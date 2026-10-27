@@ -1,0 +1,58 @@
+[package]
+name = "webgba"
+version = "0.1.0"
+description = "webGBA — GBA 실행기"
+authors = ["flightrabbit"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+name = "webgba_lib"
+
+# rlib 하나만 만든다(아비터와 같은 이유: 데스크톱만 대상이라 staticlib·cdylib 이 쓰이지 않는다).
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# devtools 를 켜야 배포본에서도 개발자 도구를 열 수 있다. 실제로 여는 것은 setting.ini 의 useDevelopKit 일 때뿐.
+tauri = { version = "2", features = ["devtools"] }
+# 두 번째 실행은 기존 창에 파일을 넘기고 끝난다.
+tauri-plugin-single-instance = "2.4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# 로그 앞에 붙일 현지 시각.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# .zip 안의 롬을 꺼낸다. deflate 만 켠다(흔한 ZIP 은 모두 이 방식).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  # 열기·저장 대화상자(IFileOpenDialog·IFileSaveDialog). 아비터 engine/picker.rs 와 같은 길.
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_System_Threading",
+  # .wgba 확장자 연결(HKCU\Software\Classes). 아비터 abtapp.rs 와 같은 길.
+  "Win32_System_Registry",
+  # RegCreateKeyExW 의 보안 속성 인자 타입이 여기 있어 함께 켠다(아비터와 같음).
+  "Win32_Security",
+] }
+
+# WebView2 설정(브라우저 가속키 끄기·개발자 도구 허용). tauri 가 쓰는 것과 같은 0.38.
+webview2-com = "0.38"
+
+# strip 은 끈다(아비터와 같음: 심볼 없는 작은 바이너리가 백신 오탐을 부른다).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = false

@@ -1,0 +1,8 @@
+# 줄바꿈은 LF 로 둔다. core.autocrlf=true 인 Windows 에서 받아도 build.sh 가 CRLF 로 바뀌어
+# 도커 bash 에서 깨지지 않게 한다(지금 파일도 모두 LF).
+* text=auto eol=lf
+
+*.wasm binary
+*.png binary
+*.ico binary
+*.icns binary

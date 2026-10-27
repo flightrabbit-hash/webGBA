@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "본 창이 쓸 수 있는 내장 명령. 제목 표시줄을 직접 그려서 창 끌기·가장자리 크기 바꾸기도 내장 명령으로 한다(아비터와 같음).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
+  ]
+}

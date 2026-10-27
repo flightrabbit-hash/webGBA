@@ -1,0 +1,59 @@
+webGBA — 포함된 오픈소스 고지 (Third-party notices)
+==============================================================================
+
+webGBA 자체 코드(src-bundle, src-tauri, tools, core/src, core/build.sh)는 MIT
+라이선스를 따릅니다(LICENSE). 아래 구성요소는 각 원저작자의 라이선스를 따르며,
+MIT 로 바뀌지 않습니다.
+
+webGBA's own code (src-bundle, src-tauri, tools, core/src, core/build.sh) is
+under the MIT License (see LICENSE). The components below keep their own
+licenses and are not relicensed under MIT.
+
+webGBA 는 롬 파일과 GBA 공식 BIOS 를 포함하지 않습니다. mGBA 코어의 내장 HLE
+BIOS 를 씁니다. 롬은 사용자가 직접 가진 파일을 엽니다.
+webGBA includes no ROM files and no official GBA BIOS (mGBA's built-in HLE
+BIOS is used). You open ROMs that you own.
+
+앱 아이콘은 아비터(Arbiter)와 같은 그림이며 같은 저작권자의 것입니다.
+The app icon is the same artwork as Arbiter, by the same author.
+
+------------------------------------------------------------------------------
+포함된 오픈소스 / Included open source
+------------------------------------------------------------------------------
+
+| 구성요소 Component      | 용도 Use                               | 라이선스 License    |
+| ----------------------- | -------------------------------------- | ------------------- |
+| mGBA 0.10.1             | GBA 에뮬레이션 코어 (bin/core)         | MPL-2.0             |
+|   blip_buf (in mGBA)    | 소리 표본 변환 / audio resampling      | LGPL-2.1            |
+|   inih (in mGBA)        | 설정 파일 읽기 / ini parsing           | BSD-3-Clause        |
+| Tauri 2 · WRY · TAO     | 앱 뼈대 · 웹뷰 · 창 / app, webview     | Apache-2.0 OR MIT   |
+| Microsoft Edge WebView2 | 화면 런타임 / web runtime              | Microsoft 배포 조건 |
+| windows (windows-rs)    | Win32 API                              | MIT OR Apache-2.0   |
+| zip                     | .zip 롬 꺼내기 / reading .zip ROMs     | MIT                 |
+| Tabler Icons            | 화면 아이콘 / UI icons                 | MIT                 |
+
+그 밖의 Rust crate(serde, serde_json, thiserror, chrono 등)는 src-tauri/Cargo.lock
+에 적힌 판을 쓰며 각 crate 의 라이선스(대부분 MIT OR Apache-2.0)를 따릅니다.
+Other Rust crates (serde, serde_json, thiserror, chrono, …) are used at the
+versions in src-tauri/Cargo.lock under their own licenses (mostly
+MIT OR Apache-2.0).
+
+mGBA
+  Copyright (c) 2013-2022 Jeffrey Pfau and contributors
+  https://mgba.io · source: https://github.com/mgba-emu/mgba/tree/0.10.1
+
+  mGBA 소스는 이 저장소에 들어 있지 않습니다. core/build.sh 가 빌드할 때 공식
+  0.10.1 태그를 받아 고치지 않고 정적 라이브러리로 묶습니다. webGBA 쪽 래퍼
+  (core/src/webgba_core.c, core/src/host_stubs.c)는 이 저장소에 있습니다.
+  mGBA 와 그 결과물(mgba_core.wasm)은 MIT 가 아니라 MPL-2.0 을 따릅니다.
+
+  The mGBA source is not in this repository. core/build.sh fetches the official
+  0.10.1 tag at build time and links it unmodified as a static library. The
+  webGBA wrapper (core/src/webgba_core.c, core/src/host_stubs.c) is here.
+  mGBA and its build output (mgba_core.wasm) are under MPL-2.0, not MIT.
+
+  전문 / full texts (앱 폴더 기준 / in the app folder):
+    MPL-2.0   bin/core/licenses/mgba-LICENSE.txt     (https://mozilla.org/MPL/2.0/)
+    blip_buf  bin/core/licenses/blip_buf-LICENSE.txt
+    inih      bin/core/licenses/inih-LICENSE.txt
+  (저장소에서는 / in the repository: src-bundle/bin/core/licenses/)

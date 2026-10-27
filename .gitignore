@@ -1,0 +1,66 @@
+# ── 작업용 내부 문서 (공개 저장소에 넣지 않음, 파일은 남김) ──
+/CLAUDE.md
+/documents/markdown/시험.md
+/documents/markdown/결정필요사항.md
+
+# ── 빌드 결과 ──
+/node_modules
+/dist
+/src-tauri/target
+/src-tauri/gen
+
+# mGBA 코어: 소스(build.sh 가 공식 0.10.1 태그를 받음)·중간 결과·기록
+/core/vendor
+/core/build
+/core/out
+
+# exe 옆에 생기는 앱 폴더(설정·기록·세이브·상태·웹뷰 데이터). 저장소 원본은 src-bundle/bin
+/bin
+
+# ── 롬·BIOS (넣지 않음) ──
+*.gba
+*.agb
+*.gb
+*.gbc
+*.zip
+*.7z
+*.rar
+*.bin
+
+# ── 웹 빌드 (.wasm·.wgba 게임은 넣지 않음, mGBA 코어만 남김) ──
+*.wasm
+*.wgba
+!/src-bundle/bin/core/mgba_core.wasm
+
+# ── 세이브·상태 ──
+*.sav
+*.sav.*
+*.srm
+*.ss[0-9]
+*.bak
+
+# ── 시험·캡처·기록 ──
+/captures
+/capture
+/screenshots
+/캡처
+*.log
+npm-debug.log*
+
+# ── 비밀·서명 키 ──
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+
+# ── 편집기·도구 ──
+/.claude
+/.playwright-mcp
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,27 @@
+{
+  "name": "webgba",
+  "version": "0.1.0",
+  "private": true,
+  "description": "webGBA 데스크톱 앱",
+  "author": "flightrabbit",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "┌──── RUN WEBGBA\t────┐": "",
+    "start": "node tools/run.cjs app:run",
+    "├──── BUILD WEBGBA\t────┤": "",
+    "build": "node tools/run.cjs build",
+    "build:route": "node tools/run.cjs open:release",
+    "├──── DEVELOPMENT\t────┤": "",
+    "dev": "node tools/run.cjs app:dev",
+    "dist": "node tools/run.cjs dist",
+    "core": "node tools/run.cjs core",
+    "├──── RUN TEST\t\t────┤": "",
+    "test": "node tools/run.cjs rs:test",
+    "test:core": "node tools/run.cjs test:core",
+    "└────────────────┘": ""
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

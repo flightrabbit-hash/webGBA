@@ -1,0 +1,40 @@
+:root {
+  --host-bg: #000000;
+  --host-ink: #b4bed6;
+  --host-veil: rgba(11, 16, 32, 0.8);
+  --font-ui: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--host-bg);
+}
+
+#canvas {
+  display: block;
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: contain;
+  image-rendering: pixelated;
+  outline: none;
+}
+
+.host__status {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  margin: 0;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  border-radius: 6px;
+  background: var(--host-veil);
+  color: var(--host-ink);
+  font: 12px/1.5 var(--font-ui);
+}
+
+.host__status[hidden] {
+  display: none;
+}

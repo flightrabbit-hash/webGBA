@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>webGBA</title>
+    <link rel="stylesheet" href="css/default.css" />
+    <link rel="modulepreload" href="js/bridge.js" />
+    <link rel="modulepreload" href="js/shell/i18n.js" />
+    <link rel="modulepreload" href="js/shell/theme.js" />
+    <link rel="modulepreload" href="js/app/settings.js" />
+    <link rel="modulepreload" href="js/core/web-host.js" />
+    <link rel="modulepreload" href="js/app/player.js" />
+    <script type="module" src="js/pages/index.js"></script>
+  </head>
+
+  <body>
+    <div class="titlebar" data-tauri-drag-region>
+      <button type="button" class="titlebar__iconbtn" id="app-menu" title="메뉴" data-i18n-title="title.menu">
+        <img class="titlebar__icon" src="icon.png" alt="" />
+      </button>
+      <button type="button" class="iconbtn" id="rail-toggle" title="도구 막대 접기 (Ctrl+B)" aria-pressed="false">
+        <span class="icon" id="rail-toggle-icon" style="--icon: url(&quot;/icons/layout-sidebar-left-collapse.svg&quot;)"></span>
+      </button>
+
+      <nav class="titlebar__menu" aria-label="메뉴" data-i18n-aria="title.menu">
+        <button type="button" class="menubar__item" data-menu="file" aria-haspopup="true" aria-expanded="false" data-i18n="menu.file">파일</button>
+        <button type="button" class="menubar__item" data-menu="game" aria-haspopup="true" aria-expanded="false" data-i18n="menu.game">게임</button>
+        <button type="button" class="menubar__item" data-menu="setting" aria-haspopup="true" aria-expanded="false" data-i18n="menu.setting">설정</button>
+        <button type="button" class="menubar__item" data-menu="help" aria-haspopup="true" aria-expanded="false" data-i18n="menu.help">도움말</button>
+      </nav>
+
+      <span class="titlebar__title" id="title" data-tauri-drag-region>webGBA</span>
+
+      <div class="titlebar__controls">
+        <button type="button" class="winbtn" id="win-min" title="최소화" data-i18n-title="win.min">
+          <span class="icon" style="--icon: url(&quot;/icons/minus.svg&quot;)"></span>
+        </button>
+        <button type="button" class="winbtn" id="win-max" title="최대화">
+          <span class="icon" id="win-max-icon" style="--icon: url(&quot;/icons/square.svg&quot;)"></span>
+        </button>
+        <button type="button" class="winbtn winbtn--close" id="win-close" title="닫기" data-i18n-title="win.close">
+          <span class="icon" style="--icon: url(&quot;/icons/x.svg&quot;)"></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="menu" id="menu" role="menu" hidden></div>
+
+    <div class="workbench">
+      <nav class="railbar" id="rail" aria-label="도구" data-i18n-aria="rail.label">
+        <button type="button" class="iconbtn" id="btn-open" title="게임 열기 (Ctrl+O)" data-i18n-title="rail.open">
+          <span class="icon" style="--icon: url(&quot;/icons/folder-open.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-files" title="같은 폴더의 게임" data-i18n-title="rail.files" aria-pressed="false">
+          <span class="icon" style="--icon: url(&quot;/icons/files.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-favorites" title="즐겨찾기" data-i18n-title="rail.favorites" aria-pressed="false">
+          <span class="icon" style="--icon: url(&quot;/icons/bookmarks.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-star" title="즐겨찾기에 넣기 (Ctrl+D)" aria-pressed="false" disabled>
+          <span class="icon" id="btn-star-icon" style="--icon: url(&quot;/icons/star.svg&quot;)"></span>
+        </button>
+        <span class="railbar__sep" aria-hidden="true"></span>
+        <button type="button" class="iconbtn" id="btn-pause" title="일시정지 (Pause)" disabled>
+          <span class="icon" id="btn-pause-icon" style="--icon: url(&quot;/icons/player-pause.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-reset" title="다시 시작 (Ctrl+R)" data-i18n-title="rail.reset" disabled>
+          <span class="icon" style="--icon: url(&quot;/icons/refresh.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-fast" title="빨리 감기 (Tab, 누르는 동안은 Space)" data-i18n-title="rail.fast" aria-pressed="false" disabled>
+          <span class="icon" style="--icon: url(&quot;/icons/player-track-next.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-state-save" title="상태 저장 (Shift+F1~F9)" data-i18n-title="rail.stateSave" disabled>
+          <span class="icon" style="--icon: url(&quot;/icons/device-floppy.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-state-load" title="상태 불러오기 (F1~F9)" data-i18n-title="rail.stateLoad" disabled>
+          <span class="icon" style="--icon: url(&quot;/icons/history.svg&quot;)"></span>
+        </button>
+        <span class="railbar__sep" aria-hidden="true"></span>
+        <button type="button" class="iconbtn" id="btn-mute" title="소리 끄기" aria-pressed="false">
+          <span class="icon" id="btn-mute-icon" style="--icon: url(&quot;/icons/volume.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-keys" title="키 설정" data-i18n-title="rail.keys">
+          <span class="icon" style="--icon: url(&quot;/icons/keyboard.svg&quot;)"></span>
+        </button>
+        <button type="button" class="iconbtn" id="btn-settings" title="설정 (Ctrl+,)" data-i18n-title="rail.settings" aria-pressed="false">
+          <span class="icon" style="--icon: url(&quot;/icons/settings.svg&quot;)"></span>
+        </button>
+      </nav>
+
+      <aside class="sidepanel" id="sidepanel" hidden>
+        <div class="sidepanel__head">
+          <span class="sidepanel__title" id="sidepanel-title"></span>
+          <span class="sidepanel__count" id="sidepanel-count"></span>
+          <button type="button" class="iconbtn iconbtn--xs" id="sidepanel-refresh" title="목록 새로 고침" data-i18n-title="panel.refresh">
+            <span class="icon" style="--icon: url(&quot;/icons/refresh.svg&quot;)"></span>
+          </button>
+        </div>
+        <ul class="sidepanel__list" id="sidepanel-list" role="listbox" tabindex="0"></ul>
+      </aside>
+
+      <main class="stage" id="stage" tabindex="-1">
+        <canvas class="stage__screen" id="screen" width="240" height="160" hidden></canvas>
+        <iframe class="stage__frame" id="webframe" title="웹 빌드" data-i18n-title="stage.frame" allow="autoplay; fullscreen; gamepad" hidden></iframe>
+
+        <section class="start" id="start">
+          <p class="start__brand">webGBA</p>
+          <button type="button" class="iconbtn iconbtn--xl" id="start-open" title="게임 열기 (Ctrl+O)" data-i18n-title="rail.open">
+            <span class="icon" style="--icon: url(&quot;/icons/folder-open.svg&quot;)"></span>
+          </button>
+          <p class="start__hint" data-i18n="start.hint">.gba · .wgba · .wasm 파일을 열거나 이 창에 끌어 놓으세요.</p>
+          <p class="start__head" id="start-favorites-head" data-i18n="start.favorites" hidden>즐겨찾기</p>
+          <ul class="start__recent" id="start-favorites" hidden></ul>
+          <p class="start__head" id="start-recent-head" data-i18n="start.recent" hidden>최근 연 파일</p>
+          <ul class="start__recent" id="start-recent" hidden></ul>
+        </section>
+
+        <div class="paused" id="paused" data-i18n="stage.paused" hidden>일시정지</div>
+      </main>
+    </div>
+
+    <footer class="statusbar">
+      <span class="statusbar__text" id="status" data-i18n="status.ready">준비되었습니다</span>
+      <span class="statusbar__right" id="status-right"></span>
+    </footer>
+
+    <div class="osdrag" id="osdrag" aria-hidden="true">
+      <div class="osdrag__frame" id="osdrag-frame"></div>
+      <div class="osdrag__card">
+        <span class="icon osdrag__icon" style="--icon: url(&quot;/icons/device-gamepad-2.svg&quot;)"></span>
+        <p class="osdrag__text" id="osdrag-text" data-i18n="drop.card">Drop 시 게임 열기 (.gba · .wgba · .wasm)</p>
+      </div>
+    </div>
+
+    <div class="modal" id="settings-modal" hidden>
+      <div class="modal__panel cfg" id="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="modal__head">
+          <h2 class="modal__title" id="settings-title" data-i18n="cfg.title">설정</h2>
+        </header>
+
+        <div class="cfg__shell">
+          <nav class="cfg__side" role="tablist" aria-label="설정 항목" data-i18n-aria="cfg.tabs">
+            <button type="button" class="cfg__tab" id="settings-tab-general" role="tab" aria-selected="true"><span class="icon" style="--icon: url(&quot;/icons/settings.svg&quot;)"></span><span data-i18n="cfg.tab.general">일반</span></button>
+            <button type="button" class="cfg__tab" id="settings-tab-keys" role="tab" aria-selected="false"><span class="icon" style="--icon: url(&quot;/icons/keyboard.svg&quot;)"></span><span data-i18n="cfg.tab.keys">키</span></button>
+            <button type="button" class="cfg__tab" id="settings-tab-theme" role="tab" aria-selected="false"><span class="icon" style="--icon: url(&quot;/icons/typography.svg&quot;)"></span><span data-i18n="cfg.tab.theme">테마</span></button>
+            <button type="button" class="cfg__tab" id="settings-tab-language" role="tab" aria-selected="false"><span class="icon" style="--icon: url(&quot;/icons/world.svg&quot;)"></span><span data-i18n="cfg.tab.language">언어</span></button>
+          </nav>
+
+          <div class="cfg__main">
+            <div class="cfg__head">
+              <h3 class="cfg__head-title" id="settings-head-title">일반</h3>
+              <p class="cfg__head-note" id="settings-head-note"></p>
+              <button type="button" id="settings-keys-reset" class="btn cfg__head-btn" hidden>RESET</button>
+            </div>
+
+            <section class="cfg__page" id="settings-page-general">
+              <div class="cfg__body" id="settings-body"></div>
+            </section>
+
+            <section class="cfg__page" id="settings-page-keys" hidden>
+              <div class="cfg__body">
+                <section class="cfg__group">
+                  <h3 class="cfg__title" data-i18n="cfg.keys.title">키 배치</h3>
+                  <p class="cfg__note" data-i18n="cfg.keys.note">칸을 누르고 쓸 키를 누르면 바뀝니다. Esc 는 취소, 오른쪽 클릭은 지우기입니다. 게임패드는 표준 배치를 자동으로 씁니다.</p>
+                  <div class="keys" id="settings-keys"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="cfg__page cfg__page--theme" id="settings-page-theme" hidden>
+              <div class="cfg__body cfg__presets">
+                <div class="cfg__modes" id="settings-modes"></div>
+              </div>
+              <div class="cfg__body cfg__tokens" id="settings-colors"></div>
+            </section>
+
+            <section class="cfg__page" id="settings-page-language" hidden>
+              <div class="cfg__body">
+                <section class="cfg__group">
+                  <h3 class="cfg__title" data-i18n="cfg.lang.title">표시 언어</h3>
+                  <p class="cfg__note" data-i18n="cfg.lang.note">webGBA 화면의 글을 바꿉니다. 게임(롬·wasm) 안의 글은 바뀌지 않습니다.</p>
+                  <div class="cfg__langs" id="settings-langs"></div>
+                </section>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <footer class="modal__foot modal__foot--buttons">
+          <span class="cfg__status" id="settings-note"></span>
+          <button type="button" id="settings-close" class="btn">CLOSE</button>
+          <button type="button" id="settings-save" class="btn btn--go">SAVE</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="layer" id="layer" hidden>
+      <div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <h2 class="dialog__title" id="dialog-title"></h2>
+        <div class="dialog__body" id="dialog-body"></div>
+        <div class="dialog__actions" id="dialog-actions"></div>
+      </div>
+    </div>
+
+    <div class="grip grip--n" data-dir="North"></div>
+    <div class="grip grip--s" data-dir="South"></div>
+    <div class="grip grip--e" data-dir="East"></div>
+    <div class="grip grip--w" data-dir="West"></div>
+    <div class="grip grip--ne" data-dir="NorthEast"></div>
+    <div class="grip grip--nw" data-dir="NorthWest"></div>
+    <div class="grip grip--se" data-dir="SouthEast"></div>
+    <div class="grip grip--sw" data-dir="SouthWest"></div>
+  </body>
+</html>

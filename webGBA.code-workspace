@@ -1,0 +1,73 @@
+{
+  "folders": [
+    {
+      "name": "webGBA",
+      "path": ".",
+    },
+  ],
+  "settings": {
+    "github.copilot.chat.commitMessageGeneration.instructions": [
+      { "text": "커밋 메시지는 '타입: 한글 요약' 형식으로 씁니다. 타입은 feat · fix · chore · docs · refactor · test · perf · style · build · ci 중 하나, 제목은 72자 이내이고 마침표를 쓰지 않습니다. 빈 행 하나 뒤에 변경의 핵심만 불릿 3~5개로 쓰고, 불릿은 명사형으로 끝냅니다. 고유명·기술명(Tauri · WebView2 · mGBA · wasm)은 영문 그대로 둡니다." },
+      { "text": "결과에는 커밋 메시지 텍스트만 출력합니다. 설명·서문·코드블록 기호를 포함하지 않습니다." },
+    ],
+    "files.exclude": {
+      "**/node_modules": true,
+      "dist": true,
+      "src-tauri/target": true,
+      "src-tauri/gen": true,
+      "core/build": true,
+      "core/out": true,
+      ".playwright-mcp": true,
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "dist": true,
+      "src-tauri/target": true,
+      "src-tauri/gen": true,
+      "core/vendor": true,
+      "core/build": true,
+      "core/out": true,
+      "package-lock.json": true,
+    },
+    "files.watcherExclude": {
+      "**/node_modules/**": true,
+      "**/dist/**": true,
+      "**/src-tauri/target/**": true,
+      "**/core/vendor/**": true,
+      "**/core/build/**": true,
+    },
+    "files.associations": {
+      "*.cfg": "json",
+      "*.ini": "ini",
+    },
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "prettier.printWidth": 1500,
+    "js/ts.updateImportsOnFileMove.enabled": "always",
+    "editor.tabSize": 2,
+    "[rust]": {
+      "editor.tabSize": 4,
+      "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    },
+    "[markdown]": {
+      "editor.formatOnSave": false,
+      "editor.wordWrap": "on",
+    },
+    "[c]": {
+      "editor.formatOnSave": false,
+    },
+    "[shellscript]": {
+      "editor.formatOnSave": false,
+    },
+    "[powershell]": {
+      "editor.formatOnSave": false,
+    },
+    "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"],
+    "rust-analyzer.check.command": "check",
+    "npm.packageManager": "npm",
+    "terminal.integrated.cwd": "${workspaceFolder}",
+  },
+  "extensions": {
+    "recommendations": ["rust-lang.rust-analyzer", "tauri-apps.tauri-vscode", "esbenp.prettier-vscode", "vscode-icons-team.vscode-icons"],
+  },
+}
