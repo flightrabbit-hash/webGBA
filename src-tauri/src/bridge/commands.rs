@@ -36,7 +36,6 @@ fn raw_body(request: &Request<'_>) -> Result<Vec<u8>> {
 pub struct RuntimeInfo {
     version: &'static str,
     bin_dir: String,
-    save_dir: String,
     state_dir: String,
     web_dir: String,
     core_path: String,
@@ -49,7 +48,6 @@ pub fn runtime_info(state: tauri::State<'_, crate::AppState>) -> RuntimeInfo {
     RuntimeInfo {
         version: env!("CARGO_PKG_VERSION"),
         bin_dir: ui::bin_root().to_string_lossy().into_owned(),
-        save_dir: ui::dir(ui::SAVE_DIR).to_string_lossy().into_owned(),
         state_dir: ui::dir(ui::STATE_DIR).to_string_lossy().into_owned(),
         web_dir: ui::dir(ui::WEB_DIR).to_string_lossy().into_owned(),
         core_path: ui::dir(ui::CORE_DIR).join(ui::CORE_FILE).to_string_lossy().into_owned(),
@@ -108,7 +106,7 @@ pub fn prefs_set(patch: serde_json::Value) -> Result<()> {
     config::merge(patch)
 }
 
-/// 설정 창 SAVE 중 `setting.ini` 쪽 값(창이 가려지면 일시정지·세이브 백업·개발자 도구). 다시 읽은 설정을 돌려준다.
+/// 설정 창 SAVE 중 `setting.ini` 쪽 값(창이 가려지면 일시정지·개발자 도구). 다시 읽은 설정을 돌려준다.
 #[tauri::command]
 pub fn settings_save(patch: serde_json::Map<String, serde_json::Value>) -> Result<settings::Settings> {
     settings::save(&patch)
@@ -144,7 +142,7 @@ pub async fn file_read_bytes(path: String) -> Result<Response> {
 pub fn file_write_bytes(request: Request<'_>) -> Result<()> {
     let path = header(&request, "x-path")?;
     let bytes = raw_body(&request)?;
-    files::write_atomic(std::path::Path::new(&path), &bytes, false)
+    files::write_atomic(std::path::Path::new(&path), &bytes)
 }
 
 #[tauri::command]
@@ -192,47 +190,54 @@ pub async fn pick_folder<R: Runtime>(webview: WebviewWindow<R>, options: Option<
     offload(move || picker::folder(options.unwrap_or_default(), owner)).await
 }
 
-/* ── 세이브·상태 ── */
+/* ── 세이브(연 파일 옆 `<이름>.sav`, 그 파일을 직접 덮어씀) ── */
+
+#[tauri::command]
+pub async fn save_read(game: String) -> Result<Response> {
+    offload(move || store::read(&store::beside_of(&game)).map(Response::new)).await
+}
+
+/// 게임이 쓴 세이브. 원시 본문 + 헤더 `x-game`(연 파일 경로).
+#[tauri::command]
+pub async fn save_write(request: Request<'_>) -> Result<store::Written> {
+    let game = header(&request, "x-game")?;
+    let bytes = raw_body(&request)?;
+    offload(move || store::write(&store::beside_of(&game), &bytes)).await
+}
+
+/// 메뉴 "세이브 가져오기": 고른 파일의 내용으로 옆 `.sav` 를 직접 덮어쓴다.
+#[tauri::command]
+pub async fn save_import(game: String, source: String) -> Result<store::Written> {
+    offload(move || {
+        let bytes = std::fs::read(&source).map_err(|e| Error::File(format!("{source}: {e}")))?;
+        store::write(&store::beside_of(&game), &bytes)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn save_path(game: String) -> String {
+    store::beside_of(&game).to_string_lossy().into_owned()
+}
+
+/* ── 상태 슬롯 1~9(앱 안쪽) ── */
 
 #[tauri::command]
 pub async fn store_read(id: String, slot: u8) -> Result<Response> {
-    offload(move || store::read(&id, slot).map(Response::new)).await
+    offload(move || store::read_state(&id, slot).map(Response::new)).await
 }
 
 #[tauri::command]
-pub fn store_write(request: Request<'_>) -> Result<String> {
+pub fn store_write(request: Request<'_>) -> Result<()> {
     let id = header(&request, "x-store")?;
     let slot: u8 = header(&request, "x-slot")?.parse().map_err(|_| Error::File(crate::i18n::tr("rs.badSlotNumber")))?;
     let bytes = raw_body(&request)?;
-    store::write(&id, slot, &bytes, settings::load().save_backup)
-}
-
-/// 롬 옆 `<이름>.sav` 를 webGBA 세이브로 가져온다(없으면 복사, 더 새것이면 백업 뒤 가져옴).
-#[tauri::command]
-pub async fn save_import_beside(rom: String, id: String) -> Result<store::Imported> {
-    offload(move || store::import_beside(&rom, &id)).await
-}
-
-/// 정해 준 `.sav` 를 같은 규칙으로 가져온다(종료할 때 만든 세이브 파일).
-#[tauri::command]
-pub async fn save_import_file(source: String, id: String) -> Result<store::Imported> {
-    offload(move || store::import_from(&source, &id)).await
-}
-
-/// 종료할 때 세이브 파일 만들기. webGBA 세이브를 `target` 에 쓴다(있으면 `.bak` 하나).
-#[tauri::command]
-pub async fn save_export(id: String, target: String) -> Result<store::Exported> {
-    offload(move || store::export_to(&id, &target)).await
+    store::write_state(&id, slot, &bytes)
 }
 
 #[tauri::command]
 pub fn store_slots(id: String) -> Result<Vec<store::Slot>> {
     store::slots(&id)
-}
-
-#[tauri::command]
-pub fn store_path(id: String, slot: u8) -> Result<String> {
-    store::path_of(&id, slot).map(|p| p.to_string_lossy().into_owned())
 }
 
 /* ── .wgba 연결 ── */

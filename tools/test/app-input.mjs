@@ -400,10 +400,11 @@ try {
   const wgba = path.join(work, "port", `${TEST_BUILD}.wgba`);
   fs.writeFileSync(path.join(work, "port", "zz_dummy.gba"), Buffer.alloc(4));
   for (const name of [`${TEST_BUILD}.sav`, `${TEST_BUILD}.sav.bak`]) fs.rmSync(path.join(work, "port", name), { force: true });
+  for (const name of ["test.sav", "test.sav.bak"]) fs.rmSync(path.join(games, name), { force: true });
   prepareApp(exe, appDir);
   fs.writeFileSync(
     path.join(appDir, "bin", "ini", "personalization.cfg"),
-    JSON.stringify({ window: { x: 60, y: 60, width: 1100, height: 760, maximized: false }, panel: "files", wgbaLink: false, exitSave: false, volume: 80, muted: false, fastScale: 4, slot: 1, recent: [], favorites: [], webRom: TEST_ROM }, null, 2),
+    JSON.stringify({ window: { x: 60, y: 60, width: 1100, height: 760, maximized: false }, panel: "files", wgbaLink: false, volume: 80, muted: false, fastScale: 4, slot: 1, recent: [], favorites: [], webRom: TEST_ROM }, null, 2),
   );
   launch(path.join(appDir, "webgba.exe"), PORT);
   app = await attach(PORT);

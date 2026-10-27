@@ -32,9 +32,9 @@ The app icon is the same artwork as Arbiter, by the same author.
 | zip                     | .zip 롬 꺼내기 / reading .zip ROMs     | MIT                 |
 | Tabler Icons            | 화면 아이콘 / UI icons                 | MIT                 |
 
-그 밖의 Rust crate(serde, serde_json, thiserror, chrono 등)는 src-tauri/Cargo.lock
+그 밖의 Rust crate(serde, serde_json, thiserror, chrono, flate2 등)는 src-tauri/Cargo.lock
 에 적힌 판을 쓰며 각 crate 의 라이선스(대부분 MIT OR Apache-2.0)를 따릅니다.
-Other Rust crates (serde, serde_json, thiserror, chrono, …) are used at the
+Other Rust crates (serde, serde_json, thiserror, chrono, flate2, …) are used at the
 versions in src-tauri/Cargo.lock under their own licenses (mostly
 MIT OR Apache-2.0).
 

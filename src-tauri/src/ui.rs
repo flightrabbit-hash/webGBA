@@ -8,11 +8,13 @@
 //!     core/     mgba_core.wasm, licenses/          실행에 쓰는 코어(앱이 놓고, 사람이 바꿔 넣을 수 있음)
 //!     ini/      setting.ini, personalization.cfg  설정
 //!     log/      2026-10-26.log                    기록
-//!     save/     <롬 이름>.sav                       mGBA 코어 세이브
 //!     state/    <롬 이름>.ss1 … .ss9               상태 저장
-//!     web/      <빌드 이름>-<키>/save.sav            웹 빌드 세이브
+//!     web/      <빌드 이름>-<키>/state.ssN           웹 빌드 상태 저장
 //!     webview/  WebView2 데이터(웹 빌드마다 출처가 달라 저장 공간이 섞이지 않음)
 //! ```
+//!
+//! 세이브는 앱 폴더에 두지 않고 연 파일 바로 옆 `<이름>.sav` 하나를 직접 읽고 덮어쓴다(`store`). 옛 판이 쓰던
+//! `save/<롬 이름>.sav`·`web/<빌드>-<키>/save.sav` 는 읽지도 옮기지도 않는다(사용자 2026-10-27).
 //!
 //! 앱 폴더는 exe 옆 `bin/`(아비터와 같음). 일반 권한으로 뜨므로 exe 옆에 쓸 수 없는 자리(예: Program Files)면
 //! `%LOCALAPPDATA%\webGBA\bin` 을 쓴다.
@@ -31,7 +33,6 @@ pub const BIN_DIR: &str = "bin";
 pub const CORE_DIR: &str = "core";
 pub const INI_DIR: &str = "ini";
 pub const LOG_DIR: &str = "log";
-pub const SAVE_DIR: &str = "save";
 pub const STATE_DIR: &str = "state";
 pub const WEB_DIR: &str = "web";
 pub const WEBVIEW_DIR: &str = "webview";
@@ -157,7 +158,7 @@ pub fn dir(name: &str) -> PathBuf {
 
 /// 앱 폴더를 갖춘다. 없으면 만들고, 설정 씨앗과 코어를 exe 내장본에서 꺼낸다(exe 하나만으로 뜨게).
 pub fn ensure_layout<R: Runtime>(app: &AppHandle<R>) {
-    for name in [CORE_DIR, INI_DIR, LOG_DIR, SAVE_DIR, STATE_DIR, WEB_DIR, WEBVIEW_DIR] {
+    for name in [CORE_DIR, INI_DIR, LOG_DIR, STATE_DIR, WEB_DIR, WEBVIEW_DIR] {
         let _ = std::fs::create_dir_all(dir(name));
     }
 

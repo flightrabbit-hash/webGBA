@@ -4,7 +4,15 @@ import { locale, t } from "../shell/i18n.js";
 
 export const FRAME_MS = (280896 / 16777216) * 1000;
 const MAX_FRAMES_PER_TICK = 8;
-const SAVE_DELAY_MS = 400;
+const SAVE_DELAY_MS = 1000;
+
+const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 export const BUTTONS = ["A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L"];
 
@@ -115,6 +123,8 @@ export class Player {
     this.onHalt = onHalt ?? (() => {});
     this.host = null;
     this.saveId = "";
+    this.game = "";
+    this.saveBase = null;
     this.running = false;
     this.paused = false;
     this.fast = false;
@@ -280,10 +290,14 @@ export class Player {
     this.applyVolume();
   }
 
-  async start({ host, saveId }) {
+  async start({ host, saveId, game }) {
     await this.stop();
     this.host = host;
     this.saveId = saveId;
+    this.game = game;
+    this.saveBase = host.saveData();
+    host.takeSaveDirty();
+    this.savePending = false;
     this.paused = false;
     this.releaseAll();
     this.sent = 0;
@@ -306,9 +320,11 @@ export class Player {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.running = false;
-    if (this.host) await this.flushSave();
+    if (this.host) await this.flushSave({ final: true });
     this.host = null;
     this.saveId = "";
+    this.game = "";
+    this.saveBase = null;
     this.audio?.node.port.postMessage("clear");
   }
 
@@ -451,16 +467,20 @@ export class Player {
     this.saveTimer = setTimeout(() => this.flushSave(), SAVE_DELAY_MS);
   }
 
-  async flushSave() {
+  async flushSave({ final = false } = {}) {
     clearTimeout(this.saveTimer);
     this.saveTimer = 0;
-    if (!this.savePending || !this.host || !this.saveId) return;
-    this.savePending = false;
+    if (!this.host || !this.game || !(this.savePending || final)) return;
     const data = this.host.saveData();
-    if (!data) return;
+    if (!data || !data.length || (!this.savePending && sameBytes(data, this.saveBase))) {
+      this.savePending = false;
+      return;
+    }
+    this.savePending = false;
     try {
-      await core.storeWrite(this.saveId, 0, data);
-      this.onStatus(t("status.saveWritten", { time: new Date().toLocaleTimeString(locale(), { hour12: false }) }));
+      const done = await core.saveWrite(this.game, data);
+      this.saveBase = data;
+      if (done.action === "written") this.onStatus(t("status.saveWritten", { name: baseOf(done.path), time: new Date().toLocaleTimeString(locale(), { hour12: false }) }));
     } catch (error) {
       this.savePending = true;
       this.onStatus(t("status.saveWriteFailed", { reason: String(error?.message ?? error) }), "error");

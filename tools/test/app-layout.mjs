@@ -51,7 +51,7 @@ try {
   for (const item of CASES) {
     fs.rmSync(appDir, { recursive: true, force: true });
     const appExe = prepareApp(exe, appDir);
-    fs.writeFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), JSON.stringify({ window: item.window, panel: "files", wgbaLink: false, exitSave: false }, null, 2));
+    fs.writeFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), JSON.stringify({ window: item.window, panel: "files", wgbaLink: false }, null, 2));
     launch(appExe, PORT, [rom]);
     const app = await attach(PORT);
     try {

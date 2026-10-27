@@ -41,7 +41,6 @@ const DYNAMIC = [
   ...LANGS.map((id) => `lang.${id}`),
   ...["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"].map((k) => `key.${k}`),
   ...["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "Space", "Enter", "Backspace", "Tab", "NumpadEnter"].map((k) => `keyCode.${k}`),
-  "status.besideCopied", "status.besideReplaced", "status.exitSaveCopied", "status.exitSaveReplaced",
   "panel.favoritesEmpty", "panel.filesEmpty", "panel.filesNone",
 ];
 for (const key of DYNAMIC) used.add(key);

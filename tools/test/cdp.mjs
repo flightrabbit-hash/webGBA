@@ -37,15 +37,15 @@ export function guardOthers(exe, dir) {
 }
 
 /** 시험용 앱 폴더를 만든다: exe 사본 + bin/ini/setting.ini(useDevelopKit) + personalization.cfg(앱 씨앗과 같은 값).
- *  "종료할 때 세이브 파일 만들기"(기본 켬)는 꺼 둔다 — 옛 시험이 공용 시험 폴더의 롬 옆에 .sav 를 남기지 않게. 그 기능은 app-settings 가 따로 본다.
- *  .wgba 연결도 기본으로 끈다(wgbaLink false) — 켜 두면 시험 앱이 켤 때 사용자 HKCU 연결을 시험 exe 로 고쳐 쓴다. 연결을 보는 app-features 만 { link: true }. */
+ *  세이브는 연 파일 옆 <이름>.sav 에 생기므로, 게임이 저장하는 시험은 공용 폴더의 롬 대신 자기 폴더의 사본을 연다.
+ *  .wgba 연결은 기본으로 끈다(wgbaLink false) — 켜 두면 시험 앱이 켤 때 사용자 HKCU 연결을 시험 exe 로 고쳐 쓴다. 연결을 보는 app-features 만 { link: true }. */
 export function prepareApp(exe, dir, { link = false } = {}) {
   fs.mkdirSync(path.join(dir, "bin", "ini"), { recursive: true });
   fs.copyFileSync(exe, path.join(dir, "webgba.exe"));
   const resources = path.join(path.dirname(exe), "bin", "core");
   if (fs.existsSync(resources)) fs.cpSync(resources, path.join(dir, "bin", "core"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "ini", "setting.ini"), "appWidth: 960\nappHeight: 720\nuseDevelopKit: true\n");
-  const seed = { recent: [], favorites: [], volume: 80, muted: false, fastScale: 4, panel: "files", slot: 1, exitSave: false, wgbaLink: link };
+  const seed = { recent: [], favorites: [], volume: 80, muted: false, fastScale: 4, panel: "files", slot: 1, wgbaLink: link };
   fs.writeFileSync(path.join(dir, "bin", "ini", "personalization.cfg"), JSON.stringify(seed, null, 2));
   return path.join(dir, "webgba.exe");
 }

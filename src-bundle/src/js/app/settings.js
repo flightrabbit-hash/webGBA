@@ -1,4 +1,3 @@
-import { core } from "../bridge.js";
 import * as theme from "../shell/theme.js";
 import { CHANGED as LANG_CHANGED, LANGS, lang, t } from "../shell/i18n.js";
 import { codeOf, DPAD_DEFAULT } from "./player.js";
@@ -67,11 +66,7 @@ const FIELDS = [
   {
     group: "save",
     note: true,
-    items: [
-      { key: "exitSave", default: true },
-      { key: "exitSaveDir", type: "folder", default: "", requires: "exitSave" },
-      { key: "saveBackup", default: true },
-    ],
+    items: [],
   },
   {
     group: "files",
@@ -97,7 +92,6 @@ const TOKEN_GROUPS = [
 
 const reason = (error) => String(error?.message ?? error);
 
-const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
 export function setup(options = {}) {
   Object.assign(hooks, options);
@@ -248,7 +242,7 @@ function drawFields() {
 }
 
 function fieldRow(item) {
-  const row = document.createElement(item.type === "radio" || item.type === "folder" || item.type === "clear" || item.type === "text" ? "div" : "label");
+  const row = document.createElement(item.type === "radio" || item.type === "clear" || item.type === "text" ? "div" : "label");
   row.className = "cfg__row";
 
   const text = document.createElement("span");
@@ -268,7 +262,6 @@ function control(item, hint) {
   if (draft[item.key] === undefined && item.default !== undefined) draft[item.key] = item.default;
   const value = draft[item.key];
 
-  if (item.type === "folder") return folderControl(item);
   if (item.type === "clear") return clearControl(item, hint);
   if (item.type === "text") return textControl(item);
 
@@ -349,48 +342,6 @@ function iconButton(icon, title, onClick) {
     onClick(event);
   });
   return button;
-}
-
-function folderControl(item) {
-  const box = document.createElement("span");
-  box.className = "cfg__folder";
-  if (item.requires) box.dataset.requires = item.key;
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "cfg__input";
-  input.readOnly = true;
-  input.placeholder = t(`cfg.${item.key}.default`);
-
-  const paint = () => {
-    const dir = draft[item.key] ?? "";
-    input.value = dir ? baseOf(dir.replace(/[\\/]+$/, "")) || dir : "";
-    input.title = dir || t(`cfg.${item.key}.default`);
-  };
-  paint();
-
-  const choose = iconButton("folder-open", t(`cfg.${item.key}.pick`), async () => {
-    let dir = "";
-    try {
-      dir = await core.pickFolder({ title: t(`cfg.${item.key}.pick`), start: draft[item.key] || null });
-    } catch (error) {
-      note(reason(error), true);
-      return;
-    }
-    if (!dir) return;
-    draft[item.key] = dir;
-    paint();
-    note(t("cfg.pendingSave"));
-  });
-
-  const reset = iconButton("arrow-back-up", t(`cfg.${item.key}.reset`), () => {
-    draft[item.key] = "";
-    paint();
-    note(t("cfg.pendingSave"));
-  });
-
-  box.append(input, choose, reset);
-  return box;
 }
 
 function textControl(item) {

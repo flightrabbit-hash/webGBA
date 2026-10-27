@@ -1,5 +1,6 @@
 // 내장 호스트(src-bundle/src/js/core/web-host.js)로 .wasm 하나만 돌려 본다. 앱과 같은 코드다.
 //   node tools/test/host-smoke.mjs <코어.wasm> <롬> <출력 폴더> [이름표] [--save-cycle]
+//   <롬> 자리에 embedded 를 주면 wasm 안 롬 구획(webgba.rom, tools/pack-wgba.mjs)을 풀어 쓴다.
 // 1500프레임(타이틀) → 캡처. --save-cycle 이면 Web_DebugSave(포트)로 세이브를 쓰게 한 뒤 그 세이브로 다시 켜서
 // 타이틀 → START → 메뉴 캡처(이어서 하기가 보이면 세이브가 돌아온 것).
 import fs from "fs";
@@ -7,7 +8,7 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 
-import { bootHost, inspectModule } from "../../src-bundle/src/js/core/web-host.js";
+import { bootHost, inspectModule, readEmbeddedRom } from "../../src-bundle/src/js/core/web-host.js";
 
 const require = createRequire(import.meta.url);
 const { encode } = require("./png.cjs");
@@ -51,7 +52,16 @@ async function main() {
     console.log(report);
     process.exit(1);
   }
-  const rom = new Uint8Array(fs.readFileSync(romPath));
+  let rom;
+  if (romPath === "embedded") {
+    const t0 = Date.now();
+    const found = await readEmbeddedRom(module);
+    if (!found) throw new Error("롬 구획(webgba.rom)이 없습니다");
+    rom = found.rom;
+    console.log(`내장 롬 ${rom.length}바이트(묶음 ${found.packed}) · SHA-1 ${found.sha1} · 풀기·확인 ${Date.now() - t0}ms`);
+  } else {
+    rom = new Uint8Array(fs.readFileSync(romPath));
+  }
   const logs = [];
   const { host } = await bootHost({ module, rom, save: null, log: (level, line) => logs.push(`${level} ${line}`) });
   host.setAudioRate(48000);

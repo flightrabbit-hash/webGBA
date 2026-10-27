@@ -1,5 +1,5 @@
 import { core, win, onCloseRequested, onMaximized, onOpenFile, onOsDrag, onOsFileDrop } from "../bridge.js";
-import { bootHost, inspectModule, SCREEN_H, SCREEN_W } from "../core/web-host.js";
+import { bootHost, inspectModule, readEmbeddedRom, SCREEN_H, SCREEN_W } from "../core/web-host.js";
 import { codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, Player } from "../app/player.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -100,7 +100,6 @@ const stemOf = (path) => {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;
 };
-const joinPath = (dir, name) => `${dir.replace(/[\\/]+$/, "")}\\${name}`;
 const samePath = (a, b) => Boolean(a && b) && a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
 const slot = () => state.prefs.slot ?? 1;
 const reason = (error) => String(error?.message ?? error);
@@ -243,58 +242,13 @@ async function rememberRecent(path) {
   await savePrefs({ recent: recent.slice(0, RECENT_MAX), lastDir: dirOf(path) });
 }
 
-function importNote(result, kind) {
-  const name = baseOf(result.source);
-  if (result.action === "copied") return t(`status.${kind}Copied`, { name });
-  if (result.action === "replaced") {
-    core.log("INFO", `옆의 더 새 세이브를 가져옴 ${result.source} · 이전 세이브 백업 ${result.backup}`);
-    return t(`status.${kind}Replaced`, { name });
-  }
-  return "";
+async function openSave(path) {
+  const name = baseOf(await core.savePath(path));
+  const save = await core.saveRead(path);
+  return { save, name };
 }
 
-async function importBeside(rom, saveId) {
-  try {
-    return importNote(await core.saveImportBeside(rom, saveId), "beside");
-  } catch (error) {
-    core.log("WARN", `롬 옆 세이브를 가져오지 못했습니다 ${rom}: ${reason(error)}`);
-    return t("status.besideFailed", { reason: reason(error) });
-  }
-}
-
-const exitSaveOn = () => state.prefs.exitSave !== false;
-
-function exitSaveTarget(path) {
-  return joinPath(state.prefs.exitSaveDir || dirOf(path), `${stemOf(path)}.sav`);
-}
-
-const besideSave = (rom) => joinPath(dirOf(rom), `${stemOf(rom)}.sav`);
-
-async function importExitSave(path, rom, saveId) {
-  if (!exitSaveOn()) return "";
-  const source = exitSaveTarget(path);
-  if (samePath(source, besideSave(rom))) return "";
-  try {
-    return importNote(await core.saveImportFile(source, saveId), "exitSave");
-  } catch (error) {
-    core.log("WARN", `세이브 파일을 가져오지 못했습니다 ${source}: ${reason(error)}`);
-    return t("status.exitSaveImportFailed", { reason: reason(error) });
-  }
-}
-
-async function exportExitSave(game) {
-  if (!game?.saveId || !exitSaveOn()) return "";
-  const target = exitSaveTarget(game.path);
-  try {
-    const result = await core.saveExport(game.saveId, target);
-    if (result.action !== "written") return "";
-    core.log("INFO", `종료할 때 세이브 파일을 씀 ${result.path}${result.backup ? ` · 이전 파일 백업 ${result.backup}` : ""}`);
-    return t("status.exitSaved", { name: baseOf(result.path) });
-  } catch (error) {
-    core.log("WARN", `종료할 때 세이브 파일을 쓰지 못했습니다 ${target}: ${reason(error)}`);
-    return t("status.exitSaveFailed", { reason: reason(error) });
-  }
-}
+const saveNote = (hadSave, name) => t(hadSave ? "status.saveLoaded" : "status.saveNone", { name });
 
 const join = (...parts) => parts.filter(Boolean).join(" · ");
 
@@ -330,7 +284,7 @@ async function startHosted(host, game) {
   state.game = { ...game, name: baseOf(game.path), title: host.title ? `${baseOf(game.path)} · ${host.title}` : baseOf(game.path) };
   showView("screen");
   layoutScreen();
-  await player.start({ host, saveId: game.saveId });
+  await player.start({ host, saveId: game.saveId, game: game.path });
   player.fastScale = state.prefs.fastScale ?? 4;
   syncControls();
   el.stage.focus();
@@ -340,12 +294,10 @@ async function openRom(path) {
   const rom = await loadRomBytes(path);
   const module = await coreModule();
   const saveId = `gba/${stemOf(path)}`;
-  const exitImported = await importExitSave(path, path, saveId);
-  const imported = await importBeside(path, saveId);
-  const save = await core.storeRead(saveId, 0);
+  const { save, name } = await openSave(path);
   const { host, hadSave } = await bootHost({ module, rom, save, log: hostLog });
   await startHosted(host, { path, saveId, kind: "core" });
-  status(join(baseOf(path), t(hadSave ? "status.saveLoaded" : "status.saveNone"), exitImported, imported));
+  status(join(baseOf(path), saveNote(hadSave, name)));
   return true;
 }
 
@@ -382,15 +334,13 @@ async function openWasm(path, { preferPage = false } = {}) {
   const bytes = await core.fileReadBytes(path);
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: baseOf(path) }));
   const build = await core.webInspect(path, state.prefs.webRom || null);
-  let moved = "";
   if (build.movedFrom) {
     const builds = { ...(state.prefs.webBuilds ?? {}) };
     if (builds[build.movedFrom] && !builds[build.key]) {
       builds[build.key] = builds[build.movedFrom];
       await savePrefs({ webBuilds: builds });
     }
-    moved = t("status.wasmMoved", { name: `${build.base}.wasm` });
-    core.log("INFO", `.wasm 세이브를 옮겨 옴 ${build.movedFrom} → ${build.key} (${path})`);
+    core.log("INFO", `.wasm 때의 상태 슬롯을 이어받음 ${build.movedFrom} → ${build.key} (${path})`);
   }
   let module = null;
   try {
@@ -399,43 +349,42 @@ async function openWasm(path, { preferPage = false } = {}) {
     throw new Error(t("status.wasmUnreadable", { reason: reason(error) }));
   }
   const report = inspectModule(module);
+  const embedded = await readEmbeddedRom(module);
+  const romEmbedded = Boolean(embedded);
+  const romNote = (rom) => (romEmbedded ? t("status.romEmbedded") : rom ? t("status.romUsed", { name: baseOf(rom) }) : "");
   if (report.usable && !(preferPage && build.page)) {
-    const rom = await resolveWebRom(build, true);
-    if (!rom) {
+    const rom = romEmbedded ? null : await resolveWebRom(build, true);
+    if (!romEmbedded && !rom) {
       status(t("status.noRomPicked"), "warn");
       showView("start");
       return false;
     }
-    await core.webSetRom(build.key, rom);
-    const exitImported = moved ? "" : await importExitSave(path, rom, build.saveId);
-    const imported = moved ? "" : await importBeside(rom, build.saveId);
-    const save = await core.storeRead(build.saveId, 0);
-    const { host, hadSave } = await bootHost({ module, rom: await loadRomBytes(rom), save, log: hostLog });
-    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom });
-    status(join(baseOf(path), t("status.romUsed", { name: baseOf(rom) }), t(hadSave ? "status.saveLoaded" : "status.saveNone"), moved, exitImported, imported));
+    if (!romEmbedded) await core.webSetRom(build.key, rom);
+    const { save, name } = await openSave(path);
+    const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : await loadRomBytes(rom), save, log: hostLog });
+    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded });
+    status(join(baseOf(path), romNote(rom), saveNote(hadSave, name)));
     return true;
   }
   module = null;
-  const rom = await resolveWebRom(build, false);
-  await core.webSetRom(build.key, rom);
-  const exitImported = rom && !moved ? await importExitSave(path, rom, build.saveId) : "";
-  const imported = rom && !moved ? await importBeside(rom, build.saveId) : "";
-  if (build.page) {
-    openFrame(`${build.origin}/${build.page.split("/").map(encodeURIComponent).join("/")}`, { path, build, rom });
-    status(join(t("status.openPage", { name: baseOf(path), page: build.page }), moved, exitImported, imported));
-    return true;
-  }
-  if (build.glue) {
-    openFrame(`${build.origin}/__webgba__/wasm-host.html?js=${encodeURIComponent(build.glue)}&lang=${i18n.lang()}`, { path, build, rom });
-    status(join(t("status.openGlue", { name: baseOf(path), glue: build.glue }), moved, exitImported, imported));
+  const rom = romEmbedded ? null : await resolveWebRom(build, false);
+  if (!romEmbedded) await core.webSetRom(build.key, rom);
+  if (build.page || build.glue) {
+    if (build.page) {
+      openFrame(`${build.origin}/${build.page.split("/").map(encodeURIComponent).join("/")}`, { path, build, rom, romEmbedded });
+      status(join(t("status.openPage", { name: baseOf(path), page: build.page }), romEmbedded ? romNote(rom) : ""));
+    } else {
+      openFrame(`${build.origin}/__webgba__/wasm-host.html?js=${encodeURIComponent(build.glue)}&lang=${i18n.lang()}`, { path, build, rom, romEmbedded });
+      status(join(t("status.openGlue", { name: baseOf(path), glue: build.glue }), romEmbedded ? romNote(rom) : ""));
+    }
     return true;
   }
   const why = report.unknown.length ? t("status.unknownImports", { list: `${report.unknown.slice(0, 3).join(", ")}${report.unknown.length > 3 ? " …" : ""}` }) : "";
   throw new Error(t("status.needsGlue", { why }));
 }
 
-function openFrame(url, { path, build, rom }) {
-  state.game = { path, name: baseOf(path), title: baseOf(path), kind: "frame", build, rom, saveId: build.saveId, origin: build.origin };
+function openFrame(url, { path, build, rom, romEmbedded }) {
+  state.game = { path, name: baseOf(path), title: baseOf(path), kind: "frame", build, rom, romEmbedded, saveId: build.saveId, origin: build.origin };
   el.frame.src = url;
   showView("frame");
   syncControls();
@@ -455,14 +404,12 @@ async function closeGame({ quiet = false } = {}) {
   const game = state.game;
   if (player.active) await player.stop();
   if (game.kind === "frame") el.frame.src = "about:blank";
-  const exported = await exportExitSave(game);
   state.game = null;
   state.autoPaused = false;
   showView("start");
   syncControls();
   renderPanel();
-  if (!quiet) status(join(t("status.closed"), exported));
-  return exported;
+  if (!quiet) status(t("status.closed"));
 }
 
 async function openDialogFile() {
@@ -838,9 +785,6 @@ async function settingsSnapshot() {
     fastScale: player.fastScale,
     dpadMode: player.dpadMode,
     slot: slot(),
-    exitSave: exitSaveOn(),
-    exitSaveDir: state.prefs.exitSaveDir ?? "",
-    saveBackup: ini.saveBackup !== false,
     wgbaLink: state.link.linked,
     webRom: state.prefs.webRom ?? "",
     favorites: [...favorites()],
@@ -861,8 +805,6 @@ async function applySettings(next) {
     fastScale: next.fastScale,
     dpadMode: DPAD_MODES.includes(next.dpadMode) ? next.dpadMode : DPAD_DEFAULT,
     slot: next.slot,
-    exitSave: next.exitSave !== false,
-    exitSaveDir: next.exitSaveDir ?? "",
     webRom: String(next.webRom ?? "").trim(),
     favorites: next.favorites,
     recent: next.recent,
@@ -873,7 +815,7 @@ async function applySettings(next) {
 
   const ini = state.info?.settings ?? {};
   const iniPatch = {};
-  for (const key of ["pauseWhenHidden", "saveBackup", "useDevelopKit"]) {
+  for (const key of ["pauseWhenHidden", "useDevelopKit"]) {
     if (Boolean(next[key]) !== Boolean(ini[key])) iniPatch[key] = Boolean(next[key]);
   }
   if (Object.keys(iniPatch).length) state.info.settings = await core.settingsSave(iniPatch);
@@ -967,23 +909,23 @@ async function loadStateFrom(index) {
   }
 }
 
-async function exportSave() {
+async function exportSave(target) {
   if (!state.game) return;
   await player.flushSave();
-  const bytes = player.active ? player.host.saveData() : await core.storeRead(state.game.saveId, 0);
+  const bytes = player.active ? player.host.saveData() : await core.saveRead(state.game.path);
   if (!bytes || !bytes.length) {
     status(t("status.noSaveYet"), "warn");
     return;
   }
-  const path = await core.pickSave({ title: t("pick.exportSave"), defaultName: `${stemOf(state.game.path)}.sav`, defaultExt: "sav", filters: ["sav"], filterName: t("pick.saveFilter"), start: dirOf(state.game.path) });
+  const path = typeof target === "string" ? target : await core.pickSave({ title: t("pick.exportSave"), defaultName: `${stemOf(state.game.path)}.sav`, defaultExt: "sav", filters: ["sav"], filterName: t("pick.saveFilter"), start: dirOf(state.game.path) });
   if (!path) return;
   await core.fileWriteBytes(path, bytes);
   status(t("status.saveExported", { name: baseOf(path) }));
 }
 
-async function importSave() {
+async function importSave(source) {
   if (!state.game) return;
-  const path = await core.pickFile({ title: t("pick.importSave"), filters: ["sav"], filterName: t("pick.saveFilter"), start: dirOf(state.game.path) });
+  const path = typeof source === "string" ? source : await core.pickFile({ title: t("pick.importSave"), filters: ["sav"], filterName: t("pick.saveFilter"), start: dirOf(state.game.path) });
   if (!path) return;
   const bytes = await core.fileReadBytes(path);
   const limit = state.game.kind === "core" ? 0x20000 : player.active && player.host ? player.host.saveCapacity : 0x100000;
@@ -994,7 +936,8 @@ async function importSave() {
   if (!(await confirmDialog(t("confirm.importTitle"), t("confirm.importText")))) return;
   const game = state.game;
   if (player.active) await player.stop();
-  await core.storeWrite(game.saveId, 0, bytes);
+  const done = await core.saveImport(game.path, path);
+  core.log("INFO", `세이브 가져오기 ${path} → ${done.path}`);
   if (game.kind === "frame") {
     el.frame.src = el.frame.src;
     status(t("status.saveImported"));
@@ -1006,14 +949,14 @@ async function importSave() {
 }
 
 async function revealSave() {
-  const target = state.game ? await core.storePath(state.game.saveId, 0) : state.info?.saveDir;
-  if (!target) return;
+  if (!state.game) return;
+  const target = await core.savePath(state.game.path);
   await core.revealPath((await exists(target)) ? target : dirOf(target)).catch((error) => status(reason(error), "error"));
 }
 
 async function chooseWebRom() {
   const game = state.game;
-  if (!game?.build) return;
+  if (!game?.build || game.romEmbedded) return;
   const picked = await core.pickFile({ title: t("pick.webRom"), filters: ["gba"], filterName: t("pick.romFilter"), start: game.rom ? dirOf(game.rom) : game.build.dir });
   if (!picked) return;
   await rememberWebRom(game.build, picked);
@@ -1092,7 +1035,7 @@ function menuItems(name) {
       { sep: true },
       { label: t("menu.importSave"), run: importSave, disabled: !game },
       { label: t("menu.exportSave"), run: exportSave, disabled: !game },
-      { label: t("menu.revealSave"), run: revealSave },
+      { label: t("menu.revealSave"), run: revealSave, disabled: !game },
       { sep: true },
       { label: t("menu.quit"), keys: "Alt+F4", run: shutdown },
     ];
@@ -1114,7 +1057,7 @@ function menuItems(name) {
       { sep: true },
       { label: t("menu.openPage"), run: () => openPath(game.path, { preferPage: true }), disabled: !(game?.kind === "web" && build?.page) },
       { label: t("menu.openHosted"), run: () => openPath(game.path, { preferPage: false }), disabled: !(game?.kind === "frame") },
-      { label: t("menu.pickRom"), run: chooseWebRom, disabled: !build },
+      { label: t("menu.pickRom"), run: chooseWebRom, disabled: !build || Boolean(game?.romEmbedded) },
     ];
   }
   if (name === "setting") {
@@ -1407,7 +1350,7 @@ async function boot() {
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);

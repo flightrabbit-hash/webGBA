@@ -56,6 +56,46 @@ export function inspectModule(module) {
   };
 }
 
+export const ROM_SECTION = "webgba.rom";
+const ROM_MAGIC = "WGRM";
+const ROM_HEADER = 36;
+const ROM_STORE = 0;
+const ROM_ZLIB = 1;
+
+const hexOf = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+export async function readEmbeddedRom(module) {
+  const found = WebAssembly.Module.customSections(module, ROM_SECTION);
+  if (!found.length) return null;
+  const payload = new Uint8Array(found[found.length - 1]);
+  const bad = (why) => new Error(t("host.embedBad", { why }));
+  if (payload.length < ROM_HEADER || String.fromCharCode(...payload.subarray(0, 4)) !== ROM_MAGIC) throw bad(t("host.embedWhyHeader"));
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const headerSize = view.getUint16(4, true);
+  const version = payload[6];
+  const method = payload[7];
+  const size = view.getUint32(8, true);
+  const packed = view.getUint32(12, true);
+  if (version !== 1 || (method !== ROM_STORE && method !== ROM_ZLIB)) throw new Error(t("host.embedFormat", { version, method }));
+  if (headerSize < ROM_HEADER || headerSize + packed > payload.length || size === 0 || size > 0x02000000) throw bad(t("host.embedWhyHeader"));
+  const sha1 = hexOf(payload.subarray(16, 36));
+  const data = payload.subarray(headerSize, headerSize + packed);
+  let rom;
+  if (method === ROM_STORE) {
+    rom = data.slice();
+  } else {
+    try {
+      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate"));
+      rom = new Uint8Array(await new Response(stream).arrayBuffer());
+    } catch {
+      throw bad(t("host.embedWhyInflate"));
+    }
+  }
+  if (rom.length !== size) throw bad(t("host.embedWhySize"));
+  if (hexOf(new Uint8Array(await crypto.subtle.digest("SHA-1", rom))) !== sha1) throw bad(t("host.embedWhySha1"));
+  return { rom, sha1, packed };
+}
+
 function isBlank(bytes) {
   let zero = true;
   let full = true;

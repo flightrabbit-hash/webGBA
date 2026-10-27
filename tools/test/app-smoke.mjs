@@ -32,17 +32,22 @@ const stageClip = async () => app.evaluate("(() => { const b = document.getEleme
 const statusText = () => app.evaluate("document.getElementById('status').textContent");
 const frames = () => app.evaluate("window.__WEBGBA_TEST__.player.host ? window.__WEBGBA_TEST__.player.host.ex.Web_GetFrameCount?.() ?? -1 : -1");
 const open = (file, options = {}) => app.evaluate(`window.__WEBGBA_TEST__.openPath(${JSON.stringify(file)}, ${JSON.stringify(options)})`);
+/** 세이브가 롬 옆에 생기므로 공용 rom\test.gba 대신 그 시험 폴더의 사본을 연다. */
+function ownCopy(name) {
+  const dir = path.join(work, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(work, "rom", "test.gba"), path.join(dir, "test.gba"));
+  return path.join(dir, "test.gba");
+}
 const screenHash = () =>
   app.evaluate("(() => { const c = document.getElementById('screen'); const d = c.getContext('2d').getImageData(0,0,240,160).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) { h ^= d[i] | (d[i+1] << 8) | (d[i+2] << 16); h = Math.imul(h, 16777619); } const colors = new Set(); for (let i = 0; i < d.length; i += 148) colors.add(d[i] << 16 | d[i+1] << 8 | d[i+2]); return { hash: h >>> 0, colors: colors.size }; })()");
 
 try {
   if (names.includes("gba")) {
-    const rom = path.join(work, "rom", "test.gba");
-    const saveSrc = path.join(work, "rom", "townmap.sav");
-    const binSave = path.join(appDir, "bin", "save", "test.sav");
-    fs.mkdirSync(path.dirname(binSave), { recursive: true });
-    fs.copyFileSync(saveSrc, binSave);
-    const before = fs.statSync(binSave).mtimeMs;
+    const rom = ownCopy("smoke_gba");
+    const binSave = path.join(path.dirname(rom), "test.sav");
+    fs.copyFileSync(path.join(work, "rom", "townmap.sav"), binSave);
 
     check("C1 열기", await open(rom), await statusText());
     await sleep(21000);
@@ -77,18 +82,19 @@ try {
     const stateFile = path.join(appDir, "bin", "state", "test.ss3");
     check("C5 상태 저장·불러오기", fs.existsSync(stateFile) && back === snap, `${saved} · 파일 ${fs.existsSync(stateFile) ? fs.statSync(stateFile).size : 0}바이트 · 화면 ${back === snap ? "같음" : "다름"}`);
 
+    const before = fs.statSync(binSave).mtimeMs;
     await app.evaluate("(async () => { const p = window.__WEBGBA_TEST__.player; p.savePending = true; await p.flushSave(); })()");
     const after = fs.statSync(binSave);
-    check("C4 세이브 파일 쓰기", after.mtimeMs > before && after.size === 131072 && fs.existsSync(`${binSave}.bak`), `${after.size}바이트 · .bak ${fs.existsSync(`${binSave}.bak`)}`);
+    check("C4 옆 test.sav: 내용이 같으면 다시 쓰지 않음(.bak 없음)", after.mtimeMs === before && after.size === 131072 && !fs.existsSync(`${binSave}.bak`), `${after.size}바이트 · .bak ${fs.existsSync(`${binSave}.bak`)}`);
     await app.evaluate("window.__WEBGBA_TEST__.closeGame()");
   }
 
   if (names.includes("gbasave")) {
-    const rom = path.join(work, "rom", "test.gba");
-    const binSave = path.join(appDir, "bin", "save", "test.sav");
-    fs.mkdirSync(path.dirname(binSave), { recursive: true });
+    const rom = ownCopy("smoke_gbasave");
+    const binSave = path.join(path.dirname(rom), "test.sav");
     fs.copyFileSync(path.join(work, "rom", "townmap.sav"), binSave);
     const before = fs.readFileSync(binSave);
+    const inoBefore = fs.statSync(binSave, { bigint: true }).ino;
     await open(rom);
     await sleep(21000);
     for (let i = 0; i < 3; i++) {
@@ -115,22 +121,24 @@ try {
     await sleep(4000);
     await app.screenshot(path.join(captures, "app_gbasave_4_after.png"), await stageClip());
     const after = fs.readFileSync(binSave);
-    check("C4 게임 안 저장 → 세이브 파일", !after.equals(before) && after.length === 131072, `${after.length}바이트 · ${(await statusText())}`);
+    const sameFile = fs.statSync(binSave, { bigint: true }).ino === inoBefore;
+    const extra = fs.readdirSync(path.dirname(rom)).filter((n) => n !== "test.gba" && n !== "test.sav");
+    check("C4 게임 안 저장 → 옆 test.sav 를 직접 고쳐 씀(같은 파일), .bak·임시 파일 없음", !after.equals(before) && after.length === 131072 && sameFile && !extra.length, `${after.length}바이트 · 같은 파일 ${sameFile} · 다른 파일 ${extra.join(", ") || "없음"} · ${(await statusText())}`);
     await app.evaluate("window.__WEBGBA_TEST__.closeGame()");
   }
 
   if (names.includes("portwasm")) {
     const wasm = path.join(work, "wasm_only", `${TEST_BUILD}.wasm`);
+    const savePath = path.join(work, "wasm_only", `${TEST_BUILD}.sav`);
+    for (const file of [savePath, `${savePath}.bak`]) fs.rmSync(file, { force: true });
     check("W1 열기(.wasm 만, .js 없음)", await open(wasm), await statusText());
     await sleep(26000);
     const title = await screenHash();
     check("W1 타이틀까지", title.colors > 8, `색 ${title.colors}`);
     await app.screenshot(path.join(captures, "app_portwasm_title.png"), await stageClip());
-    const saveId = await app.evaluate("window.__WEBGBA_TEST__.state.game.saveId");
     const wrote = await app.evaluate("window.__WEBGBA_TEST__.player.host.ex.Web_DebugSave()");
-    await sleep(1500);
-    const savePath = path.join(appDir, "bin", "web", saveId.slice(4), "save.sav");
-    check("W1 세이브 쓰기", fs.existsSync(savePath) && fs.statSync(savePath).size === 131072, `결과 ${wrote} · ${savePath}`);
+    await sleep(2000);
+    check("W1 세이브 쓰기(옆 firered.sav)", fs.existsSync(savePath) && fs.statSync(savePath).size === 131072, `결과 ${wrote} · ${path.basename(savePath)}`);
     await app.evaluate("window.__WEBGBA_TEST__.closeGame()");
     const reopened = await open(wasm);
     const reopenStatus = await statusText();
@@ -187,10 +195,11 @@ try {
 
   if (names.includes("portpage")) {
     const wasm = path.join(work, "웹버전", `${TEST_BUILD}.wasm`);
+    for (const file of [`${TEST_BUILD}.sav`, `${TEST_BUILD}.sav.bak`]) fs.rmSync(path.join(work, "웹버전", file), { force: true });
     check("W5 포트 웹버전(페이지 있음)은 내장 호스트가 먼저", await open(wasm), await statusText());
     await sleep(3000);
     await app.evaluate("window.__WEBGBA_TEST__.player.host.ex.Web_DebugSave()");
-    await sleep(1500);
+    await sleep(2000);
     await app.evaluate("window.__WEBGBA_TEST__.closeGame()");
     check("W5 포트 웹버전을 원래 페이지로 열기", await open(wasm, { preferPage: true }), await statusText());
     await sleep(4000);
@@ -209,7 +218,8 @@ try {
       await sleep(26000);
       await app.screenshot(path.join(captures, "app_portpage_title.png"));
       const put = await inner.evaluate("fetch('save').then(async (r) => ({ get: r.status, size: (await r.arrayBuffer()).byteLength }))");
-      check("W5 /save 호환(내장 호스트와 같은 세이브)", put.get === 200 && put.size === 131072, JSON.stringify(put));
+      const beside = path.join(work, "웹버전", `${TEST_BUILD}.sav`);
+      check("W5 /save 호환(내장 호스트와 같은 옆 firered.sav)", put.get === 200 && put.size === 131072 && fs.existsSync(beside) && fs.statSync(beside).size === put.size, JSON.stringify(put));
       inner.close();
     }
     await app.evaluate("window.__WEBGBA_TEST__.closeGame()");

@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::ui;
 
 /// 설정 창이 바꾸는 `setting.ini` 키(모두 참·거짓). 창 크기 등 나머지는 파일에서만 고친다.
-pub const EDITABLE: [&str; 3] = ["pauseWhenHidden", "saveBackup", "useDevelopKit"];
+pub const EDITABLE: [&str; 2] = ["pauseWhenHidden", "useDevelopKit"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,8 +23,6 @@ pub struct Settings {
     pub use_develop_kit: bool,
     /// 창이 최소화되거나 가려지면 게임을 멈춘다.
     pub pause_when_hidden: bool,
-    /// 세이브를 처음 덮어쓸 때 `.bak` 을 남긴다.
-    pub save_backup: bool,
 }
 
 impl Default for Settings {
@@ -36,7 +34,6 @@ impl Default for Settings {
             app_min_height: 420.0,
             use_develop_kit: false,
             pause_when_hidden: false,
-            save_backup: true,
         }
     }
 }
@@ -71,7 +68,6 @@ pub fn load() -> Settings {
             "appMinHeight" => settings.app_min_height = number().unwrap_or(settings.app_min_height),
             "useDevelopKit" => settings.use_develop_kit = flag().unwrap_or(settings.use_develop_kit),
             "pauseWhenHidden" => settings.pause_when_hidden = flag().unwrap_or(settings.pause_when_hidden),
-            "saveBackup" => settings.save_backup = flag().unwrap_or(settings.save_backup),
             _ => {}
         }
     }

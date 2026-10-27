@@ -31,6 +31,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # .zip 안의 롬을 꺼낸다. deflate 만 켠다(흔한 ZIP 은 모두 이 방식).
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# 롬을 묶은 .wgba(사용자 정의 구획 webgba.rom, zlib)를 원래 페이지의 /rom 으로 줄 때 푼다. zip 이 이미 쓰는 크레이트.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
   "Win32_Foundation",

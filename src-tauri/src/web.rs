@@ -6,7 +6,9 @@
 //! 이 스킴이 주는 것:
 //!   /<파일>                  빌드 폴더 안의 파일만(`..` 로 못 나감). HTML 에는 다리 스크립트 하나를 넣는다.
 //!   /__webgba__/<이름>       앱 내장 자산(다리·페이지 없는 빌드용 호스트 페이지)
-//!   /rom, /save              웹 빌드 서버(server.js)와 같은 호환 경로(폴더에 같은 이름 파일이 없을 때만)
+//!   /rom, /save              웹 빌드 서버(server.js)와 같은 호환 경로(폴더에 같은 이름 파일이 없을 때만).
+//!                            /save 는 연 파일 옆 `<이름>.sav`(`store`)를 읽고 쓴다.
+//!                            /rom 은 wasm 안에 묶인 롬(`embed`, 사용자 정의 구획 webgba.rom)이 있으면 그것이 먼저.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -17,7 +19,7 @@ use tauri::http::{Method, Request, Response, StatusCode};
 use tauri::{AppHandle, Runtime};
 
 use crate::error::{Error, Result};
-use crate::{store, ui};
+use crate::{embed, store, ui};
 
 pub const SCHEME: &str = "game";
 
@@ -38,8 +40,11 @@ const HOST_ASSETS: [(&str, &str); 7] = [
 #[derive(Debug, Clone)]
 struct Mount {
     dir: PathBuf,
-    save_id: String,
+    /// 연 파일 옆 `<이름>.sav`.
+    save: PathBuf,
     rom: Option<PathBuf>,
+    /// wasm 안에 묶인 롬. 있으면 `rom` 대신 이것을 준다.
+    embedded: Option<embed::Embedded>,
 }
 
 static MOUNTS: Mutex<Option<HashMap<String, Mount>>> = Mutex::new(None);
@@ -61,42 +66,42 @@ pub struct Build {
     pub page: Option<String>,
     /// 같은 이름의 emscripten 글루(`<이름>.js` 또는 `.mjs`).
     pub glue: Option<String>,
+    /// 상태 슬롯 저장 이름(`web/<이름>-<키>`). 세이브는 연 파일 옆 `<이름>.sav`.
     pub save_id: String,
-    /// 롬 짐작(`guess_rom`). 없으면 화면이 사람에게 묻고 기억한다.
+    /// 롬 짐작(`guess_rom`). 없으면 화면이 사람에게 묻고 기억한다. 롬이 묶인 빌드는 짐작하지 않는다.
     pub rom_guess: Option<String>,
-    /// `.wgba` 를 처음 열 때 같은 폴더·같은 이름 `.wasm` 의 세이브를 옮겨 왔으면 그 빌드 키.
+    /// wasm 안에 롬이 묶여 있음(사용자 정의 구획 `webgba.rom`). 화면은 모듈에서 바로 꺼내 쓴다.
+    pub rom_embedded: bool,
+    /// `.wgba` 를 처음 열 때 같은 폴더·같은 이름 `.wasm` 때의 앱 안쪽 폴더(상태 슬롯)를 이어받았으면 그 빌드 키.
     pub moved_from: Option<String>,
 }
 
-/// 경로 → 빌드 키(FNV-1a 64 앞 12자리). 출처 이름과 세이브 폴더 이름에 쓴다.
-fn key_of(path: &Path) -> String {
+/// 경로 → 빌드 키(FNV-1a 64 앞 12자리). 출처 이름과 앱 안쪽 폴더 이름(상태 슬롯)에 쓴다.
+pub fn key_of(path: &Path) -> String {
     format!("{:016x}", ui::fnv1a(path.to_string_lossy().to_lowercase().as_bytes()))[..12].to_string()
 }
 
-/// `.wgba` 로 이름을 바꾼 빌드가 `.wasm` 때의 세이브를 이어 쓰게 옮긴다(세이브가 아직 없을 때만).
-/// 롬 옆 `.sav` 가져오기(`store::import_beside`)보다 먼저 한다 — 화면은 이 다음에 가져오기를 부른다.
-fn adopt_wasm_save(dir: &Path, base: &str, save_id: &str) -> Option<String> {
-    let new_save = store::path_of(save_id, 0).ok()?;
-    if new_save.exists() {
-        return None;
-    }
+/// `.wgba` 로 이름을 바꾼 빌드가 `.wasm` 때의 앱 안쪽 폴더(상태 슬롯)를 이어 쓰게 옮긴다.
+/// 폴더째 못 옮기면 상태 슬롯만 옮긴다. 세이브는 연 파일 옆 `.sav` 라 이름이 같으면 그대로 이어진다.
+fn adopt_wasm_states(dir: &Path, base: &str, save_id: &str) -> Option<String> {
+    let new_dir = store::web_dir(save_id).ok()?;
     let old_key = key_of(&dir.join(format!("{base}.wasm")));
-    let old_save = store::path_of(&format!("web/{}-{old_key}", store::clean_name(base)), 0).ok()?;
-    if !old_save.is_file() {
+    let old_dir = store::web_dir(&format!("web/{}-{old_key}", store::clean_name(base))).ok()?;
+    if !old_dir.is_dir() || old_dir == new_dir {
         return None;
     }
-    let (old_dir, new_dir) = (old_save.parent()?.to_path_buf(), new_save.parent()?.to_path_buf());
     if !new_dir.exists() && std::fs::rename(&old_dir, &new_dir).is_ok() {
         return Some(old_key);
     }
     std::fs::create_dir_all(&new_dir).ok()?;
-    for name in std::iter::once("save.sav".to_string()).chain((1..=9).map(|n| format!("state.ss{n}"))) {
+    let mut moved = false;
+    for name in (1..=9).map(|n| format!("state.ss{n}")) {
         let from = old_dir.join(&name);
-        if from.is_file() && !new_dir.join(&name).exists() {
-            let _ = std::fs::rename(&from, new_dir.join(&name));
+        if from.is_file() && !new_dir.join(&name).exists() && std::fs::rename(&from, new_dir.join(&name)).is_ok() {
+            moved = true;
         }
     }
-    new_save.is_file().then_some(old_key)
+    moved.then_some(old_key)
 }
 
 /// .wgba·.wasm 경로 → 빌드 정보. 출처를 등록해 둔다. `rom_name` 은 설정 "웹 빌드 롬 파일 이름"(비우면 None).
@@ -109,13 +114,17 @@ pub fn inspect(path: &str, rom_name: Option<&str>) -> Result<Build> {
     let page = [format!("{base}.html"), "index.html".to_string()].into_iter().find(|name| dir.join(name).is_file());
     let glue = [format!("{base}.js"), format!("{base}.mjs")].into_iter().find(|name| dir.join(name).is_file());
     let save_id = format!("web/{}-{key}", store::clean_name(&base));
-    let rom_guess = guess_rom(&wasm, rom_name);
+    let embedded = embed::find(&wasm);
+    let rom_guess = if embedded.is_some() { None } else { guess_rom(&wasm, rom_name) };
     let is_wgba = wasm.extension().map(|e| e.eq_ignore_ascii_case("wgba")).unwrap_or(false);
-    let moved_from = if is_wgba { adopt_wasm_save(&dir, &base, &save_id) } else { None };
+    let moved_from = if is_wgba { adopt_wasm_states(&dir, &base, &save_id) } else { None };
+    let save = store::beside_of(path);
 
+    let rom_embedded = embedded.is_some();
     with_mounts(|mounts| {
         let keep = mounts.get(&key).and_then(|m| m.rom.clone());
-        mounts.insert(key.clone(), Mount { dir: dir.clone(), save_id: save_id.clone(), rom: keep.or_else(|| rom_guess.clone()) });
+        let rom = if rom_embedded { None } else { keep.or_else(|| rom_guess.clone()) };
+        mounts.insert(key.clone(), Mount { dir: dir.clone(), save, rom, embedded });
     });
 
     Ok(Build {
@@ -127,6 +136,7 @@ pub fn inspect(path: &str, rom_name: Option<&str>) -> Result<Build> {
         glue,
         save_id,
         rom_guess: rom_guess.map(|p| p.to_string_lossy().into_owned()),
+        rom_embedded,
         moved_from,
     })
 }
@@ -249,6 +259,11 @@ pub fn serve<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Respo
     }
 
     match rel.as_str() {
+        "rom" if mount.embedded.is_some() => match mount.embedded.as_ref().map(embed::read) {
+            Some(Ok(body)) => ui::ok(body, "application/octet-stream"),
+            Some(Err(e)) => ui::error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            None => ui::error(StatusCode::NOT_FOUND, "no rom for this build"),
+        },
         "rom" => match mount.rom.as_ref().and_then(|p| std::fs::read(p).ok()) {
             Some(body) => ui::ok(body, "application/octet-stream"),
             None => ui::error(StatusCode::NOT_FOUND, "no rom for this build"),
@@ -260,7 +275,7 @@ pub fn serve<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Respo
 
 fn serve_save(mount: &Mount, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if request.method() == Method::GET {
-        return match store::read(&mount.save_id, 0) {
+        return match store::read(&mount.save) {
             Ok(body) if !body.is_empty() => ui::ok(body, "application/octet-stream"),
             Ok(_) => ui::error(StatusCode::NOT_FOUND, "no save"),
             Err(e) => ui::error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -271,8 +286,7 @@ fn serve_save(mount: &Mount, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         if body.is_empty() || body.len() > 1024 * 1024 {
             return ui::error(StatusCode::BAD_REQUEST, "save must be 1 B .. 1 MiB");
         }
-        let backup = crate::settings::load().save_backup;
-        return match store::write(&mount.save_id, 0, body, backup) {
+        return match store::write(&mount.save, body) {
             Ok(_) => ui::ok(b"ok".to_vec(), "text/plain; charset=utf-8"),
             Err(e) => ui::error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };

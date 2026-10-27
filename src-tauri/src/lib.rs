@@ -1,7 +1,7 @@
 //! webGBA — Tauri 2 웹뷰로 도는 GBA 실행기. 구조는 아비터를 따른다.
 //!
 //! ```text
-//!   webgba.exe 옆 bin/  core/ · ini/ · log/ · save/ · state/ · web/ · webview/
+//!   webgba.exe 옆 bin/  core/ · ini/ · log/ · state/ · web/ · webview/   (세이브는 연 파일 옆 <이름>.sav)
 //!            │  invoke()              ▲  event / DOM 이벤트
 //!            ▼                        │
 //!   ┌────────────────────────────────────────┐
@@ -18,6 +18,7 @@
 mod assoc;
 mod bridge;
 mod config;
+mod embed;
 mod error;
 mod files;
 mod i18n;
@@ -166,15 +167,15 @@ pub fn run() {
             bridge::commands::pick_file,
             bridge::commands::pick_save,
             bridge::commands::pick_folder,
+            bridge::commands::save_read,
+            bridge::commands::save_write,
+            bridge::commands::save_import,
+            bridge::commands::save_path,
             bridge::commands::store_read,
             bridge::commands::store_write,
             bridge::commands::store_slots,
-            bridge::commands::save_import_beside,
-            bridge::commands::save_import_file,
-            bridge::commands::save_export,
             bridge::commands::assoc_status,
             bridge::commands::assoc_set,
-            bridge::commands::store_path,
             bridge::commands::web_inspect,
             bridge::commands::web_set_rom,
             bridge::commands::log_write,

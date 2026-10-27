@@ -103,7 +103,9 @@ const portimp = path.join(work, "portimp");
 fs.mkdirSync(path.join(portimp, "웹버전"), { recursive: true });
 if (!fs.existsSync(path.join(portimp, TEST_ROM))) fs.copyFileSync(path.join(work, TEST_ROM), path.join(portimp, TEST_ROM));
 fs.copyFileSync(path.join(work, "wasm_only", `${TEST_BUILD}.wasm`), path.join(portimp, "웹버전", `${TEST_BUILD}.wgba`));
+for (const name of [`${TEST_BUILD}.sav`, `${TEST_BUILD}.sav.bak`]) fs.rmSync(path.join(portimp, "웹버전", name), { force: true });
 fs.copyFileSync(path.join(work, "captures", "port.sav"), path.join(portimp, TEST_ROM_SAV));
+for (const name of ["test.sav.bak"]) fs.rmSync(path.join(imp, name), { force: true });
 
 let app = null;
 try {
@@ -115,72 +117,58 @@ try {
   const cmd = regDefault(CMD_KEY);
   check("연결: 켤 때 .wgba 를 이 exe 로 등록(HKCU)", regDefault(EXT_KEY) === "webGBA.wgba" && cmd?.toLowerCase().includes(appExe.toLowerCase()) && (regDefault(ICON_KEY) ?? "").toLowerCase().includes("webgba.exe"), `${regDefault(EXT_KEY)} · ${cmd}`);
 
-  // 2. .gba 옆 .sav 자동 가져오기
-  const gbaSave = path.join(appDir, "bin", "save", "test.sav");
+  // 2. .gba 옆 .sav 를 그대로 읽음(시각 비교·가져오기 없음)
+  const hostSum = () => app.evaluate(`(() => { const d = ${T}.player.host.saveData(); let s = 0; for (const b of d) s = (s * 31 + b) >>> 0; return s; })()`);
+  const sumOf = (bytes) => {
+    let s = 0;
+    for (const b of bytes) s = (s * 31 + b) >>> 0;
+    return s;
+  };
   await open(app, path.join(imp, "test.gba"));
   let said = await statusOf(app);
-  check("세이브 가져오기: webGBA 세이브가 없으면 복사", /롬 옆 세이브\(test\.sav\)를 가져왔습니다/.test(said) && fs.readFileSync(gbaSave).equals(fs.readFileSync(path.join(imp, "test.sav"))), said);
-  await close(app);
-  const played = fs.readFileSync(gbaSave);
-  played[0x10] ^= 0xff;
-  fs.writeFileSync(gbaSave, played);
-  await open(app, path.join(imp, "test.gba"));
-  said = await statusOf(app);
-  check("세이브 가져오기: webGBA 세이브가 더 새것이면 그대로", !/가져왔습니다/.test(said) && fs.readFileSync(gbaSave).equals(played), said);
+  check("세이브: 옆 test.sav(1분 전 시각)를 그대로 읽음", /세이브를 불러왔습니다: test\.sav/.test(said) && (await hostSum()) === sumOf(fs.readFileSync(path.join(imp, "test.sav"))), said);
+  check("세이브: 앱 안쪽(bin\\save)에 세이브를 만들지 않음", !fs.existsSync(path.join(appDir, "bin", "save")), "");
   await close(app);
   const vba = fs.readFileSync(path.join(imp, "test.sav"));
   vba[0x20] ^= 0xff;
   fs.writeFileSync(path.join(imp, "test.sav"), vba);
+  touch(path.join(imp, "test.sav"), 3 * 24 * 3600 * 1000);
   await open(app, path.join(imp, "test.gba"));
   said = await statusOf(app);
-  const backups = fs.readdirSync(path.dirname(gbaSave)).filter((n) => /^test\.sav\.\d{8}-\d{6}\.bak$/.test(n));
-  check(
-    "세이브 가져오기: 옆 .sav 가 더 새것이면 백업 뒤 가져옴",
-    /더 새 세이브\(test\.sav\)를 가져왔습니다 · 이전 세이브는 백업했습니다/.test(said) && fs.readFileSync(gbaSave).equals(vba) && backups.length === 1 && fs.readFileSync(path.join(path.dirname(gbaSave), backups[0])).equals(played),
-    `${said} · 백업 ${backups.join(", ")}`,
-  );
+  check("세이브: 옆 파일을 바꿔 놓으면(시각이 옛것이어도) 다음에 열 때 그것을 읽음", /세이브를 불러왔습니다/.test(said) && (await hostSum()) === sumOf(vba), said);
   const title = await app.evaluate("document.getElementById('title').textContent");
   check("경로 숨김: 제목·상태에 경로 없음", !/[A-Za-z]:\\/.test(title + said), `${title} | ${said}`);
   await close(app);
 
-  // 3. .wgba: wasm 확인, .wasm 세이브 옮겨 오기
+  // 3. .wgba: wasm 확인, 같은 이름 .wasm 때의 옆 세이브를 이어 씀
   check("wgba: wasm 이 아니면 알림", !(await open(app, path.join(wg, "fake.wgba"))) && /wasm 이 아닙니다/.test(await statusOf(app)), await statusOf(app));
   await open(app, path.join(wg, `${TEST_BUILD}.wasm`));
-  const wasmId = await app.evaluate(`${T}.state.game.saveId`);
   await app.evaluate(`${T}.player.host.ex.Web_DebugSave()`);
-  await sleep(1500);
+  await sleep(2000);
   await close(app);
-  const wasmSave = path.join(appDir, "bin", "web", wasmId.slice(4), "save.sav");
-  check("wgba: .wasm 로 연 판의 세이브 생김", fs.existsSync(wasmSave), wasmId);
+  const wasmSave = path.join(wg, `${TEST_BUILD}.sav`);
+  check(`wgba: .wasm 로 연 판의 세이브가 옆 ${TEST_BUILD}.sav 에 생김`, fs.existsSync(wasmSave), "");
   fs.copyFileSync(path.join(wg, `${TEST_BUILD}.wasm`), path.join(wg, `${TEST_BUILD}.wgba`));
   fs.rmSync(path.join(wg, `${TEST_BUILD}.wasm`));
   const opened = await open(app, path.join(wg, `${TEST_BUILD}.wgba`));
   said = await statusOf(app);
-  const wgbaId = await app.evaluate(`${T}.state.game?.saveId ?? ''`);
   const kind = await app.evaluate(`${T}.state.game?.kind ?? ''`);
   check("wgba: .wasm 와 같이 내장 호스트로 열림", opened && kind === "web", `${kind} · ${said}`);
-  check(
-    "wgba: 같은 이름 .wasm 세이브를 옮겨 와 이어 씀",
-    said.includes(`${TEST_BUILD}.wasm 의 세이브를 이어 씁니다`) &&/세이브를 불러왔습니다/.test(said) && fs.existsSync(path.join(appDir, "bin", "web", wgbaId.slice(4), "save.sav")) && !fs.existsSync(wasmSave),
-    `${wasmId} → ${wgbaId}`,
-  );
+  check(`wgba: 이름이 같아 옆 ${TEST_BUILD}.sav 를 그대로 이어 씀`, /세이브를 불러왔습니다/.test(said) && (await hostSum()) === sumOf(fs.readFileSync(wasmSave)), said);
   await sleep(26000);
   await app.screenshot(path.join(captures, "feat_wgba_title.png"), await app.evaluate("(() => { const b = document.getElementById('screen').getBoundingClientRect(); return { x: b.left, y: b.top, width: b.width, height: b.height }; })()"));
   await close(app);
 
-  // 4. 포트(.wgba) 롬 옆 .sav 가져오기
+  // 4. 포트(.wgba)는 롬 옆 .sav 를 쓰지 않음(세이브는 연 파일 옆 하나)
   await open(app, path.join(portimp, "웹버전", `${TEST_BUILD}.wgba`));
   said = await statusOf(app);
-  check(`포트: 롬 옆 ${TEST_ROM_SAV} 를 가져옴`, said.includes(`롬 옆 세이브(${TEST_ROM_SAV})를 가져왔습니다`) && /세이브를 불러왔습니다/.test(said), said);
+  check(`포트: 롬 옆 ${TEST_ROM_SAV} 는 가져오지 않음(옆 ${TEST_BUILD}.sav 가 없어 빈 세이브)`, /세이브 없이 시작합니다/.test(said) && !/불러왔습니다/.test(said), said);
   await close(app);
 
   // 5. 박스 30 (512KB 세이브)
   const pc30 = path.join(work, "pc30", `${TEST_BUILD}.wasm`);
-  await open(app, pc30);
-  const pcId = await app.evaluate(`${T}.state.game.saveId`);
-  await close(app);
-  const pcSave = path.join(appDir, "bin", "web", pcId.slice(4), "save.sav");
-  fs.mkdirSync(path.dirname(pcSave), { recursive: true });
+  const pcSave = path.join(work, "pc30", `${TEST_BUILD}.sav`);
+  for (const file of [pcSave, `${pcSave}.bak`]) fs.rmSync(file, { force: true });
   fs.copyFileSync(path.join(work, "pc30", "old128.sav"), pcSave);
   const PLAY = `(() => { const t = ${T}; const host = t.player.host; const ex = host.ex; t.player.setPaused(true);
     let f = 0; const run = (n, k = 0) => { for (let i = 0; i < n; i++, f++) if (!host.runFrame(k)) throw new Error(host.halted); };
@@ -196,7 +184,7 @@ try {
   await app.evaluate(`(() => { const ex = ${T}.player.host.ex; ex.Web_DebugPcBoxPut(29, 0, 0); return ex.Web_DebugSave(); })()`);
   await app.evaluate(`(async () => { const p = ${T}.player; p.host.takeSaveDirty(); p.savePending = true; await p.flushSave(); })()`);
   const big = fs.statSync(pcSave).size;
-  check("박스30: 저장하면 512KB, 옛 128KB 는 .128k.bak", big === 0x80000 && fs.existsSync(`${pcSave}.128k.bak`), `${big}바이트`);
+  check("박스30: 저장하면 옆 128KB 파일을 그대로 512KB 로 덮어씀(.sav.bak 없음)", big === 0x80000 && !fs.existsSync(`${pcSave}.bak`), `${big}바이트`);
   await close(app);
   await open(app, pc30);
   await app.evaluate(PLAY);

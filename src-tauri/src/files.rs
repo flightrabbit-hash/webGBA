@@ -100,20 +100,56 @@ pub fn read_rom(path: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// 임시 파일에 쓴 뒤 바꿔치기(쓰는 도중 실패해도 원본이 남음). `backup` 이면 처음 덮어쓸 때 `.bak` 을 남긴다.
-pub fn write_atomic(target: &Path, bytes: &[u8], backup: bool) -> Result<()> {
+/// 임시 파일에 쓴 뒤 바꿔치기(쓰는 도중 실패하거나 꺼져도 원본이 남음).
+/// 바꾸기는 다른 프로그램(OneDrive 동기화·백신)이 잠깐 잡고 있으면 실패하므로 짧게 몇 번 다시 해 본다.
+pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(io_at(parent))?;
     }
-    if backup && target.exists() {
-        let bak = PathBuf::from(format!("{}.bak", target.display()));
-        if !bak.exists() {
-            let _ = std::fs::copy(target, &bak);
+    let temp = PathBuf::from(format!("{}.tmp", target.display()));
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&temp).map_err(io_at(&temp))?;
+        file.write_all(bytes).and_then(|_| file.sync_all()).map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            io_at(&temp)(e)
+        })?;
+    }
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(&temp, target) {
+            Ok(()) => return Ok(()),
+            Err(e) if tries < 8 && e.kind() != std::io::ErrorKind::NotFound => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(io_at(target)(e));
+            }
         }
     }
-    let temp = PathBuf::from(format!("{}.tmp", target.display()));
-    std::fs::write(&temp, bytes).map_err(io_at(&temp))?;
-    std::fs::rename(&temp, target).map_err(io_at(target))
+}
+
+/// 그 파일 자체를 열어 처음부터 덮어쓴다(임시 파일·이름 바꾸기 없음, 세이브용). 없으면 만들고, 새 내용이 더 짧으면 뒤쪽을 잘라 낸다.
+/// 열기는 다른 프로그램(OneDrive 동기화·백신)이 잠깐 잡고 있으면 실패하므로 짧게 몇 번 다시 해 본다.
+pub fn write_in_place(target: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut tries = 0;
+    let mut file = loop {
+        match std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(target) {
+            Ok(file) => break file,
+            Err(e) if tries < 8 && e.kind() != std::io::ErrorKind::NotFound => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            Err(e) => return Err(io_at(target)(e)),
+        }
+    };
+    file.write_all(bytes)
+        .and_then(|_| file.set_len(bytes.len() as u64))
+        .and_then(|_| file.sync_all())
+        .map_err(io_at(target))
 }
 
 /// 탐색기에서 보이기. 파일이면 그 파일을 고른 채로, 폴더면 그 폴더를 연다.
