@@ -30,6 +30,7 @@
 # ── 웹 빌드 (.wasm·.wgba 게임은 넣지 않음, mGBA 코어만 남김) ──
 *.wasm
 *.wgba
+*.wgbp
 !/src-bundle/bin/core/mgba_core.wasm
 
 # ── 세이브·상태 ──

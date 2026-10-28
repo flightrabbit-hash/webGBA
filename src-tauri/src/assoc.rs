@@ -1,11 +1,13 @@
-//! `.wgba` 확장자 연결(사용자 2026-10-26). 아비터 abtapp.rs 의 `.abtapp` 연결과 같은 방식.
+//! `.wgba`·`.wgbp` 확장자 연결(사용자 2026-10-26, `.wgbp` 2026-10-28). 아비터 abtapp.rs 의 `.abtapp` 연결과 같은 방식.
 //!
 //! 새 확장자라 `HKCU\Software\Classes` 의 ProgID 등록으로 충분하다(관리자 권한 불필요, UserChoice 제약 없음).
 //!   .wgba                              (기본값) webGBA.wgba
 //!   webGBA.wgba                        (기본값) webGBA 게임
 //!   webGBA.wgba\DefaultIcon            "<exe>",0   ← 앱 아이콘
 //!   webGBA.wgba\shell\open\command     "<exe>" "%1"
-//! 앱을 켤 때 등록된 exe 가 지금 exe 와 다르면 고쳐 쓴다(폴더를 옮겨도 계속 열림). 사람이 "연결 해제"를 고르면
+//!   .wgbp / webGBA.wgbp                같은 짜임, 이름 "webGBA 패치"(롬이 들어 있지 않은 공유용 패치 — 열면 롬을 골라 .wgba 를 만듦)
+//! 둘을 함께 다룬다: 둘 다 이 exe 를 가리켜야 "연결됨". 앱을 켤 때 등록된 exe 가 지금 exe 와 다르거나 하나가 빠졌으면
+//! 고쳐 쓴다(폴더를 옮겨도 계속 열림, 옛 판이 `.wgba` 만 등록했어도 `.wgbp` 가 더해짐). 사람이 "연결 해제"를 고르면
 //! `personalization.cfg` 의 `wgbaLink: false` 를 남기고 다시 등록하지 않는다.
 
 use serde::Serialize;
@@ -13,14 +15,16 @@ use serde::Serialize;
 use crate::error::Result;
 
 pub const EXTENSION: &str = ".wgba";
-const PROGID: &str = "webGBA.wgba";
+
+/// (확장자, ProgID, 탐색기 "유형" 칸 번역 키)
+const KINDS: [(&str, &str, &str); 2] = [(".wgba", "webGBA.wgba", "rs.assocLabel"), (".wgbp", "webGBA.wgbp", "rs.assocPatchLabel")];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    /// `.wgba` 가 이 exe 로 연결되어 있음.
+    /// `.wgba`·`.wgbp` 가 모두 이 exe 로 연결되어 있음.
     pub linked: bool,
-    /// `.wgba` 가 webGBA 로 연결되어 있으나 다른 exe(옮기기 전 자리 등)를 가리킴.
+    /// 하나라도 webGBA 로 연결되어 있으나 다른 exe(옮기기 전 자리 등)를 가리키거나 하나가 빠짐.
     pub elsewhere: bool,
 }
 
@@ -34,21 +38,29 @@ fn open_command(exe: &str) -> String {
 
 #[cfg(windows)]
 pub fn status() -> Status {
-    let ours = reg::get_default(&format!(r"Software\Classes\{EXTENSION}")).as_deref() == Some(PROGID);
-    let command = reg::get_default(&format!(r"Software\Classes\{PROGID}\shell\open\command"));
     let here = exe().map(|e| open_command(&e).to_lowercase());
-    let matches = matches!((&command, &here), (Some(c), Some(h)) if c.to_lowercase() == *h);
-    Status { linked: ours && matches, elsewhere: ours && !matches }
+    let mut all = true;
+    let mut any = false;
+    for (ext, progid, _) in KINDS {
+        let ours = reg::get_default(&format!(r"Software\Classes\{ext}")).as_deref() == Some(progid);
+        let command = reg::get_default(&format!(r"Software\Classes\{progid}\shell\open\command"));
+        let matches = matches!((&command, &here), (Some(c), Some(h)) if c.to_lowercase() == *h);
+        all &= ours && matches;
+        any |= ours;
+    }
+    Status { linked: all, elsewhere: any && !all }
 }
 
 #[cfg(windows)]
 pub fn link() -> Result<()> {
     use crate::error::Error;
     let exe = exe().ok_or_else(|| Error::Config(crate::i18n::tr("rs.noExe")))?;
-    reg::set_default(&format!(r"Software\Classes\{EXTENSION}"), PROGID)?;
-    reg::set_default(&format!(r"Software\Classes\{PROGID}"), &crate::i18n::tr("rs.assocLabel"))?;
-    reg::set_default(&format!(r"Software\Classes\{PROGID}\DefaultIcon"), &format!("\"{exe}\",0"))?;
-    reg::set_default(&format!(r"Software\Classes\{PROGID}\shell\open\command"), &open_command(&exe))?;
+    for (ext, progid, label) in KINDS {
+        reg::set_default(&format!(r"Software\Classes\{ext}"), progid)?;
+        reg::set_default(&format!(r"Software\Classes\{progid}"), &crate::i18n::tr(label))?;
+        reg::set_default(&format!(r"Software\Classes\{progid}\DefaultIcon"), &format!("\"{exe}\",0"))?;
+        reg::set_default(&format!(r"Software\Classes\{progid}\shell\open\command"), &open_command(&exe))?;
+    }
     reg::notify();
     Ok(())
 }
@@ -59,7 +71,11 @@ pub fn refresh_label() {
     if !status().linked {
         return;
     }
-    if reg::set_default(&format!(r"Software\Classes\{PROGID}"), &crate::i18n::tr("rs.assocLabel")).is_ok() {
+    let mut changed = false;
+    for (_, progid, label) in KINDS {
+        changed |= reg::set_default(&format!(r"Software\Classes\{progid}"), &crate::i18n::tr(label)).is_ok();
+    }
+    if changed {
         reg::notify();
     }
 }
@@ -67,13 +83,15 @@ pub fn refresh_label() {
 #[cfg(not(windows))]
 pub fn refresh_label() {}
 
-/// 연결을 푼다. `.wgba` 가 다른 프로그램을 가리키면 그 연결은 건드리지 않는다.
+/// 연결을 푼다. 확장자가 다른 프로그램을 가리키면 그 연결은 건드리지 않는다.
 #[cfg(windows)]
 pub fn unlink() -> Result<()> {
-    if reg::get_default(&format!(r"Software\Classes\{EXTENSION}")).as_deref() == Some(PROGID) {
-        reg::delete_tree(&format!(r"Software\Classes\{EXTENSION}"))?;
+    for (ext, progid, _) in KINDS {
+        if reg::get_default(&format!(r"Software\Classes\{ext}")).as_deref() == Some(progid) {
+            reg::delete_tree(&format!(r"Software\Classes\{ext}"))?;
+        }
+        reg::delete_tree(&format!(r"Software\Classes\{progid}"))?;
     }
-    reg::delete_tree(&format!(r"Software\Classes\{PROGID}"))?;
     reg::notify();
     Ok(())
 }
@@ -86,9 +104,9 @@ pub fn ensure_on_start() {
     }
     if !status().linked {
         if let Err(e) = link() {
-            crate::logging::write("WARN", &format!(".wgba 연결을 쓰지 못했습니다: {e}"));
+            crate::logging::write("WARN", &format!(".wgba·.wgbp 연결을 쓰지 못했습니다: {e}"));
         } else {
-            crate::logging::write("INFO", ".wgba 를 이 실행 파일로 연결했습니다");
+            crate::logging::write("INFO", ".wgba·.wgbp 를 이 실행 파일로 연결했습니다");
         }
     }
 }

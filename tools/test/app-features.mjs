@@ -43,6 +43,8 @@ fs.mkdirSync(regBackup, { recursive: true });
 const REG_SAVED = [
   ["HKCU\\Software\\Classes\\.wgba", "ext.reg"],
   ["HKCU\\Software\\Classes\\webGBA.wgba", "progid.reg"],
+  ["HKCU\\Software\\Classes\\.wgbp", "ext-wgbp.reg"],
+  ["HKCU\\Software\\Classes\\webGBA.wgbp", "progid-wgbp.reg"],
 ].map(([key, name]) => {
   const file = path.join(regBackup, name);
   fs.rmSync(file, { force: true });
@@ -116,6 +118,8 @@ try {
   app = await start();
   const cmd = regDefault(CMD_KEY);
   check("연결: 켤 때 .wgba 를 이 exe 로 등록(HKCU)", regDefault(EXT_KEY) === "webGBA.wgba" && cmd?.toLowerCase().includes(appExe.toLowerCase()) && (regDefault(ICON_KEY) ?? "").toLowerCase().includes("webgba.exe"), `${regDefault(EXT_KEY)} · ${cmd}`);
+  const patchCmd = regDefault("HKCU\\Software\\Classes\\webGBA.wgbp\\shell\\open\\command");
+  check("연결: 켤 때 .wgbp 도 이 exe 로 등록(HKCU)", regDefault("HKCU\\Software\\Classes\\.wgbp") === "webGBA.wgbp" && patchCmd?.toLowerCase().includes(appExe.toLowerCase()), `${regDefault("HKCU\\Software\\Classes\\.wgbp")} · ${patchCmd}`);
 
   // 2. .gba 옆 .sav 를 그대로 읽음(시각 비교·가져오기 없음)
   const hostSum = () => app.evaluate(`(() => { const d = ${T}.player.host.saveData(); let s = 0; for (const b of d) s = (s * 31 + b) >>> 0; return s; })()`);

@@ -1,4 +1,4 @@
-// .wgba 묶기: 웹 빌드 wasm 끝에 사용자 정의 구획(custom section) `webgba.rom` 하나로 롬을 붙인다. node 18+, 의존성 없음.
+// .wgba 묶기: 웹 빌드 wasm 끝에 사용자 정의 구획(custom section) `webgba.rom` 하나로 롬을 붙인다. node 18+, 바깥 의존성 없음.
 //
 //   node tools/pack-wgba.mjs <빌드.wasm|.wgba> <롬.gba> <출력.wgba> [--store] [--level <0-9>]
 //   node tools/pack-wgba.mjs --info <파일>                      묶인 롬 정보만 본다(SHA-1·크기·방식)
@@ -12,6 +12,9 @@
 //   0  "WGRM"   4  머리 길이 u16(36)   6  형식 판 u8(1)   7  방식 u8(0 그대로, 1 zlib)
 //   8  롬 크기 u32   12  묶은 크기 u32   16  롬 SHA-1 20바이트   36  묶은 롬
 // zlib 은 RFC 1950 — 웹뷰가 DecompressionStream("deflate") 로 푼다. 읽는 쪽: web-host.js 의 readEmbeddedRom, Rust 는 embed.rs.
+// 압축은 저장소 안 pako 2.1.0(src-bundle/src/js/vendor/pako.js, 표준 zlib 과 같은 결과)으로 한다. 앱이 .wgbp 로 .wgba 를 만들 때
+// 같은 코드(src-bundle/src/js/core/wgbp.js 의 romPayloadFrom)를 쓰므로, 어느 PC 에서 묶어도 같은 롬·같은 wasm 이면 바이트까지 같다.
+// (2026-10-28 전에는 node 내장 zlib — Chromium 판이라 표준 zlib 과 결과가 달랐다. 읽는 쪽은 그대로 읽는다.)
 //
 // 롬은 배포하지 않는다. 이 도구는 롬을 가진 사람이 자기 PC 에서 묶을 때만 쓰고, 묶은 .wgba 는 공개 저장소·릴리스에 넣지 않는다.
 import crypto from "crypto";
@@ -19,6 +22,7 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import { fileURLToPath } from "url";
+import { romPayloadFrom } from "../src-bundle/src/js/core/wgbp.js";
 
 export const SECTION = "webgba.rom";
 export const MAGIC = "WGRM";
@@ -116,20 +120,11 @@ export function unpackPayload(payload) {
   return { rom, header };
 }
 
-/** 롬 → 구획 내용(머리 + 묶은 롬). */
+/** 롬 → 구획 내용(머리 + 묶은 롬). 머리·압축은 앱과 같은 코드(wgbp.js romPayloadFrom, pako). */
 export function makePayload(rom, { store = false, level = 9 } = {}) {
   if (!rom.length) throw new Error("롬이 비어 있습니다");
   if (rom.length > MAX_ROM) throw new Error(`롬이 32MB 보다 큽니다: ${rom.length}바이트`);
-  const data = store ? rom : zlib.deflateSync(rom, { level });
-  const head = Buffer.alloc(HEADER_SIZE);
-  head.write(MAGIC, 0, "latin1");
-  head.writeUInt16LE(HEADER_SIZE, 4);
-  head[6] = VERSION;
-  head[7] = store ? METHOD_STORE : METHOD_ZLIB;
-  head.writeUInt32LE(rom.length, 8);
-  head.writeUInt32LE(data.length, 12);
-  crypto.createHash("sha1").update(rom).digest().copy(head, 16);
-  return Buffer.concat([head, data]);
+  return Buffer.from(romPayloadFrom(rom, crypto.createHash("sha1").update(rom).digest(), { store, level }));
 }
 
 /** wasm 에서 롬 구획을 모두 뺀 바이트. 구획이 없으면 입력 그대로. */
@@ -218,7 +213,7 @@ function main(argv) {
   const packed = findRomSection(bytes);
   const romBytes = packed.end - packed.payload - HEADER_SIZE;
   console.log(`wasm  ${path.basename(wasmPath)} ${hex(wasm.length)}바이트${replaced ? " (있던 롬 구획을 바꿈)" : ""}`);
-  console.log(`롬    ${path.basename(romPath)} ${hex(rom.length)}바이트 → ${store ? "그대로" : `zlib ${level}`} ${hex(romBytes)}바이트(${((romBytes / rom.length) * 100).toFixed(1)}%)`);
+  console.log(`롬    ${path.basename(romPath)} ${hex(rom.length)}바이트 → ${store ? "그대로" : `zlib ${level}(pako)`} ${hex(romBytes)}바이트(${((romBytes / rom.length) * 100).toFixed(1)}%)`);
   console.log(`출력  ${path.basename(outPath)} ${hex(bytes.length)}바이트 · ${((Date.now() - started) / 1000).toFixed(1)}초 · 다시 읽어 확인함`);
   console.log(`SHA-1 ${sha1}`);
   return 0;

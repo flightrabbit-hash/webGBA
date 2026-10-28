@@ -66,10 +66,14 @@ node tools/run.cjs   # 전체 명령 목록
   (롬 찾기·고르기 없음, 상태 줄에 "내장 롬"). 묶기: `node tools/pack-wgba.mjs <빌드.wasm> <롬.gba> <출력.wgba>` — 롬을 zlib 으로 줄여 넣고 다시 읽어 SHA-1 까지 확인합니다.
   열 때도 SHA-1 을 확인해 다르면 열지 않고 알립니다. 사용자 정의 구획은 wasm 엔진이 무시하므로 묶은 파일도 그대로 올바른 wasm 입니다.
   **롬이 들어 있으므로 자기 PC 에서만 쓰고 나눠 주지 마세요.** 이 저장소와 릴리스에는 롬도, 롬을 묶은 `.wgba` 도 들어 있지 않습니다.
+- **롬 없는 공유용 패치 .wgbp** — 나눠 줄 수 있는 파일입니다. 열면 가지고 있는 롬을 한 번 고르게 하고, 같은 폴더에 롬을 묶은 `<이름>.wgba` 를 만들어 바로 엽니다
+  (다음부터는 그 `.wgba` 를 엽니다). 롬은 SHA-1 로 확인하고, 맞지 않으면 이유(이미 패치된 롬·다른 판·다른 언어판·다른 게임 등)를 알립니다. `.wgbp` 와 롬을 같이 끌어 놓으면 고르지 않고 만듭니다.
+  만들기: `node tools/make-wgbp.mjs <빌드.wasm|.wgba> <결과 롬> <출력.wgbp> --base <원래 롬> [--label 이름] …` — 원래 롬 → 결과 롬 BPS 패치를 넣고, wasm 안에서 원래 롬과 같은 구간은 비워 두었다가
+  만들 때 사용자의 롬에서 채웁니다. 만든 뒤 받는 모든 롬으로 결과가 `pack-wgba` 로 묶은 것과 바이트까지 같은지 확인합니다. `.wgba` 압축은 앱과 도구가 같은 pako 를 써서 어느 PC 에서나 같은 바이트입니다.
 - **웹 빌드의 롬 고르기** — 설정 창 › 일반 › 파일 › **웹 빌드에 쓸 롬 파일 이름**. 적어 두면 `.wgba`·`.wasm` 과 같은 폴더(없으면 위 폴더)에서 그 이름의 롬을 씁니다.
   비워 두면(기본) `<빌드 이름>.gba` → 같은 폴더에 `.gba` 가 하나뿐이면 그것 순으로 찾고, 여럿이라 정할 수 없으면 처음 열 때 고르게 한 뒤 빌드마다 기억합니다.
   게임 메뉴 › 롬 지정… 으로 언제든 바꿀 수 있습니다. 롬을 묶은 `.wgba` 는 이 규칙을 쓰지 않고 안의 롬을 씁니다.
-- **.wgba 파일 연결** — `.wgba` 를 탐색기에서 두 번 누르면 webGBA 로 열립니다. 관리자 권한 없이 사용자 범위(HKCU)에 연결합니다.
+- **.wgba · .wgbp 파일 연결** — `.wgba`·`.wgbp` 를 탐색기에서 두 번 누르면 webGBA 로 열립니다. 관리자 권한 없이 사용자 범위(HKCU)에 연결합니다.
   연결 해제는 **설정 창 › 일반 › 파일** 에서 합니다.
 - **세이브는 연 파일 옆 하나** — `.gba`·`.zip`·`.wgba`·`.wasm` 모두 연 파일 바로 옆 `<파일 이름>.sav` 하나를 읽고 씁니다(VBA 등 다른 실행기의 세이브를 그 이름으로 두면 그대로 이어집니다).
   게임이 저장하면 약 1초 뒤, 창을 닫거나 다른 게임을 열 때도 그 `.sav` 파일 자체를 직접 덮어씁니다. 백업 파일은 만들지 않습니다.
@@ -116,7 +120,7 @@ node tools/run.cjs   # 전체 명령 목록
 core/          mGBA wasm 코어 빌드 — build.sh(도커, mGBA 공식 소스를 받아 옴), src/ 래퍼(webgba_core.c · host_stubs.c)
 src-bundle/    화면 — src/(html · css · js · icons · i18n), ini/(설정 씨앗), bin/core/(mgba_core.wasm · licenses/)
 src-tauri/     Rust — 창 · 파일 · 세이브 · 웹 빌드 출처 · .wgba 연결
-tools/         npm 명령(run.cjs · scripts.cjs), 코어 빌드, pack-wgba.mjs(롬을 .wgba 에 묶기), test/(시험 도구)
+tools/         npm 명령(run.cjs · scripts.cjs), 코어 빌드, pack-wgba.mjs(롬을 .wgba 에 묶기), make-wgbp.mjs(롬 없는 .wgbp 만들기), lib/, test/(시험 도구)
 documents/     설계 문서
 ```
 
@@ -149,7 +153,7 @@ bin/
 - 함께 묶는 mGBA 0.10.1 과 그 결과물(`mgba_core.wasm`)은 MIT 가 아니라 **MPL-2.0** 그대로입니다. mGBA 소스는 고치지 않았고 저장소에도 넣지 않았습니다.
   소스: https://github.com/mgba-emu/mgba/tree/0.10.1 · 전문: `src-bundle/bin/core/licenses/`(배포본은 `bin/core/licenses/`)
 - 포함된 오픈소스 전체 고지는 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) 에 있습니다(앱의 도움말 › 정보에도 같은 내용).
-- 롬과 GBA 공식 BIOS 는 들어 있지 않습니다(mGBA 내장 HLE BIOS 사용). 앱 아이콘은 아비터와 같은 그림입니다.
+- 롬과 GBA 공식 BIOS 는 들어 있지 않습니다(mGBA 내장 HLE BIOS 사용). 앱 아이콘은 flightrabbit 이 준 게임기 픽셀 그림입니다.
 
 ### 포함된 오픈소스
 
@@ -160,6 +164,7 @@ bin/
 | Microsoft Edge WebView2 | 화면 런타임 | Microsoft 배포 조건 |
 | windows-rs · zip | Win32 API · .zip 롬 | MIT OR Apache-2.0 · MIT |
 | Tabler Icons | 아이콘 | MIT |
+| pako 2.1.0 | .wgba 롬 압축 · .wgbp | MIT AND Zlib |
 
 mGBA — Copyright (c) 2013-2022 Jeffrey Pfau 외 기여자 · https://mgba.io
 

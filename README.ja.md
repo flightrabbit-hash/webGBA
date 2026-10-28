@@ -66,10 +66,14 @@ node tools/run.cjs   # コマンド一覧
   (ROM の検索・選択なし、ステータスバーに「内蔵 ROM」)。同梱: `node tools/pack-wgba.mjs <ビルド.wasm> <rom.gba> <出力.wgba>` — ROM を zlib で縮めて入れ、読み直して SHA-1 まで確かめます。
   開くときにも SHA-1 を確かめ、違えば開かずに知らせます。カスタムセクションは wasm エンジンが無視するので、同梱したファイルもそのまま正しい wasm です。
   **ROM が入っているので自分の PC だけで使い、配らないでください。** このリポジトリとリリースには ROM も、ROM を同梱した `.wgba` も入っていません。
+- **ROM の入っていない配布用パッチ .wgbp** — 配れるファイルです。開くとお持ちの ROM を一度選んでもらい、同じフォルダーに ROM を同梱した `<名前>.wgba` を作ってすぐに開きます
+  (次からはその `.wgba` を開きます)。ROM は SHA-1 で確かめ、合わなければ理由(パッチ済み・別の版・別の言語版・別のゲームなど)を知らせます。`.wgbp` と ROM を一緒にドロップすると選ばずに作ります。
+  作り方: `node tools/make-wgbp.mjs <ビルド.wasm|.wgba> <結果の ROM> <出力.wgbp> --base <元の ROM> [--label 名前] …` — 元の ROM → 結果の ROM の BPS パッチを入れ、wasm の中で元の ROM と同じ部分は空けておき、
+  作るときに利用者の ROM から埋めます。作ったあと、受け付けるすべての ROM で結果が `pack-wgba` で同梱したものとバイトまで同じか確かめます。アプリとツールが同じ pako を使うので、`.wgba` はどの PC でも同じバイトです。
 - **ウェブビルドの ROM 選び** — 設定ウィンドウ › 一般 › ファイル › **Web ビルドで使う ROM ファイル名**。入力しておくと、`.wgba`・`.wasm` と同じフォルダー(なければ一つ上のフォルダー)にあるその名前の ROM を使います。
   空のまま(既定)なら `<ビルド名>.gba` → 同じフォルダーの `.gba` が一つだけならそれ、の順に探し、複数あって決められないときは最初に開くときに選んでもらい、ビルドごとに覚えます。
   ゲーム › ROM を指定… でいつでも変更できます。ROM を同梱した `.wgba` はこの規則を使わず、中の ROM を使います。
-- **.wgba の関連付け** — エクスプローラーで `.wgba` をダブルクリックすると webGBA で開きます。管理者権限なしでユーザー単位(HKCU)に登録します。
+- **.wgba・.wgbp の関連付け** — エクスプローラーで `.wgba`・`.wgbp` をダブルクリックすると webGBA で開きます。管理者権限なしでユーザー単位(HKCU)に登録します。
   関連付けの解除は **設定ウィンドウ › 一般 › ファイル** で行います。
 - **セーブは開いたファイルの隣にひとつ** — `.gba`・`.zip`・`.wgba`・`.wasm` のどれも、開いたファイルのすぐ隣の `<ファイル名>.sav` ひとつを読み書きします(VBA などほかのエミュレーターのセーブをその名前で置けばそのまま続きから遊べます)。
   ゲームがセーブしてから約 1 秒後と、ウィンドウを閉じるときや別のゲームを開くときに、その `.sav` ファイル自体を直接上書きします。バックアップファイルは作りません。
@@ -116,7 +120,7 @@ node tools/run.cjs   # コマンド一覧
 core/          mGBA wasm コアのビルド — build.sh(Docker、mGBA 公式ソースを取得)、src/ ラッパー(webgba_core.c・host_stubs.c)
 src-bundle/    画面 — src/(html・css・js・icons・i18n)、ini/(設定の初期値)、bin/core/(mgba_core.wasm・licenses/)
 src-tauri/     Rust — ウィンドウ・ファイル・セーブ・ウェブビルドのオリジン・.wgba の関連付け
-tools/         npm コマンド(run.cjs・scripts.cjs)、コアのビルド、pack-wgba.mjs(ROM を .wgba に同梱)、test/(テストツール)
+tools/         npm コマンド(run.cjs・scripts.cjs)、コアのビルド、pack-wgba.mjs(ROM を .wgba に同梱)、make-wgbp.mjs(ROM なしの .wgbp を作る)、lib/、test/(テストツール)
 documents/     設計の文書(韓国語)
 ```
 
@@ -149,7 +153,7 @@ bin/
 - 同梱する mGBA 0.10.1 とそのビルド結果(`mgba_core.wasm`)は MIT ではなく **MPL-2.0** のままです。mGBA のソースは変更しておらず、リポジトリにも含めていません。
   ソース: https://github.com/mgba-emu/mgba/tree/0.10.1 ・全文: `src-bundle/bin/core/licenses/`(配布版では `bin/core/licenses/`)
 - 同梱のオープンソースの表示の全文は [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) にあります(アプリの ヘルプ › 情報 にも同じ内容)。
-- ROM と GBA 公式 BIOS は含まれていません(mGBA 内蔵の HLE BIOS を使用)。アプリのアイコンは Arbiter と同じ画像です。
+- ROM と GBA 公式 BIOS は含まれていません(mGBA 内蔵の HLE BIOS を使用)。アプリのアイコンは flightrabbit が用意した携帯ゲーム機のドット絵です。
 
 ### 同梱のオープンソース
 
@@ -160,6 +164,7 @@ bin/
 | Microsoft Edge WebView2 | 画面のランタイム | Microsoft の配布条件 |
 | windows-rs・zip | Win32 API・.zip の ROM | MIT OR Apache-2.0・MIT |
 | Tabler Icons | アイコン | MIT |
+| pako 2.1.0 | .wgba の ROM 圧縮・.wgbp | MIT AND Zlib |
 
 mGBA — Copyright (c) 2013-2022 Jeffrey Pfau and contributors ・ https://mgba.io
 

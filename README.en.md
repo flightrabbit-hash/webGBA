@@ -67,10 +67,14 @@ node tools/run.cjs   # list all commands
   (no ROM search or prompt; the status bar says "Built-in ROM"). To pack: `node tools/pack-wgba.mjs <build.wasm> <rom.gba> <out.wgba>` — the ROM is zlib-compressed, then read back and checked down to its SHA-1.
   The SHA-1 is checked again when opening; if it does not match, the game is not opened and you are told why. Wasm engines ignore custom sections, so a packed file is still a valid wasm.
   **It contains the ROM, so keep it on your own PC and do not share it.** Neither this repository nor its releases contain any ROM or any `.wgba` with a ROM packed in.
+- **ROM-free shareable patch .wgbp** — a file you can share. When opened, webGBA asks once for a ROM you own, then creates `<name>.wgba` with that ROM packed in, in the same folder, and opens it
+  (from then on you open that `.wgba`). The ROM is checked by SHA-1; if it does not fit, you are told why (already patched, different revision, different language, different game, …). Drop a `.wgbp` together with a ROM to skip the prompt.
+  To make one: `node tools/make-wgbp.mjs <build.wasm|.wgba> <target ROM> <out.wgbp> --base <original ROM> [--label name] …` — stores a BPS patch from the original ROM to the target ROM, blanks the parts of the wasm
+  that equal the original ROM and fills them back from the user's ROM. Afterwards it checks, with every accepted ROM, that the result is byte-identical to what `pack-wgba` packs. The app and the tools use the same pako, so a `.wgba` is byte-identical on any PC.
 - **Choosing the ROM for a web build** — Settings › General › Files › **ROM file name for web builds**. When set, the ROM with that name in the same folder as the `.wgba`/`.wasm` (or the folder above) is used.
   When empty (default), webGBA tries `<build name>.gba`, then the only `.gba` in the same folder; if there are several, it asks the first time and remembers the choice per build.
   You can change it any time with Game › Choose ROM…. A `.wgba` with a packed ROM ignores these rules and uses its own ROM.
-- **.wgba file association** — double-click a `.wgba` in Explorer to open it in webGBA. Registered per user (HKCU) without administrator rights.
+- **.wgba · .wgbp file association** — double-click a `.wgba` or `.wgbp` in Explorer to open it in webGBA. Registered per user (HKCU) without administrator rights.
   To remove the association, use **Settings › General › Files**.
 - **One save, next to the opened file** — for `.gba`, `.zip`, `.wgba` and `.wasm` alike, webGBA reads and writes a single `<file name>.sav` right next to the opened file (put a VBA or other emulator save there under that name and it just continues).
   About a second after the game saves, and also when you close the window or open another game, that `.sav` file itself is overwritten in place. No backup file is made.
@@ -117,7 +121,7 @@ Game keys can be changed in Settings › Keys; gamepads are mapped automatically
 core/          mGBA wasm core build — build.sh (Docker, downloads the official mGBA source), src/ wrappers (webgba_core.c · host_stubs.c)
 src-bundle/    UI — src/ (html · css · js · icons · i18n), ini/ (settings seeds), bin/core/ (mgba_core.wasm · licenses/)
 src-tauri/     Rust — windows · files · saves · web-build origins · .wgba association
-tools/         npm commands (run.cjs · scripts.cjs), core build, pack-wgba.mjs (pack a ROM into a .wgba), test/ (test tools)
+tools/         npm commands (run.cjs · scripts.cjs), core build, pack-wgba.mjs (pack a ROM into a .wgba), make-wgbp.mjs (make a ROM-free .wgbp), lib/, test/ (test tools)
 documents/     design documents (Korean)
 ```
 
@@ -150,7 +154,7 @@ bin/
 - The bundled mGBA 0.10.1 and its build output (`mgba_core.wasm`) stay under **MPL-2.0**, not MIT. The mGBA source is unmodified and not included in this repository.
   Source: https://github.com/mgba-emu/mgba/tree/0.10.1 · full texts: `src-bundle/bin/core/licenses/` (`bin/core/licenses/` in the deployed app)
 - The full notices for bundled open source are in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) (also shown in the app under Help › About).
-- No ROMs or official GBA BIOS are included (mGBA's built-in HLE BIOS is used). The app icon is the same image as Arbiter's.
+- No ROMs or official GBA BIOS are included (mGBA's built-in HLE BIOS is used). The app icon is a pixel-art handheld drawing provided by flightrabbit.
 
 ### Bundled open source
 
@@ -161,6 +165,7 @@ bin/
 | Microsoft Edge WebView2 | UI runtime | Microsoft distribution terms |
 | windows-rs · zip | Win32 API · .zip ROMs | MIT OR Apache-2.0 · MIT |
 | Tabler Icons | icons | MIT |
+| pako 2.1.0 | .wgba ROM compression · .wgbp | MIT AND Zlib |
 
 mGBA — Copyright (c) 2013-2022 Jeffrey Pfau and contributors · https://mgba.io
 

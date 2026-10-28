@@ -1,5 +1,6 @@
 import { core, win, onCloseRequested, onMaximized, onOpenFile, onOsDrag, onOsFileDrop } from "../bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, SCREEN_H, SCREEN_W } from "../core/web-host.js";
+import { buildGame, readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, Player } from "../app/player.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -54,9 +55,11 @@ const el = {
   winMaxIcon: $("win-max-icon"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "zip", "wgba", "wasm"]);
-const LIST_EXT = new Set(["gba", "wgba", "wasm"]);
+const OPEN_EXT = new Set(["gba", "agb", "zip", "wgba", "wasm", "wgbp"]);
+const LIST_EXT = new Set(["gba", "wgba", "wasm", "wgbp"]);
 const WASM_EXT = new Set(["wgba", "wasm"]);
+const PATCH_EXT = "wgbp";
+const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
 const RECENT_MAX = 10;
 const LICENSE_LINE = "webGBA — MIT License, © 2026 flightrabbit";
 
@@ -254,7 +257,7 @@ const join = (...parts) => parts.filter(Boolean).join(" · ");
 
 async function openPath(path, options = {}) {
   if (!path || state.opening) return false;
-  const ext = extOf(path);
+  let ext = extOf(path);
   if (!OPEN_EXT.has(ext)) {
     status(t("status.unsupported", { name: baseOf(path) }), "warn");
     return false;
@@ -263,8 +266,19 @@ async function openPath(path, options = {}) {
   status(t("status.opening", { name: baseOf(path) }));
   try {
     await closeGame({ quiet: true });
+    let made = null;
+    if (ext === PATCH_EXT) {
+      made = await makeFromPatch(path, options);
+      if (!made) {
+        showView("start");
+        return false;
+      }
+      path = made.path;
+      ext = extOf(path);
+    }
     const ok = WASM_EXT.has(ext) ? await openWasm(path, options) : await openRom(path);
     if (!ok) return false;
+    if (made?.note) status(join(made.note, el.status.textContent));
     await rememberRecent(path);
     state.root = dirOf(path);
     await loadRoot({ select: path });
@@ -308,6 +322,115 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+const besideOf = (path, name) => {
+  const dir = dirOf(path);
+  const sep = path.charAt(dir.length) || "\\";
+  return dir ? `${dir}${sep}${name}` : name;
+};
+
+const paint = () =>
+  new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      setTimeout(resolve, 0);
+    };
+    const timer = setTimeout(done, 60);
+    requestAnimationFrame(done);
+  });
+
+const patchNeed = (manifest) =>
+  (manifest?.bases ?? [])
+    .filter((base) => base.main !== false)
+    .map((base) => base.name)
+    .join(" · ");
+
+function patchError(error, { file, rom = "", manifest = null }) {
+  if (!(error instanceof WgbpError)) return reason(error);
+  const p = error.params ?? {};
+  return t(`patch.err.${error.code}`, {
+    name: baseOf(file),
+    rom: rom ? baseOf(rom) : "",
+    need: patchNeed(manifest),
+    why: p.why ? t(`patch.why.${p.why}`) : "",
+    version: p.version ?? "?",
+    code: p.code || "?",
+    title: p.title || "?",
+    revision: p.revision ?? 0,
+    sha1: String(p.sha1 ?? "").slice(0, 8),
+    what: p.what ?? "",
+  });
+}
+
+async function makeFromPatch(path, { patchRom = "" } = {}) {
+  const bytes = await core.fileReadBytes(path);
+  let patch;
+  try {
+    patch = readPatch(bytes);
+  } catch (error) {
+    throw new Error(patchError(error, { file: path }));
+  }
+  const { manifest } = patch;
+  const out = besideOf(path, `${stemOf(path)}.wgba`);
+  const outName = baseOf(out);
+  if (await exists(out)) {
+    let same = false;
+    try {
+      same = (await sha1Hex(await core.fileReadBytes(out))) === manifest.wgba.sha1;
+    } catch {
+      same = false;
+    }
+    if (same) return { path: out, note: t("status.patchExisting", { name: outName }) };
+    if (!(await confirmDialog(t("confirm.patchOverwriteTitle"), t("confirm.patchOverwriteText", { name: outName, patch: baseOf(path) })))) {
+      status(t("status.patchCancelled"), "warn");
+      return null;
+    }
+  }
+  let rom = patchRom;
+  if (!rom) {
+    const go = await openDialog({
+      title: t("patch.title", { title: manifest.title }),
+      body: [t("patch.intro", { name: baseOf(path), out: outName }), t("patch.need", { need: patchNeed(manifest) })],
+      actions: [
+        { label: "CANCEL", value: false },
+        { label: "OK", go: true, value: true },
+      ],
+    });
+    if (go) rom = await core.pickFile({ title: t("pick.patchRom", { title: manifest.title }), filters: PATCH_ROM_EXT, filterName: t("pick.romFilter"), start: dirOf(path) });
+    if (!rom) {
+      status(t("status.patchCancelled"), "warn");
+      return null;
+    }
+  }
+  const started = performance.now();
+  const romBytes = await loadRomBytes(rom);
+  let made;
+  try {
+    made = await buildGame(patch, romBytes, {
+      onStep: async (step) => {
+        status(t("status.patchMaking", { name: outName, step: t(`patch.step.${step}`) }));
+        await paint();
+      },
+    });
+  } catch (error) {
+    core.log("WARN", `패치로 만들지 못했습니다 ${path} + ${rom}: ${reason(error)}`);
+    throw new Error(patchError(error, { file: path, rom, manifest }));
+  }
+  status(t("status.patchMaking", { name: outName, step: t("patch.step.write") }));
+  await paint();
+  let target = out;
+  try {
+    await core.fileWriteBytes(target, made.wgba);
+  } catch (error) {
+    core.log("WARN", `만든 게임을 쓰지 못했습니다 ${target}: ${reason(error)}`);
+    const other = await core.pickSave({ title: t("pick.patchOut"), defaultName: outName, defaultExt: "wgba", filters: ["wgba"], filterName: t("pick.gameFilter"), start: dirOf(path) });
+    if (!other) throw new Error(t("patch.err.write", { name: outName, reason: reason(error) }));
+    await core.fileWriteBytes(other, made.wgba);
+    target = other;
+  }
+  core.log("INFO", `패치로 만듦 ${path} + ${rom} → ${target} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"}, ${Math.round(performance.now() - started)}ms)`);
+  return { path: target, note: t("status.patchMade", { name: baseOf(target), base: made.base.name }) };
 }
 
 function isWasmBytes(bytes) {
@@ -414,7 +537,7 @@ async function closeGame({ quiet = false } = {}) {
 
 async function openDialogFile() {
   const start = state.game ? dirOf(state.game.path) : state.prefs.lastDir;
-  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "wgba", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
+  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "wgba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
   if (path) await openPath(path);
 }
 
@@ -423,11 +546,12 @@ async function openDialogFile() {
 function kindOf(path) {
   const ext = extOf(path);
   if (WASM_EXT.has(ext)) return "wasm";
+  if (ext === PATCH_EXT) return "patch";
   if (ext === "zip") return "zip";
   return "rom";
 }
 
-const ROW_ICON = { wasm: "file-code", zip: "file-zip", rom: "device-gamepad-2" };
+const ROW_ICON = { wasm: "file-code", patch: "file-diff", zip: "file-zip", rom: "device-gamepad-2" };
 
 async function loadRoot({ select = "" } = {}) {
   state.entries = [];
@@ -623,6 +747,7 @@ onOsDrag((phase) => {
 async function openDropped(paths) {
   let opened = false;
   let folders = 0;
+  const files = [];
   for (const path of paths ?? []) {
     let stat = null;
     try {
@@ -631,11 +756,17 @@ async function openDropped(paths) {
       stat = null;
     }
     if (!stat) continue;
-    if (stat.isDir) {
-      folders++;
-      continue;
-    }
-    if (!opened && OPEN_EXT.has(stat.extension)) opened = await openPath(path);
+    if (stat.isDir) folders++;
+    else files.push({ path, ext: stat.extension });
+  }
+  const patch = files.find((file) => file.ext === PATCH_EXT);
+  const rom = files.find((file) => PATCH_ROM_EXT.includes(file.ext));
+  if (patch && rom) {
+    await openPath(patch.path, { patchRom: rom.path });
+    return;
+  }
+  for (const file of files) {
+    if (!opened && OPEN_EXT.has(file.ext)) opened = await openPath(file.path);
   }
   if (opened) return;
   status(t(folders ? "status.dropFolder" : "status.dropNothing"), "warn");

@@ -592,7 +592,8 @@ html.is-rail-collapsed .sidepanel {
   color: var(--file-rom);
 }
 
-.row--wasm .icon {
+.row--wasm .icon,
+.row--patch .icon {
   color: var(--file-wasm);
 }
 

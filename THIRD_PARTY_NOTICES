@@ -31,6 +31,7 @@ The app icon is the same artwork as Arbiter, by the same author.
 | windows (windows-rs)    | Win32 API                              | MIT OR Apache-2.0   |
 | zip                     | .zip 롬 꺼내기 / reading .zip ROMs     | MIT                 |
 | Tabler Icons            | 화면 아이콘 / UI icons                 | MIT                 |
+| pako 2.1.0              | .wgba 롬 압축 · .wgbp / zlib deflate   | MIT AND Zlib        |
 
 그 밖의 Rust crate(serde, serde_json, thiserror, chrono, flate2 등)는 src-tauri/Cargo.lock
 에 적힌 판을 쓰며 각 crate 의 라이선스(대부분 MIT OR Apache-2.0)를 따릅니다.
@@ -57,3 +58,18 @@ mGBA
     blip_buf  bin/core/licenses/blip_buf-LICENSE.txt
     inih      bin/core/licenses/inih-LICENSE.txt
   (저장소에서는 / in the repository: src-bundle/bin/core/licenses/)
+
+pako 2.1.0
+  Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn (MIT)
+  zlib port: (C) 1995-2013 Jean-loup Gailly and Mark Adler (Zlib)
+  https://github.com/nodeca/pako
+
+  src-bundle/src/js/vendor/pako.js 는 pako 2.1.0 의 dist/pako.esm.mjs 를 고치지 않고
+  이름만 바꾼 것입니다. .wgba 의 롬 구획 압축(tools/pack-wgba.mjs)과, 앱이 .wgbp 로
+  .wgba 를 만들 때 같은 코드를 써서 어느 PC 에서나 같은 바이트가 나오게 합니다.
+
+  src-bundle/src/js/vendor/pako.js is pako 2.1.0's dist/pako.esm.mjs, unmodified and
+  renamed. Both the ROM section of a .wgba (tools/pack-wgba.mjs) and the .wgba the app
+  creates from a .wgbp use it, so every PC produces the same bytes.
+
+  전문 / full text: bin/core/licenses/pako-LICENSE.txt
