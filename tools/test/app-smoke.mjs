@@ -73,7 +73,7 @@ try {
     const snap = await app.evaluate(hostHash);
     await app.evaluate("window.__WEBGBA_TEST__.player.setPaused(false)");
     await app.key("ArrowDown");
-    await app.key("KeyX");
+    await app.key("KeyZ");
     await sleep(1500);
     await app.evaluate("window.__WEBGBA_TEST__.player.setPaused(true)");
     await app.evaluate("window.__WEBGBA_TEST__.loadStateFrom(3)");
@@ -102,7 +102,7 @@ try {
       await sleep(2500);
     }
     await sleep(3000);
-    await app.key("KeyX", 300);
+    await app.key("KeyZ", 300);
     await sleep(6000);
     await app.screenshot(path.join(captures, "app_gbasave_1_field.png"), await stageClip());
     await app.key("Enter", 250);
@@ -115,7 +115,7 @@ try {
     }
     await app.screenshot(path.join(captures, "app_gbasave_3_cursor.png"), await stageClip());
     for (let i = 0; i < 4; i++) {
-      await app.key("KeyX", 250);
+      await app.key("KeyZ", 250);
       await sleep(2500);
     }
     await sleep(4000);

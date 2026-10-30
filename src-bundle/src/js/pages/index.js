@@ -1,6 +1,7 @@
 import { core, win, onCloseRequested, onMaximized, onOpenFile, onOsDrag, onOsFileDrop } from "../bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { buildGame, readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
+import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
+import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, Player } from "../app/player.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -264,9 +265,9 @@ async function openPath(path, options = {}) {
   }
   state.opening = true;
   status(t("status.opening", { name: baseOf(path) }));
+  let made = null;
   try {
     await closeGame({ quiet: true });
-    let made = null;
     if (ext === PATCH_EXT) {
       made = await makeFromPatch(path, options);
       if (!made) {
@@ -275,9 +276,14 @@ async function openPath(path, options = {}) {
       }
       path = made.path;
       ext = extOf(path);
+      made.loader?.set("open", 0);
     }
     const ok = WASM_EXT.has(ext) ? await openWasm(path, options) : await openRom(path);
-    if (!ok) return false;
+    if (!ok) {
+      made?.loader?.close();
+      return false;
+    }
+    made?.loader?.finish();
     if (made?.note) status(join(made.note, el.status.textContent));
     await rememberRecent(path);
     state.root = dirOf(path);
@@ -288,6 +294,7 @@ async function openPath(path, options = {}) {
     status(t("status.openFailed", { reason: reason(error) }), "error");
     core.log("ERROR", `열지 못했습니다 ${path}: ${reason(error)}`);
     showView("start");
+    if (made?.loader) await made.loader.fail(reason(error), "open");
     return false;
   } finally {
     state.opening = false;
@@ -329,16 +336,6 @@ const besideOf = (path, name) => {
   const sep = path.charAt(dir.length) || "\\";
   return dir ? `${dir}${sep}${name}` : name;
 };
-
-const paint = () =>
-  new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      setTimeout(resolve, 0);
-    };
-    const timer = setTimeout(done, 60);
-    requestAnimationFrame(done);
-  });
 
 const patchNeed = (manifest) =>
   (manifest?.bases ?? [])
@@ -404,33 +401,45 @@ async function makeFromPatch(path, { patchRom = "" } = {}) {
     }
   }
   const started = performance.now();
-  const romBytes = await loadRomBytes(rom);
+  const loader = openLoader({ title: t("loader.title", { name: outName }), stages: ["check", "patch", "verify", "pack", "write", "open"], buttonClass: "btn btn--go" });
+  loader.set("check", 0);
   let made;
   try {
-    made = await buildGame(patch, romBytes, {
-      onStep: async (step) => {
-        status(t("status.patchMaking", { name: outName, step: t(`patch.step.${step}`) }));
-        await paint();
-      },
+    const romBytes = await loadRomBytes(rom);
+    let shown = "";
+    made = await runPatchJob(bytes, romBytes, (stage, fraction) => {
+      loader.set(stage, fraction);
+      if (stage === shown) return;
+      shown = stage;
+      status(t("status.patchMaking", { name: outName, step: t(`loader.step.${stage}`) }));
     });
   } catch (error) {
     core.log("WARN", `패치로 만들지 못했습니다 ${path} + ${rom}: ${reason(error)}`);
-    throw new Error(patchError(error, { file: path, rom, manifest }));
+    const text = patchError(error, { file: path, rom, manifest });
+    status(t("status.openFailed", { reason: text }), "error");
+    await loader.fail(text);
+    throw new Error(text);
   }
-  status(t("status.patchMaking", { name: outName, step: t("patch.step.write") }));
-  await paint();
+  loader.set("write", 0);
+  status(t("status.patchMaking", { name: outName, step: t("loader.step.write") }));
   let target = out;
   try {
-    await core.fileWriteBytes(target, made.wgba);
+    try {
+      await core.fileWriteBytes(target, made.wgba);
+    } catch (error) {
+      core.log("WARN", `만든 게임을 쓰지 못했습니다 ${target}: ${reason(error)}`);
+      const other = await core.pickSave({ title: t("pick.patchOut"), defaultName: outName, defaultExt: "wgba", filters: ["wgba"], filterName: t("pick.gameFilter"), start: dirOf(path) });
+      if (!other) throw new Error(t("patch.err.write", { name: outName, reason: reason(error) }));
+      await core.fileWriteBytes(other, made.wgba);
+      target = other;
+    }
   } catch (error) {
-    core.log("WARN", `만든 게임을 쓰지 못했습니다 ${target}: ${reason(error)}`);
-    const other = await core.pickSave({ title: t("pick.patchOut"), defaultName: outName, defaultExt: "wgba", filters: ["wgba"], filterName: t("pick.gameFilter"), start: dirOf(path) });
-    if (!other) throw new Error(t("patch.err.write", { name: outName, reason: reason(error) }));
-    await core.fileWriteBytes(other, made.wgba);
-    target = other;
+    await loader.fail(reason(error), "write");
+    throw error;
   }
+  loader.set("write", 1);
   core.log("INFO", `패치로 만듦 ${path} + ${rom} → ${target} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"}, ${Math.round(performance.now() - started)}ms)`);
-  return { path: target, note: t("status.patchMade", { name: baseOf(target), base: made.base.name }) };
+  return { path: target, loader, note: t("status.patchMade", { name: baseOf(target), base: made.base.name }) };
 }
 
 function isWasmBytes(bytes) {

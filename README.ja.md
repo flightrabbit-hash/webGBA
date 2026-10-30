@@ -94,7 +94,7 @@ node tools/run.cjs   # コマンド一覧
 
 | 操作 | キー |
 | --- | --- |
-| GBA A / B | X・K / Z・J |
+| GBA A / B | Z・K / X・J |
 | GBA L / R | A / S |
 | START / SELECT | Enter・テンキー Enter / Backspace・右 Shift |
 | 方向 | 矢印キー |

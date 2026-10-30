@@ -95,7 +95,7 @@ node tools/run.cjs   # list all commands
 
 | Action | Key |
 | --- | --- |
-| GBA A / B | X · K / Z · J |
+| GBA A / B | Z · K / X · J |
 | GBA L / R | A / S |
 | START / SELECT | Enter · Numpad Enter / Backspace · Right Shift |
 | D-pad | Arrow keys |

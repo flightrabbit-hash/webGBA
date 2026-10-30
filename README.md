@@ -94,7 +94,7 @@ node tools/run.cjs   # 전체 명령 목록
 
 | 동작 | 키 |
 | --- | --- |
-| GBA A / B | X · K / Z · J |
+| GBA A / B | Z · K / X · J |
 | GBA L / R | A / S |
 | START / SELECT | Enter · 숫자패드 Enter / Backspace · 오른쪽 Shift |
 | 방향 | 방향키 |

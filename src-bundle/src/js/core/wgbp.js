@@ -1,4 +1,4 @@
-import { deflate } from "../vendor/pako.js";
+import { deflate, Deflate } from "../vendor/pako.js";
 
 export const ROM_SECTION = "webgba.rom";
 export const ROM_MAGIC = "WGRM";
@@ -89,10 +89,23 @@ export function customSection(name, payload) {
   return concat([Uint8Array.of(0), leb(body.length), body]);
 }
 
-export function romPayloadFrom(rom, sha1, { store = false, level = PACK_LEVEL } = {}) {
+const PACK_STEP = 0x40000;
+
+function deflateSteps(rom, level, onProgress) {
+  const deflator = new Deflate({ level });
+  for (let at = 0; at < rom.length; at += PACK_STEP) {
+    const end = Math.min(rom.length, at + PACK_STEP);
+    deflator.push(rom.subarray(at, end), end === rom.length);
+    if (deflator.err) throw new Error(deflator.msg || "deflate");
+    onProgress(end / rom.length);
+  }
+  return deflator.result;
+}
+
+export function romPayloadFrom(rom, sha1, { store = false, level = PACK_LEVEL, onProgress = null } = {}) {
   if (!rom.length) throw new WgbpError("romEmpty");
   if (rom.length > MAX_ROM) throw new WgbpError("romTooBig", { size: rom.length });
-  const data = store ? rom : deflate(rom, { level });
+  const data = store ? rom : onProgress ? deflateSteps(rom, level, onProgress) : deflate(rom, { level });
   const head = new Uint8Array(ROM_HEADER);
   for (let i = 0; i < 4; i++) head[i] = ROM_MAGIC.charCodeAt(i);
   head[4] = ROM_HEADER & 0xff;
@@ -166,7 +179,9 @@ function readNumber(bytes, pos) {
   }
 }
 
-export function bpsApply(source, patch) {
+const BPS_STEP = 0x100000;
+
+export function bpsApply(source, patch, onProgress = null) {
   const bad = () => new WgbpError("patchCorrupt", { why: "bps" });
   if (patch.length < 19 || ascii(patch, 0, 4) !== "BPS1") throw bad();
   const end = patch.length - 12;
@@ -181,6 +196,7 @@ export function bpsApply(source, patch) {
   let out = 0;
   let sourceAt = 0;
   let targetAt = 0;
+  let report = BPS_STEP;
   while (pos.i < end) {
     const data = readNumber(patch, pos);
     const command = data % 4;
@@ -209,6 +225,10 @@ export function bpsApply(source, patch) {
       }
     }
     out += length;
+    if (onProgress && out >= report) {
+      onProgress(out / targetSize);
+      report = out + BPS_STEP;
+    }
   }
   if (out !== targetSize || crc32(target) !== u32(patch, end + 4)) throw bad();
   return target;
@@ -288,33 +308,58 @@ export function encodeRefill(ranges) {
   return concat(parts);
 }
 
-export async function buildGame(patch, rom, { onStep = async () => {} } = {}) {
+function chainLength(manifest, from) {
+  let sha1 = from;
+  let links = 0;
+  while (sha1 !== manifest.rom.sha1 && links <= manifest.bases.length) {
+    const base = manifest.bases.find((item) => item.sha1 === sha1);
+    if (!base) break;
+    sha1 = base.to;
+    links++;
+  }
+  return Math.max(1, links);
+}
+
+export async function buildGame(patch, rom, { onStep = async () => {}, onProgress = () => {} } = {}) {
   const { manifest } = patch;
   await onStep("check");
+  onProgress("check", 0);
   const found = await findBase(patch, rom);
+  onProgress("check", 1);
   let bytes = found.bytes;
   let sha1 = found.base.sha1;
   let refillRom = sha1 === manifest.refill.from ? bytes : null;
+  const links = chainLength(manifest, sha1);
   for (let guard = 0; sha1 !== manifest.rom.sha1; guard++) {
     const base = manifest.bases.find((item) => item.sha1 === sha1);
     if (!base || guard >= manifest.bases.length) throw new WgbpError("patchCorrupt", { why: "chain" });
     await onStep("patch");
-    bytes = bpsApply(bytes, await readBlob(patch, base.patch));
+    const part = (value) => onProgress("patch", Math.min(1, (guard + value) / links));
+    part(0);
+    const blob = await readBlob(patch, base.patch);
+    part(0.1);
+    bytes = bpsApply(bytes, blob, (value) => part(0.1 + value * 0.8));
     sha1 = await sha1Hex(bytes);
+    part(1);
     if (sha1 !== base.to) throw new WgbpError("resultMismatch", { what: "rom" });
     if (sha1 === manifest.refill.from) refillRom = bytes;
   }
   if (!refillRom) throw new WgbpError("patchCorrupt", { why: "refill" });
   await onStep("game");
+  onProgress("verify", 0);
   const wasm = await readBlob(patch, manifest.wasm.blob);
+  onProgress("verify", 0.35);
   if (wasm.length !== manifest.wasm.size) throw new WgbpError("patchCorrupt", { why: "size" });
   for (const range of decodeRefill(await readBlob(patch, manifest.refill.table))) {
     if (range.at + range.length > wasm.length || range.from + range.length > refillRom.length) throw new WgbpError("patchCorrupt", { why: "refill" });
     wasm.set(refillRom.subarray(range.from, range.from + range.length), range.at);
   }
+  onProgress("verify", 0.6);
   if ((await sha1Hex(wasm)) !== manifest.wasm.sha1) throw new WgbpError("resultMismatch", { what: "wasm" });
+  onProgress("verify", 1);
   await onStep("pack");
-  const wgba = await packWgba(wasm, bytes, { level: manifest.pack?.level ?? PACK_LEVEL });
+  onProgress("pack", 0);
+  const wgba = await packWgba(wasm, bytes, { level: manifest.pack?.level ?? PACK_LEVEL, onProgress: (value) => onProgress("pack", value) });
   const wgbaSha1 = await sha1Hex(wgba);
   return { wgba, base: found.base, sha1: wgbaSha1, same: wgbaSha1 === manifest.wgba.sha1 };
 }

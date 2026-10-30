@@ -180,22 +180,22 @@ async function inputTests(label) {
   );
 
   at = await mark();
-  await down("KeyX");
+  await down("KeyZ");
   await sleep(120);
   await down("KeyK");
   await sleep(120);
   await up("KeyK");
   await sleep(150);
   f = await since(at);
-  await up("KeyX");
+  await up("KeyZ");
   await sleep(100);
-  check(`${label} K2 같은 버튼(A)의 두 키(X·K)를 함께 누르고 K 만 떼도 A 는 눌린 채`, tail(f).every((k) => k & BIT.A), fmt(tail(f, 6)));
+  check(`${label} K2 같은 버튼(A)의 두 키(Z·K)를 함께 누르고 K 만 떼도 A 는 눌린 채`, tail(f).every((k) => k & BIT.A), fmt(tail(f, 6)));
 
   at = await mark();
-  await down("KeyZ");
+  await down("KeyX");
   await down("ArrowRight");
   await sleep(150);
-  await up("KeyZ");
+  await up("KeyX");
   await sleep(150);
   f = await since(at);
   await up("ArrowRight");
@@ -358,13 +358,13 @@ async function inputTests(label) {
   await app.evaluate("document.getElementById('stage').focus(); true");
 
   at = await mark();
-  await down("KeyZ", { key: "Process", windowsVirtualKeyCode: 229 });
+  await down("KeyX", { key: "Process", windowsVirtualKeyCode: 229 });
   await sleep(150);
   const imeHeld = await since(at);
-  await up("KeyZ");
+  await up("KeyX");
   await sleep(150);
   f = await since(at);
-  check(`${label} I1 한글 입력기(keydown "Process"/229)에서도 문자키(Z=B)`, tail(imeHeld).every((k) => k & BIT.B) && tail(f).every((k) => !(k & BIT.B)), fmt(tail(imeHeld, 3)));
+  check(`${label} I1 한글 입력기(keydown "Process"/229)에서도 문자키(X=B)`, tail(imeHeld).every((k) => k & BIT.B) && tail(f).every((k) => !(k & BIT.B)), fmt(tail(imeHeld, 3)));
 
   at = await mark();
   await down("ArrowLeft", { key: "Process", windowsVirtualKeyCode: 229 });

@@ -95,9 +95,20 @@ try {
   let said = await statusOf(app);
   check("안내 창 CANCEL: 만들지 않음·알림", !fs.existsSync(outFile) && /만들지 않았습니다/.test(said), said);
 
+  await app.evaluate("(() => { window.__frames = []; window.__stopFrames = false; const loop = (now) => { const l = document.querySelector('.loader'); window.__frames.push([now, l ? Number(l.dataset.percent || 0) : -1, l ? l.dataset.stage || '' : '']); if (window.__frames.length < 20000 && !window.__stopFrames) requestAnimationFrame(loop); }; requestAnimationFrame(loop); return true; })()");
   const t0 = Date.now();
   const made = await open(app, patchFile, { patchRom: rom1 });
   const tookMs = Date.now() - t0;
+  const frames = await app.evaluate("(() => { window.__stopFrames = true; return window.__frames.filter((f) => f[1] >= 0); })()");
+  const gaps = {};
+  for (let i = 1; i < frames.length; i++) {
+    const stage = frames[i][2] || "?";
+    gaps[stage] = Math.max(gaps[stage] ?? 0, Math.round(frames[i][0] - frames[i - 1][0]));
+  }
+  const workGap = Math.max(...["check", "patch", "verify", "pack"].map((s) => gaps[s] ?? 0));
+  const stagesSeen = [...new Set(frames.map((f) => f[2]).filter(Boolean))];
+  check("로더: 단계(롬 확인→패치→결과 확인→묶기→쓰기→여는 중)·패치·압축 동안 막대가 멈추지 않음", ["check", "patch", "verify", "pack", "write", "open"].every((s) => stagesSeen.includes(s)) && workGap < 250 && new Set(frames.map((f) => Math.floor(f[1]))).size >= 15, `${stagesSeen.join(",")} · 단계별 최대 프레임 간격 ${JSON.stringify(gaps)}`);
+  check("로더: 끝나면 닫힘", await waitFor(async () => !(await app.evaluate("Boolean(document.querySelector('.loader'))")), 3000));
   said = await statusOf(app);
   const outSha = fs.existsSync(outFile) ? sha1(fs.readFileSync(outFile)) : "";
   check("바탕 롬 1: 옆에 .wgba 를 만듦(SHA-1 = manifest)", made && outSha === manifest.wgba.sha1, `${outSha.slice(0, 12)} · ${tookMs}ms`);
@@ -131,8 +142,14 @@ try {
   for (const [lang, pattern] of [["ko", /이미 이 패치를 적용한 롬/], ["en", /already has this patch applied/], ["ja", /すでにこのパッチを当てた/]]) {
     await app.evaluate(`${T}.setLang(${JSON.stringify(lang)})`);
     await sleep(300);
-    const ok = await open(app, patchFile, { patchRom: wrongRom });
+    const pendingWrong = open(app, patchFile, { patchRom: wrongRom });
+    const failShown = await waitFor(() => app.evaluate("Boolean(document.querySelector('.loader[data-state=\"fail\"]'))"), 20000);
+    const failText = failShown ? await app.evaluate("document.querySelector('.loader__error').textContent + ' @' + (document.querySelector('.loader__step[data-state=\"fail\"]')?.dataset.stage ?? '')") : "";
+    if (lang === "ko" && failShown) await app.screenshot(path.join(captures, "wgbp_loader_fail.png"));
+    await app.evaluate("document.querySelector('.loader .loader__actions button')?.click()");
+    const ok = await pendingWrong;
     said = await statusOf(app);
+    check(`받으면 안 되는 롬(${lang}): 로더가 '롬 확인' 단계에서 이유를 보이고 CLOSE`, failShown && pattern.test(failText) && failText.endsWith("@check"), failText.slice(0, 140));
     check(`받으면 안 되는 롬(${lang}): 알아듣는 안내·파일 안 생김·경로 없음`, !ok && pattern.test(said) && !fs.existsSync(outFile) && noPath(said), said);
   }
   await app.evaluate(`${T}.setLang("ko")`);

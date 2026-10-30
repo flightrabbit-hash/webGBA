@@ -53,6 +53,7 @@ export function inspectModule(module) {
     unknown,
     missing,
     canState: exports.has("Web_StateSize") && exports.has("Web_StateSave") && exports.has("Web_StateLoad"),
+    canPointer: exports.has("Web_Pointer"),
   };
 }
 
@@ -302,6 +303,18 @@ class WebHost {
 
   get hasSave() {
     return Boolean(this.ex.Web_GetFlash);
+  }
+
+  get hasPointer() {
+    return Boolean(this.ex?.Web_Pointer);
+  }
+
+  get pointerWanted() {
+    return Boolean(this.ex?.Web_PointerWanted && this.ex.Web_PointerWanted());
+  }
+
+  pointer(x, y, buttons, wheel) {
+    if (this.ex?.Web_Pointer) this.ex.Web_Pointer(x, y, buttons, wheel);
   }
 
   takeSaveDirty() {

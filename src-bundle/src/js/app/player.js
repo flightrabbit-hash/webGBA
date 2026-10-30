@@ -5,6 +5,8 @@ import { locale, t } from "../shell/i18n.js";
 export const FRAME_MS = (280896 / 16777216) * 1000;
 const MAX_FRAMES_PER_TICK = 8;
 const SAVE_DELAY_MS = 1000;
+const POINTER_BUTTONS = 7;
+const POINTER_WHEEL_STEP = 40;
 
 const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
@@ -41,8 +43,8 @@ export function codeOf(event) {
 }
 
 export const DEFAULT_KEYS = {
-  A: ["KeyX", "KeyK"],
-  B: ["KeyZ", "KeyJ"],
+  A: ["KeyZ", "KeyK"],
+  B: ["KeyX", "KeyJ"],
   SELECT: ["Backspace", "ShiftRight"],
   START: ["Enter", "NumpadEnter"],
   RIGHT: ["ArrowRight"],
@@ -154,8 +156,91 @@ export class Player {
     this.frames = 0;
     this.statAt = 0;
     this.raf = 0;
+    this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.tick = this.tick.bind(this);
     this.setKeys(DEFAULT_KEYS);
+    this.attachPointer();
+  }
+
+  get pointerOn() {
+    return Boolean(this.host?.hasPointer) && this.running && !this.paused;
+  }
+
+  attachPointer() {
+    const canvas = this.canvas;
+    if (!canvas?.addEventListener) return;
+    canvas.addEventListener("pointerdown", (event) => {
+      if (!this.pointerOn) return;
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {}
+      this.pointerMove(event);
+    });
+    canvas.addEventListener("pointermove", (event) => this.pointerMove(event));
+    canvas.addEventListener("pointerup", (event) => this.pointerMove(event));
+    canvas.addEventListener("pointercancel", () => this.pointerRelease());
+    canvas.addEventListener("pointerleave", (event) => {
+      if (!event.buttons) this.pointerSend(-1, -1, 0, 0);
+    });
+    canvas.addEventListener(
+      "wheel",
+      (event) => {
+        if (!this.pointerOn) return;
+        event.preventDefault();
+        const dy = event.deltaMode === 0 ? event.deltaY : event.deltaY * POINTER_WHEEL_STEP;
+        let notch = 0;
+        if (Math.abs(dy) >= POINTER_WHEEL_STEP) {
+          this.ptr.wheel = 0;
+          notch = Math.sign(dy);
+        } else {
+          this.ptr.wheel += dy;
+          if (Math.abs(this.ptr.wheel) >= POINTER_WHEEL_STEP) {
+            notch = Math.sign(this.ptr.wheel);
+            this.ptr.wheel = 0;
+          }
+        }
+        if (notch) this.pointerSend(this.ptr.x, this.ptr.y, this.ptr.buttons, notch);
+      },
+      { passive: false },
+    );
+    canvas.addEventListener("contextmenu", (event) => {
+      if (this.host?.pointerWanted) event.preventDefault();
+    });
+  }
+
+  gamePoint(event) {
+    const box = this.canvas.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1) return [-1, -1];
+    const x = Math.floor(((event.clientX - box.left) * SCREEN_W) / box.width);
+    const y = Math.floor(((event.clientY - box.top) * SCREEN_H) / box.height);
+    return x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H ? [-1, -1] : [x, y];
+  }
+
+  pointerMove(event) {
+    if (!this.pointerOn) return;
+    if (!event.buttons) this.ptr.block = false;
+    const [x, y] = this.gamePoint(event);
+    this.pointerSend(x, y, this.ptr.block ? 0 : event.buttons & POINTER_BUTTONS, 0);
+  }
+
+  pointerSend(x, y, buttons, wheel) {
+    if (!this.pointerOn) return;
+    const p = this.ptr;
+    if (p.x === x && p.y === y && p.buttons === buttons && !wheel) return;
+    p.x = x;
+    p.y = y;
+    p.buttons = buttons;
+    this.host.pointer(x, y, buttons, wheel);
+  }
+
+  pointerRelease() {
+    const p = this.ptr;
+    if (this.host?.hasPointer && (p.buttons || p.x >= 0)) this.host.pointer(-1, -1, 0, 0);
+    p.block = p.block || p.buttons !== 0;
+    p.x = -1;
+    p.y = -1;
+    p.buttons = 0;
+    p.wheel = 0;
   }
 
   get active() {
@@ -222,6 +307,7 @@ export class Player {
     this.pressed = 0;
     this.dropped = 0;
     this.released = 0;
+    this.pointerRelease();
   }
 
   notePad(bits) {
@@ -299,6 +385,7 @@ export class Player {
     host.takeSaveDirty();
     this.savePending = false;
     this.paused = false;
+    this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.releaseAll();
     this.sent = 0;
     this.padPrev = 0;
@@ -322,6 +409,7 @@ export class Player {
     this.running = false;
     if (this.host) await this.flushSave({ final: true });
     this.host = null;
+    this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.saveId = "";
     this.game = "";
     this.saveBase = null;
@@ -334,6 +422,7 @@ export class Player {
     this.pressed = 0;
     this.dropped = 0;
     this.released = 0;
+    this.pointerRelease();
     if (paused) this.audio?.node.port.postMessage("clear");
     this.last = performance.now();
     this.acc = 0;
