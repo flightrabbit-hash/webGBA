@@ -20,6 +20,7 @@ const el = {
   btnOpen: $("btnOpen"),
   btnLibrary: $("btnLibrary"),
   btnSaves: $("btnSaves"),
+  btnQuick: $("btnQuick"),
   btnFast: $("btnFast"),
   btnSound: $("btnSound"),
   btnMenu: $("btnMenu"),
@@ -66,6 +67,11 @@ const SAVE_IMPORT_MAX = 0x100000;
 const TOAST_MS = 3200;
 const NAME_MAX = 40;
 const IOS_FILE_ACCEPT = "application/octet-stream";
+const QUICK_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const AUTO_SLOT = 9;
+const AUTO_SAVE_MINUTES = [0, 1, 3, 5, 10, 15, 30];
+const AUTO_SAVE_DEFAULT = 5;
+const AUTO_TOAST_MS = 1600;
 
 const state = {
   prefs: store.loadPrefs(),
@@ -81,6 +87,7 @@ const state = {
   coreModule: null,
   toastTimer: 0,
   dragDepth: 0,
+  quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0 },
 };
 
 const holds = new Set();
@@ -327,6 +334,8 @@ function layout() {
   });
 }
 
+const toolOff = (node) => node.disabled || node.getAttribute("aria-disabled") === "true";
+
 function syncTools() {
   const running = Boolean(state.game);
   const full = Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
@@ -334,7 +343,7 @@ function syncTools() {
   for (const node of el.bar.querySelectorAll(".tool")) {
     skin.tool(node, {
       size,
-      disabled: node.disabled,
+      disabled: toolOff(node),
       on: (node === el.btnFast && player.gameSpeed !== 1) || (node === el.btnSound && state.prefs.muted),
       fast: player.gameSpeed !== 1,
       muted: state.prefs.muted,
@@ -358,6 +367,7 @@ function syncControls() {
   const full = Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
+  el.btnQuick.setAttribute("aria-disabled", String(!canQuick()));
   syncTools();
 }
 
@@ -513,7 +523,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint";
+const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty";
 const INK_BLOCK = ".item__main, .field__text";
 
 function inkShift(contentTop, contentBottom, ink) {
@@ -925,6 +935,7 @@ const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|wgba|wasm)$/i
 async function startHosted(host, meta) {
   state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId: meta.id };
   context.game = meta.name;
+  state.quick.played = 0;
   holds.delete("user");
   syncControls();
   layout();
@@ -1300,7 +1311,11 @@ function openSheet(name) {
 function closeSheet({ fromHistory = false } = {}) {
   if (!state.sheet) return;
   state.sheet = "";
-  hideLater(el.sheet, () => !state.sheet && el.sheetBody.replaceChildren());
+  hideLater(el.sheet, () => {
+    if (state.sheet) return;
+    el.sheetBody.replaceChildren();
+    revokeQuickUrls();
+  });
   hold("sheet", false);
   if (state.sheetHistory) {
     state.sheetHistory = false;
@@ -1311,7 +1326,7 @@ function closeSheet({ fromHistory = false } = {}) {
 function renderSheet() {
   const name = state.sheet;
   if (!name) return;
-  const render = { library: renderLibrary, saves: renderSaves, settings: renderSettings, help: renderHelp, info: renderInfo }[name];
+  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo }[name];
   render?.();
 }
 
@@ -1405,6 +1420,7 @@ async function renameRom(rom) {
     if (chosen.replace) {
       if (state.game?.id === chosen.replace.id) await closeGame({ quiet: true });
       await store.remove(chosen.replace.key);
+      await store.removeStates(chosen.replace.id).catch(() => {});
     }
     await store.patch(rom.key, { name: chosen.name });
     await store.patch(store.saveKey(rom.id), { game: chosen.name });
@@ -1427,6 +1443,7 @@ async function deleteRom(rom) {
   await leaveRow(rom.key);
   try {
     await store.remove(rom.key);
+    await store.removeStates(rom.id);
     toast(t("web.deleted", { name: rom.name }));
   } catch (error) {
     toast(reason(error), "error");
@@ -1553,6 +1570,219 @@ async function renderSaves() {
     group("", make("p", "note", join(t("web.save.usage", { count: saves.length, size: fmtSize(total) }), line)), make("p", "note note--warn", t("web.storageNote"))),
   );
   el.sheetBody.replaceChildren(...children);
+}
+
+// ── 퀵슬롯(빠른 저장·불러오기) ──
+// 게임 id 마다 칸 1~9(IndexedDB 키 state:<id>:<칸>). 9번은 자동 저장 전용 — 사람은 불러오기만.
+// 상태 저장 내보내기(Web_State*)가 있는 코어(.gba = mGBA)만 된다. 상태에는 게임 안 세이브(.sav) 내용이 들어가지 않는다.
+
+function canQuick() {
+  return Boolean(state.game) && player.running && player.canState;
+}
+
+const slotLabel = (slot) => (slot === AUTO_SLOT ? t("web.quick.autoLabel") : t("web.quick.slotLabel", { n: slot }));
+const pad2 = (n) => String(n).padStart(2, "0");
+
+function fmtSlotTime(ms) {
+  const d = new Date(ms);
+  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function autoMinutes() {
+  const value = Number(state.prefs.autoSave);
+  return AUTO_SAVE_MINUTES.includes(value) ? value : AUTO_SAVE_DEFAULT;
+}
+
+// 저장 순간 화면을 PNG 바이트로. 그림은 지금 바로 복사하고 인코딩만 나중에 한다.
+function quickThumb() {
+  const image = player.image;
+  if (!image) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  canvas.getContext("2d").putImageData(image, 0, 0);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob ? blob.arrayBuffer() : null), "image/png"));
+}
+
+async function quickSave(slot, { auto = false } = {}) {
+  if (!canQuick() || state.quick.busy || (slot === AUTO_SLOT) !== auto) return false;
+  state.quick.busy = true;
+  const started = performance.now();
+  try {
+    const pending = player.saveState(slot);
+    state.quick.syncMs = performance.now() - started;
+    const done = await pending;
+    state.quick.lastMs = performance.now() - started;
+    if (!done) toast(t("web.quick.saveFailedPlain"), auto ? "warn" : "error");
+    return Boolean(done);
+  } catch (error) {
+    toast(t("web.quick.saveFailed", { reason: reason(error) }), auto ? "warn" : "error");
+    return false;
+  } finally {
+    state.quick.busy = false;
+  }
+}
+
+async function quickLoad(slot) {
+  if (!canQuick()) return false;
+  try {
+    const result = await player.loadState(slot);
+    if (result) {
+      toast(t("web.quick.loaded", { slot: slotLabel(slot) }));
+      return true;
+    }
+    toast(t(result === null ? "web.quick.missing" : "web.quick.loadFailed"), "warn");
+  } catch (error) {
+    toast(t("web.quick.loadFailedWhy", { reason: reason(error) }), "error");
+  }
+  return false;
+}
+
+function openQuick() {
+  if (state.menuOpen) setMenu(false);
+  if (!state.game) {
+    toast(t("web.quick.noGame"), "warn");
+    return;
+  }
+  if (!canQuick()) {
+    toast(t("web.quick.noState"), "warn");
+    return;
+  }
+  openSheet("quick");
+}
+
+function revokeQuickUrls() {
+  for (const url of state.quick.urls) URL.revokeObjectURL(url);
+  state.quick.urls = [];
+}
+
+function slotUsable(slot) {
+  return state.quick.tab === "save" ? slot !== AUTO_SLOT : state.quick.info.has(slot);
+}
+
+function applyQuickTab() {
+  for (const node of el.sheetBody.querySelectorAll(".seg__btn")) node.setAttribute("aria-selected", String(node.dataset.tab === state.quick.tab));
+  for (const node of el.sheetBody.querySelectorAll(".slot")) node.disabled = !slotUsable(Number(node.dataset.slot));
+}
+
+function quickTabs() {
+  const tabs = make("div", "seg");
+  tabs.setAttribute("role", "tablist");
+  for (const [id, icon] of [
+    ["save", "device-floppy"],
+    ["load", "history"],
+  ]) {
+    const node = make("button", "seg__btn");
+    node.type = "button";
+    node.dataset.tab = id;
+    node.dataset.action = `tab-${id}`;
+    node.setAttribute("role", "tab");
+    node.append(iconNode(icon), make("span", "seg__label", t(`web.quick.tab.${id}`)));
+    node.addEventListener("click", () => {
+      state.quick.tab = id;
+      applyQuickTab();
+    });
+    tabs.append(node);
+  }
+  return tabs;
+}
+
+function slotCard(slot, info, latest) {
+  const card = make("button", `slot${info && info.saved === latest ? " is-latest" : ""}`);
+  card.type = "button";
+  card.dataset.slot = String(slot);
+  card.setAttribute("aria-label", info ? `${slotLabel(slot)} · ${fmtSlotTime(info.saved)}` : `${slotLabel(slot)} · ${t("web.quick.empty")}`);
+  const shot = make("span", `slot__shot${info?.thumb ? "" : " is-empty"}`);
+  if (info?.thumb) {
+    const url = URL.createObjectURL(new Blob([info.thumb], { type: "image/png" }));
+    state.quick.urls.push(url);
+    const img = make("img", "slot__img");
+    img.alt = "";
+    img.draggable = false;
+    img.src = url;
+    shot.append(img);
+  } else {
+    shot.append(make("span", "slot__empty", info ? "" : t("web.quick.empty")));
+  }
+  const num = make("span", `slot__num${slot === AUTO_SLOT ? " is-auto" : ""}`);
+  num.append(make("span", "slot__tag", slot === AUTO_SLOT ? t("web.quick.auto") : String(slot)));
+  shot.append(num);
+  card.append(shot, make("span", "slot__time", info ? fmtSlotTime(info.saved) : "—"));
+  card.addEventListener("click", () => pickSlot(slot));
+  return card;
+}
+
+async function renderQuick() {
+  const game = state.game;
+  el.sheetTitle.textContent = game ? join(t("web.quick"), game.name) : t("web.quick");
+  if (!game || !player.canState) {
+    el.sheetBody.replaceChildren(group("", make("p", "empty", t(game ? "web.quick.noState" : "web.quick.noGame"))));
+    return;
+  }
+  let list = [];
+  let failed = false;
+  try {
+    list = await store.states(game.id);
+  } catch {
+    failed = true;
+  }
+  if (state.sheet !== "quick" || state.game !== game) return;
+  revokeQuickUrls();
+  state.quick.info = new Map(list.filter((info) => QUICK_SLOTS.includes(info.slot)).map((info) => [info.slot, info]));
+  const latest = Math.max(0, ...[...state.quick.info.values()].map((info) => info.saved ?? 0));
+  const grid = make("ul", "slots");
+  for (const slot of QUICK_SLOTS) {
+    const li = make("li");
+    li.append(slotCard(slot, state.quick.info.get(slot), latest));
+    grid.append(li);
+  }
+  const minutes = autoMinutes();
+  el.sheetBody.replaceChildren(
+    group("", quickTabs(), grid),
+    group(
+      "",
+      failed ? make("p", "note note--warn", t("web.noStore")) : null,
+      make("p", "note", minutes ? t("web.quick.noteAuto", { n: minutes }) : t("web.quick.noteAutoOff")),
+      make("p", "note", t("web.quick.noteSav")),
+    ),
+  );
+  applyQuickTab();
+}
+
+async function pickSlot(slot) {
+  if (!slotUsable(slot) || state.quick.busy) return;
+  const info = state.quick.info.get(slot);
+  const label = slotLabel(slot);
+  if (state.quick.tab === "save") {
+    if (info && !(await confirmDialog(t("web.quick.overTitle", { slot: label }), t("web.quick.overText", { time: fmtSlotTime(info.saved) }), t("web.quick.overOk")))) return;
+    if (state.sheet !== "quick" || !(await quickSave(slot))) return;
+    closeSheet();
+    toast(t("web.quick.saved", { slot: label }));
+    return;
+  }
+  if (!(await confirmDialog(t("web.quick.loadTitle", { slot: label }), t("web.quick.loadText", { time: fmtSlotTime(info.saved) }), t("web.quick.loadOk")))) return;
+  if (state.sheet !== "quick" || !(await quickLoad(slot))) return;
+  closeSheet();
+}
+
+// 자동 저장: 게임이 실제로 돈 시간(일시정지·화면 숨김·창 열림 동안은 안 셈)이 고른 분을 넘으면 9번 칸에 덮어쓴다.
+function autoTick() {
+  const now = performance.now();
+  const dt = state.quick.lastTick ? Math.min(now - state.quick.lastTick, 2000) : 0;
+  state.quick.lastTick = now;
+  const minutes = autoMinutes();
+  if (!minutes || !canQuick() || player.paused || holds.size || state.opening || document.visibilityState !== "visible") return;
+  state.quick.played += dt;
+  if (state.quick.played < minutes * 60000 || state.quick.busy) return;
+  state.quick.played = 0;
+  autoSave();
+}
+
+async function autoSave() {
+  if (!(await quickSave(AUTO_SLOT, { auto: true }))) return;
+  state.quick.autoCount++;
+  toast(t("web.quick.autoSaved"), "info", AUTO_TOAST_MS);
+  if (state.sheet === "quick") renderQuick();
 }
 
 function field(label, note, control) {
@@ -1715,6 +1945,13 @@ function renderSettings() {
     group(
       t("cfg.group.game"),
       selectField(t("web.speed"), t("web.speed.note"), SPEEDS.map((value) => ({ value, label: speedText(value) })), SPEEDS.includes(p.gameSpeed) ? p.gameSpeed : 1, (value) => setSpeed(Number(value))),
+      selectField(
+        t("web.autoSave"),
+        t("web.autoSave.note"),
+        AUTO_SAVE_MINUTES.map((value) => ({ value, label: value ? t("web.autoSave.min", { n: value }) : t("web.autoSave.off") })),
+        autoMinutes(),
+        (value) => savePrefs({ autoSave: Number(value) }),
+      ),
       selectField(t("cfg.dpadMode"), t("cfg.dpadMode.note"), DPAD_MODES.map((value) => ({ value, label: t(`cfg.dpadMode.${value}`) })), DPAD_MODES.includes(p.dpadMode) ? p.dpadMode : "latest", (value) => {
         savePrefs({ dpadMode: value });
         applyPlayerPrefs();
@@ -1881,6 +2118,7 @@ function wire() {
   el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
   el.btnSaves.addEventListener("click", () => openSheet("saves"));
+  el.btnQuick.addEventListener("click", openQuick);
   el.btnSettings.addEventListener("click", () => openSheet("settings"));
   el.btnSound.addEventListener("click", toggleSound);
   el.btnMenu.addEventListener("click", () => setMenu(!state.menuOpen));
@@ -1898,7 +2136,7 @@ function wire() {
     { capture: true },
   );
   for (const node of [...el.bar.querySelectorAll(".tool"), el.btnMenu]) {
-    const press = (on) => () => skin.tool(node, { pressed: on && !node.disabled });
+    const press = (on) => () => skin.tool(node, { pressed: on && !toolOff(node) });
     node.addEventListener("pointerdown", press(true));
     for (const type of ["pointerup", "pointerleave", "pointercancel"]) node.addEventListener(type, press(false));
   }
@@ -1992,6 +2230,8 @@ function wire() {
   context.onSaved = () => {
     state.saveFailNotified = false;
   };
+  context.stateExtra = (slot) => ({ auto: slot === AUTO_SLOT, thumb: quickThumb() });
+  setInterval(autoTick, 1000);
 }
 
 let installEvent = null;

@@ -5,9 +5,12 @@ const DATA = "data";
 
 export const KIND_ROM = "rom";
 export const KIND_SAVE = "save";
+export const KIND_STATE = "state";
 
 export const romKey = (id) => `${KIND_ROM}:${id}`;
 export const saveKey = (id) => `${KIND_SAVE}:${id}`;
+export const stateKey = (id, slot) => `${KIND_STATE}:${id}:${slot}`;
+const stateRange = (id) => IDBKeyRange.bound(`${KIND_STATE}:${id}:`, `${KIND_STATE}:${id}:￿`);
 
 export function newId() {
   const random = new Uint8Array(4);
@@ -122,6 +125,24 @@ export function putSave(id, data, game = "") {
 
 export const saveBytes = (id) => bytes(saveKey(id));
 
+// 퀵슬롯(상태 저장): 게임 id 마다 칸 1~9. 목록 기록에 저장 순간 화면(PNG 바이트)을 함께 둔다.
+export function putState(id, slot, data, { game = "", thumb = null, auto = false } = {}) {
+  return put({ key: stateKey(id, slot), kind: KIND_STATE, id, slot, game, auto, thumb, saved: Date.now() }, data);
+}
+
+export const stateBytes = (id, slot) => bytes(stateKey(id, slot));
+
+export function states(id) {
+  return run([META], "readonly", (tx) => tx.objectStore(META).getAll(stateRange(id)));
+}
+
+export function removeStates(id) {
+  return run([META, DATA], "readwrite", (tx) => {
+    tx.objectStore(META).delete(stateRange(id));
+    tx.objectStore(DATA).delete(stateRange(id));
+  });
+}
+
 export async function estimate() {
   try {
     return (await navigator.storage?.estimate?.()) ?? null;
@@ -154,6 +175,7 @@ export const DEFAULT_PREFS = {
   dpadMode: "latest",
   pauseWhenHidden: true,
   wakeLock: true,
+  autoSave: 5,
   lastGame: "",
   webRoms: {},
 };

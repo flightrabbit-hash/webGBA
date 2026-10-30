@@ -208,11 +208,11 @@ for (const view of VIEWS) {
       const list = await toolBoxes();
       const blockers = await page.evaluate(() => [document.getElementById("screen"), ...document.querySelectorAll("[data-key], [data-dpad]")].map((n) => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
       const hits = list.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b));
-      ok(`${base}|bar 가로: 기능 버튼 7개 모두 바로 보임·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, list.length === 7 && !list.some((x) => x.id === "btnMenu") && !overlap(list) && inView(list) && !hits, JSON.stringify(list.map((x) => x.id)));
+      ok(`${base}|bar 가로: 기능 버튼 8개(퀵슬롯 포함) 모두 바로 보임·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, list.length === 8 && !list.some((x) => x.id === "btnMenu") && !overlap(list) && inView(list) && !hits, JSON.stringify(list.map((x) => x.id)));
       await snap(page, `${base}|bar`);
     } else {
       const closed = await toolBoxes();
-      ok(`${base}|bar 세로: 햄버거 + 기능 버튼 4개·겹침 0·화면 안`, closed.length === 5 && closed[0].id === "btnMenu" && !overlap(closed) && inView(closed), JSON.stringify(closed.map((x) => x.id)));
+      ok(`${base}|bar 세로: 햄버거 + 퀵슬롯 + 기능 버튼 4개·겹침 0·화면 안`, closed.length === 6 && closed[0].id === "btnMenu" && closed[1].id === "btnQuick" && !overlap(closed) && inView(closed), JSON.stringify(closed.map((x) => x.id)));
       await page.click("#btnMenu");
       await page.waitForTimeout(250);
       const opened = await page.evaluate(() => [...document.querySelectorAll(".bar__group--files .tool")].map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
@@ -308,7 +308,7 @@ for (const width of [320, 360, 375, 390, 414, 430]) {
   const boxesOf = (selector) => page.evaluate((selector) => [...document.querySelectorAll(selector)].filter((b) => b.offsetParent !== null).map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }), selector);
   const overlap = (list) => list.some((x, i) => list.some((y, j) => j > i && x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5));
   const bar = await boxesOf(".bar .tool");
-  ok(`너비 ${width}: 위 기능 버튼 겹침 0·화면 밖 0`, bar.length === 5 && !overlap(bar) && bar.every((x) => x.l >= 0 && x.r <= width), JSON.stringify(bar.map((x) => [x.id, Math.round(x.l), Math.round(x.r)])));
+  ok(`너비 ${width}: 위 기능 버튼 겹침 0·화면 밖 0`, bar.length === 6 && !overlap(bar) && bar.every((x) => x.l >= 0 && x.r <= width), JSON.stringify(bar.map((x) => [x.id, Math.round(x.l), Math.round(x.r)])));
   await page.click("#btnMenu");
   await page.waitForTimeout(250);
   const files = await boxesOf(".bar__group--files .tool");
@@ -356,7 +356,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 1000
   await page.mouse.down();
   const held = await page.evaluate(() => window.webgba.player.held);
   await page.mouse.up();
-  const want = info.layout === "landscape" ? 7 : 5;
+  const want = info.layout === "landscape" ? 8 : 6;
   await page.click("#btnSettings");
   await page.waitForTimeout(200);
   const span = await page.evaluate(() => { const r = document.querySelector(".sheet__body").getBoundingClientRect(); return [r.left + 10, r.top + 10, r.right - 10, r.bottom - 10]; });
