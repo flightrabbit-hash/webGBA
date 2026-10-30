@@ -595,8 +595,10 @@ async function loadIconInk(url) {
 
 const iconSvg = new Map();
 
+// 아이콘은 늘 span.icon. 넣는 svg(태블러)도 class 에 "icon" 이 있어 그대로 두면 다시 잡혀 svg 안에 svg 를 끝없이 넣고,
+// 그 변화가 MutationObserver 를 깨워 매 프레임 centerIcons 가 돌았다(안드로이드 프레임 떨어짐, 2026-10-30).
 function hydrateIcons(root = document) {
-  for (const node of root.querySelectorAll?.(".icon:not(.icon--svg)") ?? []) {
+  for (const node of root.querySelectorAll?.("span.icon:not(.icon--svg)") ?? []) {
     const url = iconUrl(node);
     if (!url) continue;
     if (!iconSvg.has(url)) iconSvg.set(url, fetch(url).then((response) => (response.ok ? response.text() : "")).catch(() => ""));
@@ -606,14 +608,16 @@ function hydrateIcons(root = document) {
       const holder = document.createElement("template");
       holder.innerHTML = text.trim();
       const svg = holder.content.querySelector("svg");
-      if (svg) node.replaceChildren(svg);
+      if (!svg) return;
+      svg.classList.remove("icon");
+      node.replaceChildren(svg);
     });
   }
 }
 
 function centerIcons(root = document) {
   hydrateIcons(root);
-  for (const node of root.querySelectorAll?.(".icon") ?? []) {
+  for (const node of root.querySelectorAll?.("span.icon") ?? []) {
     const url = iconUrl(node);
     if (!url) continue;
     if (!iconInk.has(url)) {
