@@ -10,6 +10,9 @@ It puts a WebView UI on top of Tauri 2 + Rust, and its structure follows Arbiter
 
 > **No ROMs or BIOS are included.** Open ROM files that you own. The official GBA BIOS is not included either; mGBA's built-in HLE BIOS is used.
 
+**Web version:** https://webgba.vercel.app — an installable web app (PWA) for phone and PC browsers (`.gba`, `.zip`, `.wgba`, `.wasm`, `.wgbp`).
+Opened in a browser tab it shows how to install; add it to the Home screen or install it as an app, then open it from that icon to play. Files and saves you pick stay inside that browser.
+
 ---
 
 ## Prerequisites
