@@ -7,6 +7,21 @@ const MAX_FRAMES_PER_TICK = 8;
 const SAVE_DELAY_MS = 1000;
 const POINTER_BUTTONS = 7;
 const POINTER_WHEEL_STEP = 40;
+const AUDIO_STALL_MS = 2000;
+
+// iOS·Safari 의 Web Audio 는 기본이 ambient 라 무음 모드(벨소리 끔)에서 소리가 나지 않는다.
+// Audio Session API(Safari 16.4+)가 있으면 소리를 낼 때 playback 으로 바꾼다. 없는 브라우저(Chrome·WebView2)는 그대로.
+function setAudioSession(type) {
+  const session = globalThis.navigator?.audioSession;
+  if (!session || session.type === type) return;
+  try {
+    session.type = type;
+  } catch {}
+}
+
+export function audioSessionType() {
+  return globalThis.navigator?.audioSession?.type ?? "";
+}
 
 const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
@@ -339,31 +354,112 @@ export class Player {
     return this.resolveDpad(keys);
   }
 
+  // 사용자 동작(터치·키) 안에서 부르면 iOS 잠금도 풀린다. 만들기·resume 은 첫 await 앞(동작 안)에서 한다.
   async ensureAudio() {
+    if (this.audio && (this.audio.stuck || this.audio.ac.state === "closed")) this.dropAudio();
     if (this.audio) {
-      if (this.audio.ac.state === "suspended") await this.audio.ac.resume().catch(() => {});
+      if (this.audio.ac.state !== "running") await this.wakeAudio(true);
       return this.audio;
     }
+    let ac = null;
     try {
-      const ac = new AudioContext({ latencyHint: "interactive" });
+      this.syncAudioSession();
+      ac = new AudioContext({ latencyHint: "interactive" });
+      const waking = ac.state === "running" ? null : ac.resume().catch(() => {});
       const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
       await ac.audioWorklet.addModule(url);
       URL.revokeObjectURL(url);
       const node = new AudioWorkletNode(ac, "webgba-out", { outputChannelCount: [2] });
       const gain = ac.createGain();
       node.connect(gain).connect(ac.destination);
-      this.audio = { ac, node, gain };
+      const audio = { ac, node, gain, time: ac.currentTime, moved: performance.now(), woke: false, stuck: false };
+      this.audio = audio;
+      ac.addEventListener("statechange", () => this.onAudioState(audio));
       this.applyVolume();
-      if (ac.state === "suspended") await ac.resume().catch(() => {});
+      if (this.host) {
+        this.host.setAudioRate(ac.sampleRate);
+        node.port.postMessage("clear");
+      }
+      await waking;
+      if (ac.state !== "running" && ac.state !== "closed") await ac.resume().catch(() => {});
     } catch (error) {
       core.log("WARN", `소리를 켜지 못했습니다: ${error}`);
-      this.audio = null;
+      if (ac && !this.audio) ac.close().catch(() => {});
     }
     return this.audio;
   }
 
+  // gesture: 사용자 동작 안에서 부를 때. 1표본 무음을 한 번 틀어 iOS 오디오 세션을 깨운다.
+  wakeAudio(gesture = false) {
+    const audio = this.audio;
+    if (!audio || audio.stuck) return Promise.resolve();
+    const { ac } = audio;
+    if (ac.state === "running" || ac.state === "closed") return Promise.resolve();
+    if (gesture) {
+      if (!audio.woke) audio.moved = performance.now();
+      audio.woke = true;
+      try {
+        const blip = ac.createBufferSource();
+        blip.buffer = ac.createBuffer(1, 1, ac.sampleRate);
+        blip.connect(ac.destination);
+        blip.start(0);
+      } catch {}
+    }
+    return ac.resume().catch(() => {});
+  }
+
+  onAudioState(audio) {
+    const state = audio.ac.state;
+    core.log("INFO", `소리 상태: ${state}`);
+    if (audio !== this.audio) return;
+    if (state === "running") {
+      audio.woke = false;
+      audio.moved = performance.now();
+    } else if (state !== "closed" && globalThis.document?.visibilityState !== "hidden") {
+      // iOS: 전화·다른 앱 소리 뒤 "interrupted"·"suspended" 가 된다. 동작 없이도 켜질 때가 있어 한 번 시도하고, 안 되면 다음 터치에서.
+      this.wakeAudio(false);
+    }
+  }
+
+  // 화면이 다시 보일 때(visibilitychange·pageshow) 부른다.
+  resumeAudio() {
+    if (this.audio) this.audio.moved = performance.now();
+    return this.wakeAudio(false);
+  }
+
+  // iOS: running 인데 시계가 멈춰 소리가 없거나, 동작 안에서 깨웠는데도 2초 넘게 안 켜지면 다음 터치에서 새로 만든다.
+  watchAudio(now, gap) {
+    const audio = this.audio;
+    if (!audio || audio.stuck) return;
+    const { ac } = audio;
+    const time = ac.currentTime;
+    if (gap > 500 || (ac.state !== "running" && !audio.woke) || time !== audio.time) {
+      audio.time = time;
+      audio.moved = now;
+    } else if (now - audio.moved > AUDIO_STALL_MS) {
+      audio.stuck = true;
+      core.log("WARN", `소리가 멈춰 다음 터치에서 다시 켭니다 (${ac.state})`);
+    }
+  }
+
+  dropAudio() {
+    const audio = this.audio;
+    this.audio = null;
+    if (!audio) return;
+    try {
+      audio.node.disconnect();
+    } catch {}
+    audio.ac.close().catch(() => {});
+  }
+
+  syncAudioSession() {
+    setAudioSession(this.muted || this.volume <= 0 ? "ambient" : "playback");
+  }
+
   applyVolume() {
-    if (this.audio) this.audio.gain.gain.value = this.muted ? 0 : this.volume;
+    if (!this.audio) return;
+    this.audio.gain.gain.value = this.muted ? 0 : this.volume;
+    this.syncAudioSession();
   }
 
   setVolume(volume) {
@@ -508,6 +604,7 @@ export class Player {
   tick(now) {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.tick);
+    this.watchAudio(now, now - this.last);
     const dt = Math.min(now - this.last, 100);
     this.last = now;
     if (this.paused) return;

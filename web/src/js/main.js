@@ -2,7 +2,7 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom } from "./core/web-host.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
+import { audioSessionType, codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
@@ -139,8 +139,8 @@ class WebPlayer extends Player {
   }
 
   ensureAudio() {
-    if (this.audio) {
-      if (this.audio.ac.state !== "running") this.audio.ac.resume().catch(() => {});
+    if (this.audio && !this.audio.stuck) {
+      if (this.audio.ac.state !== "running") this.wakeAudio(true);
       return Promise.resolve(this.audio);
     }
     if (!this.audioBoot) this.audioBoot = super.ensureAudio().finally(() => (this.audioBoot = null));
@@ -1771,10 +1771,21 @@ function renderInfo() {
     link.rel = "noopener";
     links.append(link);
   }
+  // 소리 확인 한 줄(iOS 무음 원인 찾기용): 상태 · 표본률 · 오디오 세션. 시트가 열려 있는 동안 0.5초마다 고침.
+  const audioLine = make("p", "note", "");
+  const paintAudio = () => {
+    const audio = player.audio;
+    audioLine.textContent = audio
+      ? t("web.info.audio", { state: audio.stuck ? "stuck" : audio.ac.state, rate: audio.ac.sampleRate, session: audioSessionType() || "-" })
+      : t("web.info.audioOff");
+    if (audioLine.isConnected) setTimeout(paintAudio, 500);
+  };
+  paintAudio();
   el.sheetBody.replaceChildren(
-    group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
+    group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );
+  setTimeout(paintAudio, 500);
 }
 
 function typing(target) {
@@ -1823,7 +1834,7 @@ function onKeyUp(event) {
 }
 
 function unlockAudio() {
-  if (!player.audio || player.audio.ac.state !== "running") player.ensureAudio();
+  if (!player.audio || player.audio.stuck || player.audio.ac.state !== "running") player.ensureAudio();
 }
 
 function onVisibility() {
@@ -1834,6 +1845,7 @@ function onVisibility() {
     if (state.prefs.pauseWhenHidden) hold("hidden", true);
   } else {
     hold("hidden", false);
+    player.resumeAudio();
     state.reg?.update().catch(() => {});
   }
   updateWake();
@@ -1924,6 +1936,7 @@ function wire() {
   coarse.addEventListener?.("change", layout);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", () => player.active && player.flushSave({ final: true }));
+  window.addEventListener("pageshow", (event) => event.persisted && player.resumeAudio());
   window.addEventListener("blur", () => player.releaseAll());
   window.addEventListener("popstate", () => {
     if (state.sheet) closeSheet({ fromHistory: true });

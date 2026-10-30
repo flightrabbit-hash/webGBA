@@ -65,6 +65,8 @@
   "web.help.touchTitle": "터치 · 게임패드",
   "web.help.touch": "가상 버튼은 여러 손가락으로 함께 누를 수 있고, 방향 패드는 손가락을 미끄러뜨리면 방향이 바뀝니다. 마우스를 쓰는 게임(포토체스 등)은 화면을 직접 누릅니다.",
   "web.help.gamepad": "게임패드는 표준 배치를 씁니다(아무 버튼이나 한 번 누르면 연결됩니다).",
+  "web.info.audio": "소리: {state} · {rate}Hz · {session}",
+  "web.info.audioOff": "소리: 아직 켜지지 않음",
   "web.info.about": "브라우저에서 도는 GBA 실행기입니다. .gba · .zip 은 mGBA 코어로, .wgba · .wasm 은 내장 호스트로 실행합니다. 롬·게임 파일과 공식 BIOS 는 들어 있지 않습니다(mGBA 내장 HLE BIOS).",
   "web.update": "새 버전이 있습니다",
   "web.updateGo": "다시 불러오기",
