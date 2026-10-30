@@ -134,6 +134,7 @@
   "web.quick.loadOk": "Load",
   "web.quick.saved": "Saved to {slot}",
   "web.quick.loaded": "Loaded {slot}",
+  "web.quick.loadedSave": "{slot} was saved by another version: continuing on the field from that time",
   "web.quick.autoSaved": "Auto saved",
   "web.quick.missing": "This slot is empty",
   "web.quick.saveFailed": "Could not save: {reason}",

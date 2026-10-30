@@ -449,18 +449,69 @@ async function layoutChecks(page, key, width, height) {
   await context.close();
 }
 
-// ── .wgba(포트 wasm, 상태 저장 없음) ──
+// ── .wgba(포트 wasm: 상태 저장 = 그 순간 + 그때의 게임 저장, 쓴 길이만 남김) ──
 if (opt.wgba) {
   const { context, page } = await newPage({ width: 390, height: 844 });
   await openGame(page, path.basename(opt.wgba), opt.wgba);
-  ok(".wgba: 상태 저장 내보내기 없음", !(await page.evaluate(() => window.webgba.player.canState)));
-  ok(".wgba: 퀵슬롯 버튼 회색", (await page.getAttribute("#btnQuick", "aria-disabled")) === "true");
-  await page.click("#btnQuick", { force: true });
-  await page.waitForTimeout(200);
-  ok(".wgba: 누르면 짧은 안내만", (await page.isHidden("#sheet")) && /퀵슬롯을 쓸 수 없습니다/.test(await page.textContent("#toast")), await page.textContent("#toast"));
-  await page.evaluate(() => (window.webgba.state.quick.played = 4 * 60000 + 59500));
-  await page.waitForTimeout(2200);
-  ok(".wgba: 자동 저장 안 돎", (await page.evaluate(() => window.webgba.state.quick.autoCount)) === 0 && (await slotsOf(page, await gameId(page))).length === 0);
+  const idW = await gameId(page);
+  ok(".wgba: 상태 저장 내보내기 있음", await page.evaluate(() => window.webgba.player.canState));
+  ok(".wgba: 퀵슬롯 버튼 켜짐", (await page.getAttribute("#btnQuick", "aria-disabled")) === "false");
+  await page.waitForTimeout(3000);
+  const savedFrame = await frameNow(page);
+  await openQuick(page);
+  await page.click('.slot[data-slot="1"]');
+  await page.waitForTimeout(600);
+  let list = await slotsOf(page, idW);
+  const full = await page.evaluate(() => window.webgba.player.host.ex.Web_StateSize() >>> 0);
+  ok(".wgba: 1번 칸 저장(쓴 길이만 남김)", list.length === 1 && list[0].slot === 1 && list[0].size > 1000 && list[0].size < full / 4 && list[0].thumb > 500, `칸 ${list[0]?.size}바이트 · Web_StateSize ${full}`);
+  await page.waitForTimeout(1500);
+  const runFrame = await frameNow(page);
+  await openQuick(page);
+  await page.click('.seg__btn[data-tab="load"]');
+  await page.waitForTimeout(150);
+  await page.click('.slot[data-slot="1"]');
+  await page.waitForSelector("#dialog:not([hidden])");
+  await page.click("#dialogActions .btn--primary");
+  await page.waitForTimeout(400);
+  const loadedFrame = await frameNow(page);
+  const kind = await page.evaluate(() => window.webgba.player.host.stateLoadedKind);
+  ok(".wgba: 불러오기는 저장한 순간 그대로(같은 빌드)", kind === 1 && loadedFrame < runFrame - 30 && loadedFrame >= savedFrame && loadedFrame - savedFrame < 40 && /불러왔습니다/.test(await page.textContent("#toast")),
+    `종류 ${kind} · 저장 ${savedFrame} · 불러오기 전 ${runFrame} · 뒤 ${loadedFrame} · ${await page.textContent("#toast")}`);
+  // 자동 저장(9번) + 그때 프레임 간격
+  await page.evaluate(() => {
+    const gaps = (window.__gaps = []);
+    let last = performance.now();
+    const loop = (now) => {
+      gaps.push([now, now - last]);
+      last = now;
+      if (gaps.length < 20000) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  const timings = [];
+  for (let i = 0; i < 5; i++) {
+    const before = await page.evaluate(() => window.webgba.state.quick.autoCount);
+    await page.evaluate(() => (window.webgba.state.quick.played = 5 * 60000 - 800));
+    await page.waitForFunction((n) => window.webgba.state.quick.autoCount > n, before, { timeout: 5000 });
+    await page.waitForTimeout(300);
+    timings.push(await page.evaluate(() => ({ at: performance.now(), sync: window.webgba.state.quick.syncMs, all: window.webgba.state.quick.lastMs })));
+    await page.waitForTimeout(700);
+  }
+  list = await slotsOf(page, idW);
+  const auto = list.find((s) => s.slot === 9);
+  const gapInfo = await page.evaluate((marks) => {
+    const gaps = window.__gaps;
+    const near = (t) => gaps.filter(([at]) => at > t - 1400 && at <= t).map(([, g]) => g);
+    const quiet = gaps.filter(([at]) => marks.every((t) => Math.abs(at - t) > 1500)).map(([, g]) => g).sort((a, b) => a - b);
+    return { around: marks.map((t) => Math.max(...near(t))), quietMax: quiet[quiet.length - 1] ?? 0 };
+  }, timings.map((x) => x.at));
+  const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  ok(".wgba: 자동 저장 9번 칸(쓴 길이만)", auto && auto.auto && auto.size < full / 4 && auto.thumb > 500, JSON.stringify(auto));
+  ok(
+    ".wgba: 자동 저장 순간 멈춤이 눈에 띄지 않음(프레임 간격 최대 50ms 미만)",
+    Math.max(...gapInfo.around) < 50,
+    `상태 뜨기(동기) 평균 ${avg(timings.map((x) => x.sync)).toFixed(2)}ms · 보관 끝까지 평균 ${avg(timings.map((x) => x.all)).toFixed(1)}ms · 저장 때 프레임 간격 최대 ${gapInfo.around.map((g) => g.toFixed(1)).join("/")}ms · 평소 최대 ${gapInfo.quietMax.toFixed(1)}ms`,
+  );
   ok(".wgba 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
   await context.close();
 }

@@ -134,6 +134,7 @@
   "web.quick.loadOk": "불러오기",
   "web.quick.saved": "{slot}에 저장했습니다",
   "web.quick.loaded": "{slot}을 불러왔습니다",
+  "web.quick.loadedSave": "{slot}은 다른 버전에서 저장한 칸이라 그때의 필드에서 이어 합니다",
   "web.quick.autoSaved": "자동 저장했습니다",
   "web.quick.missing": "빈 칸입니다",
   "web.quick.saveFailed": "저장하지 못했습니다: {reason}",

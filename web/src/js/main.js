@@ -1628,7 +1628,8 @@ async function quickLoad(slot) {
   try {
     const result = await player.loadState(slot);
     if (result) {
-      toast(t("web.quick.loaded", { slot: slotLabel(slot) }));
+      // 포트 .wgba: 다른 버전에서 저장한 칸은 그때의 게임 저장으로 필드에서 이어 한다(Web_StateLoadedKind 2)
+      toast(t(player.host?.stateLoadedKind === 2 ? "web.quick.loadedSave" : "web.quick.loaded", { slot: slotLabel(slot) }));
       return true;
     }
     toast(t(result === null ? "web.quick.missing" : "web.quick.loadFailed"), "warn");

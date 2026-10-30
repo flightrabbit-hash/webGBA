@@ -332,30 +332,42 @@ class WebHost {
     return Boolean(this.ex.Web_StateSize && this.ex.Web_StateSave && this.ex.Web_StateLoad && this.ex.Web_Alloc);
   }
 
+  // 코어가 쓴 길이를 알려 주면(Web_StateUsed, 포트 wasm) 그만큼만 남긴다 — 나머지는 0이다. mGBA 코어는 그대로 전체.
   stateSave() {
     if (!this.canState) return null;
     const size = this.ex.Web_StateSize() >>> 0;
     if (!size) return null;
     const at = this.ex.Web_Alloc(size) >>> 0;
+    if (!at) return null;
     try {
       if (!this.ex.Web_StateSave(at)) return null;
-      return this.u8.slice(at, at + size);
+      const used = this.ex.Web_StateUsed ? this.ex.Web_StateUsed() >>> 0 : 0;
+      return this.u8.slice(at, at + (used > 0 && used <= size ? used : size));
     } finally {
       this.ex.Web_Free(at);
     }
   }
 
+  // 길이는 Web_StateSize 그대로, 또는 쓴 길이를 알려 주는 코어면 그보다 짧은 것(뒤를 0으로 채움)
   stateLoad(bytes) {
     if (!this.canState) return false;
     const size = this.ex.Web_StateSize() >>> 0;
-    if (bytes.length !== size) return false;
+    const short = Boolean(this.ex.Web_StateUsed) && bytes.length > 0 && bytes.length < size;
+    if (bytes.length !== size && !short) return false;
     const at = this.ex.Web_Alloc(size) >>> 0;
+    if (!at) return false;
     try {
       this.u8.set(bytes, at);
+      if (short) this.u8.fill(0, at + bytes.length, at + size);
       return Boolean(this.ex.Web_StateLoad(at));
     } finally {
       this.ex.Web_Free(at);
     }
+  }
+
+  // 마지막 불러오기: 1 그 순간 그대로, 2 다른 빌드라 그때의 게임 저장에서 이어 함, 0 알 수 없음(포트 wasm만)
+  get stateLoadedKind() {
+    return this.ex.Web_StateLoadedKind ? this.ex.Web_StateLoadedKind() >>> 0 : 0;
   }
 
   async reset() {

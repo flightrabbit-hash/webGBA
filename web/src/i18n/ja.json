@@ -134,6 +134,7 @@
   "web.quick.loadOk": "ロード",
   "web.quick.saved": "{slot}に保存しました",
   "web.quick.loaded": "{slot}をロードしました",
+  "web.quick.loadedSave": "{slot}は別のバージョンで保存した枠なので、そのときのフィールドから続けます",
   "web.quick.autoSaved": "オートセーブしました",
   "web.quick.missing": "空きスロットです",
   "web.quick.saveFailed": "保存できませんでした: {reason}",
