@@ -4,7 +4,7 @@
   "installCommand": "node --version",
   "buildCommand": "node web/build.mjs",
   "outputDirectory": "web/dist",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- web src-bundle/src/js src-bundle/src/i18n src-bundle/src/icons src-bundle/bin/core vercel.json package.json LICENSE THIRD_PARTY_NOTICES",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- web src-bundle/src/js src-bundle/src/i18n src-bundle/src/icons src-bundle/bin/core vercel.json package.json LICENSE THIRD_PARTY_NOTICES || exit 1",
   "cleanUrls": false,
   "trailingSlash": false,
   "headers": [
