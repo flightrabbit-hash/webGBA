@@ -1583,9 +1583,10 @@ function canQuick() {
 const slotLabel = (slot) => (slot === AUTO_SLOT ? t("web.quick.autoLabel") : t("web.quick.slotLabel", { n: slot }));
 const pad2 = (n) => String(n).padStart(2, "0");
 
-function fmtSlotTime(ms) {
+// 칸 글자는 날짜와 시각 사이를 줄바꿈으로 둔다: 넓은 칸(nowrap)은 한 줄, 좁은 칸(pre-line, web.css 컨테이너 조건)은 늘 두 줄
+function fmtSlotTime(ms, sep = " ") {
   const d = new Date(ms);
-  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}${sep}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function autoMinutes() {
@@ -1708,7 +1709,7 @@ function slotCard(slot, info, latest) {
   const num = make("span", `slot__num${slot === AUTO_SLOT ? " is-auto" : ""}`);
   num.append(make("span", "slot__tag", slot === AUTO_SLOT ? t("web.quick.auto") : String(slot)));
   shot.append(num);
-  card.append(shot, make("span", "slot__time", info ? fmtSlotTime(info.saved) : "—"));
+  card.append(shot, make("span", info ? "slot__time" : "slot__time is-empty", info ? fmtSlotTime(info.saved, "\n") : "—"));
   card.addEventListener("click", () => pickSlot(slot));
   return card;
 }

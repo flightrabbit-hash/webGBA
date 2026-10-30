@@ -434,16 +434,85 @@ async function layoutChecks(page, key, width, height) {
   await context.close();
 }
 
-// ── 좁은 320px ──
+// ── 좁은 320px + 가장 넓은 시각 ──
+// 갈무리11 숫자는 1만 5px(나머지 8px)이라 시각마다 폭이 달랐다(10/30 23:30 잘림). 저장 시각을 넓은 조합으로 바꿔 넣고
+// 세로 320·360·390, 가로 높이 320·360·390 에서 칸 글자 잘림·넘침 0, 잉크 세로 가운데를 본다.
 {
   const { context, page } = await newPage({ width: 320, height: 640 });
   await openGame(page, "QuickTest D.gba");
+  const id = await gameId(page);
+  for (const slot of [1, 2, 3, 4]) {
+    await openQuick(page);
+    await page.click('.seg__btn[data-tab="save"]');
+    await page.click(`.slot[data-slot="${slot}"]`);
+    await page.waitForTimeout(500);
+  }
+  const WIDE = [
+    [1, new Date(2026, 7, 8, 8, 8)], // 08/08 08:08 — 숫자 모두 8px(가장 넓음)
+    [2, new Date(2026, 9, 30, 23, 30)], // 10/30 23:30 — 실패했던 시각
+    [3, new Date(2026, 11, 30, 8, 8)], // 12/30 08:08
+    [4, new Date(2026, 10, 11, 11, 11)], // 11/11 11:11 — 비례폭이면 가장 좁음
+  ].map(([slot, d]) => [slot, d.getTime()]);
+  const patched = await page.evaluate(async ([id, list]) => {
+    const db = await new Promise((resolve) => {
+      const r = indexedDB.open("webgba");
+      r.onsuccess = () => resolve(r.result);
+    });
+    let n = 0;
+    for (const [slot, saved] of list) {
+      const store = db.transaction("meta", "readwrite").objectStore("meta");
+      const rec = await new Promise((resolve) => {
+        const req = store.get(`state:${id}:${slot}`);
+        req.onsuccess = () => resolve(req.result);
+      });
+      if (!rec) continue;
+      rec.saved = saved;
+      await new Promise((resolve) => {
+        const req = store.put(rec);
+        req.onsuccess = () => resolve();
+      });
+      n++;
+    }
+    db.close();
+    return n;
+  }, [id, WIDE]);
+  ok("넓은 시각 4칸 넣음", patched === 4, `${patched}칸`);
   await openQuick(page);
-  await page.click('.slot[data-slot="1"]');
-  await page.waitForTimeout(500);
-  await openQuick(page);
-  await layoutChecks(page, "너비 320", 320, 640);
-  await inkRows(page, "너비 320", ".slot:not(:disabled) .slot__time", 9);
+  await page.click('.seg__btn[data-tab="save"]');
+  await page.waitForTimeout(200);
+  const texts = await page.evaluate(() => [1, 2, 3, 4].map((s) => document.querySelector(`.slot[data-slot="${s}"] .slot__time`).textContent.replace("\n", " ")));
+  ok("넓은 시각이 칸에 보임", texts.join(",") === "08/08 08:08,10/30 23:30,12/30 08:08,11/11 11:11", texts.join(","));
+  const VIEWS = [
+    [320, 640, "세로 320x640"],
+    [360, 640, "세로 360x640"],
+    [390, 844, "세로 390x844"],
+    [568, 320, "가로 568x320"],
+    [640, 360, "가로 640x360"],
+    [844, 390, "가로 844x390"],
+  ];
+  for (const [width, height, key] of VIEWS) {
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(400);
+    if (!(await page.isVisible("#sheet"))) await openQuick(page);
+    for (const tab of ["save", "load"]) {
+      await page.click(`.seg__btn[data-tab="${tab}"]`);
+      await page.waitForTimeout(250);
+      const label = `${key} ${tab === "save" ? "저장" : "불러오기"}`;
+      await layoutChecks(page, label, width, height);
+      const fit = await page.evaluate(() =>
+        [...document.querySelectorAll(".slot__time")].map((n) => {
+          const card = n.closest(".slot").getBoundingClientRect();
+          const r = n.getBoundingClientRect();
+          return { text: n.textContent.replace("\n", "⏎"), lines: Math.round((n.clientHeight - parseFloat(getComputedStyle(n).paddingTop) - parseFloat(getComputedStyle(n).paddingBottom)) / parseFloat(getComputedStyle(n).lineHeight)), over: n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1, inside: r.left >= card.left - 0.5 && r.right <= card.right + 0.5 && r.bottom <= card.bottom + 0.5 };
+        }),
+      );
+      const bad = fit.filter((f) => f.over || !f.inside);
+      const rows = [...new Set(fit.map((f) => f.lines))];
+      ok(`${label} 칸 시각 넘침·칸 밖 0(${rows.join("/")}줄 칸)`, bad.length === 0, bad.map((f) => f.text).join(","));
+      await inkRows(page, label, ".slot:not(:disabled) .slot__time", 9);
+      if (width === 320 && tab === "save") await page.screenshot({ path: path.join(SHOTS, "퀵슬롯_320_시각.png") });
+    }
+  }
   await closeSheet(page);
   ok("320 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
   await context.close();
