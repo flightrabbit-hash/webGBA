@@ -15,10 +15,79 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--boot-bg, #070a14);
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: var(--boot-bg, #070a14);
+        transition: opacity 0.2s ease-out;
+      }
+      #boot.is-done {
+        opacity: 0;
+      }
+      #boot img {
+        width: 96px;
+        height: 96px;
+        image-rendering: pixelated;
+      }
+      #boot i {
+        position: relative;
+        display: block;
+        width: 48px;
+        height: 6px;
+        overflow: hidden;
+        background: rgba(128, 140, 170, 0.35);
+      }
+      #boot i::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 16px;
+        height: 6px;
+        background: #6c93ff;
+        animation: boot-step 0.9s steps(3) infinite;
+      }
+      @keyframes boot-step {
+        to {
+          transform: translateX(48px);
+        }
+      }
+      body[data-booting] .app,
+      body[data-booting] .gate {
+        visibility: hidden;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot i::after {
+          animation: none;
+        }
+      }
+    </style>
+    <script>
+      (() => {
+        try {
+          const color = localStorage.getItem("webgba.bootBg");
+          if (/^#[0-9a-f]{3,8}$|^rgb/i.test(color || "")) document.documentElement.style.setProperty("--boot-bg", color);
+        } catch {}
+      })();
+    </script>
     <link rel="stylesheet" href="/css/web.css" />
     <script type="module" src="/js/main.js"></script>
   </head>
-  <body data-layout="portrait" data-pad="off" data-view="start">
+  <body data-layout="portrait" data-pad="off" data-view="start" data-booting>
+    <div id="boot" aria-hidden="true"><img src="/icons/icon-192.png" alt="" width="96" height="96" /><i></i></div>
     <div class="app" id="app">
       <header class="bar" id="bar">
         <button class="tool tool--menu" id="btnMenu" type="button" data-i18n-title="title.menu" data-i18n-aria="title.menu" aria-expanded="false"></button>

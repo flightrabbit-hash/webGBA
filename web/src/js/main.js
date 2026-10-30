@@ -321,7 +321,10 @@ function layout() {
   pad.enabled = padOn;
   if (!padOn) pad.releaseAll();
   pad.invalidate();
-  requestAnimationFrame(() => centerInk(document));
+  requestAnimationFrame(() => {
+    centerInk(document);
+    centerIcons(document);
+  });
 }
 
 function syncTools() {
@@ -590,8 +593,26 @@ async function loadIconInk(url) {
   centerIcons(document);
 }
 
+const iconSvg = new Map();
+
+function hydrateIcons(root = document) {
+  for (const node of root.querySelectorAll?.(".icon:not(.icon--svg)") ?? []) {
+    const url = iconUrl(node);
+    if (!url) continue;
+    if (!iconSvg.has(url)) iconSvg.set(url, fetch(url).then((response) => (response.ok ? response.text() : "")).catch(() => ""));
+    node.classList.add("icon--svg");
+    iconSvg.get(url).then((text) => {
+      if (!text || node.querySelector("svg")) return;
+      const holder = document.createElement("template");
+      holder.innerHTML = text.trim();
+      const svg = holder.content.querySelector("svg");
+      if (svg) node.replaceChildren(svg);
+    });
+  }
+}
+
 function centerIcons(root = document) {
-  const dpr = window.devicePixelRatio || 1;
+  hydrateIcons(root);
   for (const node of root.querySelectorAll?.(".icon") ?? []) {
     const url = iconUrl(node);
     if (!url) continue;
@@ -602,8 +623,8 @@ function centerIcons(root = document) {
     }
     const ink = iconInk.get(url);
     if (!ink) continue;
-    const dx = Math.round(ink.dx * node.offsetWidth * dpr) / dpr;
-    const dy = Math.round(ink.dy * node.offsetHeight * dpr) / dpr;
+    const dx = Math.round(ink.dx * node.offsetWidth);
+    const dy = Math.round(ink.dy * node.offsetHeight);
     node.style.translate = dx || dy ? `${dx}px ${dy}px` : "";
   }
 }
@@ -1607,6 +1628,9 @@ function applyTheme(mode) {
   }
   theme.apply(id === "custom" ? { mode: "custom", colors: customTokens() } : { mode: id });
   const color = getComputedStyle(document.documentElement).getPropertyValue("--bg-sunken").trim();
+  try {
+    if (color) localStorage.setItem("webgba.bootBg", color);
+  } catch {}
   if (color) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", color);
   skin.refreshColors();
   if (document.documentElement.dataset.ready) layout();
@@ -2113,7 +2137,39 @@ function showGate() {
   renderGate();
 }
 
+const BOOT_LIMIT_MS = 5000;
+
+function fontsReady() {
+  if (!document.fonts?.load) return Promise.resolve();
+  const loads = ["15px Galmuri14", "12px Galmuri11", "700 12px Galmuri11", "30px Galmuri14"].map((font) => document.fonts.load(font).catch(() => []));
+  return Promise.race([Promise.all(loads), new Promise((resolve) => setTimeout(resolve, BOOT_LIMIT_MS))]);
+}
+
+function revealApp() {
+  if (!document.body.hasAttribute("data-booting")) return;
+  document.body.removeAttribute("data-booting");
+  const screen = document.getElementById("boot");
+  if (!screen) return;
+  requestAnimationFrame(() => {
+    screen.classList.add("is-done");
+    setTimeout(() => screen.remove(), reducedMotion() ? 0 : 220);
+  });
+}
+
+async function settle() {
+  state.glyphCache?.clear();
+  state.baselineCache?.clear();
+  centerInk(document);
+  centerIcons(document);
+  await Promise.race([Promise.allSettled([...iconSvg.values()]), new Promise((resolve) => setTimeout(resolve, 1500))]);
+  centerIcons(document);
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+setTimeout(revealApp, BOOT_LIMIT_MS);
+
 async function boot() {
+  const fonts = fontsReady();
   applyTheme(state.prefs.theme);
   await i18n.use(i18n.known(state.prefs.lang) ? state.prefs.lang : "ko");
   document.fonts?.ready.then(() => {
@@ -2125,6 +2181,9 @@ async function boot() {
   if (!standalone() && !devBypass()) {
     showGate();
     document.addEventListener(i18n.CHANGED, renderGate);
+    await fonts;
+    await settle();
+    revealApp();
     document.documentElement.dataset.ready = "1";
     registerWorker();
     return;
@@ -2143,6 +2202,10 @@ async function boot() {
     state.storeBroken = true;
     toast(t("web.noStore"), "error");
   }
+  await fonts;
+  layout();
+  await settle();
+  revealApp();
   document.documentElement.dataset.ready = "1";
   registerWorker();
   if (!state.storeBroken) store.persist();
