@@ -73,3 +73,11 @@ pako 2.1.0
   creates from a .wgbp use it, so every PC produces the same bytes.
 
   전문 / full text: bin/core/licenses/pako-LICENSE.txt
+
+Galmuri (웹 버전에만 / web version only: web/src/fonts)
+  Copyright (c) 2019-2025 Lee Minseo (quiple@quiple.dev),
+  with Reserved Font Name "Galmuri".
+  SIL Open Font License, Version 1.1 — https://openfontlicense.org
+  공식 배포본 v2.40.4 의 woff2 를 고치지 않고 넣었습니다(Galmuri14, Galmuri11, Galmuri11-Bold).
+  The official v2.40.4 woff2 files are included unmodified.
+  전문 / full text: web/src/fonts/Galmuri-OFL.txt (served at /fonts/Galmuri-OFL.txt)

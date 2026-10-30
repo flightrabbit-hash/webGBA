@@ -6,6 +6,7 @@
 # ── 빌드 결과 ──
 /node_modules
 /dist
+/web/dist
 /src-tauri/target
 /src-tauri/gen
 
@@ -65,3 +66,6 @@ npm-debug.log*
 Thumbs.db
 desktop.ini
 .DS_Store
+
+.vercel
+.env*
