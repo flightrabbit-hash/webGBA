@@ -370,7 +370,10 @@ async function layoutChecks(page, key, width, height) {
   await page.waitForSelector("#sheet:not([hidden])");
   await page.waitForTimeout(300);
   const keyA = `rom:${idA}`;
-  await page.click(`.item[data-key="${keyA}"] [data-action="delete"]`);
+  // 라이브러리 책장에서 A 롬팩을 꺼내(이미 꺼냈으면 그대로) 꺼낸 칸의 지우기
+  if ((await page.getAttribute(`.spine[data-key="${keyA}"]`, "aria-pressed")) !== "true") await page.click(`.spine[data-key="${keyA}"]`);
+  await page.waitForSelector(`.lib__card[data-key="${keyA}"] [data-action="delete"]`);
+  await page.click(`.lib__card[data-key="${keyA}"] [data-action="delete"]`);
   await page.waitForSelector("#dialog:not([hidden])");
   ok("지우기 확인 글에 퀵슬롯도 지운다는 말", /퀵슬롯/.test(await page.textContent("#dialogBody")));
   await page.click("#dialogActions .btn--danger");

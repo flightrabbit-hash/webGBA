@@ -874,6 +874,25 @@ const ICONS = {
        ................
        ................`),
   ],
+  // 라이브러리: 우리 롬팩 앞면(오른쪽 위 모따기 · 위 꽂는 방향 ▼ · 라벨 그림 · 아래 손잡이 홈) — 실제 카트리지 모양 아님
+  library: [
+    L(`................
+       ..llllkkkkll....
+       ..lmmmmkkmmmk...
+       ..lmwwwwwwwwmk..
+       ..lmwbbbbyywmk..
+       ..lmwbgbbbbwmk..
+       ..lmwgggbgbwmk..
+       ..lmwggggggwmk..
+       ..lmwwwwwwwwmk..
+       ..lmmmmmmmmmmk..
+       ..lmkmkmkmkmmk..
+       ..lmkmkmkmkmmk..
+       ..kkkkkkkkkkkk..
+       ................
+       ................
+       ................`),
+  ],
   saves: [
     floppyLayer(4, 1, 'B', 'B'),
     floppyLayer(1, 4, 'b', 'B'),

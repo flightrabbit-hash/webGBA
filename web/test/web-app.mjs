@@ -281,13 +281,15 @@ async function testGba() {
   await page.evaluate(() => { const p = JSON.parse(localStorage.getItem("webgba.prefs")); p.gameSpeed = 1; localStorage.setItem("webgba.prefs", JSON.stringify(p)); });
   await page.reload();
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
-  await page.click("#startList .item__main");
+  await page.click("#startList .recent__item");
   await waitGame(page);
   await filesMenu(page);
   await page.click("#btnLibrary");
-  await page.waitForSelector('.list[data-kind="rom"] .item');
-  const actions = await page.$$eval('.list[data-kind="rom"] .item [data-action]', (nodes) => nodes.map((node) => node.dataset.action));
-  ok("보관한 게임 목록: 열기·이름 바꾸기·삭제만(내보내기 없음)", actions.length > 0 && actions.every((a) => a === "rename" || a === "delete"), actions.join(","));
+  await page.waitForSelector('.lib__card[data-state="open"] [data-action]');
+  const actions = await page.$$eval(".sheet__body [data-action]", (nodes) => nodes.map((node) => node.dataset.action));
+  // 실행 중인 게임을 꺼낸 칸: 계속하기·세이브 창·다시 시작·게임 닫기·이름·지우기·정보 + 정렬·파일 열기(내려받기 없음)
+  const LIB_ACTIONS = ["resume", "saves", "reset", "close-game", "rename", "delete", "info", "sort", "add-file"];
+  ok("라이브러리: 실행 중인 게임 = 계속하기·세이브·다시 시작·게임 닫기·이름·지우기·정보(게임 파일 내보내기 없음)", ["resume", "saves", "reset", "close-game", "rename", "delete", "info"].every((a) => actions.includes(a)) && actions.every((a) => LIB_ACTIONS.includes(a)), actions.join(","));
   await page.click("#sheetClose");
   await page.setViewportSize({ width: 844, height: 390 });
   await page.waitForTimeout(500);
@@ -372,7 +374,7 @@ async function testPortSaveOffline() {
   await page.click("#sheetClose");
   await page.reload();
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
-  await page.click("#startList .item__main");
+  await page.click("#startList .recent__item");
   await waitGame(page, 90000);
   const after = await page.evaluate(async () => {
     const bytes = await window.webgba.store.saveBytes(window.webgba.state.game.saveId);
@@ -381,15 +383,15 @@ async function testPortSaveOffline() {
   ok("새로고침 뒤 이어서 하기 · 세이브 유지", after[0] === modified.byte && after[1] === hidden.byte && after[2] === modified.byte, after.join(","));
   await filesMenu(page);
   await page.click("#btnLibrary");
-  await page.waitForSelector('.list[data-kind="rom"] .item');
-  const romActions = await page.$$eval('.list[data-kind="rom"] [data-action]', (nodes) => nodes.map((n) => n.dataset.action));
-  ok("롬 기록은 내려받을 수 없음(목록에 내보내기 없음)", romActions.every((a) => a === "rename" || a === "delete"), romActions.join(","));
+  await page.waitForSelector('.lib__card[data-state="open"] [data-action]');
+  const romActions = await page.$$eval(".sheet__body [data-action]", (nodes) => nodes.map((n) => n.dataset.action));
+  ok("롬 기록은 내려받을 수 없음(라이브러리에 내보내기 없음)", romActions.length > 0 && !romActions.some((a) => /export|download/.test(a)), romActions.join(","));
   await page.click("#sheetClose");
   await context.setOffline(true);
   await page.reload();
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 15000 });
   ok("오프라인 다시 열기(앱 화면)", true);
-  await page.click("#startList .item__main");
+  await page.click("#startList .recent__item");
   await waitGame(page, 90000).then(
     () => ok("오프라인에서 보관한 게임 열기", true),
     () => ok("오프라인에서 보관한 게임 열기", false),
@@ -455,9 +457,9 @@ async function testPatch() {
       });
       const saveBefore = await page.evaluate(async () => (await window.webgba.store.list("save")).map((s) => s.key));
       await filesMenu(page);
-  await page.click("#btnLibrary");
-      await page.waitForSelector('.list[data-kind="rom"] [data-action="rename"]');
-      await page.click('.list[data-kind="rom"] [data-action="rename"]');
+      await page.click("#btnLibrary");
+      await page.waitForSelector('.lib__card [data-action="rename"]');
+      await page.click('.lib__card [data-action="rename"]');
       await page.fill(".dialog__input", "새 이름");
       await page.click('[data-action="name-ok"]');
       await page.waitForTimeout(500);

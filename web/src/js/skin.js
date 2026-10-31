@@ -2,7 +2,7 @@ import * as PX from "./pixel-ui.js";
 
 const TOOL_ICONS = {
   btnOpen: () => "open",
-  btnLibrary: () => "games",
+  btnLibrary: () => "library",
   btnSaves: () => "saves",
   btnQuick: () => "quickslot",
   btnFast: (s) => (s.fast ? "fastForwardOn" : "fastForwardOff"),

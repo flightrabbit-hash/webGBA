@@ -28,11 +28,15 @@ const INK_THRESHOLD = Number(process.env.INK_THRESHOLD ?? 48);
 const ONLY_MOTION = process.env.UI_MOTION_ONLY === "1";
 // UI_EXTRA_ONLY=1 이면 C·D 버튼 시험만(UI_EXTRA=0 이면 그것만 뺌). UI_BASE_URL = 수정 전 빌드 주소(정의 없음 픽셀 비교).
 const ONLY_EXTRA = process.env.UI_EXTRA_ONLY === "1";
-const EXTRA = ONLY_EXTRA || (!ONLY_MOTION && process.env.UI_EXTRA !== "0");
+// UI_LIBRARY_ONLY=1 이면 라이브러리(책장)·첫 화면 최근 줄 시험만(UI_LIBRARY=0 이면 그것만 뺌): 320 세로 ~ 낮은 가로까지 겹침·화면 안·잉크 가운데·
+// 정수 배율·꺼내기/넣기·정렬·실행 중 칸, 그리고 꺼내기·넣기 움직임(transform·opacity, 닫을 때 움직임 뒤 숨김).
+const ONLY_LIBRARY = process.env.UI_LIBRARY_ONLY === "1";
+const EXTRA = ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && process.env.UI_EXTRA !== "0");
 const BASE_URL = process.env.UI_BASE_URL ?? "";
-const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA;
-const MOTION = !ONLY_EXTRA && (ONLY_MOTION || process.env.UI_MOTION !== "0");
-const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "844x390|ko|library": "가로_844x390_보관함.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY;
+const MOTION = !ONLY_EXTRA && !ONLY_LIBRARY && (ONLY_MOTION || process.env.UI_MOTION !== "0");
+const LIBRARY = ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && process.env.UI_LIBRARY !== "0");
+const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
 const table = [];
@@ -94,8 +98,11 @@ async function boxes(page, selector, { limit = 12 } = {}) {
         .filter((node) => node.offsetParent !== null || getComputedStyle(node).position === "fixed")
         .slice(0, limit)
         .map((node) => {
-          const r = node.getBoundingClientRect();
           const s = getComputedStyle(node);
+          // 잉크 가운데 맞춤이 이 칸 자체를 translate 로 옮긴 경우(.lib__name 등)는 옮기기 전 자리(레이아웃 칸)에서 잰다
+          const [tx = 0, ty = 0] = s.translate && s.translate !== "none" ? s.translate.split(/\s+/).map((v) => parseFloat(v) || 0) : [];
+          const raw = node.getBoundingClientRect();
+          const r = { left: raw.left - tx, right: raw.right - tx, top: raw.top - ty, bottom: raw.bottom - ty, height: raw.height };
           const bt = parseFloat(s.borderTopWidth);
           const bb = parseFloat(s.borderBottomWidth);
           const bl = parseFloat(s.borderLeftWidth);
@@ -201,8 +208,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
     await page.waitForTimeout(400);
     const base = `${view.name}|${lang}`;
     const landscape = view.viewport.width > view.viewport.height;
-    await rows(page, `${base}|start`, "#startList .item");
-    await measure(page, `${base}|start`, ["#startList .item", ".start__head", landscape ? "" : ".bar"].filter(Boolean));
+    await measure(page, `${base}|start`, [".recent__name", ".recent__meta", ".start__head", landscape ? "" : ".bar"].filter(Boolean));
 
     await page.evaluate(() => window.webgba.toast("세이브를 저장했습니다 · Saved · セーブしました"));
     await page.waitForTimeout(150);
@@ -225,7 +231,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       await page.click("#btnMenu");
       await page.waitForTimeout(250);
       const opened = await page.evaluate(() => [...document.querySelectorAll(".bar__group--files .tool")].map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
-      ok(`${base}|menu 햄버거: 파일 열기·보관함·세이브 3개 펼침·화면 안`, opened.length === 3 && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
+      ok(`${base}|menu 햄버거: 파일 열기·라이브러리·세이브 3개 펼침·화면 안`, opened.length === 3 && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
       await fits(page, `${base}|menu`, ".bar__group--files");
       await snap(page, `${base}|menu`);
       await page.click("#btnMenu");
@@ -250,12 +256,10 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
 
     await openSheet("#btnLibrary");
     await fits(page, `${base}|library`, ".sheet__panel");
-    await rows(page, `${base}|library`, '.list[data-kind="rom"] .item');
-    ok(`${base}|library '파일 열기' 버튼 없음`, !(await page.$(".sheet__body .btn--primary")));
-    await measure(page, `${base}|library`, [".sheet__head", '.list[data-kind="rom"] .item']);
+    await measure(page, `${base}|library`, [".sheet__head", ".lib__name", ".lib__meta", ".lib__btns .btn"]);
     await snap(page, `${base}|library`);
 
-    await page.click('.list[data-kind="rom"] [data-action="rename"]');
+    await page.click('.lib__card [data-action="rename"]');
     await page.waitForSelector("#dialog:not([hidden]) .dialog__input");
     await page.fill(".dialog__input", "테스트 Name 名前");
     await page.waitForTimeout(200);
@@ -265,7 +269,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
     await page.click("#dialogActions .btn:not(.btn--primary)");
     await page.waitForTimeout(200);
 
-    await page.click('.list[data-kind="rom"] [data-action="delete"]');
+    await page.click('.lib__card [data-action="delete"]');
     await page.waitForSelector("#dialog:not([hidden])");
     await page.waitForTimeout(150);
     await fits(page, `${base}|confirm`, ".dialog__card");
@@ -853,6 +857,270 @@ async function motionChecks(engine, launcher) {
   ok(`${key}: 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
   const lines = ["open", "close", "midOpen", "outside"].map((name) => `${name}: ${out[name].map((f) => `${f.t}ms ${f.vis ? `불투명도 ${f.op} · 위로 ${-f.ty}px` : "숨김"}`).join(" | ")}`);
   fs.writeFileSync(path.join(SHOTS, `여닫기_프레임_${engine}.txt`), lines.join("\n"));
+  await context.close();
+}
+
+// ── 라이브러리(책장)·첫 화면 최근 줄 ──
+const LIB_VIEWS = [
+  { name: "390x844", width: 390, height: 844, langs: ["ko", "en", "ja"] },
+  { name: "844x390", width: 844, height: 390, langs: ["ko", "en", "ja"] },
+  { name: "360x640", width: 360, height: 640, langs: ["ko"] },
+  { name: "320x568", width: 320, height: 568, langs: ["ko", "en", "ja"] },
+  { name: "568x320", width: 568, height: 320, langs: ["ko", "ja"] },
+].filter((view) => !VIEW_FILTER || VIEW_FILTER.has(view.name));
+const LIB_SHOTS = { "390x844|ko|start": "라이브러리_첫화면_390x844.png", "390x844|ko|library": "라이브러리_세로_390x844.png", "844x390|ko|library": "라이브러리_가로_844x390.png", "320x568|ko|library": "라이브러리_세로_320x568.png", "568x320|ko|library": "라이브러리_가로_568x320.png", "320x568|ko|running": "라이브러리_실행중_320x568.png" };
+
+// 1KB 가짜 기록(롬 아님) + 코드로 그린 임시 롬팩 그림(k = 2: 라벨 96x64 · 앞면 108x88 · 옆면 24x88)
+async function seedLibrary(page) {
+  await page.evaluate(async () => {
+    const s = window.webgba.store;
+    const png = async (w, h, paint) => {
+      const c = new OffscreenCanvas(w, h);
+      paint(c.getContext("2d"));
+      return new Uint8Array(await (await c.convertToBlob({ type: "image/png" })).arrayBuffer());
+    };
+    const front = await png(108, 88, (g) => {
+      g.fillStyle = "#04060d";
+      g.fillRect(0, 0, 108, 88);
+      g.fillStyle = "#2f6f5e";
+      g.fillRect(2, 2, 104, 84);
+      g.fillStyle = "#1c4a3e";
+      g.fillRect(4, 8, 100, 68);
+    });
+    const label = await png(96, 64, (g) => {
+      g.fillStyle = "#172259";
+      g.fillRect(0, 0, 96, 64);
+      g.fillStyle = "#58c070";
+      g.fillRect(0, 46, 96, 18);
+      g.fillStyle = "#ffe39a";
+      g.fillRect(66, 10, 14, 14);
+    });
+    const spine = await png(24, 88, (g) => {
+      g.fillStyle = "#04060d";
+      g.fillRect(0, 0, 24, 88);
+      g.fillStyle = "#2f6f5e";
+      g.fillRect(2, 2, 20, 84);
+      g.fillStyle = "#dfe4f0";
+      g.fillRect(4, 10, 16, 64);
+    });
+    const fake = (n) => new Uint8Array(1024 + n);
+    let t = Date.now();
+    const opened = (id) => s.patch(s.romKey(id), { opened: (t -= 1000) });
+    await s.putGame(
+      { id: "art", name: "star.wgba", file: "star.wgba", type: "wgba", gameId: "dev.example.star", version: "0.9.1", build: "a".repeat(64), title: "Star Garden", shortName: "Star", author: "example", romSha1: "", cart: { color: "#2f6f5e", label: { format: "png", width: 96, height: 64, scale: 2 }, front: { format: "png", width: 108, height: 88, scale: 2, labelAt: [6, 10] }, spine: { format: "png", width: 24, height: 88, scale: 2, textArea: [4, 10, 16, 64] } } },
+      fake(0),
+      { carts: [{ part: "label", bytes: label, format: "png", width: 96, height: 64 }, { part: "front", bytes: front, format: "png", width: 108, height: 88 }, { part: "spine", bytes: spine, format: "png", width: 24, height: 88 }] },
+    );
+    await s.putSave("dev.example.star", new Uint8Array(4096), "star.wgba");
+    await opened("art");
+    await s.putGame({ id: "color", name: "racer.wgba", file: "racer.wgba", type: "wgba", gameId: "dev.example.racer", version: "2.0.3", build: "b".repeat(64), title: { ko: "작은 경주", en: "Tiny Racer", ja: "タイニーレーサー" }, shortName: "", author: "", romSha1: "", cart: { color: "#d9a02b" } }, fake(1), { carts: [] });
+    await opened("color");
+    await s.putRom({ id: "gba", name: "테스트 게임 둘.gba", file: "테스트 게임 둘.gba", type: "gba" }, fake(2));
+    await s.putSave("gba", new Uint8Array(4096), "테스트 게임 둘.gba");
+    await opened("gba");
+    await s.putRom({ id: "wasm", name: "homebrew-demo.wasm", file: "homebrew-demo.wasm", type: "wasm" }, fake(3));
+    await opened("wasm");
+    const names = ["Moon Hopper", "Pixel Quest", "던전 런", "Sky Fisher", "Neon Drift", "꼬마 농장", "Robo Run", "テスト ゲーム", "Bit Golf", "Ghost Lamp", "Rail Way", "Mini Chef", "바다 탐험", "Crystal Cave", "Hop Frog", "Space Mail", "Tile Town", "별빛 우체국", "Cloud Kite", "Iron Bee", "숲속 학교", "A very long game name for testing"];
+    for (const [i, name] of names.entries()) {
+      await s.putRom({ id: `m${i}`, name: `${name}.gba`, file: `${name}.gba`, type: "gba" }, fake(10 + i));
+      await opened(`m${i}`);
+    }
+  });
+}
+
+const boxOf = (r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom });
+const within = (list, box) => list.every((x) => x.l >= box.l - 0.5 && x.r <= box.r + 0.5 && x.t >= box.t - 0.5 && x.b <= box.b + 0.5);
+const crosses = (list) => list.some((x, i) => list.some((y, j) => j > i && x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5));
+
+async function libraryLayout(page) {
+  return page.evaluate(() => {
+    const box = (n) => {
+      const r = n.getBoundingClientRect();
+      return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+    };
+    const one = (sel) => document.querySelector(sel);
+    const card = one(".lib__card");
+    const shelf = one(".lib__shelf");
+    const scroll = one(".lib__scroll");
+    const caseBox = one(".lib__case");
+    const spines = [...document.querySelectorAll(".lib__case .spine")];
+    const arts = [...document.querySelectorAll(".sheet__body .cart__art")].map((c) => ({ ratio: c.getBoundingClientRect().width / c.width, ratioH: c.getBoundingClientRect().height / c.height, pixelated: getComputedStyle(c).imageRendering }));
+    const cardParts = card ? [...card.querySelectorAll(".lib__pack, .lib__line, .lib__meta, .lib__btns .btn, .lib__hint")].filter((n) => n.offsetParent).map(box) : [];
+    return {
+      body: box(one(".sheet__body")),
+      card: card ? box(card) : null,
+      cardScroll: card ? card.scrollWidth - card.clientWidth : 0,
+      cardParts,
+      cardView: card ? (() => { const r = box(card); return { ...r, b: r.t + card.clientHeight }; })() : null,
+      shelf: box(shelf),
+      scroll: box(scroll),
+      caseBox: box(caseBox),
+      spines: spines.map(box),
+      spineRows: new Set(spines.map((n) => Math.round(n.getBoundingClientRect().height))).size,
+      arts,
+      // 버튼 글이 말줄임으로 잘리면 안 됨(이름·버전 줄은 말줄임 허용)
+      btnOver: [...document.querySelectorAll(".lib__btns .btn__label, .lib__shelfHead .btn__label")].filter((n) => n.offsetParent && n.scrollWidth > n.clientWidth + 1).map((n) => n.textContent),
+    };
+  });
+}
+
+for (const view of LIBRARY ? LIB_VIEWS : []) {
+  for (const lang of view.langs) {
+    const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: view.width, height: view.height }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    await context.addInitScript((lang) => {
+      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+      localStorage.setItem("webgba.prefs", JSON.stringify({ lang }));
+    }, lang);
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+    await page.goto(URL_BASE);
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+    await seedLibrary(page);
+    await page.evaluate(() => window.webgba.refreshStart());
+    await page.waitForTimeout(500);
+    const key = `${view.name}|${lang}`;
+    const landscape = view.width > view.height;
+
+    // 첫 화면 최근 줄: 세로 3개·가로 5개까지 들어가는 만큼(줄이지 않음), 게임 화면 안, 겹침 0, 굴림 없음
+    const start = await page.evaluate(() => {
+      const box = (n) => {
+        const r = n.getBoundingClientRect();
+        return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+      };
+      const items = [...document.querySelectorAll("#startList .recent__item")].filter((n) => !n.hidden).map(box);
+      const startNode = document.getElementById("start");
+      const packs = [...document.querySelectorAll("#startList .recent__item:not([hidden]) .pack")].map((n) => Math.round(n.getBoundingClientRect().width));
+      return { screen: box(document.getElementById("screen")), items, all: box(document.getElementById("startAll")), width: document.getElementById("startList").clientWidth, overflow: startNode.scrollHeight - startNode.clientHeight, packs };
+    });
+    const n = start.items.length;
+    const max = landscape ? 5 : 3;
+    const oneMore = (n + 1) * 108 + n * 4 <= start.width;
+    ok(`${key}|start 최근 롬팩 ${n}개(세로 3·가로 5까지 들어가는 만큼) · 108px 그대로 · 화면 안 · 겹침 0 · 굴림 없음`, n >= 1 && n <= max && (n === max || !oneMore) && start.packs.every((w) => w === 108) && within([...start.items, start.all], start.screen) && !crosses(start.items) && start.overflow <= 0, JSON.stringify({ n, width: start.width, overflow: start.overflow, packs: start.packs }));
+    await measure(page, `${key}|start`, [".recent__name", ".recent__meta", ".recent__all", ".start__head", "#startList .pack__label"]);
+    if (LIB_SHOTS[`${key}|start`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|start`]) });
+
+    // 라이브러리
+    if (!landscape) {
+      await page.click("#btnMenu");
+      await page.waitForTimeout(250);
+    }
+    await page.click("#btnLibrary");
+    await page.waitForSelector('#sheet:not([hidden]) .lib__card[data-state="open"]');
+    await page.waitForTimeout(400);
+    await fits(page, `${key}|library`, ".sheet__panel");
+    const lay = await libraryLayout(page);
+    ok(`${key}|library 꺼낸 롬팩 칸·책장이 시트 안 · 서로 겹침 0`, within([lay.card, lay.shelf], lay.body) && !crosses([lay.card, lay.shelf]), JSON.stringify({ card: lay.card, shelf: lay.shelf, body: lay.body }));
+    ok(`${key}|library 꺼낸 칸의 롬팩·이름·버튼이 칸 안 · 서로 겹침 0 · 가로 넘침 0 · 버튼 글 안 잘림`, within(lay.cardParts, lay.cardView) && !crosses(lay.cardParts) && lay.cardScroll <= 0 && lay.btnOver.length === 0, JSON.stringify({ parts: lay.cardParts.length, scroll: lay.cardScroll, over: lay.btnOver }));
+    ok(`${key}|library 옆면은 책장 안(가로 넘침 0) · 겹침 0 · 칸 높이 하나`, lay.spines.length > 20 && lay.spines.every((x) => x.l >= lay.caseBox.l - 0.5 && x.r <= lay.caseBox.r + 0.5) && !crosses(lay.spines) && lay.spineRows === 1, JSON.stringify({ n: lay.spines.length, case: lay.caseBox }));
+    ok(`${key}|library 롬팩 그림 정수 배율(CSS px/그림 px)·가장 가까운 점`, lay.arts.length > 20 && lay.arts.every((a) => Number.isInteger(+a.ratio.toFixed(3)) && a.ratio >= 1 && Math.abs(a.ratio - a.ratioH) < 0.001 && a.pixelated === "pixelated"), JSON.stringify([...new Set(lay.arts.map((a) => `${a.ratio}/${a.pixelated}`))]));
+    await measure(page, `${key}|library`, [".sheet__head", ".lib__name", ".lib__meta", ".lib__btns .btn", ".lib__shelfHead .btn", ".lib__count"]);
+    if (LIB_SHOTS[`${key}|library`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|library`]) });
+
+    // 꺼내기·넣기(움직임 줄이기 = 바로)
+    const keys = await page.$$eval(".lib__case .spine[data-key]", (nodes) => nodes.map((node) => node.dataset.key));
+    const first = await page.getAttribute(".lib__card", "data-key");
+    await page.click(`.spine[data-key="${keys[2]}"]`);
+    await page.waitForTimeout(200);
+    const pulled = await page.evaluate((k) => ({ card: document.querySelector(".lib__card").dataset.key, out: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), pressed: document.querySelector(`.spine[data-key="${k}"]`).getAttribute("aria-pressed") }), keys[2]);
+    ok(`${key}|library 옆면 누르면 꺼냄(이전 것은 제자리) · 빈칸 하나`, first === keys[0] && pulled.card === keys[2] && pulled.out.join() === keys[2] && pulled.pressed === "true", JSON.stringify({ first, pulled }));
+    await measure(page, `${key}|library-pulled`, [".lib__card .pack__label", ".lib__name", ".lib__meta"]);
+    await page.click(`.spine[data-key="${keys[2]}"]`);
+    await page.waitForTimeout(200);
+    const back = await page.evaluate(() => ({ state: document.querySelector(".lib__card").dataset.state, out: document.querySelectorAll(".spine.is-out").length }));
+    ok(`${key}|library 빈칸 누르면 넣음 → 안내`, back.state === "empty" && back.out === 0, JSON.stringify(back));
+    await measure(page, `${key}|library-empty`, [".lib__hint"]);
+
+    // 정렬: 버튼으로 이름순 ↔ 최근 연 순(기억)
+    await page.click('[data-action="sort"]');
+    await page.waitForTimeout(400);
+    const sorted = await page.evaluate(() => {
+      const names = [...document.querySelectorAll(".lib__case .spine[data-key]")].map((n) => n.getAttribute("aria-label"));
+      const collator = new Intl.Collator(document.documentElement.lang || "ko", { numeric: true, sensitivity: "base" });
+      return { names, ok: names.every((name, i) => i === 0 || collator.compare(names[i - 1], name) <= 0), pref: JSON.parse(localStorage.getItem("webgba.prefs")).libSort };
+    });
+    await page.click('[data-action="sort"]');
+    await page.waitForTimeout(400);
+    const recentAgain = await page.$$eval(".lib__case .spine[data-key]", (nodes) => nodes.map((node) => node.dataset.key));
+    ok(`${key}|library 정렬: 이름순 → 다시 최근 연 순(기억)`, sorted.ok && sorted.pref === "name" && recentAgain.join() === keys.join(), sorted.names.slice(0, 4).join(" / "));
+
+    // 실행 중인 게임을 꺼낸 칸(버튼 6개)
+    await page.evaluate(() => {
+      window.webgba.state.game = { id: "art", saveId: "dev.example.star", name: "star.wgba" };
+      window.webgba.state.lib.sel = "rom:art";
+      window.webgba.renderSheet();
+    });
+    await page.waitForTimeout(400);
+    const run = await libraryLayout(page);
+    const runButtons = await page.$$eval(".lib__btns .btn", (nodes) => nodes.map((node) => node.dataset.action));
+    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 닫기·이름·지우기 · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
+    await measure(page, `${key}|running`, [".lib__btns .btn", ".pack__chip"]);
+    if (LIB_SHOTS[`${key}|running`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|running`]) });
+    await page.evaluate(() => (window.webgba.state.game = null));
+    ok(`${key}|library 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+    await context.close();
+  }
+}
+
+// 꺼내기·넣기 움직임(움직임 줄이기 끔): transform·opacity 만, --pop-ms 시간, 넣기만 할 때 칸 내용은 움직임 뒤 안내로
+if (LIBRARY) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    localStorage.setItem("webgba.prefs", JSON.stringify({ lang: "ko" }));
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(URL_BASE);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+  await seedLibrary(page);
+  await page.evaluate(() => window.webgba.openSheet("library"));
+  await page.waitForSelector('.lib__card[data-state="open"]');
+  // 첫 누르기는 소리 켜기(오디오 준비, 라이브러리와 무관)가 수백 ms 걸리므로 먼저 한 번 눌러 둔다
+  await page.evaluate(() => document.querySelector(".lib__count").click());
+  await page.waitForTimeout(800);
+  const out = await page.evaluate(async () => {
+    const card = document.querySelector(".lib__card");
+    const target = [...document.querySelectorAll(".lib__case .spine[data-key]")][3];
+    const art = target.querySelector(".spine__art");
+    const props = new Set();
+    const look = () => {
+      const s = getComputedStyle(art);
+      const m = s.transform === "none" ? new DOMMatrixReadOnly() : new DOMMatrixReadOnly(s.transform);
+      for (const anim of document.getAnimations()) for (const frame of anim.effect?.getKeyframes?.() ?? []) for (const name of Object.keys(frame)) if (!["offset", "easing", "composite", "computedOffset"].includes(name)) props.add(name);
+      const grid = card.querySelector(".lib__grid");
+      const pack = card.querySelector(".lib__pack");
+      return { op: +(+s.opacity).toFixed(3), ty: +m.m42.toFixed(2), out: target.classList.contains("is-out"), card: card.dataset.key, state: card.dataset.state, packOp: pack ? +(+getComputedStyle(pack).opacity).toFixed(3) : -1, gridOp: grid ? +(+getComputedStyle(grid).opacity).toFixed(3) : -1 };
+    };
+    const record = (ms, act) =>
+      new Promise((done) => {
+        const start = performance.now();
+        act();
+        const frames = [{ t: 0, ...look() }];
+        const step = (now) => {
+          frames.push({ t: +(now - start).toFixed(1), ...look() });
+          if (now - start < ms) requestAnimationFrame(step);
+          else done(frames);
+        };
+        requestAnimationFrame(step);
+      });
+    const pull = await record(450, () => target.click());
+    const put = await record(500, () => target.click());
+    return { pull, put, props: [...props], pop: getComputedStyle(document.documentElement).getPropertyValue("--pop-ms").trim(), key: target.dataset.key };
+  });
+  const mid = (frames, field) => frames.filter((f) => f[field] > 0.02 && f[field] < 0.98).length;
+  const lastPull = out.pull[out.pull.length - 1];
+  const outAt = out.pull.find((f) => f.out)?.t ?? -1;
+  ok("라이브러리 움직임: transform·opacity 만", out.props.length > 0 && out.props.every((p) => p === "transform" || p === "opacity"), out.props.join(","));
+  ok(`라이브러리 움직임: 꺼내기 — 옆면이 위로 빠지며 사라지고(중간 ${mid(out.pull, "op")}프레임) 끝나면 빈칸(${outAt}ms, --pop-ms ${out.pop})`, mid(out.pull, "op") >= 2 && out.pull.some((f) => f.ty < -1) && lastPull.out && outAt >= 150 && outAt <= 400);
+  ok(`라이브러리 움직임: 꺼낸 앞면이 올라오며 나타남(중간 ${mid(out.pull, "packOp")}프레임)`, lastPull.card === out.key && mid(out.pull, "packOp") >= 2 && lastPull.packOp === 1);
+  const lastPut = out.put[out.put.length - 1];
+  const openSeen = Math.max(0, ...out.put.filter((f) => f.state === "open" && f.gridOp > 0.02).map((f) => f.t));
+  ok(`라이브러리 움직임: 넣기 — 옆면이 제자리로(끝 불투명도 ${lastPut.op}) · 칸 내용은 움직임 뒤 안내로(마지막으로 보인 ${openSeen}ms)`, !lastPut.out && lastPut.op === 1 && mid(out.put, "gridOp") >= 2 && openSeen >= 100 && lastPut.state === "empty");
+  ok("라이브러리 움직임: 페이지 오류 없음", errors.length === 0, errors.join(" | "));
+  fs.writeFileSync(path.join(SHOTS, "라이브러리_꺼내기_프레임.txt"), ["pull", "put"].map((name) => `${name}: ${out[name].map((f) => `${f.t}ms 옆면 ${f.op}/${f.ty}px${f.out ? " 빈칸" : ""} · 앞면 ${f.packOp} · 칸 ${f.state} ${f.gridOp}`).join(" | ")}`).join("\n"));
   await context.close();
 }
 

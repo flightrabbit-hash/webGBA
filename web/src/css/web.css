@@ -342,23 +342,34 @@ body:not([data-view="start"]) .start {
   line-height: 1.3;
 }
 
+/* 첫 화면 "최근 실행한 게임": 라이브러리와 같은 롬팩 앞면 한 줄(세로 3개·가로 5개까지, 들어가는 만큼 — main.js fitRecent),
+   누르면 바로 실행, 아래 "라이브러리 전체 보기 ›". 게임 화면(240:160) 안이라 높이 213px(320 세로)에도 들어가게 촘촘히. */
 .start.has-list {
   justify-content: flex-start;
   align-items: stretch;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .start.has-list .start__head {
+  flex: none;
   flex-direction: row;
   justify-content: space-between;
-  min-height: 34px;
+  min-height: 32px;
 }
 
 .start.has-list .start__hint {
-  font-family: var(--font-small);
-  font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  overflow: hidden;
+  color: var(--text-dim);
+  line-height: 20px;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .start.has-list .start__head .btn {
@@ -366,26 +377,157 @@ body:not([data-view="start"]) .start {
   flex: none;
 }
 
-.start__list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  text-align: left;
-  overscroll-behavior: contain;
+.recent {
+  display: grid;
+  flex: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 108px;
+  justify-content: center;
+  column-gap: 10px;
 }
 
-.start__list .item {
-  min-height: 46px;
+.recent__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 108px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
-.item__go {
+.recent__item .pack {
+  transition: transform 120ms var(--pop-ease);
+}
+
+.recent__item:hover .pack {
+  transform: translate3d(0, -2px, 0);
+}
+
+.recent__item:active .pack {
+  transform: none;
+}
+
+.recent__item:focus-visible {
+  outline: none;
+}
+
+.recent__item:focus-visible .pack,
+.lib__pack:focus-visible .pack {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.recent__name,
+.recent__meta {
+  display: block;
+  width: 108px;
+  height: 16px;
+  overflow: hidden;
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent__name {
+  margin-top: 6px;
+  color: var(--text);
+}
+
+.recent__meta {
+  color: var(--text-faint);
+}
+
+.recent__all {
   display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: flex-end;
+  gap: 2px;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-small);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recent__allLabel {
+  height: 16px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.recent__all .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* 롬팩 앞면(첫 화면·라이브러리 같은 모양): canvas 는 정수 배율·가장 가까운 점(main.js cssOf) */
+.pack {
+  position: relative;
+  display: block;
+  flex: none;
+}
+
+.cart__art {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.pack__label {
+  position: absolute;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  color: var(--accent);
+  padding: 0 4px;
+  overflow: hidden;
   pointer-events: none;
+}
+
+.pack__text {
+  display: -webkit-box;
+  max-width: 100%;
+  max-height: 32px;
+  overflow: hidden;
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-break: strict; /* 줄 첫머리에 ー·작은 가나가 혼자 오지 않게(일본어) */
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.pack__chip {
+  position: absolute;
+  top: -8px;
+  right: -4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--ink-accent);
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.pack__chipText {
+  display: block;
+  height: 18px;
 }
 
 .start__note {
@@ -919,6 +1061,419 @@ body[data-layout="landscape"] .key--start {
   color: var(--text-faint);
   line-height: 20px;
   text-align: center;
+}
+
+/* ── 라이브러리(책장, 사용자 결정 100 B) ──
+   세로: 위 = 꺼낸 롬팩 칸(앞면 + 이름·버전 + 동작 줄), 아래 = 책장(옆면을 꽂은 선반, 그 칸만 굴림).
+   가로: 왼쪽 책장 · 오른쪽 꺼낸 롬팩 칸(그 칸만 굴림). 패널은 화면 높이를 다 씀(고르는 게임이 바뀌어도 높이 그대로). */
+.sheet[data-sheet="library"] .sheet__panel {
+  height: 100%;
+}
+
+@media (min-width: 700px) and (min-height: 560px) {
+  .sheet[data-sheet="library"] .sheet__panel {
+    height: min(100%, 760px);
+  }
+}
+
+.sheet[data-sheet="library"] .sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  overflow: hidden;
+  padding: var(--gap-3);
+}
+
+body[data-layout="landscape"] .sheet[data-sheet="library"] .sheet__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.lib__card {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 114px;
+  padding: var(--gap-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  container: libcard / inline-size;
+}
+
+body[data-layout="landscape"] .lib__card {
+  grid-row: 1;
+  grid-column: 2;
+  justify-content: flex-start;
+  width: 248px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+body[data-layout="landscape"] .lib__card[data-state="empty"] {
+  justify-content: center;
+}
+
+/* 좁음(세로 320~360): [롬팩 | 이름·버전] + 아래 버튼 줄 / 넓음(390~): 롬팩 옆에 이름·버전과 버튼 / 가로 오른쪽 칸: 위아래로 */
+.lib__grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "pack text"
+    "btns btns";
+  align-items: center;
+  gap: var(--gap-2) var(--gap-3);
+}
+
+/* 실행 중(버튼 6개)이면 넓어도 버튼 줄은 아래 전체 폭 — 글이 잘리지 않게 */
+@container libcard (min-width: 320px) {
+  .lib__grid:not([data-running]) {
+    grid-template-areas:
+      "pack text"
+      "pack btns";
+    row-gap: var(--gap-1);
+  }
+
+  .lib__grid:not([data-running]) .lib__text {
+    align-self: end;
+  }
+
+  .lib__grid:not([data-running]) .lib__btns {
+    align-self: start;
+  }
+}
+
+@container libcard (min-width: 480px) {
+  .lib__grid .lib__btns {
+    grid-template-columns: repeat(var(--btn-cols, 4), minmax(0, 1fr));
+  }
+}
+
+body[data-layout="landscape"] .lib__grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "pack"
+    "text"
+    "btns";
+  row-gap: var(--gap-2);
+}
+
+body[data-layout="landscape"] .lib__grid .lib__pack {
+  justify-self: center;
+}
+
+.lib__grid .lib__pack {
+  grid-area: pack;
+}
+
+.lib__grid .lib__text {
+  grid-area: text;
+}
+
+.lib__grid .lib__btns {
+  grid-area: btns;
+}
+
+.lib__pack {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.lib__pack:focus-visible {
+  outline: none;
+}
+
+.lib__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lib__line {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-1);
+  height: 32px;
+}
+
+.lib__line .tool--small {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+
+.lib__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib__meta {
+  display: block;
+  height: 16px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib__btns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lib__btns .btn {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 6px;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.lib__hint {
+  margin: 0;
+  height: 20px;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.lib__shelf {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--gap-2);
+  min-width: 0;
+  min-height: 0;
+}
+
+body[data-layout="landscape"] .lib__shelf {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.lib__scroll {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--gap-2);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lib__scroll .note {
+  flex: none;
+  margin: 0;
+}
+
+.lib__shelfHead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-2);
+  height: 32px;
+}
+
+.lib__count {
+  height: 16px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.lib__shelfHead .btn {
+  flex: none;
+}
+
+/* 책장: 한 칸(--slot-h = 위 표시 자리 14 + 옆면 + 선반 14)마다 선반 판(윗면·앞면·그림자)을 배경으로 — 굴려도 같이 움직임 */
+.lib__case {
+  --board: calc(var(--slot-h, 116px) - 14px);
+  display: flex;
+  flex: 1 0 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0 2px;
+  min-height: var(--slot-h, 116px);
+  padding: 0 8px;
+  border-radius: 6px;
+  background-color: var(--bg-sunken);
+  background-image: repeating-linear-gradient(to bottom, transparent 0 var(--board), var(--line-strong) var(--board) calc(var(--board) + 4px), var(--bg-hover) calc(var(--board) + 4px) calc(var(--board) + 10px), rgba(0, 0, 0, 0.45) calc(var(--board) + 10px) calc(var(--board) + 12px), transparent calc(var(--board) + 12px) var(--slot-h, 116px));
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.spine {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  height: var(--slot-h, 116px);
+  padding: 0 0 14px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.spine__art {
+  position: relative;
+  display: block;
+  transition: transform 120ms var(--pop-ease);
+}
+
+.spine:hover .spine__art {
+  transform: translate3d(0, -3px, 0);
+}
+
+.spine:focus-visible {
+  outline: none;
+}
+
+.spine:focus-visible .spine__art {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.spine__name {
+  position: absolute;
+  overflow: hidden;
+  font-family: var(--font-small);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  pointer-events: none;
+}
+
+.spine__run {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--accent);
+}
+
+.spine__gap {
+  position: absolute;
+  inset: 0;
+  display: none;
+  border: 2px dashed var(--line-strong);
+  border-radius: 3px;
+}
+
+.spine.is-out .spine__art > :not(.spine__gap) {
+  visibility: hidden;
+}
+
+.spine.is-out .spine__gap {
+  display: block;
+}
+
+.spine.is-out:hover .spine__art {
+  transform: none;
+}
+
+.spine--add {
+  width: 40px;
+  color: var(--text-faint);
+}
+
+.spine--add::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 14px;
+  height: 88px;
+  border: 2px dashed var(--line-strong);
+  border-radius: 4px;
+}
+
+.spine--add .icon {
+  position: absolute;
+  left: 10px;
+  bottom: 48px;
+}
+
+.spine--add:hover {
+  color: var(--accent);
+}
+
+.lib__empty {
+  flex: none;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  word-break: keep-all;
+}
+
+.start__actions--left {
+  justify-content: flex-start;
+  margin-bottom: var(--gap-3);
+}
+
+/* 가로이면서 낮은 화면(568x320 등): 꺼낸 롬팩 칸(롬팩·이름·버튼 두 줄)이 굴리지 않고 들어가게 여백만 줄임 */
+@media (max-height: 360px) {
+  body[data-layout="landscape"] .sheet[data-sheet="library"] .sheet__body {
+    gap: var(--gap-2);
+    padding: var(--gap-2);
+  }
+
+  body[data-layout="landscape"] .lib__card {
+    padding: var(--gap-2);
+  }
+
+  body[data-layout="landscape"] .lib__grid {
+    row-gap: 6px;
+  }
+
+  body[data-layout="landscape"] .lib__line {
+    height: 28px;
+  }
+
+  body[data-layout="landscape"] .lib__line .tool--small {
+    width: 28px;
+    height: 28px;
+  }
+
+  body[data-layout="landscape"] .lib__btns {
+    gap: 4px;
+  }
+
+  body[data-layout="landscape"] .lib__btns .btn {
+    min-height: 32px;
+  }
 }
 
 .field {

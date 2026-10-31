@@ -11,6 +11,7 @@ import * as store from "./store.js";
 import { DIR_MODES, DIRS, PAD_KEYS, VirtualPad } from "./pad.js";
 import { extractRom, ZipError } from "./zip.js";
 import { Skin } from "./skin.js";
+import * as cartArt from "./cart.js";
 import { BUILD } from "./build-info.js";
 
 const { t } = i18n;
@@ -35,6 +36,7 @@ const el = {
   startOpen: $("startOpen"),
   startHint: $("startHint"),
   startList: $("startList"),
+  startAll: $("startAll"),
   frame: $("frame"),
   pauseVeil: $("pauseVeil"),
   veilResume: $("veilResume"),
@@ -92,6 +94,8 @@ const state = {
   dragDepth: 0,
   quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0 },
   extra: null,
+  // 라이브러리: sel = 꺼낸 롬팩(보관 키), refs = 지금 그린 책장 노드, savesFor = 세이브 창을 한 게임만 걸러 볼 때
+  lib: { sel: "", refs: null, savesFor: null, token: 0 },
 };
 
 const holds = new Set();
@@ -400,6 +404,7 @@ function layout() {
   pad.enabled = padOn;
   if (!padOn) pad.releaseAll();
   pad.invalidate();
+  fitRecent();
   requestAnimationFrame(() => {
     centerInk(document);
     centerIcons(document);
@@ -427,7 +432,10 @@ function syncTools() {
 
 function syncControls() {
   const running = Boolean(state.game);
-  document.body.dataset.view = running ? "game" : "start";
+  const view = running ? "game" : "start";
+  const back = document.body.dataset.view !== view && !running;
+  document.body.dataset.view = view;
+  if (back) fitRecent();
   const userPaused = running && holds.has("user");
   el.btnFast.setAttribute("aria-pressed", String(player.gameSpeed !== 1));
   // 값이 같으면 쓰지 않는다: hidden·글자를 같은 값으로 다시 써도 MutationObserver 가 깨어 다음 프레임에
@@ -619,8 +627,8 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty";
-const INK_BLOCK = ".item__main, .field__text";
+const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText";
+const INK_BLOCK = ".item__main, .field__text, .pack__label";
 
 function inkShift(contentTop, contentBottom, ink) {
   const dpr = window.devicePixelRatio || 1;
@@ -988,6 +996,14 @@ async function keepRom(name, bytes, { id = "", added = 0, sha1 = "", file = name
 const saveIdOf = (meta) => meta?.gameId || meta?.id || "";
 const titleOf = (meta) => (meta?.gameId ? pickText(meta.title, i18n.lang()) || meta.name : meta?.name ?? "");
 const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
+// 라이브러리에 보일 이름: 설명서 게임은 설명서 이름(사람이 이름을 바꿨으면 그 이름), 그 밖은 보관 이름(확장자 뺌).
+const GAME_EXT = /\.(gba|agb|bin|zip|wgba|wasm)$/i;
+const bareName = (name) => String(name ?? "").replace(GAME_EXT, "") || String(name ?? "");
+const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareName(rom.name) : bareName(rom?.name));
+// 옆면 세로 글: shortName → 이름
+const spineName = (rom) => (rom?.gameId && !rom.named ? pickText(rom.shortName, i18n.lang()) || displayName(rom) : displayName(rom));
+// 롬팩 아래 작은 글: .wgba 설명서 = v1.2.0, 옛 .wgba 로 되돌린 게임 = "옛 .wgba", 그 밖 = 형식
+const kindText = (rom) => (rom.gameId ? (rom.version ? `v${rom.version}` : t("web.lib.oldWgba")) : `.${rom.type}`);
 
 /** 목차가 있으면 readWgba 결과, 없으면 null. 망가졌으면 보일 문장으로 던짐. */
 async function inspectWgba(bytes) {
@@ -1042,10 +1058,70 @@ async function oldSameGame(info, roms) {
  * 같은 id 가 없으면 옛 .wgba 항목을 찾아 세이브·퀵슬롯을 게임 id 로 옮기고 그 항목을 새 것으로 바꾼다.
  * 돌려주는 값 { meta, note, wgba } · 사용자가 그만두면 null.
  */
-async function importGame(name, bytes, { replace = null, sha1 = "", file = name, keepName = true } = {}) {
+// 라이브러리의 버전 글: 설명서 게임은 버전, 옛 .wgba 로 되돌린 게임은 "옛 .wgba"
+const versionText = (rom) => (rom?.version ? rom.version : t("web.lib.oldWgba"));
+
+/** 낮은 버전 경고(기본 단추 아니요). true = 이 파일로 바꾸기, false = 라이브러리에 있던 버전을 그대로 엶(결정 102-6). */
+async function askOlder(shown, now, version, oldFile = false) {
+  const go = await openDialog({
+    title: t("web.wgba.olderTitle"),
+    body: [oldFile ? t("web.wgba.olderOldText", { name: shown, now }) : t("web.wgba.olderText", { name: shown, now, version })],
+    actions: [
+      { label: t("web.wgba.olderUse"), value: true, danger: true, id: "older-use" },
+      { label: t("web.wgba.olderKeep"), value: false, primary: true, id: "older-keep" },
+    ],
+  });
+  return Boolean(go);
+}
+
+const keptStored = (same, shown) => ({ meta: same, note: t("web.wgba.olderKept", { name: shown, version: versionText(same) }), wgba: undefined, stored: true });
+
+/**
+ * 결정 102-4: 세이브를 옮긴 뒤 옛 .wgba(목차 없음)를 다시 열면 따로 한 줄 만들지 않고, 롬 구획 SHA-1 이 같은 게임 id 항목의 "낮은 버전"으로 본다.
+ * 바꾸기 = 그 항목의 게임 파일만 옛 파일로(보관 id·게임 id 그대로라 세이브·퀵슬롯 이어짐, 버전·빌드·롬팩 그림은 비움).
+ * 돌려주는 값: 처리했으면 importGame 과 같은 꼴, 해당 없으면 null.
+ */
+async function oldFileOfGame(name, bytes, { sha1, file, type }) {
+  const romSha1 = storedRomSha1(bytes);
+  if (!romSha1) return null;
+  let roms = [];
+  try {
+    roms = await store.list(store.KIND_ROM);
+  } catch {
+    return null;
+  }
+  const same = roms.filter((item) => item.gameId && item.romSha1 === romSha1).sort(byOpened)[0] ?? null;
+  if (!same) return null;
+  const shown = displayName(same);
+  if (!same.version) return { meta: same, note: t("web.wgba.same", { name: shown, version: versionText(same) }), wgba: undefined, stored: true };
+  if (!(await askOlder(shown, same.version, "", true))) return keptStored(same, shown);
+  const meta = { ...same, file, type, sha1, version: "", build: "", cart: {} };
+  delete meta.key;
+  delete meta.kind;
+  delete meta.size;
+  delete meta.opened;
+  try {
+    await store.persist();
+    const saved = await store.putGame(meta, bytes);
+    cartArt.forgetImages(same.id);
+    logLine("INFO", `옛 .wgba 로 되돌림 ${same.gameId} ${same.version} → 옛 파일(${saved.record.key})`);
+    return { meta: saved.record, note: t("web.wgba.downgraded", { name: shown, from: same.version, to: t("web.lib.oldWgba") }), wgba: null };
+  } catch (error) {
+    storeFailed(error);
+    return { meta: { ...meta, key: store.romKey(meta.id), kind: store.KIND_ROM, size: bytes.length, transient: true }, note: "", wgba: null };
+  }
+}
+
+async function importGame(name, bytes, { replace = null, sha1 = "", file = name, keepName = true, named = false } = {}) {
   const type = typeOf(file);
   const wgba = type === "wgba" || type === "wasm" ? await inspectWgba(bytes) : null;
-  if (!wgba) return { meta: await keepRom(name, bytes, { id: replace?.id ?? "", added: replace?.added ?? 0, sha1, file }), note: "", wgba: null };
+  if (!wgba) {
+    if (!replace && (type === "wgba" || type === "wasm")) {
+      const old = await oldFileOfGame(name, bytes, { sha1, file, type });
+      if (old) return old;
+    }
+    return { meta: await keepRom(name, bytes, { id: replace?.id ?? "", added: replace?.added ?? 0, sha1, file }), note: "", wgba: null };
+  }
   const problem = supportProblem(wgba.manifest);
   if (problem) throw new Error(problemText(problem));
   const info = gameInfo(wgba);
@@ -1059,23 +1135,13 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
   let target = null;
   let moveFrom = "";
   if (same) {
-    const action = updateAction({ version: same.version, build: same.build }, { version: info.version, build: info.build });
+    // 옛 .wgba 로 되돌려 둔 항목(버전 없음)은 어떤 새 파일이든 업데이트
+    const action = same.version ? updateAction({ version: same.version, build: same.build }, { version: info.version, build: info.build }) : "update";
     if (action === "older") {
-      const go = await openDialog({
-        title: t("web.wgba.olderTitle"),
-        body: [t("web.wgba.olderText", { name: shown, now: same.version, version: info.version })],
-        actions: [
-          { label: t("web.wgba.olderUse"), value: true, danger: true, id: "older-use" },
-          { label: t("web.wgba.olderKeep"), value: false, primary: true, id: "older-keep" },
-        ],
-      });
-      if (!go) {
-        toast(t("web.wgba.olderKept", { name: shown, version: same.version }), "warn");
-        return null;
-      }
+      if (!(await askOlder(shown, same.version, info.version))) return keptStored(same, shown);
       note = t("web.wgba.downgraded", { name: shown, from: same.version, to: info.version });
     } else if (action === "update") {
-      note = same.version === info.version ? t("web.wgba.rebuilt", { name: shown, version: info.version }) : t("web.wgba.updated", { name: shown, from: same.version, to: info.version });
+      note = same.version === info.version ? t("web.wgba.rebuilt", { name: shown, version: info.version }) : t("web.wgba.updated", { name: shown, from: versionText(same), to: info.version });
     } else {
       note = t("web.wgba.same", { name: shown, version: info.version });
     }
@@ -1085,7 +1151,8 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
     if (target) moveFrom = target.id;
     else if (replace) target = replace;
   }
-  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, file, type, sha1, added: target?.added ?? 0 };
+  // named = 사람이 정한 이름(이름 바꾸기·패치에서 고른 이름) → 라이브러리에 그 이름, 아니면 설명서 이름
+  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, named: keepName ? Boolean(target?.named) : named, file, type, sha1, added: target?.added ?? 0 };
   const carts = Object.entries(wgba.images).map(([part, image]) => ({ part, bytes: image.bytes, format: image.format, width: image.width, height: image.height }));
   let saved = null;
   await store.persist();
@@ -1110,8 +1177,11 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
   if (moveFrom) {
     const { moved } = saved;
     logLine("INFO", `옛 .wgba 세이브를 게임 id 로 옮김 ${moveFrom} → ${info.gameId} (세이브 ${moved.save ? 1 : 0} · 퀵슬롯 ${moved.states})`);
-    if (moved.save || moved.states) note = t("web.wgba.migrated", { name: shown, version: info.version });
+    // 결정 102-7: 옮긴 것에 맞게 "세이브를" / "퀵슬롯을" / "세이브·퀵슬롯을"
+    const what = moved.save && moved.states ? "web.wgba.migrated" : moved.save ? "web.wgba.migratedSave" : "web.wgba.migratedStates";
+    if (moved.save || moved.states) note = t(what, { name: shown, version: info.version });
   }
+  cartArt.forgetImages(saved.record.id);
   if (replace && replace.id !== saved.record.id) {
     await store.remove(replace.key).catch(() => {});
     await store.removeCarts(replace.id).catch(() => {});
@@ -1354,7 +1424,7 @@ async function makeFromPatch(fileName, bytes, romFile) {
   loader.set("store", 0);
   let kept;
   try {
-    kept = await importGame(chosen.name, made.wgba, { replace: chosen.replace, sha1: made.sha1, file: `${fallback}.wgba`, keepName: false });
+    kept = await importGame(chosen.name, made.wgba, { replace: chosen.replace, sha1: made.sha1, file: `${fallback}.wgba`, keepName: false, named: chosen.name !== fallback });
   } catch (error) {
     await loader.fail(reason(error), "store");
     state.loader = null;
@@ -1364,6 +1434,17 @@ async function makeFromPatch(fileName, bytes, romFile) {
     loader.close();
     state.loader = null;
     return null;
+  }
+  if (kept.stored) {
+    const stored = await store.bytes(kept.meta.key).catch(() => null);
+    if (!stored) {
+      loader.close();
+      state.loader = null;
+      toast(t("web.lib.missing"), "warn");
+      return null;
+    }
+    loader.set("store", 1);
+    return { meta: kept.meta, bytes: stored, loader, wgba: undefined, note: kept.note };
   }
   loader.set("store", 1);
   logLine("INFO", `패치로 만듦 ${fileName} + ${file.name} → ${chosen.name} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"})`);
@@ -1391,7 +1472,7 @@ async function launch(meta, bytes, { note = "", loader = null, wgba = undefined 
   }
   loader?.finish();
   state.loader = null;
-  if (!note && meta.gameId) note = t("web.wgba.opened", { name: titleOf(meta), version: meta.version });
+  if (!note && meta.gameId) note = t("web.wgba.opened", { name: displayName(meta), version: versionText(meta) });
   if (!meta.transient) {
     savePrefs({ lastGame: store.romKey(meta.id) });
     store.patch(store.romKey(meta.id), { opened: Date.now() }).catch(() => {});
@@ -1444,8 +1525,20 @@ function openFile(file, patchRom = null) {
     }
     const kept = await importGame(name, bytes);
     if (!kept) return false;
+    if (kept.stored) return launchStored(kept);
     return launch(kept.meta, bytes, { note: kept.note, wgba: kept.wgba });
   });
+}
+
+// 낮은 버전 경고에서 "아니요" → 라이브러리에 있던 버전을 그대로 엶(결정 102-6)
+async function launchStored(kept, loader = null) {
+  const bytes = await store.bytes(kept.meta.key).catch(() => null);
+  if (!bytes) {
+    loader?.close();
+    toast(t("web.lib.missing"), "warn");
+    return false;
+  }
+  return launch(kept.meta, bytes, { note: kept.note, loader });
 }
 
 function openStored(key) {
@@ -1488,35 +1581,127 @@ async function closeGame({ quiet = false } = {}) {
   if (!quiet) toast(t("status.closed"));
 }
 
-// 설명서가 있는 게임은 목록 한 줄에 "포켓몬 Rapid v1.2.0"(롬팩 진열은 라이브러리 묶음에서)
-const gameLine = (rom) => (rom.gameId ? t("web.lib.gameVersion", { name: titleOf(rom), version: rom.version }) : "");
+// ── 롬팩 그림 노드(라이브러리·첫 화면 같은 모양) ──
+
+/** 그림 픽셀 → CSS px(정수 배율). */
+const cssOf = (model, value) => (value * model.unit) / model.k;
+
+/** rom → { model, images, body } — 그림 바이트는 IndexedDB 에서 한 번 풀어 둔다(cart.js 캐시). */
+async function cartLook(rom, body) {
+  const model = cartArt.cartModel(rom);
+  const images = model.parts.length ? await cartArt.cartImages(rom, model, (part) => store.cartBytes(rom.id, part).catch(() => null)) : {};
+  return { model, images, body };
+}
+
+function sizeCanvas(canvas, model) {
+  canvas.className = "cart__art";
+  canvas.style.width = `${cssOf(model, canvas.width)}px`;
+  canvas.style.height = `${cssOf(model, canvas.height)}px`;
+  return canvas;
+}
+
+/** 앞면(몸통 + 라벨). 라벨 그림이 없으면 라벨 자리에 이름(두 줄까지, 잉크 기준 가운데). */
+function packNode(rom, look, { running = false } = {}) {
+  const { model, images, body } = look;
+  const { canvas, textBox, paper } = cartArt.drawFront(model, images, body);
+  const node = make("span", "pack");
+  node.style.width = `${cssOf(model, canvas.width)}px`;
+  node.style.height = `${cssOf(model, canvas.height)}px`;
+  node.append(sizeCanvas(canvas, model));
+  if (textBox) {
+    const label = make("span", "pack__label");
+    Object.assign(label.style, { left: `${cssOf(model, textBox[0])}px`, top: `${cssOf(model, textBox[1])}px`, width: `${cssOf(model, textBox[2])}px`, height: `${cssOf(model, textBox[3])}px`, color: cartArt.LABEL_INK, backgroundColor: paper });
+    label.append(make("span", "pack__text", displayName(rom)));
+    node.append(label);
+  }
+  if (running) {
+    // 칩 바탕은 그대로 두고 글만 잉크 가운데로 옮기게 안에 한 겹
+    const chip = make("span", "pack__chip");
+    chip.append(make("span", "pack__chipText", t("web.lib.current")));
+    node.append(chip);
+  }
+  return node;
+}
+
+/** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
+function spineArt(rom, look) {
+  const { model, images, body } = look;
+  const canvas = cartArt.drawSpine(model, images, body);
+  const art = make("span", "spine__art");
+  art.style.width = `${cssOf(model, canvas.width)}px`;
+  art.style.height = `${cssOf(model, canvas.height)}px`;
+  art.append(sizeCanvas(canvas, model));
+  if (model.textArea) {
+    const [x, y, w, h] = model.textArea.map((v) => cssOf(model, v));
+    const name = make("span", "spine__name", spineName(rom));
+    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, lineHeight: `${w}px`, color: cartArt.LABEL_INK });
+    art.append(name);
+  }
+  return art;
+}
+
+async function loadRoms() {
+  const roms = await store.list(store.KIND_ROM);
+  let saves = new Set();
+  try {
+    saves = new Set((await store.list(store.KIND_SAVE)).map((save) => save.id));
+  } catch {}
+  return { roms, saves };
+}
+
+const RECENT_MAX = { portrait: 3, landscape: 5 };
+const PACK_W = cartArt.FRONT[0] * cartArt.UNIT;
+
+/** 첫 화면 최근 줄: 들어가는 만큼(세로 3개·가로 5개까지)만 보인다. layout() 이 화면 크기를 바꿀 때마다. */
+// 롬팩 사이 간격은 10px 이 기본이고, 하나 더 들어갈 수 있으면 4px 까지 좁힌다(롬팩은 줄이지 않음).
+const RECENT_GAP = { max: 10, min: 4 };
+
+function fitRecent() {
+  const items = [...el.startList.children];
+  if (!items.length || el.startList.hidden) return;
+  const width = el.startList.clientWidth;
+  if (!width) return; // 게임 중(첫 화면 숨김) — 첫 화면으로 돌아올 때 syncControls 가 다시 부른다
+  const fit = Math.max(1, Math.floor((width + RECENT_GAP.min) / (PACK_W + RECENT_GAP.min)));
+  const want = Math.min(fit, items.length, RECENT_MAX[document.body.dataset.layout] ?? 3);
+  const gap = want > 1 ? clamp(Math.floor((width - want * PACK_W) / (want - 1)), RECENT_GAP.min, RECENT_GAP.max) : RECENT_GAP.max;
+  const gapText = `${gap}px`;
+  if (el.startList.style.columnGap !== gapText) el.startList.style.columnGap = gapText;
+  items.forEach((item, index) => {
+    const hide = index >= want;
+    if (item.hidden !== hide) item.hidden = hide;
+  });
+}
 
 async function refreshStart() {
   let roms = [];
   let saves = new Set();
   try {
-    roms = (await store.list(store.KIND_ROM)).sort((a, b) => (b.opened ?? 0) - (a.opened ?? 0));
-    saves = new Set((await store.list(store.KIND_SAVE)).map((save) => save.id));
+    ({ roms, saves } = await loadRoms());
+    roms.sort(byOpened);
   } catch {}
-  el.startHint.textContent = t(coarse.matches ? "web.start.pick" : "web.start.pickDrop");
+  const token = (state.startToken = (state.startToken ?? 0) + 1);
+  const body = cartArt.themeBody();
+  const recent = roms.slice(0, RECENT_MAX.landscape);
+  const looks = await Promise.all(recent.map((rom) => cartLook(rom, body)));
+  if (token !== state.startToken) return;
+  el.startHint.textContent = roms.length ? t("web.start.recent") : t(coarse.matches ? "web.start.pick" : "web.start.pickDrop");
   el.startList.replaceChildren(
-    ...roms.slice(0, 20).map((rom) =>
-      item({
-        key: rom.key,
-        name: rom.name,
-        meta: join(gameLine(rom), fmtSize(rom.size), t("web.start.lastPlayed", { time: fmtTime(rom.opened) }), saves.has(saveIdOf(rom)) ? t("web.start.hasSave") : ""),
-        onOpen: () => openStored(rom.key),
-        actions: [(() => {
-          const mark = make("span", "item__go");
-          mark.append(iconNode("player-play"));
-          return mark;
-        })()],
-      }),
-    ),
+    ...recent.map((rom, index) => {
+      const node = make("button", "recent__item");
+      node.type = "button";
+      node.dataset.key = rom.key;
+      node.setAttribute("aria-label", displayName(rom));
+      node.append(packNode(rom, looks[index]), make("span", "recent__name", displayName(rom)), make("span", "recent__meta", join(kindText(rom), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : "")));
+      node.addEventListener("click", () => openStored(rom.key));
+      return node;
+    }),
   );
   el.startList.hidden = roms.length === 0;
+  el.startAll.hidden = roms.length === 0;
+  el.startAll.querySelector(".recent__allLabel").textContent = t("web.start.all", { count: roms.length });
   document.getElementById("start").classList.toggle("has-list", roms.length > 0);
   if (roms.length) el.startList.setAttribute("aria-label", t("web.start.recent"));
+  fitRecent();
 }
 
 function togglePause() {
@@ -1560,6 +1745,8 @@ function toggleFullscreen() {
 
 function openSheet(name) {
   state.sheet = name;
+  if (name !== "saves") state.lib.savesFor = null;
+  el.sheet.dataset.sheet = name;
   showNow(el.sheet);
   if (!state.sheetHistory) {
     history.pushState({ webgbaSheet: true }, "");
@@ -1573,9 +1760,11 @@ function openSheet(name) {
 function closeSheet({ fromHistory = false } = {}) {
   if (!state.sheet) return;
   state.sheet = "";
+  state.lib.savesFor = null;
   hideLater(el.sheet, () => {
     if (state.sheet) return;
     el.sheetBody.replaceChildren();
+    state.lib.refs = null;
     revokeQuickUrls();
   });
   hold("sheet", false);
@@ -1618,61 +1807,243 @@ async function storageLine() {
   return estimate?.quota ? t("web.storageUse", { used: fmtSize(estimate.usage ?? 0), quota: fmtSize(estimate.quota) }) : "";
 }
 
+// ── 라이브러리(책장) — 사용자 결정 100: 롬팩을 옆면(등)으로 꽂아 진열, 고르면 꺼내 앞면(몸통 + 라벨)과 동작 줄 ──
+// 꺼내기·넣기 움직임은 transform·opacity 만(Web Animations, 햄버거·시트와 같은 --pop-ms·--pop-ease), 닫을 때는 움직임 뒤 숨김.
+
+const popEase = () => getComputedStyle(document.documentElement).getPropertyValue("--pop-ease").trim() || "ease-out";
+const LIFT = "translate3d(0, -16px, 0)";
+const DROP = "translate3d(0, 16px, 0)";
+
+/** transform·opacity 움직임. 움직임 줄이기면 바로 끝. 돌려주는 값 = 끝나는 Promise. */
+function motion(node, frames, { fill = "none" } = {}) {
+  const ms = popMs();
+  if (!node || !ms || !node.animate) return Promise.resolve();
+  const run = node.animate(frames, { duration: ms, easing: popEase(), fill });
+  return run.finished.then(
+    () => run,
+    () => run,
+  );
+}
+
+const libSort = () => (state.prefs.libSort === "name" ? "name" : "recent");
+
+function sortRoms(roms) {
+  if (libSort() === "name") {
+    const collator = new Intl.Collator(i18n.locale(), { numeric: true, sensitivity: "base" });
+    return roms.sort((a, b) => collator.compare(displayName(a), displayName(b)) || byOpened(a, b));
+  }
+  return roms.sort(byOpened);
+}
+
 async function renderLibrary() {
   el.sheetTitle.textContent = t("web.library");
+  const token = ++state.lib.token;
   let roms = [];
+  let saves = new Set();
   let failed = false;
   try {
-    roms = (await store.list(store.KIND_ROM)).sort((a, b) => (b.opened ?? 0) - (a.opened ?? 0));
+    ({ roms, saves } = await loadRoms());
   } catch {
     failed = true;
   }
-  if (state.sheet !== "library") return;
-  const list = make("ul", "list");
-  list.dataset.kind = store.KIND_ROM;
-  for (const rom of roms) {
-    const current = state.game?.id === rom.id;
-    list.append(
-      item({
-        key: rom.key,
-        name: rom.name,
-        meta: join(gameLine(rom), `.${rom.type}`, fmtSize(rom.size), t("web.lib.added", { date: fmtTime(rom.added) }), current ? t("web.lib.current") : ""),
-        current,
-        onOpen: () => {
-          closeSheet();
-          openStored(rom.key);
-        },
-        actions: [
-          button({ kind: "tool", icon: "pencil", title: t("web.rename"), action: "rename", onClick: () => renameRom(rom) }),
-          button({ kind: "tool", icon: "trash", title: t("web.delete"), action: "delete", onClick: () => deleteRom(rom) }),
-        ],
-      }),
-    );
-  }
+  sortRoms(roms);
+  const body = cartArt.themeBody();
+  const looks = await Promise.all(roms.map((rom) => cartLook(rom, body)));
   const total = roms.reduce((sum, rom) => sum + (rom.size ?? 0), 0);
   const line = await storageLine();
-  if (state.sheet !== "library") return;
-  const playing = state.game
-    ? group(
-        t("web.save.currentGame", { name: state.game.name }),
-        (() => {
-          const row = make("div", "start__actions");
-          row.append(
-            button({ label: t("menu.reset"), icon: "refresh", action: "reset", onClick: () => (closeSheet(), resetGame()) }),
-            button({ label: t("web.closeGame"), icon: "x", action: "close-game", onClick: () => (closeSheet(), closeGame()) }),
-          );
-          return row;
-        })(),
-      )
-    : null;
-  el.sheetBody.replaceChildren(
-    ...(playing ? [playing] : []),
-    group(t("web.lib.files"), roms.length ? list : make("p", "empty", failed ? t("web.noStore") : t("web.lib.empty")), make("p", "note", t("web.lib.noExport"))),
-    group(
-      "",
-      make("p", "note", join(t("web.lib.usage", { count: roms.length, size: fmtSize(total) }), line)),
-    ),
+  if (state.sheet !== "library" || token !== state.lib.token) return;
+  const lib = state.lib;
+  if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
+  const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
+  // 책장 한 칸 높이 = 위 표시 자리 14 + 가장 큰 옆면 + 선반 14(옆면 그림이 k 3·4 로 크면 그만큼)
+  const spineH = Math.max(cartArt.SPINE[1] * cartArt.UNIT, ...looks.map((look) => cartArt.SPINE[1] * look.model.unit));
+
+  const card = make("section", "lib__card");
+  card.setAttribute("aria-live", "polite");
+  const head = make("div", "lib__shelfHead");
+  const sortBtn = button({ label: t(libSort() === "name" ? "web.lib.sortName" : "web.lib.sortRecent"), icon: "sort-descending", title: t("web.lib.sort"), kind: "small", action: "sort", onClick: () => {
+    savePrefs({ libSort: libSort() === "name" ? "recent" : "name" });
+    renderSheet();
+  } });
+  head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })), sortBtn);
+  const shelf = make("div", "lib__case");
+  shelf.style.setProperty("--slot-h", `${spineH + 28}px`);
+  shelf.setAttribute("role", "group");
+  shelf.setAttribute("aria-label", t("web.library"));
+  const spines = new Map();
+  for (const rom of roms) {
+    const slot = make("button", "spine");
+    slot.type = "button";
+    slot.dataset.key = rom.key;
+    slot.setAttribute("aria-label", displayName(rom));
+    slot.title = displayName(rom);
+    // 꺼내면 옆면 그림 자리에 점선 빈칸(.spine__gap), 실행 중이면 위에 작은 네모
+    const art = spineArt(rom, byKey.get(rom.key).look);
+    art.append(make("span", "spine__gap"));
+    if (state.game?.id === rom.id) art.append(make("span", "spine__run"));
+    slot.append(art);
+    slot.addEventListener("click", () => pickSpine(rom.key));
+    spines.set(rom.key, slot);
+    shelf.append(slot);
+  }
+  const add = make("button", "spine spine--add");
+  add.type = "button";
+  add.dataset.action = "add-file";
+  add.title = t("web.openShort");
+  add.setAttribute("aria-label", t("web.openShort"));
+  add.append(iconNode("plus"));
+  add.addEventListener("click", () =>
+    pickFile({ multiple: true }).then((files) => {
+      if (!files.length) return;
+      closeSheet();
+      openFiles(files);
+    }),
   );
+  shelf.append(add);
+  const shelfBox = make("div", "lib__shelf");
+  // 책장 + 안내 줄을 한 굴림 칸에(낮은 화면에서도 안내 줄이 잘리지 않게). 게임이 적으면 책장이 빈 선반으로 칸을 채움.
+  const scroller = make("div", "lib__scroll");
+  const notes = [make("p", "note", join(t("web.lib.usage", { count: roms.length, size: fmtSize(total) }), line)), make("p", "note", t("web.lib.noExport"))];
+  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : t("web.lib.empty")), ...notes);
+  else scroller.append(shelf, ...notes);
+  shelfBox.append(head, scroller);
+  lib.refs = { card, spines, byKey, saves };
+  for (const [key, slot] of spines) slot.classList.toggle("is-out", key === lib.sel);
+  for (const [key, slot] of spines) slot.setAttribute("aria-pressed", String(key === lib.sel));
+  fillCard(lib.sel);
+  const children = roms.length ? [card, shelfBox] : [shelfBox];
+  el.sheetBody.replaceChildren(...children);
+  // 꺼낸 롬팩 자리가 책장 굴림 칸 밖이면 그 칸만 굴려 보이게(문서 전체는 굴리지 않음)
+  const target = spines.get(lib.sel);
+  if (target && target.offsetTop + target.offsetHeight > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = Math.max(0, target.offsetTop - (scroller.clientHeight - target.offsetHeight) / 2);
+}
+
+/** 꺼낸 롬팩 칸: 앞면 + 이름·버전·크기 + 동작 줄. key 가 없으면 "롬팩을 누르면 꺼냅니다" 안내. */
+function fillCard(key) {
+  const refs = state.lib.refs;
+  if (!refs) return null;
+  const { card, byKey, saves } = refs;
+  const entry = byKey.get(key);
+  card.dataset.key = key || "";
+  if (!entry) {
+    card.dataset.state = "empty";
+    card.replaceChildren(make("p", "lib__hint", t("web.lib.pick")));
+    return null;
+  }
+  const { rom, look } = entry;
+  const running = state.game?.id === rom.id;
+  card.dataset.state = "open";
+  const pack = make("button", "lib__pack");
+  pack.type = "button";
+  pack.dataset.action = running ? "resume" : "open";
+  pack.setAttribute("aria-label", t(running ? "web.lib.resume" : "web.lib.open"));
+  pack.append(packNode(rom, look, { running }));
+  pack.addEventListener("click", () => openFromLibrary(rom));
+  const side = make("div", "lib__text");
+  const nameRow = make("div", "lib__line");
+  nameRow.append(make("span", "lib__name", displayName(rom)), button({ kind: "tool", icon: "info-circle", title: t("web.lib.info"), action: "info", onClick: () => showGameInfo(rom) }));
+  const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? ".wgba" : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : ""));
+  const btns = make("div", "lib__btns");
+  const act = (label, icon, action, onClick, kind = "") => button({ label, icon, action, kind, onClick });
+  const list = running
+    ? [
+        act(t("web.lib.resume"), "player-play", "resume", () => openFromLibrary(rom), "primary"),
+        act(t("web.saves"), "device-floppy", "saves", () => openGameSaves(rom)),
+        act(t("menu.reset"), "refresh", "reset", () => (closeSheet(), resetGame())),
+        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet())),
+        act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
+        act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
+      ]
+    : [
+        act(t("web.lib.open"), "player-play", "open", () => openFromLibrary(rom), "primary"),
+        act(t("web.saves"), "device-floppy", "saves", () => openGameSaves(rom)),
+        act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
+        act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
+      ];
+  btns.style.setProperty("--btn-cols", String(running ? 3 : 4));
+  btns.append(...list);
+  side.append(nameRow, meta);
+  // 격자: 좁으면 [롬팩 | 이름·버전] 아래 버튼 줄, 넓으면 롬팩 옆에 이름·버튼, 가로 화면 오른쪽 칸은 위아래로(web.css)
+  const grid = make("div", "lib__grid");
+  if (running) grid.dataset.running = "1";
+  grid.append(pack, side, btns);
+  card.replaceChildren(grid);
+  return pack;
+}
+
+/** 옆면을 누름: 다른 롬팩이면 꺼내고(이전 것은 제자리에 넣음), 꺼낸 자리(빈칸)를 누르면 넣음. */
+function pickSpine(key) {
+  const lib = state.lib;
+  const refs = lib.refs;
+  if (!refs) return;
+  const prev = lib.sel;
+  const next = prev === key ? "" : key;
+  lib.sel = next;
+  const back = refs.spines.get(prev);
+  const out = refs.spines.get(next);
+  if (back) {
+    back.classList.remove("is-out");
+    back.setAttribute("aria-pressed", "false");
+    motion(back.querySelector(".spine__art"), [
+      { transform: LIFT, opacity: 0 },
+      { transform: "none", opacity: 1 },
+    ]);
+  }
+  if (out) {
+    out.setAttribute("aria-pressed", "true");
+    const art = out.querySelector(".spine__art");
+    // 끝 모습을 붙잡아 두었다가(fill forwards) 빈칸으로 바꾼 뒤 풀어 한 프레임도 다시 보이지 않게
+    motion(art, [
+      { transform: "none", opacity: 1 },
+      { transform: LIFT, opacity: 0 },
+    ], { fill: "forwards" }).then((run) => {
+      if (lib.sel === next && lib.refs === refs) out.classList.add("is-out");
+      run?.cancel();
+    });
+    if (!popMs()) out.classList.add("is-out");
+    const pack = fillCard(next);
+    motion(pack, [
+      { transform: DROP, opacity: 0 },
+      { transform: "none", opacity: 1 },
+    ]);
+    return;
+  }
+  // 넣기만(꺼낸 롬팩 없음): 칸 내용이 움직임 뒤에 안내로 바뀜
+  const card = refs.card;
+  const shown = [...card.children];
+  Promise.all(shown.map((node) => motion(node, [{ transform: "none", opacity: 1 }, { transform: DROP, opacity: 0 }], { fill: "forwards" }))).then(() => {
+    if (lib.sel === "" && lib.refs === refs) {
+      fillCard("");
+      motion(card.firstElementChild, [{ opacity: 0 }, { opacity: 1 }]);
+    }
+  });
+}
+
+function openFromLibrary(rom) {
+  closeSheet();
+  if (state.game?.id === rom.id) {
+    hold("user", false);
+    return;
+  }
+  openStored(rom.key);
+}
+
+function openGameSaves(rom) {
+  state.lib.savesFor = { id: saveIdOf(rom), name: rom.name, title: displayName(rom) };
+  openSheet("saves");
+}
+
+function showGameInfo(rom) {
+  const lines = [
+    rom.gameId ? t("web.lib.infoVersion", { version: versionText(rom) }) : "",
+    rom.gameId && rom.author ? t("web.lib.infoAuthor", { author: rom.author }) : "",
+    rom.gameId ? t("web.lib.infoId", { id: rom.gameId }) : "",
+    t("web.lib.infoFile", { file: rom.name, type: `.${rom.type}`, size: fmtSize(rom.size) }),
+    rom.build ? t("web.lib.infoBuild", { build: rom.build.slice(0, 8) }) : "",
+    t("web.lib.added", { date: fmtTime(rom.added) }),
+    rom.opened ? t("web.start.lastPlayed", { time: fmtTime(rom.opened) }) : "",
+  ];
+  openDialog({ title: displayName(rom), body: lines, actions: [{ label: "OK", value: true, primary: true, id: "info-ok" }] });
 }
 
 async function renameRom(rom) {
@@ -1685,7 +2056,7 @@ async function renameRom(rom) {
       await store.removeCarts(chosen.replace.id).catch(() => {});
       await store.removeStates(saveIdOf(chosen.replace)).catch(() => {});
     }
-    await store.patch(rom.key, { name: chosen.name });
+    await store.patch(rom.key, { name: chosen.name, named: true });
     await store.patch(store.saveKey(saveIdOf(rom)), { game: chosen.name });
     if (state.game?.id === rom.id) {
       state.game.name = chosen.name;
@@ -1708,20 +2079,27 @@ async function deleteRom(rom) {
     await store.remove(rom.key);
     await store.removeCarts(rom.id);
     await store.removeStates(saveIdOf(rom));
-    toast(t("web.deleted", { name: rom.name }));
+    cartArt.forgetImages(rom.id);
+    toast(t("web.deleted", { name: displayName(rom) }));
   } catch (error) {
     toast(reason(error), "error");
   }
   if (state.prefs.lastGame === rom.key) savePrefs({ lastGame: "" });
+  if (state.lib.sel === rom.key) state.lib.sel = "";
   refreshStart();
   renderSheet();
 }
 
 async function leaveRow(key) {
   const row = [...el.sheetBody.querySelectorAll(".item")].find((node) => node.dataset.key === key);
-  if (!row) return;
-  row.classList.add("is-leaving");
-  await wait(160);
+  if (row) {
+    row.classList.add("is-leaving");
+    await wait(160);
+    return;
+  }
+  // 라이브러리: 꺼낸 롬팩 칸 내용이 아래로 빠지며 사라짐(transform·opacity)
+  const card = state.lib.refs?.card;
+  if (card?.isConnected && card.dataset.key === key) await Promise.all([...card.children].map((node) => motion(node, [{ transform: "none", opacity: 1 }, { transform: DROP, opacity: 0 }], { fill: "forwards" })));
 }
 
 function downloadSave(fileName, bytes) {
@@ -1799,7 +2177,22 @@ async function renderSaves() {
   }
   if (state.sheet !== "saves") return;
   const children = [];
-  if (state.game) {
+  // 라이브러리의 "세이브"로 열면 그 게임만(실행 중이 아니어도 내보내기·불러오기)
+  const only = state.lib.savesFor;
+  if (only) {
+    saves = saves.filter((save) => save.id === only.id);
+    const back = make("div", "start__actions start__actions--left");
+    back.append(
+      button({ label: t("web.library"), icon: "arrow-back-up", kind: "small", action: "back-library", onClick: () => openSheet("library") }),
+      button({ label: t("web.save.all"), kind: "small", action: "all-saves", onClick: () => ((state.lib.savesFor = null), renderSheet()) }),
+    );
+    const row = make("div", "start__actions");
+    row.append(
+      button({ label: t("web.save.export"), icon: "download", action: "export-current", onClick: () => exportSave(only.id, only.name) }),
+      button({ label: t("web.save.import"), icon: "upload", action: "import-current", onClick: () => importSave(only.id, only.name) }),
+    );
+    children.push(back, group(t("web.save.ofGame", { name: only.title }), row));
+  } else if (state.game) {
     const { saveId: id, name } = state.game;
     const row = make("div", "start__actions");
     row.append(
@@ -2133,7 +2526,11 @@ function applyTheme(mode) {
   } catch {}
   if (color) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", color);
   skin.refreshColors();
-  if (document.documentElement.dataset.ready) layout();
+  if (document.documentElement.dataset.ready) {
+    layout();
+    // 기본 롬팩 몸통 색은 테마에서 만든다
+    refreshStart();
+  }
 }
 
 function colorField(item) {
@@ -2393,7 +2790,8 @@ function wire() {
   el.btnOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
-  el.btnSaves.addEventListener("click", () => openSheet("saves"));
+  el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
+  el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
   el.btnSettings.addEventListener("click", () => openSheet("settings"));
   el.btnSound.addEventListener("click", toggleSound);
@@ -2731,7 +3129,7 @@ async function boot() {
   if (!state.storeBroken) store.persist();
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setExtraButtons, version: BUILD };
+window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setExtraButtons, openSheet, renderSheet, applyTheme, version: BUILD };
 
 boot().catch((error) => {
   console.error(error);

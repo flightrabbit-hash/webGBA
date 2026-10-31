@@ -123,7 +123,7 @@ try {
   ok("옮기기: 옛 키는 지움", left.save === 0 && left.states.length === 0, JSON.stringify(left));
   ok("옮기기: 이어받았다는 알림", /이어받았습니다/.test(toast1), toast1);
   let list = await roms();
-  ok("옮기기: 보관함 항목 하나(옛 항목을 새 것으로 바꿈, 보관 id 그대로)", list.length === 1 && list[0].id === oldGame.id && list[0].gameId === GAME_ID && list[0].version === "1.2.0", JSON.stringify(list));
+  ok("옮기기: 라이브러리 항목 하나(옛 항목을 새 것으로 바꿈, 보관 id 그대로)", list.length === 1 && list[0].id === oldGame.id && list[0].gameId === GAME_ID && list[0].version === "1.2.0", JSON.stringify(list));
   const live = await page.evaluate(() => Array.from(window.webgba.player.host.saveData().subarray(0x7f000, 0x7f004)).join(","));
   ok("옮기기: 게임이 옮긴 세이브로 시작", live === oldData.head, live);
   const carts = await page.evaluate(async () => (await window.webgba.store.list("cart")).map((c) => `${c.id}:${c.part}:${c.width}x${c.height}`).sort());
@@ -137,19 +137,20 @@ try {
   await page.click("#btnMenu").catch(() => {});
   await page.waitForSelector(".bar__group--files #btnLibrary", { state: "visible" }).catch(() => {});
   await page.click("#btnLibrary");
-  await page.waitForSelector('.list[data-kind="rom"] .item');
-  const libLine = await page.textContent('.list[data-kind="rom"] .item__meta');
-  ok("보관함: 이름·버전(포켓몬 Rapid v1.2.0)", /포켓몬 Rapid v1\.2\.0/.test(libLine), libLine);
-  await page.screenshot({ path: path.join(SHOTS, "보관함_이름버전.png") });
+  await page.waitForSelector('.lib__card[data-state="open"] .lib__name');
+  const libLine = `${await page.textContent(".lib__card .lib__name")} ${await page.textContent(".lib__card .lib__meta")}`;
+  const spineText = await page.textContent(`.spine[data-key="rom:${oldGame.id}"] .spine__name`).catch(() => "");
+  ok("라이브러리: 꺼낸 롬팩 = 이름·버전(포켓몬 Rapid v1.2.0), 옆면 = 짧은 이름(Rapid)", /포켓몬 Rapid v1\.2\.0/.test(libLine) && spineText === "Rapid", `${libLine} · ${spineText}`);
+  await page.screenshot({ path: path.join(SHOTS, "라이브러리_이름버전.png") });
   await page.click("#sheetClose");
 
-  // 3. 새로고침 뒤 보관함에서 열기 → 이어서
+  // 3. 새로고침 뒤 라이브러리에서 열기 → 이어서
   await boot();
-  await page.click("#startList .item__main");
+  await page.click("#startList .recent__item");
   await page.waitForFunction(() => document.body.dataset.view === "game" && window.webgba.player.running, null, { timeout: 120000 });
   const again = await gameNow();
   const againLive = await page.evaluate(() => Array.from(window.webgba.player.host.saveData().subarray(0x7f000, 0x7f004)).join(","));
-  ok("새로고침 뒤 보관함에서 열기: 게임 id 세이브로 이어짐", again.saveId === GAME_ID && againLive === oldData.head && (await moduleHasRom()) === 0, JSON.stringify(again));
+  ok("새로고침 뒤 라이브러리에서 열기: 게임 id 세이브로 이어짐", again.saveId === GAME_ID && againLive === oldData.head && (await moduleHasRom()) === 0, JSON.stringify(again));
 
   // 4. 업데이트 규칙
   await pick(opt.v130);
@@ -164,9 +165,10 @@ try {
   await page.screenshot({ path: path.join(SHOTS, "낮은버전_경고.png") });
   ok("낮은 버전(1.3.0 → 1.2.0): 경고 창 · 기본 단추 = 아니요", /이전 버전/.test(dialog.title) && dialog.focus === "older-keep" && /1\.3\.0/.test(dialog.text) && /1\.2\.0/.test(dialog.text), JSON.stringify(dialog));
   await page.click('[data-action="older-keep"]');
-  await page.waitForFunction(() => /그대로 둡니다/.test(document.getElementById("toast").textContent), null, { timeout: 10000 });
+  await page.waitForFunction(() => /엽니다/.test(document.getElementById("toast").textContent) && document.body.dataset.view === "game" && window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 120000 });
   list = await roms();
-  ok("낮은 버전 → 아니요: 그대로(1.3.0)", list.length === 1 && list[0].version === "1.3.0");
+  g = await gameNow();
+  ok("낮은 버전 → 아니요: 라이브러리에 있던 1.3.0 을 그대로 엶(결정 102-6)", list.length === 1 && list[0].version === "1.3.0" && g?.version === "1.3.0" && g.saveId === GAME_ID, `${await toastText()} · ${JSON.stringify(g)}`);
   await pick(opt.v120d, "dialog");
   await page.click('[data-action="older-use"]');
   await page.waitForFunction(() => document.body.dataset.view === "game" && window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 120000 });
@@ -181,14 +183,30 @@ try {
   ok("같은 버전·다른 빌드: 묻지 않고 바꿈", /새 빌드로 바꿨습니다/.test(toast) && list.length === 1 && list[0].build !== buildD, toast);
   await pick(opt.new);
   toast = await toastText();
-  ok("같은 빌드: 이미 있음(그대로 엶)", /이미 보관함에 있는/.test(toast) && (await roms()).length === 1, toast);
+  ok("같은 빌드: 이미 있음(그대로 엶)", /이미 라이브러리에 있는/.test(toast) && (await roms()).length === 1, toast);
   ok("규칙을 거쳐도 세이브·퀵슬롯은 게임 id 하나", (await savesOf(GAME_ID)).save === oldData.save && (await savesOf(GAME_ID)).states.join() === "1,3");
 
-  // 5. 옛 파일을 다시 열면 따로(게임 id 항목을 이름으로 덮어쓰지 않음)
-  await pick(opt.old);
+  // 5. 세이브를 옮긴 뒤 옛 파일을 다시 열면 따로 한 줄 만들지 않고 같은 게임의 "낮은 버전" 경고(결정 102-4)
+  await pick(opt.old, "dialog");
+  const oldDialog = await page.evaluate(() => ({ title: document.getElementById("dialogTitle").textContent, focus: document.activeElement?.dataset?.action ?? "", text: document.getElementById("dialogBody").textContent }));
+  ok("옛 .wgba 다시: 낮은 버전 경고(옛 .wgba · 기본 단추 아니요)", /이전 버전/.test(oldDialog.title) && oldDialog.focus === "older-keep" && /옛 \.wgba/.test(oldDialog.text) && /1\.2\.0/.test(oldDialog.text), JSON.stringify(oldDialog));
+  await page.click('[data-action="older-keep"]');
+  await page.waitForFunction(() => /엽니다/.test(document.getElementById("toast").textContent) && window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 120000 });
   g = await gameNow();
   list = await roms();
-  ok("옛 .wgba 다시: 새 항목으로 따로 열림(게임 id 항목은 그대로)", !g.gameId && g.saveId === g.id && list.length === 2 && list.some((r) => r.gameId === GAME_ID), JSON.stringify(list.map((r) => [r.name, r.gameId, r.version])));
+  ok("옛 .wgba → 아니요: 라이브러리의 1.2.0 을 엶 · 항목 하나", g.version === "1.2.0" && g.saveId === GAME_ID && list.length === 1, JSON.stringify(list.map((r) => [r.name, r.gameId, r.version])));
+  await pick(opt.old, "dialog");
+  await page.click('[data-action="older-use"]');
+  await page.waitForFunction(() => document.body.dataset.view === "game" && window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 120000 });
+  g = await gameNow();
+  list = await roms();
+  toast = await toastText();
+  const oldLive = await page.evaluate(() => Array.from(window.webgba.player.host.saveData().subarray(0x7f000, 0x7f004)).join(","));
+  ok("옛 .wgba → 바꾸기: 같은 항목(보관 id·게임 id 그대로)이 옛 파일로 · 세이브 이어짐", list.length === 1 && list[0].id === oldGame.id && list[0].gameId === GAME_ID && list[0].version === "" && g.saveId === GAME_ID && oldLive === oldData.head && (await moduleHasRom()) === 1 && /옛 \.wgba/.test(toast), `${toast} · ${JSON.stringify(list)}`);
+  await pick(opt.new);
+  toast = await toastText();
+  list = await roms();
+  ok("옛 .wgba 로 되돌린 뒤 새 파일: 묻지 않고 업데이트(옛 .wgba → 1.2.0)", list.length === 1 && list[0].version === "1.2.0" && /옛 \.wgba → 1\.2\.0/.test(toast) && (await savesOf(GAME_ID)).states.join() === "1,3", toast);
 
   // 6. 못 여는 파일
   for (const [key, pattern, label] of [
@@ -199,10 +217,39 @@ try {
     await pick(opt[key], "toast");
     const text = await toastText();
     const after = await roms();
-    ok(`${label}`, pattern.test(text) && !(await running()) && after.length === 2, text);
+    ok(`${label}`, pattern.test(text) && !(await running()) && after.length === 1, text);
   }
   await page.screenshot({ path: path.join(SHOTS, "자체JS_안내.png") }).catch(() => {});
   ok("페이지 오류 없음", errors.length === 0, errors.join(" | "));
+
+  // 7. 이어받기 알림은 옮긴 것에 맞게(결정 102-7): 세이브만 옮기면 "세이브를"(퀵슬롯 말 없음) — 새 프로필에서
+  const fresh = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+  await fresh.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    localStorage.setItem("webgba.installHint", "1");
+  });
+  const page2 = await fresh.newPage();
+  page2.on("pageerror", (error) => errors.push(error.message));
+  await page2.goto(URL_BASE);
+  await page2.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 20000 });
+  const pick2 = async (file) => {
+    const [chooser] = await Promise.all([page2.waitForEvent("filechooser", { timeout: 10000 }), page2.evaluate(() => document.body.dataset.view === "game").then((started) => page2.click(started ? "#btnOpen" : "#startOpen"))]);
+    await chooser.setFiles(file);
+    await page2.waitForFunction(() => document.body.dataset.view === "game" && window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 120000 });
+    await page2.waitForTimeout(400);
+  };
+  await pick2(opt.old);
+  await page2.waitForTimeout(2000);
+  await page2.evaluate(async () => {
+    const p = window.webgba.player;
+    p.host.u8[(p.host.ex.Web_GetFlash() >>> 0) + 0x7f000] ^= 0x11;
+    p.queueSave();
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+  });
+  await pick2(opt.new);
+  const toast2 = await page2.textContent("#toast");
+  ok("세이브만 옮김 → '세이브를 이어받았습니다'(퀵슬롯 말 없음)", /세이브를 이어받았습니다/.test(toast2) && !/퀵슬롯/.test(toast2), toast2);
+  await fresh.close();
 } catch (error) {
   ok("시험 중 예외", false, String(error?.stack ?? error).split("\n").slice(0, 4).join(" "));
 }
