@@ -69,6 +69,11 @@ module.exports = {
     run: "node tools/test/host-smoke.mjs",
   },
 
+  "test:wgba": {
+    detail: ".wgba 규격 1 형식·묶기 도구 시험 (node 만, 롬 없이)",
+    run: "node tools/test/wgba-format.mjs",
+  },
+
   /* ─────────────── 배포 ─────────────── */
 
   dist: {

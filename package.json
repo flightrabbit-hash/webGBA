@@ -19,6 +19,7 @@
     "├──── RUN TEST\t\t────┤": "",
     "test": "node tools/run.cjs rs:test",
     "test:core": "node tools/run.cjs test:core",
+    "test:wgba": "node tools/run.cjs test:wgba",
     "└────────────────┘": ""
   },
   "devDependencies": {

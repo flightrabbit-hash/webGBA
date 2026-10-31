@@ -17,12 +17,17 @@
 // (2026-10-28 전에는 node 내장 zlib — Chromium 판이라 표준 zlib 과 결과가 달랐다. 읽는 쪽은 그대로 읽는다.)
 //
 // 롬은 배포하지 않는다. 이 도구는 롬을 가진 사람이 자기 PC 에서 묶을 때만 쓰고, 묶은 .wgba 는 공개 저장소·릴리스에 넣지 않는다.
+//
+// 규격 1(목차 webgba.toc + 설명서) 파일: --manifest 를 주면 tools/wgba.mjs 의 묶기로 넘긴다(같은 결과).
+//   node tools/pack-wgba.mjs <빌드.wasm> <롬.gba> <출력.wgba> --manifest <manifest.json> [--cart-dir <폴더>]
+// 목차가 있는 파일의 --info·--strip 도 wgba.mjs 의 info·strip 으로 넘긴다. --manifest 없이 부르면 지금처럼 목차 없는 파일.
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import { fileURLToPath } from "url";
 import { romPayloadFrom } from "../src-bundle/src/js/core/wgbp.js";
+import { readTocFrom } from "../src-bundle/src/js/core/wgba-format.js";
 
 export const SECTION = "webgba.rom";
 export const MAGIC = "WGRM";
@@ -175,17 +180,32 @@ function info(file) {
   return 0;
 }
 
-function main(argv) {
+const VALUE_FLAGS = new Set(["--level", "--manifest", "--cart-dir", "--label", "--front", "--spine"]);
+const hasToc = async (file) => Boolean(await readTocFrom(new Uint8Array(fs.readFileSync(file))));
+
+async function main(argv) {
   const flags = new Set(argv.filter((a) => a.startsWith("--")));
-  const levelAt = argv.indexOf("--level");
-  const level = levelAt >= 0 ? Number(argv[levelAt + 1]) : 9;
-  const args = argv.filter((a, i) => !a.startsWith("--") && !(levelAt >= 0 && i === levelAt + 1));
+  const valueOf = (name) => {
+    const at = argv.indexOf(name);
+    return at >= 0 ? argv[at + 1] : undefined;
+  };
+  const level = flags.has("--level") ? Number(valueOf("--level")) : 9;
+  const args = argv.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(argv[i - 1]));
+  const wgba = () => import("./wgba.mjs");
   if (flags.has("--info")) {
     if (args.length !== 1) return usage();
+    if (await hasToc(args[0])) return (await wgba()).main(["info", args[0]]);
     return info(args[0]);
+  }
+  if (flags.has("--manifest")) {
+    if (args.length !== 3) return usage();
+    const pass = ["pack", "--wasm", args[0], "--rom", args[1], "-o", args[2], "--manifest", valueOf("--manifest")];
+    for (const name of ["--cart-dir", "--label", "--front", "--spine"]) if (flags.has(name)) pass.push(name, valueOf(name));
+    return (await wgba()).main(pass);
   }
   if (flags.has("--strip")) {
     if (args.length !== 2) return usage();
+    if (await hasToc(args[0])) return (await wgba()).main(["strip", args[0], args[1]]);
     const wasm = fs.readFileSync(args[0]);
     const out = stripRom(wasm);
     writeChecked(path.resolve(args[1]), out, (back) => {
@@ -221,6 +241,7 @@ function main(argv) {
 
 function usage() {
   console.error("사용법: node tools/pack-wgba.mjs <빌드.wasm|.wgba> <롬.gba> <출력.wgba> [--store] [--level <0-9>]");
+  console.error("        node tools/pack-wgba.mjs <빌드.wasm> <롬.gba> <출력.wgba> --manifest <manifest.json> [--cart-dir <폴더>]   (규격 1)");
   console.error("        node tools/pack-wgba.mjs --info <파일>");
   console.error("        node tools/pack-wgba.mjs --strip <파일.wgba> <출력.wasm>");
   return 2;
@@ -228,7 +249,7 @@ function usage() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   try {
-    process.exitCode = main(process.argv.slice(2));
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     console.error(`실패: ${error.message}`);
     process.exitCode = 1;
