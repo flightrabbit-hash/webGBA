@@ -33,6 +33,8 @@
 *.wgba
 *.wgbp
 !/src-bundle/bin/core/mgba_core.wasm
+# .wgba 규격 예제의 작은 wasm(롬 아님, 소스 game.c 옆)
+!/docs/wgba/examples/*/game.wasm
 
 # ── 세이브·상태 ──
 *.sav

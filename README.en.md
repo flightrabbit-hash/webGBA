@@ -94,6 +94,25 @@ node tools/run.cjs   # list all commands
 
 ---
 
+## Making a .wgba (for other developers)
+
+A `.wgba` is a single game file for webGBA. **The whole file is a valid wasm module**; a table of contents at the front
+(`webgba.toc`) records the start/end offsets and SHA-256 of each chunk — manifest, cartridge art, JS and data. It does not have to be a GBA game; any wasm game works.
+
+- **① Web API (no JS)** — if the wasm exports `Web_Init`, `Web_RunFrame(keys)`, `Web_GetFramebuffer` …, webGBA handles screen, sound, input and saves.
+- **② Own JS** — games that ship their own JS (e.g. emscripten glue). The JS runs only inside an isolated, origin-less sandbox iframe with no network, no access to other games' storage and no access to the app.
+- **Manifest** — required: `wgba` (1), `id` (stable game id — a higher version with the same id updates without asking), `version` (x.y.z), `name`, `runtime`. List your buttons (① bit numbers, ② key codes) and webGBA lays out keyboard, gamepad and touch buttons.
+- **Cartridge art** — label (48×32), front (54×44) and spine (12×44) of the cartridge shown on the web version's library shelf, all at the same integer scale (2× recommended: 96×64, 108×88, 24×88), PNG or lossless WebP. All optional; without them webGBA draws a default cartridge from the body colour (`cart.color`) and the game name.
+- **Pack and check** — `node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --manifest manifest.json [--cart-dir art-folder] [--js game.js]`, `node tools/wgba.mjs check game.wgba`. A ready-to-pack example: [docs/wgba/examples/hello-webapi](docs/wgba/examples/hello-webapi).
+- **With an AI** — paste the "Prompt for AI assistants" at the end of the spec into your AI and it will pack your wasm into a `.wgba`.
+
+**Only include data you have the rights to.** Do not distribute `.wgba` files containing other people's ROMs, art, music or trademarks (console names, logos, …).
+Older `.wgba` files without a table of contents (plain wasm, or wasm with only a ROM section) still open.
+
+Full specification: [docs/wgba/WGBA_SPEC.en.md](docs/wgba/WGBA_SPEC.en.md) (한국어: [WGBA_SPEC.ko.md](docs/wgba/WGBA_SPEC.ko.md)) · manifest schema: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.schema.json)
+
+---
+
 ## Keyboard shortcuts
 
 | Action | Key |
@@ -124,7 +143,8 @@ Game keys can be changed in Settings › Keys; gamepads are mapped automatically
 core/          mGBA wasm core build — build.sh (Docker, downloads the official mGBA source), src/ wrappers (webgba_core.c · host_stubs.c)
 src-bundle/    UI — src/ (html · css · js · icons · i18n), ini/ (settings seeds), bin/core/ (mgba_core.wasm · licenses/)
 src-tauri/     Rust — windows · files · saves · web-build origins · .wgba association
-tools/         npm commands (run.cjs · scripts.cjs), core build, pack-wgba.mjs (pack a ROM into a .wgba), make-wgbp.mjs (make a ROM-free .wgbp), lib/, test/ (test tools)
+tools/         npm commands (run.cjs · scripts.cjs), core build, wgba.mjs (pack and check .wgba files), pack-wgba.mjs (pack a ROM into a .wgba), make-wgbp.mjs (make a ROM-free .wgbp), lib/, test/ (test tools)
+docs/wgba/     .wgba specification (Korean · English) · manifest schema · example
 documents/     design documents (Korean)
 ```
 

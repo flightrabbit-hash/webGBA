@@ -1,0 +1,18 @@
+{
+  "wgba": 1,
+  "id": "com.example.hello",
+  "version": "1.0.0",
+  "name": { "en": "Hello wgba", "ko": "안녕 wgba", "ja": "こんにちは wgba" },
+  "shortName": "Hello",
+  "runtime": "webapi",
+  "author": "example",
+  "license": "MIT",
+  "screen": { "width": 240, "height": 160 },
+  "rom": { "required": false },
+  "input": { "preset": "gba" },
+  "cart": {
+    "color": "#3a6ea5",
+    "front": { "labelAt": [6, 10] },
+    "spine": { "textArea": [4, 10, 16, 64] }
+  }
+}
