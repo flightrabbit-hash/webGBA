@@ -16,6 +16,7 @@ const colorCache = new Map();
 // 테마 하나 = 기본 색 5개. 밝은 면·그림자·옆면·글자 색은 규칙으로 만든다(부품마다 16색 이하).
 //   body    본체          button  방향 패드·스틱·L·R·START·SELECT
 //   accent  A·B·켬·강조    ink     버튼 글자        outline 외곽선(가장 진한 색)
+//   (cd)    C·D 버튼 — 넣지 않아도 됨. 없으면 accent 에서 규칙으로 만든다(secondAccent: 색상환 160° 돌림).
 // 테마 id는 윈도우용 webGBA 테마와 같다(이름은 i18n 키 theme.mode.<id>로도 찾을 수 있음).
 export const BASE_KEYS = ['body', 'button', 'accent', 'ink', 'outline'];
 
@@ -63,6 +64,27 @@ function inkFor(face, ink, outline) {
   return contrast(face, light) > contrast(face, dark) ? light : dark;
 }
 
+function hsl(c) {
+  const [r, g, b] = rgbOf(c).map((n) => n / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+function fromHsl(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return '#' + [r, g, b].map((v) => hex2((v + m) * 255)).join('');
+}
+/** C·D 색을 정해 주지 않은 테마(커스텀 등): accent 를 색상환에서 160° 돌린 색(반대쪽 가까이 — 파랑이면 주황, 초록이면 보라),
+ *  채도는 넉넉히·밝기는 비슷하게. accent 가 무채색(검정·회색)이면 빨강 계열. 글자 색은 fam() 의 inkFor 가 대비 3 이상으로 고른다. */
+function secondAccent(accent) {
+  const [h, s, l] = hsl(accent);
+  if (s < 0.15) return fromHsl(352, 0.8, Math.min(Math.max(l, 0.36), 0.62));
+  return fromHsl((h + 160) % 360, Math.max(s, 0.65), Math.min(Math.max(l, 0.4), 0.7));
+}
+
 const ICON_COLORS = {
   icW: '#f5f6ff', icL: '#b9c0e8', icM: '#7880bd', icK: '#3a4080',
   icY: '#ffd04d', icO: '#e3901f', icR: '#ee5b53', icG: '#5fd46f', icB: '#4f8ef2', icBd: '#2f5bc0',
@@ -85,6 +107,7 @@ function buildPalette(b, id) {
   const btn = fam(b.button, b.ink);
   put(pal, 'btn', btn); put(pal, 'sh', btn);
   put(pal, 'ab', fam(b.accent, b.ink));
+  put(pal, 'cd', fam(b.cd ?? secondAccent(b.accent), b.ink));
   put(pal, 'pill', fam(mix(b.button, o, 0.2), b.ink));
   const offFace = gray(mix(b.button, b.body, 0.45));
   const off = fam(offFace, offFace); off.ink = mix(offFace, o, 0.38);
@@ -103,7 +126,8 @@ const derived = new Map();
 export function derivePalette(colors = {}, id = 'custom') {
   const b = { ...THEME_BY_ID[DEFAULT_THEME_ID].colors };
   for (const k of BASE_KEYS) if (colors[k]) { parseColor(colors[k]); b[k] = colors[k].toLowerCase(); }
-  const key = id + '|' + BASE_KEYS.map((k) => b[k]).join(',');
+  if (colors.cd) { parseColor(colors.cd); b.cd = colors.cd.toLowerCase(); }
+  const key = id + '|' + BASE_KEYS.map((k) => b[k]).join(',') + '|' + (b.cd ?? '');
   let p = derived.get(key);
   if (!p) { p = buildPalette(b, id); derived.set(key, p); }
   return p;
@@ -464,7 +488,7 @@ export function renderDpad({ pressed = 'none', state = 'normal', scale = 1, pale
   });
 }
 
-/** 둥근 A·B 버튼. */
+/** 둥근 A·B 버튼(C·D 도 같은 모양, 색만 cd 계열 — 면·빛·옆면·글자 모두). */
 export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, palette } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
@@ -472,7 +496,7 @@ export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, pa
   return cached(palette, `round|${label}|${st}|${s}`, () => {
     const D = 23;
     const inside = circleInside(D);
-    const roles = buttonRoles('ab', st);
+    const roles = buttonRoles(label === 'C' || label === 'D' ? 'cd' : 'ab', st);
     const gloss = new Set([5 * D + 6, 6 * D + 5, 6 * D + 6]);
     const { art, faceBox } = extrude({
       W: D, H: D, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW,

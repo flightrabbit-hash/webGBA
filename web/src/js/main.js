@@ -300,9 +300,14 @@ function showNow(node) {
 const FRAME_ROWS = 3;
 const ART = { stick: 37, shoulderH: 17, pillH: 15, roundH: 27 };
 const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, h: 27 * 1.75 } };
-// C·D 가 있으면 A·B 묶음 위에 같은 모양 한 단: A·B 를 대각선 단차(face.h − 버튼 높이) 2개만큼 내린다
-// (C 아래 ↔ A 위 사이 = D 아래 ↔ B 위 사이 = 단차 2 − 버튼 높이, 네 버튼이 같은 간격으로 지그재그).
-const faceUp = (face) => 2 * (face.h - ART.roundH);
+// C·D 가 있으면 A·B 묶음 위에 같은 모양 한 단(C 는 A 위, D 는 B 위): A·B 를 faceUp 만큼 내린다
+// (C 아래 ↔ A 위 사이 = D 아래 ↔ B 위 사이 = faceUp − 버튼 높이).
+// 세로: 대각선 단차(face.h − 버튼 높이) 2개 — 네 버튼이 같은 간격의 지그재그.
+// 가로: 그 간격(빈 줄 13.5칸)이면 두 줄이 떨어져 보여서(사용자 2026-10-31 "AB버튼과 CD버튼 사이가 너무 멀어보여") 한 묶음으로
+// 좁힌다 — C 아래 ↔ A 위 빈 줄(그림자 뺀 잉크: 면 23 + 옆면 2 = 25 아래)을 6칸으로. A·B 사이 가장 가까운 잉크 거리는
+// 원으로 약 7.3칸이지만 픽셀 계단 때문에 실제 약 6.4칸이라, 그보다 넓지 않은 가장 큰 정수 줄 수(시험 web-ui C·D 가 잼).
+const FACE_UP_LANDSCAPE = 25 + 6;
+const faceUp = (face, landscape) => (landscape ? FACE_UP_LANDSCAPE : 2 * (face.h - ART.roundH));
 
 function layout() {
   const width = window.innerWidth;
@@ -321,7 +326,7 @@ function layout() {
   const icon = 2;
   const face = landscape ? FACE.landscape : FACE.portrait;
   const four = Boolean(state.extra);
-  const faceH = face.h + (four ? faceUp(face) : 0);
+  const faceH = face.h + (four ? faceUp(face, landscape) : 0);
   let art = state.art ?? 3;
   skin.resize({ art, icon, dpr });
   syncTools();
@@ -352,11 +357,10 @@ function layout() {
   } else if (padOn && landscape) {
     art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
     if (four) {
-      // 버튼 칸(가운데 줄) = 높이 − 첫 줄(기능 버튼 막대 또는 L·R + 위 여백 8) − 끝 줄(START·SELECT + 아래 여백 10).
-      const barH = el.bar.offsetHeight;
+      // 네 버튼 묶음은 오른쪽 세로줄 전체에서 R(위 여백 8) 아래 ~ START(아래 여백 10) 위 가운데(web.css) — 그 사이에 들어가는 배율까지.
       const fits = (a) => {
         const u = skin.px(a) / dpr;
-        return Math.round(faceH * u) <= innerH - Math.max(barH, ART.shoulderH * u + 8) - (ART.pillH * u + 10) - 4;
+        return Math.round(faceH * u) <= innerH - (ART.shoulderH * u + 8) - (ART.pillH * u + 10) - 4;
       };
       while (art > 2 && !fits(art)) art--;
     }
@@ -378,9 +382,11 @@ function layout() {
   skin.resize({ art, icon, dpr });
   const unit = skin.px(art) / dpr;
   root.setProperty("--face-w", `${Math.round(face.w * unit)}px`);
-  const up = Math.round(faceUp(face) * unit);
+  const up = Math.round(faceUp(face, landscape) * unit);
   root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
   root.setProperty("--face-up", `${up}px`);
+  // 가로 C·D 묶음은 세로줄 전체 가운데에 놓이므로 R 줄(8 + R)과 START 줄(START + 10)의 차이 절반만큼 내려 둘 사이 가운데로.
+  root.setProperty("--face-shift", `${((ART.shoulderH - ART.pillH) * unit + 8 - 10) / 2}px`);
   root.setProperty("--sw", `${sw}px`);
   root.setProperty("--sh", `${sh}px`);
   root.setProperty("--stage-h", `${sh + edge * 2}px`);

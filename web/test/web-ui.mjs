@@ -391,6 +391,10 @@ const EXTRA_VIEWS = [
   { width: 568, height: 320, dpr: 2 },
   { width: 640, height: 360, dpr: 2.625 },
   { width: 844, height: 390, dpr: 3 },
+  { width: 740, height: 360, dpr: 3 },
+  { width: 667, height: 375, dpr: 2 },
+  { width: 932, height: 430, dpr: 3 },
+  { width: 1024, height: 768, dpr: 2 },
 ];
 const EXTRA_SHOTS = { "390x844": "세로_390x844_ABCD.png", "844x390": "가로_844x390_ABCD.png" };
 const PAD_BITS = { A: 1, B: 2, SELECT: 4, START: 8, RIGHT: 16, LEFT: 32, UP: 64, DOWN: 128, R: 256, L: 512 };
@@ -423,6 +427,31 @@ const padBoxes = (page) =>
       out[n.dataset.key ?? (n.matches("[data-dpad]") ? "DIR" : n.id)] = { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
     }
     return { boxes: out, art: window.webgba.skin.art };
+  });
+
+// 둥근 버튼 넷의 잉크(불투명 칸 = 면·옆면·외곽선, 반투명 그림자 뺌) 사이 가장 가까운 빈 거리(CSS px).
+// 아트 칸 가운데끼리 거리 − 한 칸(같은 세로줄이면 빈 줄 수 × 한 칸).
+const inkGaps = (page) =>
+  page.evaluate(() => {
+    const ink = (k) => {
+      const c = document.querySelector(`[data-key="${k}"] canvas`);
+      const r = c.getBoundingClientRect();
+      const step = c.width / 23;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const sx = r.width / c.width;
+      const sy = r.height / c.height;
+      const pts = [];
+      for (let y = step / 2; y < c.height; y += step)
+        for (let x = step / 2; x < c.width; x += step) if (d[(Math.floor(y) * c.width + Math.floor(x)) * 4 + 3] === 255) pts.push([r.left + x * sx, r.top + y * sy]);
+      return { pts, cell: step * sx };
+    };
+    const k = Object.fromEntries(["A", "B", "C", "D"].map((n) => [n, ink(n)]));
+    const gap = (m, n) => {
+      let best = Infinity;
+      for (const [x1, y1] of k[m].pts) for (const [x2, y2] of k[n].pts) best = Math.min(best, Math.hypot(x1 - x2, y1 - y2));
+      return best - k[m].cell;
+    };
+    return { AB: gap("A", "B"), CD: gap("C", "D"), CA: gap("C", "A"), DB: gap("D", "B"), DA: gap("D", "A") };
   });
 
 for (const view of EXTRA ? EXTRA_VIEWS : []) {
@@ -465,6 +494,26 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
   const diagAB = b.B.t - b.A.t;
   const diagCD = b.D.t - b.C.t;
   ok(`${key}: C·D 크기 = A·B, 위아래 간격 같음, C·D 대각선 = A·B 대각선`, sameSize && Math.abs(gapCA - gapDB) <= 1 && Math.abs(diagAB - diagCD) <= 1 && gapCA > 0, `배율 ${before.art}→${art} · 버튼 ${b.A.w}x${b.A.h} · 간격 ${gapCA.toFixed(1)}/${gapDB.toFixed(1)} · 대각선 ${diagAB.toFixed(1)}/${diagCD.toFixed(1)}`);
+  if (view.width > view.height) {
+    // 가로: C·D 줄과 A·B 줄이 한 묶음 — C 아래 ↔ A 위(D ↔ B)의 빈 거리 ≤ A·B 사이 가장 가까운 거리(둘 다 그림자 뺀 잉크).
+    // 네 버튼 묶음은 R 아래 ~ START 위 가운데(위·아래 여백 차이 ≤ 1px).
+    const g = await inkGaps(page);
+    let was = "";
+    if (BASE_URL) {
+      const base = await padPage(BASE_URL, view);
+      await base.page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+      await base.page.waitForTimeout(300);
+      const old = await inkGaps(base.page);
+      const ob = (await padBoxes(base.page)).boxes;
+      await base.context.close();
+      was = ` · 고치기 전 C↔A ${old.CA.toFixed(1)} 상자 ${(ob.A.t - ob.C.b).toFixed(1)}`;
+    }
+    const top = b.C.t - b.R.b;
+    const bottom = b.START.t - b.B.b;
+    ok(`${key}: 가로 C·D 줄 ↔ A·B 줄 ≤ A·B 사이, R·START 사이 가운데`, g.CA <= g.AB + 0.01 && g.DB <= g.AB + 0.01 && Math.abs(top - bottom) <= 1,
+      `잉크 거리 C↔A ${g.CA.toFixed(1)} · D↔B ${g.DB.toFixed(1)} · A↔B ${g.AB.toFixed(1)} · D↔A ${g.DA.toFixed(1)} · 상자 C↔A ${gapCA.toFixed(1)}${was} · R 아래 ${top.toFixed(1)} / START 위 ${bottom.toFixed(1)}`);
+    console.log(`측정 ${key}: 배율 ${art} · C↔A ${g.CA.toFixed(1)} · D↔B ${g.DB.toFixed(1)} · A↔B ${g.AB.toFixed(1)} · D↔A ${g.DA.toFixed(1)} · 상자 C↔A ${gapCA.toFixed(1)}${was} · R 아래 ${top.toFixed(1)} / START 위 ${bottom.toFixed(1)}`);
+  }
 
   const cdp = await context.newCDPSession(page);
   const touch = touchApi(cdp);
@@ -533,6 +582,88 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
   });
   ok(`${key}: 정의를 지우면 처음 화면과 픽셀 같음·C 키 없음`, back === 0 && gone.bits === 0 && gone.extra === null && gone.attr === null, `다른 픽셀 ${back} · ${JSON.stringify(gone)}`);
   ok(`${key}: 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
+  await context.close();
+}
+
+// C·D 색: 테마 13개 모두 A·B 와 색상 계열이 다름(색상 차 ≥ 60°, A·B 가 무채색이면 C·D 채도 ≥ 0.4), C·D 글자 대비 ≥ 3,
+// 화면에 칠한 C·D 면 = 팔레트 cd, A·B 면 = accent(그대로). 13테마 버튼만 모은 비교 한 장(테마비교_13.png).
+const hexRgb = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255);
+const hueSat = (c) => {
+  const [r, g, b] = hexRgb(c);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  const l = (max + min) / 2;
+  if (!d) return { h: 0, s: 0 };
+  const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s: d / (1 - Math.abs(2 * l - 1)) };
+};
+const relLum = (c) => {
+  const [r, g, b] = hexRgb(c).map((s) => (s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const ratio = (a, b) => (Math.max(relLum(a), relLum(b)) + 0.05) / (Math.min(relLum(a), relLum(b)) + 0.05);
+const CUSTOM_DEFAULT = { "--bg-sunken": "#070a14", "--bg-deep": "#070a14", "--bg": "#151d33", "--bg-raised": "#151d33", "--bg-tint": "#151d33", "--text": "#eef1f8", "--text-hi": "#eef1f8", "--accent": "#6c93ff", "--accent-hi": "#6c93ff", "--line": "#3a4670", "--line-strong": "#3a4670" };
+
+if (EXTRA) {
+  const { context, page } = await padPage(URL_BASE, { width: 1000, height: 640, dpr: 2 });
+  await page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+  await page.waitForTimeout(300);
+  const rows = await page.evaluate(async (custom) => {
+    const T = await import("/js/shell/theme.js");
+    const PX = await import("/js/pixel-ui.js");
+    const skin = window.webgba.skin;
+    const hex = (d, i) => "#" + [d[i], d[i + 1], d[i + 2]].map((x) => x.toString(16).padStart(2, "0")).join("");
+    const face = (k) => {
+      const c = document.querySelector(`[data-key="${k}"] canvas`);
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const n = new Map();
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] === 255) n.set(hex(d, i), (n.get(hex(d, i)) ?? 0) + 1);
+      return [...n].sort((a, b) => b[1] - a[1])[0][0];
+    };
+    const sheet = document.createElement("div");
+    sheet.id = "cdSheet";
+    sheet.style.cssText = "position:fixed;left:0;top:0;z-index:99;display:grid;grid-template-columns:repeat(2,auto);gap:4px;padding:4px;background:#000";
+    const dpr = window.devicePixelRatio;
+    const scale = skin.px(2);
+    const out = [];
+    for (const m of T.MODES) {
+      T.apply(m.id === "custom" ? { mode: "custom", colors: custom } : { mode: m.id });
+      skin.refreshColors();
+      const p = skin.palette;
+      out.push({ id: m.id, A: face("A"), B: face("B"), C: face("C"), D: face("D"), accent: p.base.accent, ab: p.ab, cd: p.cd, cdInk: p.cdInk });
+      const cell = document.createElement("div");
+      cell.style.cssText = `display:flex;align-items:center;gap:6px;padding:6px 10px;background:${p.body};color:${p.base.ink};font:12px/16px var(--font-small)`;
+      const name = document.createElement("span");
+      name.style.cssText = "width:84px";
+      name.textContent = m.id;
+      cell.append(name);
+      for (const label of ["A", "B", "C", "D"]) {
+        const src = PX.renderRoundButton({ label, scale, palette: p }).canvas;
+        const copy = document.createElement("canvas");
+        copy.width = src.width;
+        copy.height = src.height;
+        copy.style.width = `${src.width / dpr}px`;
+        copy.getContext("2d").drawImage(src, 0, 0);
+        cell.append(copy);
+      }
+      sheet.append(cell);
+    }
+    document.body.append(sheet);
+    return out;
+  }, CUSTOM_DEFAULT);
+  await page.locator("#cdSheet").screenshot({ path: path.join(SHOTS, "테마비교_13.png") });
+  for (const r of rows) {
+    const a = hueSat(r.ab);
+    const c = hueSat(r.cd);
+    const dh = Math.min(Math.abs(a.h - c.h), 360 - Math.abs(a.h - c.h));
+    const apart = a.s < 0.15 ? c.s >= 0.4 : dh >= 60;
+    const painted = r.A === r.ab && r.B === r.ab && r.ab === r.accent && r.C === r.cd && r.D === r.cd;
+    const inkRatio = ratio(r.cd, r.cdInk);
+    ok(`C·D 색 ${r.id}: A·B 와 다른 계열·글자 대비 ≥ 3·칠한 색 맞음`, apart && inkRatio >= 3 && painted, `A·B ${r.ab} C·D ${r.cd} 글자 ${r.cdInk} · 색상 차 ${dh.toFixed(0)}° 채도 ${c.s.toFixed(2)} · 대비 ${inkRatio.toFixed(1)} · 칠한 색 A ${r.A} B ${r.B} C ${r.C} D ${r.D}`);
+    console.log(`색 ${r.id}: A·B ${r.ab} · C·D ${r.cd} · 글자 ${r.cdInk} · 색상 차 ${dh.toFixed(0)}° · 대비 ${inkRatio.toFixed(1)}`);
+  }
+  ok(`C·D 색: 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
   await context.close();
 }
 

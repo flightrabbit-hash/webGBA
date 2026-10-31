@@ -711,6 +711,13 @@ body[data-layout="landscape"] .face {
   place-self: center;
 }
 
+/* 가로 + C·D: 네 버튼 묶음을 오른쪽 세로줄 전체(R ~ START) 가운데로 — 기능 버튼 막대 높이와 관계없이.
+   --face-shift = (R 줄 − START 줄) / 2 (main.js layout). */
+body[data-layout="landscape"] .pad[data-extra] .face {
+  grid-row: 1 / 4;
+  top: var(--face-shift);
+}
+
 body[data-layout="landscape"] .key--select {
   grid-area: sel;
   place-self: center;

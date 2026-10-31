@@ -48,6 +48,24 @@ function mix(a, b, t) {
   return `#${x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0")).join("")}`;
 }
 
+// C·D 버튼 색(테마의 둘째 강조색): A·B(--accent)와 색상 계열이 다른 색을 테마마다 — 가능하면 그 테마 원래 색표에서
+// (노드 오로라 주황, 모노카이 분홍, 솔라라이즈 주황, 드라큘라 초록). 커스텀은 정하지 않음 → pixel-ui 가 accent 를 색상환에서 돌려 만든다.
+// 글자 색은 pixel-ui 가 면과 대비 3 이상으로 고른다.
+const CD_COLORS = {
+  midnight: "#ffa94d",
+  dark: "#ff9d4d",
+  nord: "#d08770",
+  monokai: "#ff6188",
+  solardark: "#cb4b16",
+  dracula: "#50fa7b",
+  forest: "#f78166",
+  light: "#e8702a",
+  sepia: "#2f7a6e",
+  ragdoll: "#d07a45",
+  solarized: "#cb4b16",
+  contrast: "#b3001e",
+};
+
 export function baseColors() {
   const style = getComputedStyle(document.documentElement);
   const read = (name, fallback) => hexOf(style.getPropertyValue(name)) || fallback;
@@ -57,9 +75,11 @@ export function baseColors() {
   const accent = read("--accent", "#6c93ff");
   const line = read("--line-strong", "#3a4670");
   const light = document.documentElement.dataset.tone === "light";
+  const themeId = document.documentElement.dataset.theme ?? "";
+  const cd = Object.hasOwn(CD_COLORS, themeId) ? CD_COLORS[themeId] : undefined;
   return light
-    ? { body: mix(bg, "#000000", 0.08), button: mix(raised, "#000000", 0.1), accent, ink: text, outline: mix(text, line, 0.35) }
-    : { body: mix(bg, "#ffffff", 0.24), button: mix(raised, "#ffffff", 0.12), accent, ink: text, outline: mix(bg, "#000000", 0.6) };
+    ? { body: mix(bg, "#000000", 0.08), button: mix(raised, "#000000", 0.1), accent, ink: text, outline: mix(text, line, 0.35), cd }
+    : { body: mix(bg, "#ffffff", 0.24), button: mix(raised, "#ffffff", 0.12), accent, ink: text, outline: mix(bg, "#000000", 0.6), cd };
 }
 
 export class Skin {
