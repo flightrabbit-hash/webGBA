@@ -2,7 +2,7 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom } from "./core/web-host.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
+import { BUTTONS, codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
@@ -89,6 +89,7 @@ const state = {
   toastTimer: 0,
   dragDepth: 0,
   quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0 },
+  extra: null,
 };
 
 const holds = new Set();
@@ -172,10 +173,16 @@ const player = new WebPlayer({
 
 const padCode = (name) => `Pad:${name}`;
 
+// C·D 버튼: 게임이 쓴다고 정의했을 때만 화면에 나오고(A·B 위), 키보드는 C·I / V·U(지금 키와 겹치지 않음 —
+// Z X C V 한 줄, 오른손은 K·J 바로 위). 보내는 신호는 그 정의가 정한 GBA 버튼.
+const EXTRA_PAD = ["C", "D"];
+const EXTRA_KEYBOARD = { C: ["KeyC", "KeyI"], D: ["KeyV", "KeyU"] };
+
 function keyTable() {
   const keys = {};
   for (const [name, codes] of Object.entries(DEFAULT_KEYS)) keys[name] = [...codes];
   for (const name of [...PAD_KEYS, ...DIRS]) keys[name] = [...(keys[name] ?? []), padCode(name)];
+  for (const [name, target] of Object.entries(state.extra ?? {})) keys[target] = [...(keys[target] ?? []), ...EXTRA_KEYBOARD[name], padCode(name)];
   return keys;
 }
 
@@ -189,6 +196,22 @@ const pad = new VirtualPad({
   onVisual: (name, down) => skin.key(name, down),
   onStick: (x, y, active) => skin.stick(x, y, active),
 });
+
+// 게임의 추가 버튼 정의를 받는 곳(하나뿐). map = { C: "L", D: "R" } 처럼 C·D 가 보낼 GBA 버튼(BUTTONS 이름),
+// 없거나 null 이면 A·B 만 = 지금 화면 그대로. .wgba 설명서를 읽는 코드는 규격이 나온 뒤 startHosted 의 meta.buttons 로 잇는다.
+// 정의 없는 지금의 .gba·.wgba·.wasm 은 늘 null 이라 C·D 가 나오지 않는다(설정 항목 없음).
+function setExtraButtons(map) {
+  const next = {};
+  for (const name of EXTRA_PAD) if (BUTTONS.includes(map?.[name])) next[name] = map[name];
+  const extra = Object.keys(next).length ? next : null;
+  if (JSON.stringify(extra) === JSON.stringify(state.extra)) return;
+  pad.releaseAll();
+  state.extra = extra;
+  if (extra) el.pad.dataset.extra = Object.keys(extra).join(" ");
+  else delete el.pad.dataset.extra;
+  player.setKeys(keyTable());
+  if (document.documentElement.dataset.ready) layout();
+}
 
 function savePrefs(patch = {}) {
   Object.assign(state.prefs, patch);
@@ -275,8 +298,11 @@ function showNow(node) {
 }
 
 const FRAME_ROWS = 3;
-const ART = { stick: 37, shoulderH: 17, pillH: 15 };
+const ART = { stick: 37, shoulderH: 17, pillH: 15, roundH: 27 };
 const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, h: 27 * 1.75 } };
+// C·D 가 있으면 A·B 묶음 위에 같은 모양 한 단: A·B 를 대각선 단차(face.h − 버튼 높이) 2개만큼 내린다
+// (C 아래 ↔ A 위 사이 = D 아래 ↔ B 위 사이 = 단차 2 − 버튼 높이, 네 버튼이 같은 간격으로 지그재그).
+const faceUp = (face) => 2 * (face.h - ART.roundH);
 
 function layout() {
   const width = window.innerWidth;
@@ -294,6 +320,8 @@ function layout() {
   const root = document.documentElement.style;
   const icon = 2;
   const face = landscape ? FACE.landscape : FACE.portrait;
+  const four = Boolean(state.extra);
+  const faceH = face.h + (four ? faceUp(face) : 0);
   let art = state.art ?? 3;
   skin.resize({ art, icon, dpr });
   syncTools();
@@ -306,16 +334,32 @@ function layout() {
     const barH = el.bar.offsetHeight;
     sw = innerW;
     sh = Math.floor((sw * 2) / 3);
-    const minPad = Math.min(300, innerH * 0.4);
+    // C·D 가 있으면: 버튼 칸 = 위아래 여백 24 + 줄 간격 16 + L·R 줄 + 버튼 줄 + START 줄. 넘치면 L·R·START 와 겹치므로
+    // 배율을 낮추고, 가장 작은 배율(2)에서도 모자라면 게임 화면을 그만큼 줄여 버튼 칸을 남긴다.
+    const needPad = (a) => {
+      const u = skin.px(a) / dpr;
+      return 44 + (ART.shoulderH + ART.pillH) * u + Math.round(faceH * u);
+    };
+    const minPad = four ? Math.max(Math.min(300, innerH * 0.4), needPad(2)) : Math.min(300, innerH * 0.4);
     if (innerH - barH - sh - edge * 2 < minPad) {
       sh = Math.max(96, Math.floor(innerH - barH - edge * 2 - minPad));
       sw = Math.floor(sh * 1.5);
     }
     const padH = innerH - barH - sh - edge * 2;
-    art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + face.h + ART.pillH))), 2, 6);
+    art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + faceH + ART.pillH))), 2, 6);
+    while (four && art > 2 && needPad(art) > padH) art--;
     root.setProperty("--side", "0px");
   } else if (padOn && landscape) {
     art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
+    if (four) {
+      // 버튼 칸(가운데 줄) = 높이 − 첫 줄(기능 버튼 막대 또는 L·R + 위 여백 8) − 끝 줄(START·SELECT + 아래 여백 10).
+      const barH = el.bar.offsetHeight;
+      const fits = (a) => {
+        const u = skin.px(a) / dpr;
+        return Math.round(faceH * u) <= innerH - Math.max(barH, ART.shoulderH * u + 8) - (ART.pillH * u + 10) - 4;
+      };
+      while (art > 2 && !fits(art)) art--;
+    }
     const rowH = Math.max(el.bar.offsetHeight + 4, ART.shoulderH * art + 12);
     const sideMin = Math.ceil(Math.max(face.w, ART.stick) * art + 16);
     const availW = innerW - sideMin * 2 - sideEdge;
@@ -334,7 +378,9 @@ function layout() {
   skin.resize({ art, icon, dpr });
   const unit = skin.px(art) / dpr;
   root.setProperty("--face-w", `${Math.round(face.w * unit)}px`);
-  root.setProperty("--face-h", `${Math.round(face.h * unit)}px`);
+  const up = Math.round(faceUp(face) * unit);
+  root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
+  root.setProperty("--face-up", `${up}px`);
   root.setProperty("--sw", `${sw}px`);
   root.setProperty("--sh", `${sh}px`);
   root.setProperty("--stage-h", `${sh + edge * 2}px`);
@@ -979,6 +1025,8 @@ async function startHosted(host, meta) {
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
+  // 게임의 추가 버튼(C·D) 정의 — 규격 전이라 meta.buttons 는 늘 없음 → A·B 만.
+  setExtraButtons(meta.buttons ?? null);
   syncControls();
   layout();
   applyPlayerPrefs();
@@ -1266,6 +1314,7 @@ async function closeGame({ quiet = false } = {}) {
   context.game = "";
   holds.delete("user");
   pad.releaseAll();
+  setExtraButtons(null);
   syncControls();
   updateWake();
   if (!quiet) toast(t("status.closed"));
@@ -2029,6 +2078,8 @@ function renderHelp() {
   for (const name of KEY_ORDER) {
     list.append(make("dt", "", t(`key.${name}`)), make("dd", "", (DEFAULT_KEYS[name] ?? []).map(keyName).join(" · ")));
   }
+  // C·D 는 게임이 정의했을 때만(보내는 GBA 버튼을 함께)
+  for (const [name, target] of Object.entries(state.extra ?? {})) list.append(make("dt", "", `${name} → ${t(`key.${target}`)}`), make("dd", "", EXTRA_KEYBOARD[name].map(keyName).join(" · ")));
   list.append(make("dt", "", t("web.speed")), make("dd", "", t("keyCode.Tab")), make("dt", "", t("help.pause")), make("dd", "", "P · Pause"));
   el.sheetBody.replaceChildren(group(t("web.help.keyboard"), list), group(t("web.help.touchTitle"), make("p", "note", t("web.help.touch")), make("p", "note", t("web.help.gamepad"))));
 }
@@ -2504,7 +2555,7 @@ async function boot() {
   if (!state.storeBroken) store.persist();
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, version: BUILD };
+window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setExtraButtons, version: BUILD };
 
 boot().catch((error) => {
   console.error(error);

@@ -567,6 +567,33 @@ body[data-pad="off"] .pad {
   top: 0;
 }
 
+/* C·D: 게임이 정의했을 때만(main.js setExtraButtons → .pad[data-extra]). A·B 위로 한 단 — C 는 A 위, D 는 B 위,
+   C·D 둘의 모양은 지금 A·B 와 같고 A·B 는 --face-up(= 대각선 단차 2개)만큼 내려간다. */
+.face .key--c,
+.face .key--d {
+  display: none;
+  position: absolute;
+}
+
+.face .key--c {
+  right: 0;
+  top: 0;
+}
+
+.face .key--d {
+  left: 0;
+  bottom: var(--face-up);
+}
+
+.pad[data-extra~="C"] .face .key--c,
+.pad[data-extra~="D"] .face .key--d {
+  display: flex;
+}
+
+.pad[data-extra] .face .key--a {
+  top: var(--face-up);
+}
+
 body[data-layout="portrait"] .app {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto var(--stage-h) minmax(0, 1fr);

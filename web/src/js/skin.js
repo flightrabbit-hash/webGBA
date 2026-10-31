@@ -11,7 +11,7 @@ const TOOL_ICONS = {
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
 };
 
-const KEY_PARTS = { A: "a", B: "b", L: "l", R: "r", START: "start", SELECT: "select" };
+const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select" };
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
 
 const MENU_ART = [

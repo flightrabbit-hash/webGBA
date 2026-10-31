@@ -26,7 +26,12 @@ const LANGS = (process.env.UI_LANGS ?? "ko,en,ja").split(",");
 const INK_THRESHOLD = Number(process.env.INK_THRESHOLD ?? 48);
 // UI_MOTION_ONLY=1 이면 여닫기 움직임 시험만(UI_MOTION=0 이면 그것만 뺌). WebKit 이 설치돼 있으면 같은 시험을 WebKit 으로도.
 const ONLY_MOTION = process.env.UI_MOTION_ONLY === "1";
-const MOTION = ONLY_MOTION || process.env.UI_MOTION !== "0";
+// UI_EXTRA_ONLY=1 이면 C·D 버튼 시험만(UI_EXTRA=0 이면 그것만 뺌). UI_BASE_URL = 수정 전 빌드 주소(정의 없음 픽셀 비교).
+const ONLY_EXTRA = process.env.UI_EXTRA_ONLY === "1";
+const EXTRA = ONLY_EXTRA || (!ONLY_MOTION && process.env.UI_EXTRA !== "0");
+const BASE_URL = process.env.UI_BASE_URL ?? "";
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA;
+const MOTION = !ONLY_EXTRA && (ONLY_MOTION || process.env.UI_MOTION !== "0");
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "844x390|ko|library": "가로_844x390_보관함.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
@@ -179,7 +184,7 @@ async function seed(page) {
   });
 }
 
-for (const view of ONLY_MOTION ? [] : VIEWS) {
+for (const view of SKIP_MAIN ? [] : VIEWS) {
   for (const lang of LANGS) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport: view.viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     await context.addInitScript((lang) => {
@@ -302,7 +307,7 @@ for (const view of ONLY_MOTION ? [] : VIEWS) {
   }
 }
 
-for (const width of ONLY_MOTION ? [] : [320, 360, 375, 390, 414, 430]) {
+for (const width of SKIP_MAIN ? [] : [320, 360, 375, 390, 414, 430]) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width, height: 760 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
   const page = await context.newPage();
@@ -322,7 +327,7 @@ for (const width of ONLY_MOTION ? [] : [320, 360, 375, 390, 414, 430]) {
 }
 
 const IOS_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
-for (const viewport of ONLY_MOTION ? [] : [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
+for (const viewport of SKIP_MAIN ? [] : [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
   for (const lang of LANGS) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: IOS_UA });
     await context.addInitScript((lang) => localStorage.setItem("webgba.prefs", JSON.stringify({ lang })), lang);
@@ -342,7 +347,7 @@ for (const viewport of ONLY_MOTION ? [] : [{ width: 320, height: 568 }, { width:
   }
 }
 
-for (const viewport of ONLY_MOTION ? [] : [{ width: 1280, height: 800 }, { width: 800, height: 1000 }, { width: 600, height: 400 }]) {
+for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 800, height: 1000 }, { width: 600, height: 400 }]) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport });
   await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
   const page = await context.newPage();
@@ -376,8 +381,169 @@ for (const viewport of ONLY_MOTION ? [] : [{ width: 1280, height: 800 }, { width
   await context.close();
 }
 
+// ── C·D 버튼(게임이 정의했을 때만 — main.js setExtraButtons, 여기서는 시험용 가짜 정의 C = L, D = R) ──
+// 정의 없음: C·D 없고 수정 전 빌드(UI_BASE_URL)와 픽셀 같음. 정의 있음: C 는 A 위·D 는 B 위, 크기 = A·B, 겹침 0·화면 안,
+// 터치로 C·D → L·R, 두 손가락(A + C)·미끄러짐(C→D→B)·스틱 + C, 키보드 C·I / V·U. 끄면 처음 화면과 픽셀 같음.
+const EXTRA_VIEWS = [
+  { width: 320, height: 568, dpr: 2 },
+  { width: 360, height: 640, dpr: 3 },
+  { width: 390, height: 844, dpr: 3 },
+  { width: 568, height: 320, dpr: 2 },
+  { width: 640, height: 360, dpr: 2.625 },
+  { width: 844, height: 390, dpr: 3 },
+];
+const EXTRA_SHOTS = { "390x844": "세로_390x844_ABCD.png", "844x390": "가로_844x390_ABCD.png" };
+const PAD_BITS = { A: 1, B: 2, SELECT: 4, START: 8, RIGHT: 16, LEFT: 32, UP: 64, DOWN: 128, R: 256, L: 512 };
+
+async function padPage(url, { width, height, dpr }) {
+  const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width, height }, isMobile: true, hasTouch: true, deviceScaleFactor: dpr });
+  await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+  const page = await context.newPage();
+  page.errors = [];
+  page.on("pageerror", (e) => page.errors.push(e.message));
+  await page.goto(url);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+  await page.waitForTimeout(400);
+  return { context, page };
+}
+
+function pixelDiff(a, b) {
+  if (a.width !== b.width || a.height !== b.height) return -1;
+  let n = 0;
+  for (let i = 0; i < a.data.length; i += 4) if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] || a.data[i + 2] !== b.data[i + 2]) n++;
+  return n;
+}
+
+const padBoxes = (page) =>
+  page.evaluate(() => {
+    const out = {};
+    for (const n of document.querySelectorAll("[data-key], [data-dpad], #frame, .bar .tool, #btnMenu")) {
+      const r = n.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(n).visibility === "hidden") continue;
+      out[n.dataset.key ?? (n.matches("[data-dpad]") ? "DIR" : n.id)] = { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    }
+    return { boxes: out, art: window.webgba.skin.art };
+  });
+
+for (const view of EXTRA ? EXTRA_VIEWS : []) {
+  const name = `${view.width}x${view.height}`;
+  const key = `${name} dpr${view.dpr} C·D`;
+  const { context, page } = await padPage(URL_BASE, view);
+  const plain = await shoot(page);
+  const before = await padBoxes(page);
+  ok(`${key}: 정의 없으면 C·D 없음`, !before.boxes.C && !before.boxes.D && before.boxes.A && before.boxes.B, Object.keys(before.boxes).join(","));
+  if (BASE_URL) {
+    const base = await padPage(BASE_URL, view);
+    const old = await shoot(base.page);
+    await base.context.close();
+    const diff = pixelDiff(plain, old);
+    ok(`${key}: 정의 없음 = 수정 전 빌드와 픽셀 같음`, diff === 0, `다른 픽셀 ${diff}`);
+  }
+
+  await page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+  await page.waitForTimeout(300);
+  const { boxes: b, art } = await padBoxes(page);
+  const list = Object.entries(b);
+  const hits = [];
+  for (let i = 0; i < list.length; i++)
+    for (let j = i + 1; j < list.length; j++) {
+      const [n1, x] = list[i];
+      const [n2, y] = list[j];
+      if (x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5) hits.push(`${n1}×${n2}`);
+    }
+  const outside = list.filter(([, x]) => x.l < -0.5 || x.t < -0.5 || x.r > view.width + 0.5 || x.b > view.height + 0.5).map(([n]) => n);
+  ok(`${key}: C·D 보임·겹침 0·화면 안`, b.C && b.D && !hits.length && !outside.length, `겹침 ${hits.join(" ") || "0"} · 밖 ${outside.join(" ") || "0"}`);
+  if (!b.C || !b.D) {
+    await context.close();
+    continue;
+  }
+  const column = b.C.b <= b.A.t + 0.5 && Math.abs(b.C.cx - b.A.cx) < 0.5 && b.D.b <= b.B.t + 0.5 && Math.abs(b.D.cx - b.B.cx) < 0.5;
+  ok(`${key}: C 는 A 바로 위, D 는 B 바로 위`, column, JSON.stringify({ C: [b.C.cx, b.C.b], A: [b.A.cx, b.A.t], D: [b.D.cx, b.D.b], B: [b.B.cx, b.B.t] }));
+  const sameSize = [b.C, b.D].every((x) => Math.abs(x.w - b.A.w) < 0.5 && Math.abs(x.h - b.A.h) < 0.5);
+  const gapCA = b.A.t - b.C.b;
+  const gapDB = b.B.t - b.D.b;
+  const diagAB = b.B.t - b.A.t;
+  const diagCD = b.D.t - b.C.t;
+  ok(`${key}: C·D 크기 = A·B, 위아래 간격 같음, C·D 대각선 = A·B 대각선`, sameSize && Math.abs(gapCA - gapDB) <= 1 && Math.abs(diagAB - diagCD) <= 1 && gapCA > 0, `배율 ${before.art}→${art} · 버튼 ${b.A.w}x${b.A.h} · 간격 ${gapCA.toFixed(1)}/${gapDB.toFixed(1)} · 대각선 ${diagAB.toFixed(1)}/${diagCD.toFixed(1)}`);
+
+  const cdp = await context.newCDPSession(page);
+  const touch = touchApi(cdp);
+  const held = () => page.evaluate(() => window.webgba.player.held);
+  const at = (n, id) => ({ x: b[n].cx, y: b[n].cy, id });
+  await touch("touchStart", [at("C", 1)]);
+  const c = await held();
+  await touch("touchEnd", []);
+  await touch("touchStart", [at("D", 1)]);
+  const d = await held();
+  await touch("touchEnd", []);
+  ok(`${key}: 터치 C → L, D → R`, c === PAD_BITS.L && d === PAD_BITS.R, `${c}/${d}`);
+  await touch("touchStart", [at("A", 1), at("C", 2)]);
+  const ac = await held();
+  await touch("touchMove", [at("A", 1), at("D", 2)]);
+  const ad = await held();
+  await touch("touchMove", [at("A", 1), at("B", 2)]);
+  const ab = await held();
+  await touch("touchEnd", [at("B", 2)]); // CDP touchEnd 의 점 = 떼는 손가락
+  const a = await held();
+  await touch("touchEnd", []);
+  const none = await held();
+  ok(`${key}: 두 손가락 A + C, C→D→B 미끄러짐, 떼기`, ac === (PAD_BITS.A | PAD_BITS.L) && ad === (PAD_BITS.A | PAD_BITS.R) && ab === (PAD_BITS.A | PAD_BITS.B) && a === PAD_BITS.A && none === 0, `${ac}/${ad}/${ab}/${a}/${none}`);
+  const stick = { x: b.DIR.cx + b.DIR.w * 0.4, y: b.DIR.cy, id: 1 };
+  await touch("touchStart", [stick, at("C", 2)]);
+  const sc = await held();
+  await touch("touchEnd", []);
+  ok(`${key}: 스틱 오른쪽 + C`, sc === (PAD_BITS.RIGHT | PAD_BITS.L), `${sc}`);
+  const keys = await page.evaluate(() => {
+    const p = window.webgba.player;
+    const one = (code) => {
+      p.keyDown(code);
+      const bits = p.held;
+      p.keyUp(code);
+      return bits;
+    };
+    return ["KeyC", "KeyI", "KeyV", "KeyU", "KeyZ", "KeyA", "KeyS"].map(one);
+  });
+  ok(`${key}: 키보드 C·I → L, V·U → R(A·L·R 키 그대로)`, keys.join() === [512, 512, 256, 256, 1, 512, 256].join(), keys.join(","));
+  if (EXTRA_SHOTS[name]) await page.screenshot({ path: path.join(SHOTS, EXTRA_SHOTS[name]) });
+
+  if (name === "390x844") {
+    const only = await page.evaluate(() => {
+      window.webgba.setExtraButtons({ C: "START" });
+      const shown = (k) => document.querySelector(`[data-key="${k}"]`).getBoundingClientRect().width > 0;
+      const s = window.webgba.player;
+      s.keyDown("Pad:C");
+      const bits = s.held;
+      s.keyUp("Pad:C");
+      const one = { c: shown("C"), d: shown("D"), bits };
+      window.webgba.setExtraButtons({ C: "X", D: 3 });
+      return { ...one, bad: window.webgba.state.extra, badShown: shown("C") || shown("D") };
+    });
+    ok(`${key}: C 만 정의하면 C 만(→ START), 모르는 이름은 무시(= 정의 없음)`, only.c && !only.d && only.bits === PAD_BITS.START && only.bad === null && !only.badShown, JSON.stringify(only));
+  }
+
+  await page.evaluate(() => window.webgba.setExtraButtons(null));
+  await page.waitForTimeout(300);
+  const back = pixelDiff(plain, await shoot(page));
+  const gone = await page.evaluate(() => {
+    const p = window.webgba.player;
+    p.keyDown("KeyC");
+    const bits = p.held;
+    p.keyUp("KeyC");
+    return { bits, extra: window.webgba.state.extra, attr: document.getElementById("pad").dataset.extra ?? null };
+  });
+  ok(`${key}: 정의를 지우면 처음 화면과 픽셀 같음·C 키 없음`, back === 0 && gone.bits === 0 && gone.extra === null && gone.attr === null, `다른 픽셀 ${back} · ${JSON.stringify(gone)}`);
+  ok(`${key}: 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
+  await context.close();
+}
+
+function touchApi(cdp) {
+  return async (type, points) => {
+    await cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map((p) => ({ x: p.x, y: p.y, id: p.id, radiusX: 2, radiusY: 2, force: 1 })) });
+  };
+}
+
 const pixelTable = [];
-for (const dpr of ONLY_MOTION ? [] : [1, 2, 3]) {
+for (const dpr of SKIP_MAIN ? [] : [1, 2, 3]) {
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: true, hasTouch: true, deviceScaleFactor: dpr });
     await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));

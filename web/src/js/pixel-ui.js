@@ -233,6 +233,8 @@ function intScale(s) {
 const BIG = { // 5x7
   A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
   B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
+  C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
   L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
   R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
 };
@@ -375,7 +377,7 @@ const GAME_DEPTH = 2, GAME_SHADOW = 2, ICON_DEPTH = 2, ICON_SHADOW = 1;
 /** 부품의 캔버스 크기(픽셀). 배치 계산용. */
 export function partSize(kind, scale = 1) {
   const s = intScale(scale);
-  const z = SIZES[kind === 'a' || kind === 'b' ? 'ab' : kind === 'l' || kind === 'r' ? 'shoulder' : kind === 'start' || kind === 'select' ? 'pill' : kind];
+  const z = SIZES[kind === 'a' || kind === 'b' || kind === 'c' || kind === 'd' ? 'ab' : kind === 'l' || kind === 'r' ? 'shoulder' : kind === 'start' || kind === 'select' ? 'pill' : kind];
   if (!z) throw new Error(`pixel-ui: 모르는 부품: ${kind}`);
   if (kind === 'icon' || kind === 'stick') return { w: z.w * s, h: z.h * s };
   const extra = kind === 'iconButton' ? ICON_DEPTH + ICON_SHADOW : GAME_DEPTH + GAME_SHADOW;
@@ -529,12 +531,12 @@ export function renderPill({ label = 'START', state = 'normal', scale = 1, palet
 
 /**
  * 게임 버튼 하나를 이름으로.
- * name: 'dpad'|'a'|'b'|'l'|'r'|'start'|'select'
+ * name: 'dpad'|'a'|'b'|'c'|'d'|'l'|'r'|'start'|'select'(c·d 는 게임이 정의했을 때만 쓰는 둥근 버튼, A·B 와 같은 모양)
  */
 export function renderGameButton(name, opts = {}) {
   switch (name) {
     case 'dpad': return renderDpad(opts);
-    case 'a': case 'b': return renderRoundButton({ ...opts, label: name.toUpperCase() });
+    case 'a': case 'b': case 'c': case 'd': return renderRoundButton({ ...opts, label: name.toUpperCase() });
     case 'l': case 'r': return renderShoulder({ ...opts, side: name.toUpperCase() });
     case 'start': case 'select': return renderPill({ ...opts, label: name.toUpperCase() });
     case 'stick': return renderStickBase(opts);
