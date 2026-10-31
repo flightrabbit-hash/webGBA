@@ -30,7 +30,7 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true, 
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
 await context.addInitScript(() => {
   Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
-  localStorage.setItem("webgba.installHint", "1");
+  if (window === window.top) localStorage.setItem("webgba.installHint", "1");
 });
 const page = await context.newPage();
 const errors = [];
@@ -210,7 +210,6 @@ try {
 
   // 6. 못 여는 파일
   for (const [key, pattern, label] of [
-    ["script", /자체 JS/, "runtime script → 아직 지원하지 않음"],
     ["net", /멀티플레이/, "needs net → 기능 없음"],
     ["newer", /새 규격/, "모르는 needs → 새 webGBA 필요"],
   ]) {
@@ -219,14 +218,17 @@ try {
     const after = await roms();
     ok(`${label}`, pattern.test(text) && !(await running()) && after.length === 1, text);
   }
-  await page.screenshot({ path: path.join(SHOTS, "자체JS_안내.png") }).catch(() => {});
+  // runtime script 는 S4 부터 격리 틀에서 연다(이 작은 예제는 webgba.ready 를 부르지 않아 기다림이 끝난 뒤 돎) — 자세한 것은 web-script.mjs
+  await pick(opt.script);
+  const scriptOpen = await page.evaluate(() => ({ script: Boolean(window.webgba.player.host?.script), frame: document.querySelector("#screen .script-frame")?.getAttribute("sandbox") ?? "" }));
+  ok("runtime script → 격리 틀에서 열림(S4)", scriptOpen.script && scriptOpen.frame === "allow-scripts" && (await running()), JSON.stringify(scriptOpen));
   ok("페이지 오류 없음", errors.length === 0, errors.join(" | "));
 
   // 7. 이어받기 알림은 옮긴 것에 맞게(결정 102-7): 세이브만 옮기면 "세이브를"(퀵슬롯 말 없음) — 새 프로필에서
   const fresh = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
   await fresh.addInitScript(() => {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
-    localStorage.setItem("webgba.installHint", "1");
+    if (window === window.top) localStorage.setItem("webgba.installHint", "1");
   });
   const page2 = await fresh.newPage();
   page2.on("pageerror", (error) => errors.push(error.message));

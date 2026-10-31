@@ -1,6 +1,7 @@
 import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
-import { compileCode, gameInfo, pickText, problemText, readWgba, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
+import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
+import { bootScript } from "./core/script-host.js";
 import { resolveInput, romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
@@ -177,6 +178,7 @@ const player = new WebPlayer({
     toast(t("status.halted", { reason: why || t("status.haltUnknown") }), "error");
     syncControls();
   },
+  onChange: () => syncControls(),
 });
 
 const padCode = (name) => `Pad:${name}`;
@@ -1285,6 +1287,9 @@ async function startHosted(host, meta, input = null) {
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
+  // ② 자체 JS 게임은 격리 틀(#screen 안 iframe)이 화면 — 캔버스는 숨김(web.css)
+  if (host.script) document.body.dataset.runtime = "script";
+  else delete document.body.dataset.runtime;
   setInput(input);
   syncControls();
   layout();
@@ -1294,6 +1299,40 @@ async function startHosted(host, meta, input = null) {
   hold("sheet", Boolean(state.sheet));
   syncControls();
   updateWake();
+}
+
+// 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 이 페이지에서 누른 것과 같은 길로.
+function frameKey(event) {
+  const fake = { ...event, target: document.body, preventDefault() {}, stopPropagation() {} };
+  if (event.type === "keydown") onKeyDown(fake);
+  else onKeyUp(fake);
+}
+
+/** 틀에 초점이 있어도 이 페이지가 먼저 쓰는 키: 빨리 감기(누르는 동안)·Tab·Pause·P. Ctrl·Alt 조합은 틀이 따로 넘김. */
+const scriptReserved = () => [...new Set([...(keyTable().FAST ?? []), "Tab", "Pause", "KeyP"])];
+
+// ② 자체 JS(runtime script): 격리 틀에서 돈다. 세이브·퀵슬롯은 다른 게임처럼 게임 id 키(saveIdOf).
+async function openScript(meta, wgba) {
+  const save = await readSave(saveIdOf(meta));
+  const input = resolveInput(wgba.manifest);
+  const { host } = await bootScript({
+    wgba,
+    input,
+    save,
+    container: el.screen,
+    before: el.canvas.nextSibling,
+    lang: i18n.lang(),
+    background: getComputedStyle(el.screen).backgroundColor || "#000",
+    text: { frame: t("stage.scriptFrame"), tap: t("stage.scriptTap"), navigated: t("status.scriptNavigated"), noRunner: t("status.scriptNoRunner"), exited: t("status.scriptExited") },
+    reserved: scriptReserved(),
+    log: (level, line) => {
+      if (level === "error" || level === "warn") logLine("WARN", `[게임 ${wgba.manifest.id}] ${line}`);
+    },
+    onFrame: (frame) => (state.scriptFrame = frame),
+    onHostKey: frameKey,
+  });
+  await startHosted(host, meta, input);
+  return meta.name;
 }
 
 async function openRom(meta, bytes) {
@@ -1348,6 +1387,7 @@ async function openWasm(meta, bytes, wgba) {
   if (wgba === undefined) wgba = await inspectWgba(bytes);
   const problem = wgba ? supportProblem(wgba.manifest) : null;
   if (problem) throw new Error(problemText(problem));
+  if (wgba?.manifest.runtime === "script") return openScript(meta, wgba);
   let module;
   try {
     module = await (wgba ? compileCode(wgba.code) : WebAssembly.compile(bytes));
@@ -1368,7 +1408,7 @@ async function openWasm(meta, bytes, wgba) {
     return "";
   }
   const save = await readSave(saveIdOf(meta));
-  const { host } = await bootHost({ module, rom: rom.bytes, save, log: hostLog });
+  const { host } = await bootHost({ module, rom: rom.bytes, save, log: hostLog, screen: wgba ? screenOf(wgba.manifest) : null });
   await startHosted(host, meta, wgba ? resolveInput(wgba.manifest) : null);
   return meta.name;
 }
@@ -1519,10 +1559,11 @@ async function launch(meta, bytes, { note = "", loader = null, wgba = undefined 
     store.patch(store.romKey(meta.id), { opened: Date.now() }).catch(() => {});
   }
   toast(note);
+  // ② 자체 JS 게임은 틀 안 소리 — 잠겨 있으면 틀이 "눌러서 소리 켜기" 덮개를 띄운다
   const audio = player.audio;
-  if (!audio || audio.ac.state !== "running")
+  if (!player.host?.script && (!audio || audio.ac.state !== "running"))
     setTimeout(() => {
-      if (state.game && (!player.audio || player.audio.ac.state !== "running")) toast(t("web.soundHint"));
+      if (state.game && !player.host?.script && (!player.audio || player.audio.ac.state !== "running")) toast(t("web.soundHint"));
     }, 2600);
   refreshStart();
   return true;
@@ -1613,6 +1654,8 @@ async function closeGame({ quiet = false } = {}) {
   if (!state.game) return;
   if (player.active) await player.stop();
   state.game = null;
+  state.scriptFrame = null;
+  delete document.body.dataset.runtime;
   context.game = "";
   holds.delete("user");
   pad.releaseAll();
@@ -2771,11 +2814,11 @@ function onKeyDown(event) {
     if (!event.repeat) togglePause();
     return;
   }
-  if (player.keyDown(code)) event.preventDefault();
+  if (player.keyDown(code, event)) event.preventDefault();
 }
 
 function onKeyUp(event) {
-  if (player.keyUp(codeOf(event))) event.preventDefault();
+  if (player.keyUp(codeOf(event), event)) event.preventDefault();
 }
 
 function unlockAudio() {
@@ -2882,7 +2925,10 @@ function wire() {
   coarse.addEventListener?.("change", layout);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", () => player.active && player.flushSave({ final: true }));
-  window.addEventListener("blur", () => player.releaseAll());
+  // ② 게임 틀을 눌러 초점이 틀로 가도 blur 가 온다 — 그때는 키를 놓지 않는다(틀이 키를 넘겨줌)
+  window.addEventListener("blur", () => {
+    if (!(state.scriptFrame && document.activeElement === state.scriptFrame)) player.releaseAll();
+  });
   window.addEventListener("popstate", () => {
     if (state.sheet) closeSheet({ fromHistory: true });
   });

@@ -1,6 +1,7 @@
 import { core, win, onCloseRequested, onMaximized, onOpenFile, onOsDrag, onOsFileDrop } from "../bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload, SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { compileCode, gameInfo, problemText, readWgba, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
+import { compileCode, gameInfo, problemText, readWgba, screenOf, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
+import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
@@ -82,6 +83,9 @@ const state = {
   link: { linked: false, elsewhere: false },
   // 지금 게임의 버튼 목록(resolveInput — 설명서 input, 없으면 GBA 10버튼)
   input: GBA_LAYOUT,
+  // 지금 게임 화면 크기(screenOf — 설명서 screen, null = GBA 240×160)와 ② 격리 틀
+  screen: null,
+  scriptFrame: null,
 };
 
 const player = new Player({
@@ -93,7 +97,9 @@ const player = new Player({
   onHalt: (why) => {
     status(t("status.halted", { reason: why || t("status.haltUnknown") }), "error");
     core.log("ERROR", `게임이 멈췄습니다 ${state.game?.path ?? ""}: ${why}`);
+    syncControls();
   },
+  onChange: () => syncControls(),
 });
 
 const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
@@ -189,14 +195,23 @@ function keyName(code) {
 
 const integerScale = () => state.prefs.scaleMode === "integer";
 
+// 게임 화면 크기: 설명서 screen(없으면 GBA 240×160). 배율 규칙은 그대로 — 설정 "정수 배율"(또는 설명서 scale "integer")이면
+// 영역에 들어가는 가장 큰 정수 배, 아니면 영역에 맞춤(비율 유지). ② 틀(iframe)도 같은 크기.
+const screenSize = () => state.screen ?? { width: SCREEN_W, height: SCREEN_H, integer: false };
+
 function layoutScreen() {
   const box = el.stage.getBoundingClientRect();
   if (box.width < 1 || box.height < 1) return;
-  const fit = Math.min(box.width / SCREEN_W, box.height / SCREEN_H);
-  const scale = integerScale() && fit >= 1 ? Math.floor(fit) : fit;
-  const width = Math.max(1, Math.floor(SCREEN_W * scale));
-  el.screen.style.width = `${width}px`;
-  el.screen.style.height = `${Math.max(1, Math.round((width * SCREEN_H) / SCREEN_W))}px`;
+  const { width: w, height: h, integer } = screenSize();
+  const fit = Math.min(box.width / w, box.height / h);
+  const scale = (integerScale() || integer) && fit >= 1 ? Math.floor(fit) : fit;
+  const width = Math.max(1, Math.floor(w * scale));
+  const height = Math.max(1, Math.round((width * h) / w));
+  for (const node of [el.screen, state.scriptFrame]) {
+    if (!node) continue;
+    node.style.width = `${width}px`;
+    node.style.height = `${height}px`;
+  }
 }
 
 new ResizeObserver(layoutScreen).observe(el.stage);
@@ -207,7 +222,7 @@ function showView(view) {
   el.screen.hidden = view !== "screen";
   el.frame.hidden = view !== "frame";
   el.stage.classList.toggle("is-game", view !== "start");
-  if (view !== "screen") el.paused.hidden = true;
+  if (view !== "screen" && view !== "script") el.paused.hidden = true;
   if (view === "start") renderStart();
   layoutScreen();
 }
@@ -328,13 +343,57 @@ async function startHosted(host, game) {
   state.game = { ...game, name: baseOf(game.path), title: game.label || (host.title ? `${baseOf(game.path)} · ${host.title}` : baseOf(game.path)) };
   // 설명서의 버튼 목록(없으면 GBA 10버튼 — 키·게임패드 지금 그대로)
   applyInput(game.input ?? null);
-  showView("screen");
+  state.screen = game.screen ?? null;
+  showView(host.script ? "script" : "screen");
   layoutScreen();
   await player.start({ host, saveId: game.saveId, game: game.path });
   player.fastScale = state.prefs.fastScale ?? 4;
+  player.pushScript();
   syncControls();
   el.stage.focus();
 }
+
+/** 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 본 창에서 누른 것과 같은 길로. */
+function frameKey(event) {
+  const fake = { ...event, target: document.body, preventDefault() {}, stopPropagation() {} };
+  if (event.type === "keydown") onKeyDown(fake);
+  else onKeyUp(fake);
+}
+
+// ② 자체 JS(runtime script): 격리 틀에서 돈다. 세이브는 다른 게임처럼 연 파일 옆 <이름>.sav, 퀵슬롯은 빌드 저장 칸.
+async function openScript(path, wgba, info, label) {
+  const build = await core.webInspect(path, state.prefs.webRom || null);
+  const { save, name } = await openSave(path);
+  const input = resolveInput(wgba.manifest);
+  state.screen = screenOf(wgba.manifest);
+  showView("script");
+  const { host, hadSave } = await bootScript({
+    wgba,
+    input,
+    save,
+    container: el.stage,
+    before: el.start,
+    lang: i18n.lang(),
+    background: getComputedStyle(document.documentElement).getPropertyValue("--screen-bg").trim() || "#000",
+    text: { frame: t("stage.scriptFrame"), tap: t("stage.scriptTap"), navigated: t("status.scriptNavigated"), noRunner: t("status.scriptNoRunner"), exited: t("status.scriptExited") },
+    reserved: scriptReserved(),
+    log: (level, line) => {
+      if (level === "error" || level === "warn") core.log("WARN", `[게임 ${info.gameId}] ${line}`);
+    },
+    onFrame: (frame) => {
+      state.scriptFrame = frame;
+      layoutScreen();
+    },
+    onHostKey: frameKey,
+  });
+  await startHosted(host, { path, saveId: build.saveId, kind: "script", info, label, input, screen: state.screen });
+  status(join(label || baseOf(path), saveNote(hadSave, name)));
+  core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기(자체 JS ${wgba.manifest.entry?.style}) ${path}`);
+  return true;
+}
+
+/** 틀에 초점이 있어도 호스트가 먼저 쓰는 키(규격 5.5): 빨리 감기·Tab·Pause·F1~F12. Ctrl·Alt 조합은 틀이 따로 넘김. */
+const scriptReserved = () => [...new Set([...(keysFor().FAST ?? []), "Tab", "Pause", ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)])];
 
 async function openRom(path) {
   const rom = await loadRomBytes(path);
@@ -502,6 +561,7 @@ async function openWasm(path, { preferPage = false } = {}) {
   if (problem) throw new Error(problemText(problem));
   const info = wgba ? gameInfo(wgba) : null;
   const label = info ? titleLine(info, i18n.lang()) : "";
+  if (wgba?.manifest.runtime === "script") return openScript(path, wgba, info, label);
   const build = await core.webInspect(path, state.prefs.webRom || null);
   if (build.movedFrom) {
     const builds = { ...(state.prefs.webBuilds ?? {}) };
@@ -534,8 +594,9 @@ async function openWasm(path, { preferPage = false } = {}) {
     }
     if (rom) await core.webSetRom(build.key, rom);
     const { save, name } = await openSave(path);
-    const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog });
-    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null });
+    const screen = wgba ? screenOf(wgba.manifest) : null;
+    const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog, screen });
+    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null, screen });
     status(join(label || baseOf(path), romNote(rom), saveNote(hadSave, name)));
     if (info) core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기 ${path}`);
     return true;
@@ -578,6 +639,8 @@ async function closeGame({ quiet = false } = {}) {
   if (player.active) await player.stop();
   if (game.kind === "frame") el.frame.src = "about:blank";
   state.game = null;
+  state.screen = null;
+  state.scriptFrame = null;
   state.autoPaused = false;
   if (!state.input.gba) applyInput(null);
   showView("start");
@@ -1412,60 +1475,59 @@ function hotkey(event) {
   return false;
 }
 
-document.addEventListener(
-  "keydown",
-  (event) => {
-    if (!el.layer.hidden) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dialogDone?.(null);
-      }
-      return;
-    }
-    if (settings.isOpen()) return;
-    if (state.menuName) {
-      if (event.key === "Escape") closeMenu();
-      return;
-    }
-    const code = codeOf(event);
-    if (event.repeat && player.keymap.has(code)) {
+function onKeyDown(event) {
+  if (!el.layer.hidden) {
+    if (event.key === "Escape") {
       event.preventDefault();
-      if (player.active && !typingTarget(event.target)) player.keyDown(code);
-      return;
+      dialogDone?.(null);
     }
-    if (hotkey(event)) {
-      event.preventDefault();
-      return;
-    }
-    if (typingTarget(event.target)) return;
-    if (player.active) {
-      if (player.keyDown(code)) event.preventDefault();
-    } else if (el.panelList.contains(event.target)) {
-      return;
-    } else if (state.game?.kind === "frame") {
-      forwardKey(event);
-      event.preventDefault();
-    }
-  },
-  true,
-);
+    return;
+  }
+  if (settings.isOpen()) return;
+  if (state.menuName) {
+    if (event.key === "Escape") closeMenu();
+    return;
+  }
+  const code = codeOf(event);
+  if (event.repeat && player.keymap.has(code)) {
+    event.preventDefault();
+    if (player.active && !typingTarget(event.target)) player.keyDown(code, event);
+    return;
+  }
+  if (hotkey(event)) {
+    event.preventDefault();
+    return;
+  }
+  if (typingTarget(event.target)) return;
+  if (player.active) {
+    if (player.keyDown(code, event)) event.preventDefault();
+  } else if (el.panelList.contains(event.target)) {
+    return;
+  } else if (state.game?.kind === "frame") {
+    forwardKey(event);
+    event.preventDefault();
+  }
+}
 
-document.addEventListener(
-  "keyup",
-  (event) => {
-    const code = codeOf(event);
-    if (player.active) {
-      if (player.keyUp(code)) event.preventDefault();
-    } else if (state.game?.kind === "frame" && el.layer.hidden && !settings.isOpen()) forwardKey(event);
-  },
-  true,
-);
+function onKeyUp(event) {
+  const code = codeOf(event);
+  if (player.active) {
+    if (player.keyUp(code, event)) event.preventDefault();
+  } else if (state.game?.kind === "frame" && el.layer.hidden && !settings.isOpen()) forwardKey(event);
+}
+
+document.addEventListener("keydown", onKeyDown, true);
+document.addEventListener("keyup", onKeyUp, true);
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) player.releaseAll();
 });
 
+// ② 게임 틀을 눌러 초점이 틀로 가도 본 창 blur 가 온다 — 그때는 키를 놓거나 멈추지 않는다(틀이 키를 넘겨줌)
+const focusInScript = () => Boolean(state.scriptFrame) && document.activeElement === state.scriptFrame;
+
 window.addEventListener("blur", () => {
+  if (focusInScript()) return;
   player.releaseAll();
   if (state.info?.settings?.pauseWhenHidden && player.active && !player.paused) {
     player.setPaused(true);

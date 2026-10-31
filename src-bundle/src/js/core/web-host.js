@@ -123,6 +123,9 @@ class WebHost {
     this.rom = null;
     this.lines = new Map();
     this.halted = "";
+    // 화면 크기(설명서 screen, 없으면 GBA). Web_GetFramebuffer 는 width × height × 4 바이트 RGBA.
+    this.width = options.screen?.width ?? SCREEN_W;
+    this.height = options.screen?.height ?? SCREEN_H;
   }
 
   get u8() {
@@ -292,7 +295,7 @@ class WebHost {
 
   framebuffer() {
     const at = this.ex.Web_GetFramebuffer() >>> 0;
-    return new Uint8ClampedArray(this.ex.memory.buffer, at, SCREEN_W * SCREEN_H * 4);
+    return new Uint8ClampedArray(this.ex.memory.buffer, at, this.width * this.height * 4);
   }
 
   setAudioRate(rate) {
@@ -398,8 +401,8 @@ class WebHost {
   }
 }
 
-export async function bootHost({ module, rom, save, log }) {
-  const host = new WebHost(module, { log });
+export async function bootHost({ module, rom, save, log, screen = null }) {
+  const host = new WebHost(module, { log, screen });
   await host.start();
   // 롬 없는 ① 게임(설명서 rom.required: false)은 rom 이 null
   if (rom) host.placeRom(rom);

@@ -299,14 +299,27 @@ body[data-layout="portrait"] .bar > .bar__group:last-child {
   display: block;
   width: 100%;
   height: 100%;
+  /* 설명서 화면이 3:2 가 아니면 화면 칸 안에서 비율을 지켜 맞춤(240×160 은 그대로 꽉 참) */
+  object-fit: contain;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   outline: none;
   touch-action: none;
 }
 
-body[data-view="start"] #canvas {
+body[data-view="start"] #canvas,
+body[data-runtime="script"] #canvas {
   visibility: hidden;
+}
+
+/* ② 자체 JS 게임의 격리 틀(script-host.js): 화면 칸을 꽉 채우고, 틀 안 캔버스가 비율을 지켜 맞춤 */
+.script-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--screen-ink);
 }
 
 .start {

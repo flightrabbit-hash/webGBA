@@ -147,13 +147,16 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt }) {
+  constructor({ canvas, onStatus, onStats, onHalt, onChange }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.image = this.ctx.createImageData(SCREEN_W, SCREEN_H);
     this.onStatus = onStatus ?? (() => {});
     this.onStats = onStats ?? (() => {});
     this.onHalt = onHalt ?? (() => {});
+    // ② 자체 JS 게임의 상태가 바뀜(퀵슬롯을 쓸 수 있게 됨·멈춤 등) → 화면이 버튼을 다시 그린다
+    this.onChange = onChange ?? (() => {});
+    this.padNow = 0;
     this.host = null;
     this.saveId = "";
     this.game = "";
@@ -248,9 +251,19 @@ export class Player {
   gamePoint(event) {
     const box = this.canvas.getBoundingClientRect();
     if (box.width < 1 || box.height < 1) return [-1, -1];
-    const x = Math.floor(((event.clientX - box.left) * SCREEN_W) / box.width);
-    const y = Math.floor(((event.clientY - box.top) * SCREEN_H) / box.height);
-    return x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H ? [-1, -1] : [x, y];
+    const w = this.image.width;
+    const h = this.image.height;
+    const x = Math.floor(((event.clientX - box.left) * w) / box.width);
+    const y = Math.floor(((event.clientY - box.top) * h) / box.height);
+    return x < 0 || y < 0 || x >= w || y >= h ? [-1, -1] : [x, y];
+  }
+
+  /** ① 화면 크기(설명서 screen)에 캔버스·그림을 맞춘다. 240×160 이면 그대로. */
+  fitScreen(width = SCREEN_W, height = SCREEN_H) {
+    if (this.image.width === width && this.image.height === height && this.canvas.width === width && this.canvas.height === height) return;
+    this.canvas.width = width;
+    this.canvas.height = height;
+    this.image = this.ctx.createImageData(width, height);
   }
 
   pointerMove(event) {
@@ -293,9 +306,11 @@ export class Player {
     this.bitOf = new Map();
     this.padMap = [];
     const dirs = { right: 0, left: 0, up: 0, down: 0 };
-    for (const b of this.layout.buttons) {
-      if (!Number.isInteger(b.bit)) continue;
-      const mask = 1 << b.bit;
+    for (const [index, b] of this.layout.buttons.entries()) {
+      // ② 자체 JS 버튼은 bit 가 없다 — 목록 순서를 비트로 쓴다(script-host.js setInput 이 같은 순서로 code 를 찾음, 24개까지)
+      const bit = Number.isInteger(b.bit) ? b.bit : b.code ? index : null;
+      if (bit === null) continue;
+      const mask = 1 << bit;
       this.bitOf.set(b.id, mask);
       if (b.role in dirs && !dirs[b.role]) dirs[b.role] = mask;
       if (b.pad?.length) this.padMap.push([mask, padTest(b.pad)]);
@@ -348,7 +363,15 @@ export class Player {
     return bits;
   }
 
-  keyDown(code) {
+  // ② keyboard "raw" 게임은 실제 키보드(event 가 있음)를 그대로 넘긴다 — 빨리 감기 키만 호스트 몫, 터치·게임패드는 버튼으로.
+  rawKey(code, event, down) {
+    if (!event || !this.host?.script || !this.host.raw || this.keymap.get(code) === "FAST") return false;
+    if (this.running && !this.paused) this.host.rawKey(event, down);
+    return true;
+  }
+
+  keyDown(code, event = null) {
+    if (this.rawKey(code, event, true)) return true;
     const hit = this.keymap.get(code);
     if (hit === undefined) return false;
     if (this.down.has(code)) return true;
@@ -360,15 +383,18 @@ export class Player {
       this.pressed |= hit;
       if (hit & this.dirMask) this.dirStamp[hit] = ++this.stamp;
     }
+    this.pushScript();
     return true;
   }
 
-  keyUp(code) {
+  keyUp(code, event = null) {
+    if (this.rawKey(code, event, false)) return true;
     const hit = this.down.get(code);
     if (hit === undefined) return this.keymap.has(code);
     this.down.delete(code);
     this.held = this.heldBits();
     if (hit !== "FAST" && !(this.held & hit)) this.released |= hit;
+    this.pushScript();
     return true;
   }
 
@@ -380,6 +406,15 @@ export class Player {
     this.dropped = 0;
     this.released = 0;
     this.pointerRelease();
+    this.pushScript();
+  }
+
+  /** ② 자체 JS 게임: 지금 눌린 버튼(키·터치·게임패드, 방향 동시 누름 설정 적용)과 빨리 감기 배수를 틀에 바로 넘긴다. */
+  pushScript() {
+    const host = this.host;
+    if (!host?.script || !this.running) return;
+    host.setInput(this.paused ? 0 : this.resolveDpad(this.held | this.padNow));
+    host.setSpeed(this.speed);
   }
 
   notePad(bits) {
@@ -438,6 +473,7 @@ export class Player {
 
   applyVolume() {
     if (this.audio) this.audio.gain.gain.value = this.muted ? 0 : this.volume;
+    if (this.host?.script) this.host.setVolume(this.muted ? 0 : this.volume);
   }
 
   setVolume(volume) {
@@ -463,11 +499,24 @@ export class Player {
     this.releaseAll();
     this.sent = 0;
     this.padPrev = 0;
+    this.padNow = 0;
     this.pace = { speed: 1, emu: 0, real: 0 };
-    const audio = await this.ensureAudio();
-    if (audio) {
-      host.setAudioRate(audio.ac.sampleRate);
-      audio.node.port.postMessage("clear");
+    if (host.script) {
+      // ② 자체 JS: 게임이 틀 안에서 스스로 그리고 소리를 낸다. 여기서는 입력·세이브·일시정지·소리 크기만.
+      host.onHalt = (why) => {
+        this.running = false;
+        this.onHalt(why);
+      };
+      host.onStats = ({ fps }) => this.onStats({ fps, speed: this.speed });
+      host.onChange = () => this.onChange();
+      host.setVolume(this.muted ? 0 : this.volume);
+    } else {
+      this.fitScreen(host.width ?? SCREEN_W, host.height ?? SCREEN_H);
+      const audio = await this.ensureAudio();
+      if (audio) {
+        host.setAudioRate(audio.ac.sampleRate);
+        audio.node.port.postMessage("clear");
+      }
     }
     this.running = true;
     this.last = performance.now();
@@ -475,13 +524,16 @@ export class Player {
     this.frames = 0;
     this.statAt = this.last;
     this.raf = requestAnimationFrame(this.tick);
+    this.pushScript();
   }
 
   async stop() {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.running = false;
+    if (this.host?.script) await this.host.flush();
     if (this.host) await this.flushSave({ final: true });
+    this.host?.dispose?.();
     this.host = null;
     this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.saveId = "";
@@ -500,11 +552,18 @@ export class Player {
     if (paused) this.audio?.node.port.postMessage("clear");
     this.last = performance.now();
     this.acc = 0;
+    if (this.host.script) {
+      // 틀은 requestAnimationFrame 을 붙잡고 소리를 멈춘다(게임이 pause 이벤트를 무시해도 화면·소리가 선다)
+      if (paused) this.host.setInput(0);
+      this.host.setPaused(paused);
+      this.pushScript();
+    }
     if (paused && this.savePending) this.flushSave();
   }
 
   setFast(fast) {
     this.fast = fast;
+    this.pushScript();
   }
 
   get speed() {
@@ -585,6 +644,15 @@ export class Player {
     const dt = Math.min(now - this.last, 100);
     this.last = now;
     if (this.paused) return;
+    if (this.host.script) {
+      // ② 는 게임이 스스로 돈다 — 게임패드만 읽어 바뀐 버튼을 넘기고, 세이브가 오면 모아 쓴다(프레임 수는 틀이 셈)
+      const padBits = this.padBits();
+      this.notePad(padBits);
+      this.padNow = padBits;
+      this.pushScript();
+      if (this.host.takeSaveDirty()) this.queueSave();
+      return;
+    }
     const speed = this.speed;
     this.acc += dt * speed;
     const padBits = this.padBits();
@@ -656,8 +724,10 @@ export class Player {
 
   async saveState(slot) {
     if (!this.canState) return false;
-    const bytes = this.host.stateSave();
+    // ② 는 틀에 물어 받는다(비동기) — 그 순간 틀 화면 사진을 this.image 로(웹 퀵슬롯 칸 그림)
+    const bytes = this.host.script ? await this.host.stateSave() : this.host.stateSave();
     if (!bytes) return false;
+    if (this.host?.script && this.host.thumb) this.image = this.host.thumb;
     await core.storeWrite(this.saveId, slot, bytes);
     return true;
   }
@@ -666,6 +736,7 @@ export class Player {
     if (!this.canState) return false;
     const bytes = await core.storeRead(this.saveId, slot);
     if (!bytes.length) return null;
+    if (this.host.script) return this.host.stateLoad(bytes);
     const ok = this.host.stateLoad(bytes);
     if (ok) {
       this.audio?.node.port.postMessage("clear");
@@ -677,6 +748,7 @@ export class Player {
 
   async reset() {
     if (!this.host) return false;
+    if (this.host.script) await this.host.flush();
     await this.flushSave();
     const ok = await this.host.reset();
     this.audio?.node.port.postMessage("clear");

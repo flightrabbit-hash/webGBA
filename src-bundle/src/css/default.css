@@ -645,6 +645,13 @@ html.is-rail-collapsed .sidepanel {
   background: var(--screen-bg);
 }
 
+/* ② 자체 JS 게임의 격리 틀(script-host.js): 크기는 게임 화면과 같은 규칙(layoutScreen) */
+.script-frame {
+  display: block;
+  border: 0;
+  background: var(--screen-bg);
+}
+
 .start {
   display: flex;
   flex-direction: column;

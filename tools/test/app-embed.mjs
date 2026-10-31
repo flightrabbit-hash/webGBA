@@ -234,9 +234,12 @@ try {
   await sleep(300);
   check("새 규격: 정보 창에 게임 이름·버전·id", /게임: 내장 시험 1\.2\.0/.test(infoText) && /io\.github\.test\.embed/.test(infoText), infoText.slice(0, 120));
   await close(app);
+  // ② script 는 S4 부터 격리 틀에서 연다(이 작은 예제는 webgba.ready 를 부르지 않아 기다림 뒤 돎) — 자세한 것은 app-script.mjs
   const scriptOk = await open(app, scriptFile);
   said = await statusOf(app);
-  check("새 규격 ② script: 열지 않고 '아직' 안내", !scriptOk && /자체 JS/.test(said) && (await gameName(app)) === "", said);
+  const scriptFrame = await app.evaluate("document.querySelector('#stage .script-frame')?.getAttribute('sandbox') ?? ''");
+  check("새 규격 ② script: 격리 틀에서 열림(S4)", scriptOk && scriptFrame === "allow-scripts" && (await app.evaluate(`${T}.state.game?.kind`)) === "script", `${said} · ${scriptFrame}`);
+  await close(app);
 
   // 7. 여는 시간(같은 앱, 첫 번째는 버림): 옛 방식(구획 없음 + 옆 롬) / 묶은 것 / 새 규격(code 조각만 컴파일)
   const before = [];

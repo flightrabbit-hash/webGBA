@@ -3,7 +3,7 @@
 // code 조각만 컴파일하므로 롬·그림이 wasm 엔진 메모리에 올라가지 않는다. 조각마다 목차의 SHA-256 을 확인한다
 // (롬팩 그림은 망가져도 그 그림만 빼고 연다 — 규격 6장). 문장은 t() 키를 코드에 그대로 적는다(i18n-keys 검사).
 import { t } from "../shell/i18n.js";
-import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND_NAME, LIMITS, NEEDS, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
+import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND, KIND_NAME, LIMITS, NEEDS, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -68,7 +68,19 @@ export async function readWgba(bytes) {
       // 그 그림만 기본 모양
     }
   }
-  return { toc, manifest, build: await buildId(toc), code, romPayload, romSha1, images };
+  // ② 자체 JS: 조각 js(풀어서), 데이터 조각은 게임이 부를 때(chunk) 확인·풀기
+  let js = null;
+  if (manifest.runtime === "script") {
+    const je = entry(typeof manifest.entry?.js === "string" ? manifest.entry.js : "js");
+    if (!je || je.kind !== KIND.js) throw new WgbaError("조각 js 가 없습니다", "code");
+    js = unpackChunk(await stored(je), je);
+  }
+  const chunk = async (name) => {
+    const e = entry(name);
+    if (!e || e.kind !== KIND.data) throw new WgbaError(`데이터 조각 ${name} 이 없습니다`, "data");
+    return unpackChunk(await stored(e), e);
+  };
+  return { toc, manifest, build: await buildId(toc), code, romPayload, romSha1, images, js, chunk };
 }
 
 /** code 조각 → 컴파일한 모듈(wasm 머리를 붙여서). */
@@ -81,21 +93,21 @@ export function pickText(value, lang = "ko") {
   return value[lang] ?? value.en ?? Object.values(value).find((v) => typeof v === "string") ?? "";
 }
 
-/** 이 webGBA 가 아직 못 여는 게임이면 그 까닭 { code, … }, 열 수 있으면 null. */
+/** 이 webGBA 가 아직 못 여는 게임이면 그 까닭 { code, … }, 열 수 있으면 null. ② 자체 JS·240×160 이 아닌 화면도 연다(S4). */
 export function supportProblem(manifest, has = HOST_HAS) {
-  if (manifest.runtime === "script") return { code: "script" };
-  const width = manifest.screen?.width ?? 240;
-  const height = manifest.screen?.height ?? 160;
-  if (width !== 240 || height !== 160) return { code: "screen", width, height };
   const missing = (manifest.needs ?? []).filter((need) => !has[need]);
   if (missing.length) return { code: "needs", list: missing };
   return null;
 }
 
 export function problemText(problem) {
-  if (problem.code === "script") return t("wgba.noScript");
-  if (problem.code === "screen") return t("wgba.noScreen", { width: problem.width, height: problem.height });
   return t("wgba.noNeeds", { list: problem.list.map((need) => (need === "net" ? t("wgba.need.net") : need)).join(", ") });
+}
+
+/** 설명서 화면 크기 { width, height, integer } — 없으면 GBA 240×160, scale "integer" 면 정수 배율 권장. */
+export function screenOf(manifest) {
+  const s = manifest?.screen ?? {};
+  return { width: s.width ?? 240, height: s.height ?? 160, integer: s.scale === "integer" };
 }
 
 /** readWgba 의 오류 → 보일 문장. */

@@ -263,7 +263,11 @@ ok(labelBroken && !labelBroken.images.label && labelBroken.images.front, "앱 �
 ok((await errCode(a.subarray(0, a.length - 1))) === "length", "앱 읽기: 잘린 파일(목차의 파일 길이와 다름) 열지 않음");
 const newer = (await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, needs: ["teleport"] } })).bytes;
 ok((await errCode(newer)) === "newer", "앱 읽기: 모르는 needs → 새 webGBA 필요");
-ok(supportProblem(manifestB)?.code === "script" && supportProblem({ ...manifestA, needs: ["net"] })?.code === "needs" && supportProblem({ ...manifestA, screen: { width: 320, height: 240 } })?.code === "screen" && supportProblem(manifestA) === null, "앱 읽기: 아직 못 여는 것(script·net·화면 크기) 가림");
+ok(supportProblem(manifestB) === null && supportProblem({ ...manifestA, needs: ["net"] })?.code === "needs" && supportProblem({ ...manifestA, screen: { width: 320, height: 240 } }) === null && supportProblem(manifestA) === null, "앱 읽기: script·240×160 아닌 화면은 엶(S4), needs net 은 가림");
+const rb = await readWgba(b);
+const levels = rb && (await rb.chunk("data.levels"));
+const noChunk = await rb.chunk("code").then(() => "열림", (e) => e.code);
+ok(rb && new TextDecoder().decode(rb.js) === new TextDecoder().decode(js) && levels?.length === 4096 && levels[0] === 7 && noChunk === "data", "앱 읽기: ② js 조각(풀어서)·데이터 조각은 부를 때(data.* 만)", `js ${rb?.js?.length} · levels ${levels?.length} · code → ${noChunk}`);
 ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.name, "ja") === "Hello Web API" && pickText("포켓몬 Rapid", "en") === "포켓몬 Rapid", "이름 고르기: 사용자 언어 → en → 첫 값");
 // 가져오기 webgba.v1(규격 4.1.2) + 롬 없는 ① 시작
 function v1Wasm() {
