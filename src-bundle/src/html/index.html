@@ -102,7 +102,8 @@
 
       <main class="stage" id="stage" tabindex="-1">
         <canvas class="stage__screen" id="screen" width="240" height="160" hidden></canvas>
-        <iframe class="stage__frame" id="webframe" title="웹 빌드" data-i18n-title="stage.frame" allow="autoplay; fullscreen; gamepad" hidden></iframe>
+        <!-- 웹 빌드 틀: 위 창 이동·팝업·내려받기는 막고 실행·자기 저장 공간(출처가 본 창과 달라 본 창에는 못 닿음)·양식·포인터 잠금만 -->
+        <iframe class="stage__frame" id="webframe" title="웹 빌드" data-i18n-title="stage.frame" allow="autoplay; fullscreen; gamepad" sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock" hidden></iframe>
 
         <section class="start" id="start">
           <p class="start__brand">webGBA</p>
