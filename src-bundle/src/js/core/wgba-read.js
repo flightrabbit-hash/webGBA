@@ -68,10 +68,10 @@ export async function readWgba(bytes) {
       // 그 그림만 기본 모양
     }
   }
-  // ② 자체 JS: 조각 js(풀어서), 데이터 조각은 게임이 부를 때(chunk) 확인·풀기
+  // ② 자체 JS: 조각 js(풀어서, 규격 1 은 이름이 늘 "js" — entry.js 의 다른 값은 check 가 경고), 데이터 조각은 게임이 부를 때(chunk) 확인·풀기
   let js = null;
   if (manifest.runtime === "script") {
-    const je = entry(typeof manifest.entry?.js === "string" ? manifest.entry.js : "js");
+    const je = entry("js");
     if (!je || je.kind !== KIND.js) throw new WgbaError("조각 js 가 없습니다", "code");
     js = unpackChunk(await stored(je), je);
   }

@@ -232,8 +232,16 @@ try {
   await sleep(2500);
   const emSav = fs.existsSync(savOf(files.emscripten)) ? fs.readFileSync(savOf(files.emscripten)) : Buffer.alloc(0);
   check("emscripten: files 조각 · Z → SDL 키 122 · FS 세이브 → 파일 옆 .sav", asset && first === "info no save" && sdlKey && sdlSaved && emSav.length === 4 && emSav.readUInt32LE(0) === 1, `${first} · ${sdlKey} · ${sdlSaved} · ${emSav.length}B`);
-  const emFrame = await app.evaluate("(() => { const f = document.querySelector('#stage .script-frame'); return { w: parseFloat(f.style.width), h: parseFloat(f.style.height) }; })()");
-  check("emscripten: 설명서 scale integer → 정수 배율(256×192 의 배수)", emFrame.w % 256 === 0 && emFrame.h % 192 === 0 && emFrame.w / 256 === emFrame.h / 192, JSON.stringify(emFrame));
+  // 결정 102-15: 설명서 scale "integer" 여도 배율은 사용자 설정이 먼저(설정이 정수 배율일 때만 정수 배)
+  const FRAME = `(() => { const f = document.querySelector('#stage .script-frame'); const s = document.getElementById('stage').getBoundingClientRect(); return { w: parseFloat(f.style.width), h: parseFloat(f.style.height), sw: s.width, sh: s.height, mode: ${T}.state.prefs.scaleMode }; })()`;
+  const emFit = await app.evaluate(FRAME);
+  const fitW = Math.floor(256 * Math.min(emFit.sw / 256, emFit.sh / 192));
+  check("emscripten: 설명서 scale integer 여도 설정 '영역에 맞춤'이면 영역에 맞춤", emFit.mode !== "integer" && Math.abs(emFit.w - fitW) <= 1 && Math.abs(emFit.w / emFit.h - 256 / 192) < 0.02, JSON.stringify({ ...emFit, fitW }));
+  await app.evaluate(`(${T}.state.prefs.scaleMode = "integer", window.dispatchEvent(new Event("resize")), true)`);
+  await sleep(200);
+  const emFrame = await app.evaluate(FRAME);
+  await app.evaluate(`(${T}.state.prefs.scaleMode = ${JSON.stringify(emFit.mode ?? "fit")}, window.dispatchEvent(new Event("resize")), true)`);
+  check("emscripten: 설정을 정수 배율로 → 정수 배(256×192 의 배수)", emFrame.w % 256 === 0 && emFrame.h % 192 === 0 && emFrame.w / 256 === emFrame.h / 192, JSON.stringify(emFrame));
   await app.evaluate(`${T}.closeGame().then(() => true)`);
   await open(files.emscripten);
   const reloaded = await waitLog(/^info loaded 1/, 8000);

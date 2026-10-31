@@ -288,6 +288,20 @@ try {
   v1Ran = String(error);
 }
 ok(inspectModule(modV1).usable && v1Ran === true, "가져오기 webgba.v1 을 아는 함수로 받음 · 롬 없는 ① 시작(rom null)", String(v1Ran));
+// check 경고(S5 의견): 롬 없는 ① 인데 webgba.v1 없음 / 있으면 경고 없음, 호스트 몫 키 Pause·KeyP, entry.js 는 "js" 만
+{
+  const noRom = { ...manifestA, cart: undefined, rom: { required: false } };
+  const w1 = (await checkWgba((await packWgba({ wasm: webapiWasm(), manifest: noRom })).bytes)).warnings;
+  const w2 = (await checkWgba((await packWgba({ wasm: v1Wasm(), manifest: noRom })).bytes)).warnings;
+  ok(w1.some((w) => /롬 없이 도는 ① 게임.*webgba\.v1/.test(w)) && !w2.some((w) => /webgba\.v1/.test(w)), "check: 롬 없는 ① 에 webgba.v1 없으면 경고 · 있으면 경고 없음", [...w1, "|", ...w2].join(" / "));
+  const keyed = { ...manifestA, cart: undefined, input: { buttons: [{ id: "A", keys: ["KeyP"] }, { id: "B", keys: ["Pause"] }] } };
+  const w3 = (await checkWgba((await packWgba({ wasm: v1Wasm(), manifest: keyed })).bytes)).warnings;
+  ok(w3.some((w) => /KeyP 는 호스트 몫/.test(w)) && w3.some((w) => /Pause 는 호스트 몫/.test(w)), "check: 기본 키 KeyP·Pause → 호스트 몫 키 경고", w3.join(" / "));
+  const named = await packWgba({ wasm: scriptWasm(), manifest: { ...manifestB, entry: { style: "module", js: "main" } }, js });
+  const r4 = await checkWgba(named.bytes);
+  const opened = await readWgba(named.bytes);
+  ok(r4.errors.length === 0 && r4.warnings.some((w) => /entry\.js 는 "js" 만/.test(w)) && opened?.js?.length === js.length, "check: entry.js 가 \"js\" 가 아니면 경고 · 앱은 조각 js 를 그대로 씀", r4.warnings.join(" / "));
+}
 
 // 명령줄
 const node = (args) => spawnSync(process.execPath, args, { encoding: "utf8" });

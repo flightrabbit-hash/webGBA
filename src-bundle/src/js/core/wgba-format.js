@@ -142,8 +142,8 @@ export const WEBAPI_ENV = Object.freeze(["emscripten_asm_const_int", "emscripten
 export const WEBAPI_WASI = Object.freeze(["fd_write", "fd_read", "fd_close", "fd_seek", "fd_sync", "fd_fdstat_get", "environ_get", "environ_sizes_get", "proc_exit", "clock_time_get", "random_get"]);
 export const WEBAPI_REQUIRED = Object.freeze(["memory", "Web_Init", "Web_RunFrame", "Web_GetFramebuffer"]);
 export const WEBAPI_NET = Object.freeze(["Web_NetWanted", "Web_NetEvent", "Web_NetOut", "Web_NetOutLen", "Web_NetOutClear", "Web_NetInBuffer", "Web_NetIn"]);
-/** 호스트 몫 키(게임 기본 배치에 넣지 말 것). */
-export const HOST_KEYS = Object.freeze(["Space", "Tab", "Escape", ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)]);
+/** 호스트 몫 키(게임 기본 배치에 넣지 말 것). Pause·KeyP = 일시정지(KeyP 는 웹 버전). */
+export const HOST_KEYS = Object.freeze(["Space", "Tab", "Escape", "Pause", "KeyP", ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)]);
 
 export const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 export const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
@@ -574,6 +574,8 @@ export function checkManifest(m, errors, warnings) {
     for (const n of [mp.players?.min, mp.players?.max]) if (n !== undefined && (!Number.isInteger(n) || n < 2 || n > 8)) errors.push("multiplayer 인원은 2~8");
   }
   if (m.runtime === "script" && !["module", "emscripten"].includes(m.entry?.style)) errors.push(`entry.style 이 module·emscripten 이 아닙니다: ${m.entry?.style}`);
+  // 규격 1 의 JS 조각 이름은 늘 "js"(묶기 도구·읽기 모두) — 다른 값은 무시된다
+  if (m.entry?.js !== undefined && m.entry.js !== "js") warnings.push(`entry.js 는 "js" 만 됩니다(규격 1) — 무시하고 조각 js 를 씁니다: ${m.entry.js}`);
   if (m.cart !== undefined) {
     if (m.cart.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(m.cart.color)) errors.push(`cart.color 는 #RRGGBB: ${m.cart.color}`);
   }
@@ -802,6 +804,7 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
         const h = m.screen?.height ?? 160;
         const customButtons = (m.input?.buttons ?? []).length > 0 || (m.input?.preset ?? "gba") !== "gba";
         if ((w !== 240 || h !== 160 || customButtons) && !v1) warnings.push("240x160·GBA 버튼이 아닌 ① 게임은 가져오기 webgba.v1 을 넣으세요(옛 webGBA 가 열지 않게)");
+        else if (m.rom?.required === false && !v1) warnings.push("롬 없이 도는 ① 게임(rom.required false)은 가져오기 webgba.v1 을 넣으세요(옛 webGBA 가 롬을 묻지 않게)");
         const bits = new Set(GBA_PRESET.filter(() => (m.input?.preset ?? "gba") === "gba").map((b) => b.bit));
         const own = new Set();
         for (const b of m.input?.buttons ?? []) {

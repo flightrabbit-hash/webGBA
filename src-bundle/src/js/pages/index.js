@@ -195,16 +195,17 @@ function keyName(code) {
 
 const integerScale = () => state.prefs.scaleMode === "integer";
 
-// 게임 화면 크기: 설명서 screen(없으면 GBA 240×160). 배율 규칙은 그대로 — 설정 "정수 배율"(또는 설명서 scale "integer")이면
-// 영역에 들어가는 가장 큰 정수 배, 아니면 영역에 맞춤(비율 유지). ② 틀(iframe)도 같은 크기.
+// 게임 화면 크기: 설명서 screen(없으면 GBA 240×160). 배율은 사용자 설정이 정한다(결정 102-15) — 설정 "정수 배율"이면
+// 영역에 들어가는 가장 큰 정수 배, 아니면 영역에 맞춤(비율 유지). 설명서 scale "integer" 는 권장일 뿐 설정을 이기지 않는다.
+// ② 틀(iframe)도 같은 크기.
 const screenSize = () => state.screen ?? { width: SCREEN_W, height: SCREEN_H, integer: false };
 
 function layoutScreen() {
   const box = el.stage.getBoundingClientRect();
   if (box.width < 1 || box.height < 1) return;
-  const { width: w, height: h, integer } = screenSize();
+  const { width: w, height: h } = screenSize();
   const fit = Math.min(box.width / w, box.height / h);
-  const scale = (integerScale() || integer) && fit >= 1 ? Math.floor(fit) : fit;
+  const scale = integerScale() && fit >= 1 ? Math.floor(fit) : fit;
   const width = Math.max(1, Math.floor(w * scale));
   const height = Math.max(1, Math.round((width * h) / w));
   for (const node of [el.screen, state.scriptFrame]) {

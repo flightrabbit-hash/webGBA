@@ -171,7 +171,7 @@ JSON schema for validation: [wgba-manifest.schema.json](wgba-manifest.schema.jso
 | `license` · `homepage` · `contact` | string | License (an SPDX name such as `MIT` is recommended), an `https://` address (anything else is an error), contact. Reserved for the info screen (the current webGBA does not show them) |
 | `build` | string | Build label (commit etc., 64 characters). Text for people only; the build id (3.4) is computed by the host separately |
 | `needs` | string array | Hosts without the feature **do not open** the game: `"pointer"` (unplayable without a mouse), `"net"` (unplayable without multiplayer), `"keyboard"` (needs a real keyboard), `"state"`. An unknown word means "not opened — a newer webGBA is required". The current webGBA has no `net`, so it does not open games with `needs: ["net"]` |
-| `screen` | object | `width`·`height` (1–1024, default 240·160), `scale` `"fit"` (default, fill while keeping the aspect ratio) · `"integer"` (integer scaling preferred — the Windows app draws at integer scale). `fps` is reserved (the current webGBA always runs at GBA speed, about 59.7275 fps). Pixels are always drawn nearest-neighbour |
+| `screen` | object | `width`·`height` (1–1024, default 240·160), `scale` `"fit"` (default, fill while keeping the aspect ratio) · `"integer"` (integer scaling preferred — the webGBA user setting comes first: integer scale only when the setting is "Integer scale"; with "Fit to area" the game is fitted even with this value). `fps` is reserved (the current webGBA always runs at GBA speed, about 59.7275 fps). Pixels are always drawn nearest-neighbour |
 | `audio` | object | `use` — reserved (the current webGBA ignores it). A ① game makes sound when it has the audio exports |
 | `save` | object | `kind`: `"flash"` (① — the current webGBA ignores `kind` for ① and saves when `Web_GetFlash` exists) · `"storage"` (② default, `webgba.save`) · `"localStorage"` (②, the frame's whole substitute localStorage is the save) · `"files"` (②, emscripten file `files[0]`) · `"none"`. `maxSize` (②, bytes, default 1MB, up to 16MB), `files` (② with `"files"`: array of paths — the current webGBA uses only the first) |
 | `state` | object | `use` — reserved. The current webGBA turns quick slots on for ① when all state exports (4.1.1) exist, and for ② when the game calls both `webgba.state.onSave` and `onLoad` |
@@ -179,7 +179,7 @@ JSON schema for validation: [wgba-manifest.schema.json](wgba-manifest.schema.jso
 | `input` | object | Button list and default layout. [Chapter 5](#5-key-mapping). Absent: ① means `{"preset": "gba"}`, ② means no buttons |
 | `cart` | object | Cartridge: `color` `"#RRGGBB"` (body colour), pictures `label`·`front`·`spine` (`{chunk, format, width, height}` + front `labelAt`, spine `textArea`). [Chapter 6](#6-cartridge-art) |
 | `rom` | object | ①: `required` (default true — **if there is no ROM chunk and this is not `false`, the host asks the user to pick a ROM file. Games that run without a ROM must set `false`**). `sha1` and `hint` are reserved (currently a mismatching `sha1` only gives a validation warning) |
-| `entry` | object | Required for ②: `style` `"module"`·`"emscripten"`, `js` chunk name (default `"js"` — the pack tool always uses this name), `args` (emscripten `arguments`) |
+| `entry` | object | Required for ②: `style` `"module"`·`"emscripten"`, `js` chunk name (always `"js"` in spec 1 — leaving it out also means `"js"`; any other value gets a `check` warning and is ignored), `args` (emscripten `arguments`) |
 | `files` | object | ② only: file name the game JS asks for → chunk name (`data.<name>` or `rom`). E.g. `{"game.data": "data.game"}` |
 | `multiplayer` | object | [Chapter 7](#7-multiplayer) (draft) |
 
@@ -399,7 +399,7 @@ There are at most 4 face buttons, roles `a` `b` `c` `d`. **Touch C·D buttons ap
 
 ### 5.5 Host keys
 
-Keys the host uses before the game. Do not put them in a game's default keys (`keys`) (`check` warns about `Space`, `Tab`, `Escape`, `F1`–`F12`).
+Keys the host uses before the game. Do not put them in a game's default keys (`keys`) (`check` warns about `Space`, `Tab`, `Escape`, `Pause`, `KeyP`, `F1`–`F12`).
 
 | Key | What it does |
 | --- | --- |
@@ -796,11 +796,11 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - `webgba.*` sections missing from the TOC → warning
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
 - Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `cart.color`, button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
-- ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons but no `webgba.v1` → warning, a `js` chunk → warning (unused)
+- ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
 - Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8
-- ②: a `js` chunk exists, `entry.style`, a `code` on every button, no imported shared memory (threads)
+- ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
 - Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 12×44) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
-- Host keys (`Space`·`Tab`·`Escape`·`F1`–`F12`) in default keys (`keys`) → warning
+- Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning
 
 ---
 
@@ -866,7 +866,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 
 [runtime "script" — games with their own JS]
 - The JS runs inside an origin-less sandbox iframe (srcdoc). It cannot use the network (fetch, XHR, WebSocket, WebRTC), IndexedDB, cookies, real localStorage, popups, top-window navigation or threads (SharedArrayBuffer, pthreads). localStorage is an in-memory substitute.
-- entry is required. entry.style "module": the JS exports export default async function start(webgba){…}. "emscripten": emscripten glue (plain, MODULARIZE or EXPORT_ES6) — the frame passes Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort}. Data files go through the files table ({"file name":"data.<name>" or "rom"}), including the .data of --preload-file. Recommended build: -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
+- entry is required. The JS chunk is always named "js" (leave out entry.js). entry.style "module": the JS exports export default async function start(webgba){…}. "emscripten": emscripten glue (plain, MODULARIZE or EXPORT_ES6) — the frame passes Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort}. Data files go through the files table ({"file name":"data.<name>" or "rom"}), including the .data of --preload-file. Recommended build: -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
 - The webgba object: version (1), manifest, lang, canvas (#canvas, screen size), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: address, save.read()/save.write(bytes) (only with save.kind "storage"), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false) (both needed for quick slots), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready() (call it when start-up is done), exit(reason), log(level,text), net (null for now).
 - save.kind: "storage" (default, webgba.save), "localStorage" (the frame's whole localStorage is the save), "files" (path save.files[0] in emscripten FS, FS must be exported), "none". maxSize default 1MB, up to 16MB.
 - Every button has a code (the KeyboardEvent.code the game listens for). The host turns the keys the user presses into keydown/keyup events with this code (isTrusted is false, so do not check it). The preset default is "none".

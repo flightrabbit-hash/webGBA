@@ -161,7 +161,7 @@
 | `license` · `homepage` · `contact` | 글 | 라이선스(SPDX 이름 권장 `MIT`), `https://` 주소(다른 주소는 오류), 연락처. 정보 화면에 쓰려고 둔 자리(지금 webGBA 는 보이지 않음) |
 | `build` | 글 | 빌드 표시(커밋 등, 64자). 사람이 보는 글일 뿐, 빌드 식별(3.4)은 호스트가 따로 셈 |
 | `needs` | 글 배열 | 이 기능이 없는 호스트는 **열지 않음**: `"pointer"`(마우스 없이는 못 함), `"net"`(멀티플레이 없이는 못 함), `"keyboard"`(실제 키보드가 꼭 있어야 함), `"state"`. 모르는 낱말이 있으면 열지 않고 "새 webGBA 가 필요합니다". 지금 webGBA 는 `net` 이 없어 `needs: ["net"]` 게임을 열지 않음 |
-| `screen` | 객체 | `width`·`height`(1~1024, 기본 240·160), `scale` `"fit"`(기본, 비율 유지 꽉 채움)·`"integer"`(정수 배율 권장 — Windows 앱은 정수 배율로 그림). `fps` 는 예약(지금 webGBA 는 늘 GBA 속도 약 59.7275fps 로 돌림). 픽셀은 늘 가장 가까운 점으로 그림 |
+| `screen` | 객체 | `width`·`height`(1~1024, 기본 240·160), `scale` `"fit"`(기본, 비율 유지 꽉 채움)·`"integer"`(정수 배율 권장 — 실제 배율은 webGBA 사용자 설정이 먼저: 설정이 "정수 배율"일 때만 정수 배, "영역에 맞춤"이면 이 값이어도 맞춤으로 그림). `fps` 는 예약(지금 webGBA 는 늘 GBA 속도 약 59.7275fps 로 돌림). 픽셀은 늘 가장 가까운 점으로 그림 |
 | `audio` | 객체 | `use` — 예약(지금 webGBA 는 보지 않음). ① 은 소리 내보내기가 있으면 소리를 냄 |
 | `save` | 객체 | `kind`: `"flash"`(① — 지금 webGBA 는 ① 의 `kind` 를 보지 않고 `Web_GetFlash` 가 있으면 세이브) · `"storage"`(② 기본, `webgba.save`) · `"localStorage"`(②, 틀의 대신 쓰는 localStorage 전체를 세이브로) · `"files"`(②, emscripten 파일 `files[0]`) · `"none"`. `maxSize`(②, 바이트, 기본 1MB, 16MB 까지), `files`(② `"files"` 일 때 경로 배열 — 지금 webGBA 는 첫 경로만 씀) |
 | `state` | 객체 | `use` — 예약. 지금 webGBA 는 ① 은 상태 내보내기(4.1.1)가 모두 있으면, ② 는 게임이 `webgba.state.onSave`·`onLoad` 를 둘 다 부르면 퀵슬롯을 켬 |
@@ -169,7 +169,7 @@
 | `input` | 객체 | 버튼 목록·기본 배치. [5장](#5-키-매핑). 없으면 ① 은 `{"preset": "gba"}`, ② 는 버튼 없음 |
 | `cart` | 객체 | 롬팩: `color` `"#RRGGBB"`(몸통 색), 그림 `label`·`front`·`spine`(`{chunk, format, width, height}` + 앞면 `labelAt`·옆면 `textArea`). [6장](#6-롬팩-그림) |
 | `rom` | 객체 | ①: `required`(기본 true — **롬 조각이 없고 `false` 가 아니면 호스트가 롬 파일을 고르게 함. 롬 없이 도는 게임은 꼭 `false`**). `sha1`·`hint` 는 예약(지금은 `sha1` 이 롬 조각과 다르면 검사 경고만) |
-| `entry` | 객체 | ② 필수: `style` `"module"`·`"emscripten"`, `js` 조각 이름(기본 `"js"` — 묶기 도구는 늘 이 이름), `args`(emscripten `arguments`) |
+| `entry` | 객체 | ② 필수: `style` `"module"`·`"emscripten"`, `js` 조각 이름(규격 1 에서는 늘 `"js"` — 생략해도 `"js"`, 다른 값은 `check` 가 경고하고 무시), `args`(emscripten `arguments`) |
 | `files` | 객체 | ② 만: 게임 JS 가 찾는 파일 이름 → 조각 이름(`data.<이름>` 또는 `rom`). 예 `{"game.data": "data.game"}` |
 | `multiplayer` | 객체 | [7장](#7-멀티플레이) (초안) |
 
@@ -389,7 +389,7 @@
 
 ### 5.5 호스트 몫 키
 
-호스트가 게임보다 먼저 쓰는 키입니다. 게임의 기본 배치(`keys`)에 넣지 마세요(`check` 가 `Space`·`Tab`·`Escape`·`F1`~`F12` 를 경고).
+호스트가 게임보다 먼저 쓰는 키입니다. 게임의 기본 배치(`keys`)에 넣지 마세요(`check` 가 `Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12` 를 경고).
 
 | 키 | 하는 일 |
 | --- | --- |
@@ -786,11 +786,11 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 목차에 없는 `webgba.*` 구획 → 경고
 - `rom` 이 있으면 맨 끝, WGRM 머리·크기·SHA-1 이 맞음(`--quick` 이면 풀지 않음), 설명서 `rom.sha1` 이 다르면 경고
 - 설명서: 64KB 이하 JSON, `wgba` 1, `id` 규칙, `version` 이 `x.y.z`, `name`(48자), `runtime`, 모르는 `needs` 없음, `homepage` 는 `https://`, `screen`·`save`·`input.preset`·`cart.color` 값, 버튼 id 규칙·겹침, role 겹침, `shortName` 16자 넘으면 경고
-- ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31 이고 겹치지 않음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아닌데 `webgba.v1` 이 없으면 경고, `js` 조각이 있으면 경고(쓰지 않음)
+- ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31 이고 겹치지 않음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 도는데(`rom.required: false`) `webgba.v1` 이 없으면 경고, `js` 조각이 있으면 경고(쓰지 않음)
 - 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·겹치지 않음, 인원 2~8
-- ②: `js` 조각 있음, `entry.style`, 버튼마다 `code`, 가져온 공유 메모리(스레드) 없음
+- ②: `js` 조각 있음, `entry.style`, `entry.js` 가 `"js"` 가 아니면 경고, 버튼마다 `code`, 가져온 공유 메모리(스레드) 없음
 - 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 넘으면 경고), 격자(48×32 · 54×44 · 12×44) × k(1~4)가 아니면 경고, 셋의 k 가 다르면 경고, 설명서의 형식·크기와 다르면 경고, `labelAt`·`textArea` 가 그림 밖이면 경고, 설명서에 있는데 조각이 없으면 오류, 조각이 있는데 설명서에 없으면 경고
-- 기본 키(`keys`)에 호스트 몫 키(`Space`·`Tab`·`Escape`·`F1`~`F12`)가 있으면 경고
+- 기본 키(`keys`)에 호스트 몫 키(`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12`)가 있으면 경고
 
 ---
 
@@ -856,7 +856,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 
 [runtime "script" — 자기 JS 가 있는 게임]
 - JS 는 출처 없는 sandbox iframe(srcdoc) 안에서 돈다. 네트워크(fetch·XHR·WebSocket·WebRTC)·IndexedDB·쿠키·진짜 localStorage·팝업·위 창 이동·스레드(SharedArrayBuffer·pthreads)를 못 쓴다. localStorage 는 메모리 대용품이다.
-- entry 필수. entry.style "module": JS 가 export default async function start(webgba){…} 를 내보낸다. "emscripten": emscripten 글루(보통·MODULARIZE·EXPORT_ES6) — 틀이 Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort} 를 넣는다. 데이터 파일은 files 표({"파일 이름":"data.<이름>" 또는 "rom"})로, --preload-file 의 .data 도 이렇게. 권장 빌드 -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
+- entry 필수. JS 조각 이름은 늘 "js"(entry.js 는 생략). entry.style "module": JS 가 export default async function start(webgba){…} 를 내보낸다. "emscripten": emscripten 글루(보통·MODULARIZE·EXPORT_ES6) — 틀이 Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort} 를 넣는다. 데이터 파일은 files 표({"파일 이름":"data.<이름>" 또는 "rom"})로, --preload-file 의 .data 도 이렇게. 권장 빌드 -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
 - webgba 객체: version(1), manifest, lang, canvas(#canvas, screen 크기), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: 주소, save.read()/save.write(bytes)(save.kind "storage" 일 때만), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false)(둘 다 불러야 퀵슬롯), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready()(시작 끝에 부른다), exit(reason), log(level,text), net(지금 null).
 - save.kind: "storage"(기본, webgba.save), "localStorage"(틀 localStorage 전체를 세이브로), "files"(emscripten FS 의 save.files[0] 경로, FS 내보내기 필요), "none". maxSize 기본 1MB, 16MB 까지.
 - 버튼마다 code(게임이 듣는 KeyboardEvent.code). 호스트가 사용자가 누른 키를 이 code 의 keydown/keyup 으로 바꿔 넣는다(isTrusted 는 false 이니 검사하지 않는다). preset 기본값은 "none".
