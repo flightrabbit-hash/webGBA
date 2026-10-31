@@ -542,7 +542,153 @@ async function testLang() {
   await context.close();
 }
 
-const tests = { head: testHeadAndInstall, pad: testPad, gba: testGba, port: testPortSaveOffline, patch: testPatch, update: testUpdateNotice, lang: testLang };
+// 키 매핑(규격 5장): --keymap <폴더> 의 예제 .wgba 셋(롬 없는 작은 ① wasm — 화면에 눌린 bit 를 막대로 그림)을 열어
+// 설명서 input 대로 터치 자리·키보드·게임패드가 그 bit 를 게임(Web_RunFrame)에 넘기는지, 조작법 창에 정의한 버튼만 보이는지,
+// 게임을 닫으면 GBA 10버튼으로 돌아가는지. 320 세로 C·D 캡처 한 장(키_C·D_320x568.png).
+async function testKeymap() {
+  if (!opt.keymap) return ok("키 매핑: --keymap 폴더 없음", false);
+  const open = async (name, viewport = { width: 390, height: 844 }) => {
+    const p = await newPage({ viewport, mobile: true, touch: true });
+    await chooseFiles(p.page, "#startOpen", [path.join(opt.keymap, `${name}.wgba`)]);
+    await waitGame(p.page, 20000);
+    await p.page.evaluate(() => {
+      const host = window.webgba.player.host;
+      const run = host.runFrame.bind(host);
+      window.__sent = [];
+      host.runFrame = (k) => (window.__sent.push(k), run(k));
+    });
+    return p;
+  };
+  // 키를 누른 채 몇 프레임 → 게임이 받은 마지막 비트 + 화면 막대(눌린 bit = 흰색)
+  const sentWhile = async (page, down, up) => {
+    await down();
+    await page.waitForTimeout(120);
+    const got = await page.evaluate(() => {
+      const fb = window.webgba.player.host.framebuffer();
+      const lit = [];
+      for (let bit = 0; bit < 30; bit++) if (fb[(10 * 240 + bit * 8 + 3) * 4] === 255) lit.push(bit);
+      return { sent: window.__sent.at(-1), lit };
+    });
+    await up();
+    await page.waitForTimeout(60);
+    return got;
+  };
+  const key = (page, code) => sentWhile(page, () => page.keyboard.down(code), () => page.keyboard.up(code));
+  const tapAt = (page, touch, box) => sentWhile(page, () => touch("touchStart", [{ x: box.x, y: box.y, id: 1 }]), () => touch("touchEnd", []));
+  const shown = (r) => Object.keys(r).filter((n) => /^[A-Z]+$/.test(n) && r[n].w > 0 && n !== "DIR");
+  const helpRows = (page) =>
+    page.evaluate(async () => {
+      window.webgba.openSheet("help");
+      await new Promise((r) => setTimeout(r, 200));
+      const dts = [...document.querySelectorAll("#sheetBody dl.keys dt")].map((n) => n.textContent);
+      const dds = [...document.querySelectorAll("#sheetBody dl.keys dd")].map((n) => n.textContent);
+      return dts.map((t, i) => `${t}=${dds[i]}`);
+    });
+  const padWith = (page, gp) =>
+    page.evaluate((gp) => {
+      const pads = [{ buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: gp.buttons.includes(i) })), axes: gp.axes ?? [0, 0, 0, 0] }];
+      const real = navigator.getGamepads;
+      navigator.getGamepads = () => pads;
+      const bits = window.webgba.player.padBits();
+      navigator.getGamepads = real;
+      return bits;
+    }, gp);
+
+  // ① C·D(preset gba + c = 10, d = 11) — 320 세로: C·D 보임·버튼 배율 그대로·캡처
+  {
+    const { context, page } = await open("keys-cd", { width: 320, height: 568 });
+    const touch = touchApi(await context.newCDPSession(page));
+    const r = await rects(page);
+    const c = await tapAt(page, touch, r.C);
+    const d = await tapAt(page, touch, r.D);
+    const kc = await key(page, "KeyC");
+    const kz = await key(page, "KeyZ");
+    const art = await page.evaluate(() => window.webgba.skin.art);
+    ok("키 매핑 C·D: 터치 C·D·키보드 C → bit 10·11, Z → A(bit 0), 화면 막대도 그 bit",
+      c.sent === 1024 && d.sent === 2048 && kc.sent === 1024 && kz.sent === 1 && c.lit.join() === "10" && d.lit.join() === "11" && kz.lit.join() === "0",
+      `터치 C ${c.sent}[${c.lit}] D ${d.sent}[${d.lit}] · 키 C ${kc.sent} Z ${kz.sent}[${kz.lit}] · 보임 ${shown(r).join(",")} · 배율 ${art} · 게임 화면 ${Math.round(r.screen.w)}x${Math.round(r.screen.h)}`);
+    ok("키 매핑 C·D: 320 세로에서 버튼 배율 3(줄이지 않음)·버튼 8자리(C·D 포함) + 방향 보임", art === 3 && shown(r).length === 8 && r.DIR.w > 0, `배율 ${art} · ${shown(r).join(",")}`);
+    ok("키 매핑 C·D: 게임패드 2·3 → C·D, 0 → A", (await padWith(page, { buttons: [2, 3, 0] })) === (1024 | 2048 | 1));
+    const help = await helpRows(page);
+    ok("키 매핑 C·D: 조작법 창에 A~L + C·D", help.some((h) => h.startsWith("C=") && h.includes("C · I")) && help.some((h) => h.startsWith("D=") && h.includes("V · U")) && help.some((h) => h.startsWith("A=")), help.join(" | "));
+    await page.evaluate(() => window.webgba.renderSheet && document.getElementById("sheetClose").click());
+    await page.waitForFunction(() => document.getElementById("toast").hidden && document.getElementById("sheet").hidden, null, { timeout: 8000 }).catch(() => {});
+    await page.screenshot({ path: path.join(SHOTS, "키_C·D_320x568.png") });
+    ok("키 매핑 C·D: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
+    await context.close();
+  }
+  // ② 버튼 일부(방향·A·START 만)
+  {
+    const { context, page } = await open("keys-few");
+    const touch = touchApi(await context.newCDPSession(page));
+    const r = await rects(page);
+    const a = await tapAt(page, touch, r.A);
+    const st = await tapAt(page, touch, r.START);
+    const kx = await key(page, "KeyX");
+    const ka = await key(page, "KeyA");
+    const up = await key(page, "ArrowUp");
+    const help = await helpRows(page);
+    const names = help.map((h) => h.split("=")[0]);
+    ok("키 매핑 일부: 터치는 A·START·방향만(B·L·R·SELECT·C·D 없음)", shown(r).sort().join() === "A,START", shown(r).join(","));
+    ok("키 매핑 일부: A·START·↑ 는 그 bit, X(B)·A(L) 키는 아무것도 아님", a.sent === 1 && st.sent === 8 && up.sent === 64 && kx.sent === 0 && ka.sent === 0, `${a.sent}/${st.sent}/${up.sent}/${kx.sent}/${ka.sent}`);
+    ok("키 매핑 일부: 조작법 창은 정의한 버튼 6개 + 빨리 감기·속도·멈춤", names.length === 6 + 3 && !names.includes("B") && !names.includes("L"), help.join(" | "));
+    ok("키 매핑 일부: 게임패드 1(B)·4(L) 은 아무것도 아님, 축 → 방향", (await padWith(page, { buttons: [1, 4] })) === 0 && (await padWith(page, { buttons: [], axes: [-1, 0] })) === 32);
+    // 게임을 닫으면 GBA 10버튼으로(자리 모두 보임·X = B)
+    await page.evaluate(async () => {
+      document.getElementById("sheetClose").click();
+    });
+    await page.waitForTimeout(200);
+    await page.keyboard.press("KeyP");
+    await page.waitForSelector("#veilClose", { state: "visible" });
+    await page.click("#veilClose");
+    await page.waitForFunction(() => document.body.dataset.view === "start");
+    const back = await rects(page);
+    const xb = await page.evaluate(() => {
+      const p = window.webgba.player;
+      p.keyDown("KeyX");
+      const bits = p.held;
+      p.keyUp("KeyX");
+      return { bits, gba: window.webgba.state.input.gba, off: document.querySelectorAll("#pad [data-off]").length };
+    });
+    ok("키 매핑 일부: 게임을 닫으면 GBA 10버튼(A·B·L·R·START·SELECT·방향 보임, C·D 없음, X = B)", shown(back).sort().join() === "A,B,L,R,SELECT,START" && back.DIR.w > 0 && xb.bits === 2 && xb.gba && xb.off === 0, `${shown(back).join(",")} · ${JSON.stringify(xb)}`);
+    ok("키 매핑 일부: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
+    await context.close();
+  }
+  // ③ 역할이 다른 버튼(a = 점프 bit 8, b = 9, c = 12, start = 15, extra 지도 = 20 키 M, l2 달리기 = 21, 방향 = 0~3)
+  {
+    const { context, page } = await open("keys-roles");
+    const touch = touchApi(await context.newCDPSession(page));
+    const r = await rects(page);
+    const ta = await tapAt(page, touch, r.A);
+    const tb = await tapAt(page, touch, r.B);
+    const tc = await tapAt(page, touch, r.C);
+    const ts = await tapAt(page, touch, r.START);
+    const kz = await key(page, "KeyZ");
+    const km = await key(page, "KeyM");
+    const kq = await key(page, "KeyQ");
+    const kl = await key(page, "ArrowLeft");
+    ok("키 매핑 역할: 터치 A·B·C·START 자리 → bit 8·9·12·15, D·L·R·SELECT 없음", ta.sent === 256 && tb.sent === 512 && tc.sent === 4096 && ts.sent === 32768 && shown(r).sort().join() === "A,B,C,START",
+      `${ta.sent}/${tb.sent}/${tc.sent}/${ts.sent} · 보임 ${shown(r).join(",")}`);
+    ok("키 매핑 역할: 키보드 Z·M(extra)·Q(l2)·← → bit 8·20·21·2, 화면 막대도", kz.sent === 256 && km.sent === 1 << 20 && kq.sent === 1 << 21 && kl.sent === 4 && km.lit.join() === "20" && kl.lit.join() === "2",
+      `${kz.sent}/${km.sent}/${kq.sent}/${kl.sent} · 막대 ${km.lit}/${kl.lit}`);
+    // 방향 동시 누름(기본 "나중에 누른 방향만")이 role 방향 bit 에 걸림: ← 누른 채 ↑ → ↑(bit 0)만
+    await page.keyboard.down("ArrowLeft");
+    await page.waitForTimeout(80);
+    await page.keyboard.down("ArrowUp");
+    await page.waitForTimeout(120);
+    const both = await page.evaluate(() => window.__sent.at(-1));
+    await page.keyboard.up("ArrowUp");
+    await page.keyboard.up("ArrowLeft");
+    ok("키 매핑 역할: 방향 동시 누름 설정이 role 방향 bit 에(← 누른 채 ↑ → ↑ 만)", both === 1, `${both}`);
+    ok("키 매핑 역할: 게임패드 0·2·6·9 → 점프·회전·달리기·메뉴, 4(L) 은 l2 가 있어 아무것도 아님", (await padWith(page, { buttons: [0, 2, 6, 9] })) === (256 | 4096 | (1 << 21) | 32768) && (await padWith(page, { buttons: [4] })) === 0);
+    const help = await helpRows(page);
+    ok("키 매핑 역할: 조작법 창에 설명서 이름(점프·공격·회전·메뉴·지도·달리기)과 그 키", ["점프=Z · K", "공격=X · J", "회전=C · I", "지도=M", "달리기=Q"].every((row) => help.includes(row)) && help.some((h) => h.startsWith("메뉴=")), help.join(" | "));
+    ok("키 매핑 역할: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
+    await context.close();
+  }
+}
+
+const tests = { head: testHeadAndInstall, pad: testPad, gba: testGba, port: testPortSaveOffline, patch: testPatch, update: testUpdateNotice, lang: testLang, keymap: testKeymap };
 for (const [name, run] of Object.entries(tests)) {
   if (!want(name)) continue;
   try {

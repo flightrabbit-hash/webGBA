@@ -271,6 +271,7 @@
   "cfg.keys.press": "Press a key",
   "cfg.keys.slotTitle": "Click, then press the key to use · right-click to clear",
   "cfg.keys.resetTitle": "Restores the default key layout (saved when you click SAVE)",
+  "cfg.keys.game": "Buttons used by {name}. Keys changed here apply to this game only (fast-forward applies to all games).",
   "cfg.lang.title": "Display language",
   "cfg.lang.note": "Changes the text of the webGBA screens. Text inside games (ROM · wasm) does not change.",
 

@@ -1,14 +1,14 @@
 import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
 import { compileCode, gameInfo, pickText, problemText, readWgba, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
-import { romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
+import { resolveInput, romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { BUTTONS, codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
+import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
-import { DIR_MODES, DIRS, PAD_KEYS, VirtualPad } from "./pad.js";
+import { DIR_MODES, DIRS, VirtualPad } from "./pad.js";
 import { extractRom, ZipError } from "./zip.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
@@ -94,6 +94,8 @@ const state = {
   dragDepth: 0,
   quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0 },
   extra: null,
+  // 지금 게임의 버튼 목록(resolveInput — 설명서 input, 없으면 GBA 10버튼)
+  input: GBA_LAYOUT,
   // 라이브러리: sel = 꺼낸 롬팩(보관 키), refs = 지금 그린 책장 노드, savesFor = 세이브 창을 한 게임만 걸러 볼 때
   lib: { sel: "", refs: null, savesFor: null, token: 0 },
 };
@@ -179,17 +181,23 @@ const player = new WebPlayer({
 
 const padCode = (name) => `Pad:${name}`;
 
-// C·D 버튼: 게임이 쓴다고 정의했을 때만 화면에 나오고(A·B 위), 키보드는 C·I / V·U(지금 키와 겹치지 않음 —
-// Z X C V 한 줄, 오른손은 K·J 바로 위). 보내는 신호는 그 정의가 정한 GBA 버튼.
+// 터치 버튼 자리 ← role(규격 5.2). 게임이 그 role 버튼을 정의했을 때만 그 자리가 보이고, 누르면 그 버튼(① bit)을 보낸다.
+// C·D 는 c·d role 을 정의한 게임에서만 A·B 위에(키보드 기본 C·I / V·U — ROLE_KEYS). l2·r2·extra 는 터치 자리가 아직 없음(키보드·게임패드만).
 const EXTRA_PAD = ["C", "D"];
-const EXTRA_KEYBOARD = { C: ["KeyC", "KeyI"], D: ["KeyV", "KeyU"] };
+const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT" };
 
 function keyTable() {
-  const keys = {};
-  for (const [name, codes] of Object.entries(DEFAULT_KEYS)) keys[name] = [...codes];
-  for (const name of [...PAD_KEYS, ...DIRS]) keys[name] = [...(keys[name] ?? []), padCode(name)];
-  for (const [name, target] of Object.entries(state.extra ?? {})) keys[target] = [...(keys[target] ?? []), ...EXTRA_KEYBOARD[name], padCode(name)];
+  const keys = layoutKeys(state.input, DEFAULT_KEYS);
+  for (const b of state.input.buttons) {
+    const slot = TOUCH_SLOT[b.role];
+    if (slot && b.touch !== "hide") keys[b.id] = [...(keys[b.id] ?? []), padCode(slot)];
+  }
   return keys;
+}
+
+/** 지금 게임이 터치 화면에 쓰는 자리(TOUCH_SLOT 값) 묶음. */
+function touchSlots(input = state.input) {
+  return new Set(input.buttons.filter((b) => b.touch !== "hide").map((b) => TOUCH_SLOT[b.role]).filter(Boolean));
 }
 
 const skin = new Skin({ pad: el.pad, dpad: el.dpad });
@@ -203,21 +211,46 @@ const pad = new VirtualPad({
   onStick: (x, y, active) => skin.stick(x, y, active),
 });
 
-// 게임의 추가 버튼 정의를 받는 곳(하나뿐). map = { C: "L", D: "R" } 처럼 C·D 가 보낼 GBA 버튼(BUTTONS 이름),
-// 없거나 null 이면 A·B 만 = 지금 화면 그대로. .wgba 설명서를 읽는 코드는 규격이 나온 뒤 startHosted 의 meta.buttons 로 잇는다.
-// 정의 없는 지금의 .gba·.wgba·.wasm 은 늘 null 이라 C·D 가 나오지 않는다(설정 항목 없음).
-function setExtraButtons(map) {
-  const next = {};
-  for (const name of EXTRA_PAD) if (BUTTONS.includes(map?.[name])) next[name] = map[name];
-  const extra = Object.keys(next).length ? next : null;
-  if (JSON.stringify(extra) === JSON.stringify(state.extra)) return;
-  pad.releaseAll();
-  state.extra = extra;
-  if (extra) el.pad.dataset.extra = Object.keys(extra).join(" ");
+// C·D 터치 버튼을 켜고 끄는 곳(하나뿐): shown = { C: true, D: true } 처럼 게임이 c·d role 을 정의한 자리.
+// 없거나 null 이면 A·B 만 = 지금 화면 그대로(.gba·설명서 없는 .wgba·.wasm·preset gba 만 쓰는 게임 — 설정 항목 없음).
+// 화면만 바꾼다 — 보내는 비트·키는 setInput 이 버튼 목록으로 정한다. 바뀌었으면 true.
+function setExtraButtons(shown) {
+  const extra = EXTRA_PAD.filter((name) => shown?.[name]);
+  const next = extra.length ? extra : null;
+  if (JSON.stringify(next) === JSON.stringify(state.extra)) return false;
+  state.extra = next;
+  if (next) el.pad.dataset.extra = next.join(" ");
   else delete el.pad.dataset.extra;
-  player.setKeys(keyTable());
-  if (document.documentElement.dataset.ready) layout();
+  return true;
 }
+
+// 게임의 버튼 목록(resolveInput 결과, null = GBA 10버튼)을 입력·터치 화면에 잇는다(startHosted·closeGame·시험).
+// 키보드·게임패드는 정의된 버튼 모두, 터치는 정의된 role 자리만(나머지 자리는 data-off 로 숨김), C·D 는 정의했을 때만.
+function setInput(input) {
+  const next = input ?? GBA_LAYOUT;
+  pad.releaseAll();
+  state.input = next;
+  const slots = touchSlots(next);
+  let changed = setExtraButtons({ C: slots.has("C"), D: slots.has("D") });
+  for (const node of el.pad.querySelectorAll("[data-key]")) {
+    if (EXTRA_PAD.includes(node.dataset.key)) continue;
+    const off = !slots.has(node.dataset.key);
+    if (off !== node.hasAttribute("data-off")) {
+      node.toggleAttribute("data-off", off);
+      changed = true;
+    }
+  }
+  const dirOff = !DIRS.some((name) => slots.has(name));
+  if (dirOff !== el.dpad.hasAttribute("data-off")) {
+    el.dpad.toggleAttribute("data-off", dirOff);
+    changed = true;
+  }
+  player.setLayout(next, keyTable());
+  if (changed && document.documentElement.dataset.ready) layout();
+}
+
+/** 시험·개발용: 설명서 input 객체(또는 null)로 바로 setInput — window.webgba.setInput({ preset: "gba", buttons: [...] }). */
+const setInputFrom = (input, runtime = "webapi") => setInput(input ? resolveInput({ runtime, input }) : null);
 
 function savePrefs(patch = {}) {
   Object.assign(state.prefs, patch);
@@ -345,20 +378,28 @@ function layout() {
     const barH = el.bar.offsetHeight;
     sw = innerW;
     sh = Math.floor((sw * 2) / 3);
-    // C·D 가 있으면: 버튼 칸 = 위아래 여백 24 + 줄 간격 16 + L·R 줄 + 버튼 줄 + START 줄. 넘치면 L·R·START 와 겹치므로
-    // 배율을 낮추고, 가장 작은 배율(2)에서도 모자라면 게임 화면을 그만큼 줄여 버튼 칸을 남긴다.
-    const needPad = (a) => {
-      const u = skin.px(a) / dpr;
-      return 44 + (ART.shoulderH + ART.pillH) * u + Math.round(faceH * u);
-    };
-    const minPad = four ? Math.max(Math.min(300, innerH * 0.4), needPad(2)) : Math.min(300, innerH * 0.4);
+    const minPad = Math.min(300, innerH * 0.4);
     if (innerH - barH - sh - edge * 2 < minPad) {
       sh = Math.max(96, Math.floor(innerH - barH - edge * 2 - minPad));
       sw = Math.floor(sh * 1.5);
     }
-    const padH = innerH - barH - sh - edge * 2;
-    art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + faceH + ART.pillH))), 2, 6);
-    while (four && art > 2 && needPad(art) > padH) art--;
+    let padH = innerH - barH - sh - edge * 2;
+    // 버튼 배율은 C·D 와 관계없이 A·B 만일 때와 같다(규격 5.4: 버튼을 줄여 그리지 않음).
+    art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + face.h + ART.pillH))), 2, 6);
+    if (four) {
+      // C·D 가 있으면 버튼 칸 = 위아래 여백 24 + 줄 간격 16 + L·R 줄 + 네 버튼 줄 + START 줄(+ 여유 4). 모자라면(좁은 세로 320·360 등)
+      // 버튼 크기는 그대로 두고 게임 화면을 그만큼 줄인다(3:2 영역 맞춤). 화면이 가장 작은 값(96)이어도 모자랄 때만 배율을 낮춘다.
+      const needPad = (a) => {
+        const u = skin.px(a) / dpr;
+        return 44 + (ART.shoulderH + ART.pillH) * u + Math.round(faceH * u);
+      };
+      if (needPad(art) > padH) {
+        sh = Math.max(96, Math.min(sh, Math.floor(innerH - barH - edge * 2 - needPad(art))));
+        sw = Math.floor(sh * 1.5);
+        padH = innerH - barH - sh - edge * 2;
+      }
+      while (art > 2 && needPad(art) > padH) art--;
+    }
     root.setProperty("--side", "0px");
   } else if (padOn && landscape) {
     art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
@@ -1237,14 +1278,14 @@ async function readSave(id) {
 
 const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|wgba|wasm)$/i, "")}.sav`;
 
-async function startHosted(host, meta) {
+// input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
+async function startHosted(host, meta, input = null) {
   const saveId = saveIdOf(meta);
   state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "" };
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
-  // 게임의 추가 버튼(C·D) 정의 — 규격 전이라 meta.buttons 는 늘 없음 → A·B 만.
-  setExtraButtons(meta.buttons ?? null);
+  setInput(input);
   syncControls();
   layout();
   applyPlayerPrefs();
@@ -1328,7 +1369,7 @@ async function openWasm(meta, bytes, wgba) {
   }
   const save = await readSave(saveIdOf(meta));
   const { host } = await bootHost({ module, rom: rom.bytes, save, log: hostLog });
-  await startHosted(host, meta);
+  await startHosted(host, meta, wgba ? resolveInput(wgba.manifest) : null);
   return meta.name;
 }
 
@@ -1575,7 +1616,7 @@ async function closeGame({ quiet = false } = {}) {
   context.game = "";
   holds.delete("user");
   pad.releaseAll();
-  setExtraButtons(null);
+  setInput(null);
   syncControls();
   updateWake();
   if (!quiet) toast(t("status.closed"));
@@ -2645,11 +2686,16 @@ function keyName(code) {
 function renderHelp() {
   el.sheetTitle.textContent = t("help.title");
   const list = make("dl", "keys");
-  for (const name of KEY_ORDER) {
-    list.append(make("dt", "", t(`key.${name}`)), make("dd", "", (DEFAULT_KEYS[name] ?? []).map(keyName).join(" · ")));
+  if (state.input.gba) {
+    for (const name of KEY_ORDER) {
+      list.append(make("dt", "", t(`key.${name}`)), make("dd", "", (DEFAULT_KEYS[name] ?? []).map(keyName).join(" · ")));
+    }
+  } else {
+    // 설명서가 버튼을 정한 게임: 그 게임의 버튼만(설명서 label, 없으면 GBA 이름·id) + 빨리 감기
+    const keys = layoutKeys(state.input, DEFAULT_KEYS);
+    for (const b of state.input.buttons) list.append(make("dt", "", buttonLabel(b)), make("dd", "", (keys[b.id] ?? []).map(keyName).join(" · ") || "—"));
+    list.append(make("dt", "", t("key.FAST")), make("dd", "", keys.FAST.map(keyName).join(" · ")));
   }
-  // C·D 는 게임이 정의했을 때만(보내는 GBA 버튼을 함께)
-  for (const [name, target] of Object.entries(state.extra ?? {})) list.append(make("dt", "", `${name} → ${t(`key.${target}`)}`), make("dd", "", EXTRA_KEYBOARD[name].map(keyName).join(" · ")));
   list.append(make("dt", "", t("web.speed")), make("dd", "", t("keyCode.Tab")), make("dt", "", t("help.pause")), make("dd", "", "P · Pause"));
   el.sheetBody.replaceChildren(group(t("web.help.keyboard"), list), group(t("web.help.touchTitle"), make("p", "note", t("web.help.touch")), make("p", "note", t("web.help.gamepad"))));
 }
@@ -3129,7 +3175,7 @@ async function boot() {
   if (!state.storeBroken) store.persist();
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setExtraButtons, openSheet, renderSheet, applyTheme, version: BUILD };
+window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD };
 
 boot().catch((error) => {
   console.error(error);

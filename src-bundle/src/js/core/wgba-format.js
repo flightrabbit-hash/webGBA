@@ -53,6 +53,90 @@ export const GBA_PRESET = Object.freeze([
   { id: "R", role: "r", bit: 8 },
   { id: "L", role: "l", bit: 9 },
 ]);
+/** role 의 기본 키(규격 5.2, KeyboardEvent.code). a·b·select·start·방향·l·r 은 webGBA 기본 키와 같다 — 앱은 그 role 에
+ *  사용자가 바꾼 GBA 버튼 키를 대신 쓴다(player.js layoutKeys). c·d 는 버튼 모드 묶음이 정한 키, extra 는 없음(사용자가 정함). */
+export const ROLE_KEYS = Object.freeze({
+  up: ["ArrowUp"],
+  down: ["ArrowDown"],
+  left: ["ArrowLeft"],
+  right: ["ArrowRight"],
+  a: ["KeyZ", "KeyK"],
+  b: ["KeyX", "KeyJ"],
+  c: ["KeyC", "KeyI"],
+  d: ["KeyV", "KeyU"],
+  l: ["KeyA"],
+  r: ["KeyS"],
+  l2: ["KeyQ"],
+  r2: ["KeyW"],
+  start: ["Enter", "NumpadEnter"],
+  select: ["Backspace", "ShiftRight"],
+});
+/** role 의 기본 게임패드(표준 매핑 버튼 번호, 축은 "-axis0"·"+axis1"). l2·r2 가 있으면 l·r 은 4·5 만(resolveInput). */
+export const ROLE_PAD = Object.freeze({
+  up: [12, "-axis1"],
+  down: [13, "+axis1"],
+  left: [14, "-axis0"],
+  right: [15, "+axis0"],
+  a: [0],
+  b: [1],
+  c: [2],
+  d: [3],
+  l: [4, 6],
+  r: [5, 7],
+  l2: [6],
+  r2: [7],
+  start: [9],
+  select: [8],
+});
+const PAD_AXIS_RE = /^[+-]?axis\d$/;
+
+/**
+ * 설명서 input → 이 게임의 버튼 목록(규격 5장). 설명서가 없으면(.gba·목차 없는 옛 .wgba·.wasm) GBA 10버튼.
+ * preset 기본값은 ① "gba"·② "none". buttons 는 preset 뒤에 붙고 같은 id 면 preset 것을 바꾼다.
+ * 돌려줌 { gameId, gba, buttons: [{ id, role, label, bit, code, keys, pad, touch }] }:
+ *  - role: 아는 role 만(없거나 이미 쓴 role 이면 null — extra 처럼 기본 키·터치 자리 없음)
+ *  - keys: 설명서가 적은 기본 키(4개까지) 또는 null(앱이 role 기본으로 채움) · pad: 설명서 값 또는 role 기본
+ *  - gba: GBA 10버튼 그대로(바꾼 키·패드·이름·숨김 없음) — 앱은 키 설정을 앱 전체 값으로, 화면은 지금 그대로.
+ * ① 은 bit(0~31)가 없는 버튼, ② 는 code 가 없는 버튼을 뺀다(readWgba 의 검사를 지난 설명서면 없음).
+ */
+export function resolveInput(manifest) {
+  const script = manifest?.runtime === "script";
+  const input = manifest?.input && typeof manifest.input === "object" ? manifest.input : {};
+  const preset = input.preset ?? (script ? "none" : "gba");
+  const list = preset === "gba" ? GBA_PRESET.map((b) => ({ ...b })) : [];
+  for (const raw of Array.isArray(input.buttons) ? input.buttons : []) {
+    if (!raw || typeof raw.id !== "string") continue;
+    const at = list.findIndex((b) => b.id === raw.id);
+    if (at >= 0) list[at] = { ...list[at], ...raw };
+    else list.push({ ...raw });
+  }
+  const used = new Set();
+  const buttons = [];
+  for (const raw of list.slice(0, script ? 24 : 32)) {
+    if (script ? typeof raw.code !== "string" || !raw.code : !Number.isInteger(raw.bit) || raw.bit < 0 || raw.bit > 31) continue;
+    let role = ROLES.includes(raw.role) ? raw.role : null;
+    if (role && role !== "extra" && used.has(role)) role = null;
+    if (role && role !== "extra") used.add(role);
+    if (role === "extra") role = null;
+    const keys = Array.isArray(raw.keys) ? raw.keys.filter((code) => typeof code === "string" && code).slice(0, 4) : null;
+    const pad = Array.isArray(raw.pad) ? raw.pad.filter((p) => (Number.isInteger(p) && p >= 0 && p < 32) || (typeof p === "string" && PAD_AXIS_RE.test(p))) : null;
+    buttons.push({ id: raw.id, role, label: raw.label ?? null, bit: script ? null : raw.bit, code: script ? raw.code : null, keys, pad, touch: raw.touch === "hide" ? "hide" : "auto" });
+  }
+  const shoulders2 = used.has("l2") || used.has("r2");
+  for (const b of buttons) {
+    if (b.pad) continue;
+    b.pad = b.role === "l" && shoulders2 ? [4] : b.role === "r" && shoulders2 ? [5] : [...(ROLE_PAD[b.role] ?? [])];
+  }
+  const gba =
+    !script &&
+    buttons.length === GBA_PRESET.length &&
+    GBA_PRESET.every((p, i) => {
+      const b = buttons[i];
+      return b.id === p.id && b.role === p.role && b.bit === p.bit && !b.keys && !b.label && b.touch === "auto" && b.pad.join() === ROLE_PAD[p.role].join();
+    });
+  return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons };
+}
+
 /** ① 가 쓸 수 있는 가져오기(web-host.js 와 같은 목록 + webgba.v1). */
 export const WEBAPI_ENV = Object.freeze(["emscripten_asm_const_int", "emscripten_resize_heap", "_emscripten_throw_longjmp", "emscripten_date_now", "emscripten_get_now", "emscripten_notify_memory_growth", "_abort_js", "abort"]);
 export const WEBAPI_WASI = Object.freeze(["fd_write", "fd_read", "fd_close", "fd_seek", "fd_sync", "fd_fdstat_get", "environ_get", "environ_sizes_get", "proc_exit", "clock_time_get", "random_get"]);
@@ -462,8 +546,10 @@ export function checkManifest(m, errors, warnings) {
   if (save.kind !== undefined && !["flash", "storage", "localStorage", "files", "none"].includes(save.kind)) errors.push(`save.kind 가 규칙 밖입니다: ${save.kind}`);
   if (save.maxSize !== undefined && (!Number.isInteger(save.maxSize) || save.maxSize < 1 || save.maxSize > 16 * 1024 * 1024)) errors.push("save.maxSize 는 1~16MB");
   if (m.input?.preset !== undefined && !["gba", "none"].includes(m.input.preset)) errors.push(`input.preset 이 gba·none 이 아닙니다: ${m.input.preset}`);
-  const ids = new Set(m.input?.preset === "gba" ? GBA_PRESET.map((b) => b.id) : []);
-  const roles = new Map(m.input?.preset === "gba" ? GBA_PRESET.map((b) => [b.role, b.id]) : []);
+  // preset 기본값: ① gba · ② none (규격 5.1, resolveInput 과 같음)
+  const presetGba = (m.input?.preset ?? (m.runtime === "script" ? "none" : "gba")) === "gba";
+  const ids = new Set(presetGba ? GBA_PRESET.map((b) => b.id) : []);
+  const roles = new Map(presetGba ? GBA_PRESET.map((b) => [b.role, b.id]) : []);
   for (const b of m.input?.buttons ?? []) {
     if (!b || typeof b.id !== "string" || !/^[A-Za-z0-9_-]{1,16}$/.test(b.id)) {
       errors.push(`버튼 id 가 규칙 밖입니다: ${b?.id}`);

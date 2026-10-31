@@ -104,6 +104,7 @@ export function setup(options = {}) {
     pages: Object.fromEntries(TABS.map((name) => [name, pick(`settings-page-${name}`)])),
     body: pick("settings-body"),
     keys: pick("settings-keys"),
+    keysGame: pick("settings-keys-game"),
     modes: pick("settings-modes"),
     colors: pick("settings-colors"),
     langs: pick("settings-langs"),
@@ -135,7 +136,7 @@ export async function open(tab = "general") {
     hooks.onError?.(reason(error));
     return;
   }
-  keys = cloneKeys(draft.keys ?? hooks.defaultKeys);
+  keys = cloneKeys(draft.keys ?? defaultKeys());
   waiting = null;
   picked = { mode: draft.theme?.mode ?? "dark", colors: { ...(draft.theme?.colors ?? {}) } };
   redraw();
@@ -165,7 +166,7 @@ function onKey(event) {
     event.stopPropagation();
     const pressed = codeOf(event);
     if (pressed !== "Escape" && pressed) {
-      for (const name of hooks.keyOrder) keys[name] = keys[name].filter((code) => code !== pressed);
+      for (const name of keyOrder()) keys[name] = keys[name].filter((code) => code !== pressed);
       const list = keys[waiting.name];
       list[waiting.index] = pressed;
       keys[waiting.name] = list.filter(Boolean);
@@ -433,14 +434,21 @@ async function save() {
 
 /* ── 키 ── */
 
+// 열린 게임이 설명서로 버튼을 정했으면 draft.keyLayout = { order, labels, defaults, note } — 그 게임의 버튼만 보이고 바꾼다.
+// 없으면(게임 없음·GBA 10버튼 게임) 앱 전체 GBA 키(hooks.keyOrder·defaultKeys).
+const keyOrder = () => draft?.keyLayout?.order ?? hooks.keyOrder;
+const defaultKeys = () => draft?.keyLayout?.defaults ?? hooks.defaultKeys;
+const keyLabel = (name) => draft?.keyLayout?.labels?.[name] ?? t(`key.${name}`);
+
 function cloneKeys(source) {
   const out = {};
-  for (const name of hooks.keyOrder) out[name] = Array.isArray(source?.[name]) ? source[name].slice(0, 2) : [...(hooks.defaultKeys[name] ?? [])];
+  const fallback = defaultKeys();
+  for (const name of keyOrder()) out[name] = Array.isArray(source?.[name]) ? source[name].slice(0, 2) : [...(fallback[name] ?? [])].slice(0, 2);
   return out;
 }
 
 function resetKeys() {
-  keys = cloneKeys(hooks.defaultKeys);
+  keys = cloneKeys(defaultKeys());
   waiting = null;
   drawKeys();
   note(t("cfg.pendingSave"));
@@ -448,10 +456,15 @@ function resetKeys() {
 
 function drawKeys() {
   el.keys.replaceChildren();
-  for (const name of hooks.keyOrder) {
+  if (el.keysGame) {
+    const text = draft?.keyLayout?.note ?? "";
+    el.keysGame.textContent = text;
+    el.keysGame.hidden = !text;
+  }
+  for (const name of keyOrder()) {
     const label = document.createElement("span");
     label.className = "keys__name";
-    label.textContent = t(`key.${name}`);
+    label.textContent = keyLabel(name);
     el.keys.append(label);
     for (const index of [0, 1]) {
       const slot = document.createElement("button");

@@ -385,9 +385,31 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
   await context.close();
 }
 
-// ── C·D 버튼(게임이 정의했을 때만 — main.js setExtraButtons, 여기서는 시험용 가짜 정의 C = L, D = R) ──
-// 정의 없음: C·D 없고 수정 전 빌드(UI_BASE_URL)와 픽셀 같음. 정의 있음: C 는 A 위·D 는 B 위, 크기 = A·B, 겹침 0·화면 안,
-// 터치로 C·D → L·R, 두 손가락(A + C)·미끄러짐(C→D→B)·스틱 + C, 키보드 C·I / V·U. 끄면 처음 화면과 픽셀 같음.
+// ── C·D 버튼·키 매핑(게임 설명서 input 이 정의했을 때만 — main.js setInput, 시험은 window.webgba.setInput(설명서 input)) ──
+// 정의 없음: C·D 없고 수정 전 빌드(UI_BASE_URL)와 픽셀 같음. C·D 정의(preset gba + c = bit 10, d = bit 11): C 는 A 위·D 는 B 위,
+// 크기 = A·B, 겹침 0·화면 안, 버튼 배율 = 정의 없을 때와 같음(좁은 세로는 게임 화면을 줄임), 터치 C·D → bit 10·11,
+// 두 손가락(A + C)·미끄러짐(C→D→B)·스틱 + C, 키보드 C·I / V·U. 끄면 처음 화면과 픽셀 같음.
+// 버튼 일부(방향·A·START 만): 나머지 자리 안 보임·겹침 0. 역할이 다른 버튼(a = bit 8 …): 터치·키보드가 그 bit.
+const CD_INPUT = { preset: "gba", buttons: [{ id: "C", role: "c", bit: 10 }, { id: "D", role: "d", bit: 11 }] };
+const FEW_INPUT = { preset: "none", buttons: [{ id: "UP", role: "up", bit: 6 }, { id: "DOWN", role: "down", bit: 7 }, { id: "LEFT", role: "left", bit: 5 }, { id: "RIGHT", role: "right", bit: 4 }, { id: "A", role: "a", bit: 0 }, { id: "START", role: "start", bit: 3 }] };
+const ROLES_INPUT = {
+  preset: "none",
+  buttons: [
+    { id: "UP", role: "up", bit: 0 },
+    { id: "DOWN", role: "down", bit: 1 },
+    { id: "LEFT", role: "left", bit: 2 },
+    { id: "RIGHT", role: "right", bit: 3 },
+    { id: "JUMP", role: "a", bit: 8, label: { en: "Jump", ko: "점프" } },
+    { id: "FIRE", role: "b", bit: 9 },
+    { id: "SPIN", role: "c", bit: 12 },
+    { id: "MENU", role: "start", bit: 15 },
+    { id: "MAP", role: "extra", bit: 20, keys: ["KeyM"] },
+    { id: "DASH", role: "l2", bit: 21 },
+  ],
+};
+const CD_BITS = { C: 1024, D: 2048 };
+// 수정 전 빌드(UI_BASE_URL)는 setInput 이 없어 옛 시험 정의(C = L, D = R)로 켠다 — 화면 배치 비교용
+const turnOnCD = (page) => page.evaluate((input) => (window.webgba.setInput ? window.webgba.setInput(input) : window.webgba.setExtraButtons({ C: "L", D: "R" })), CD_INPUT);
 const EXTRA_VIEWS = [
   { width: 320, height: 568, dpr: 2 },
   { width: 360, height: 640, dpr: 3 },
@@ -400,7 +422,7 @@ const EXTRA_VIEWS = [
   { width: 932, height: 430, dpr: 3 },
   { width: 1024, height: 768, dpr: 2 },
 ];
-const EXTRA_SHOTS = { "390x844": "세로_390x844_ABCD.png", "844x390": "가로_844x390_ABCD.png" };
+const EXTRA_SHOTS = { "320x568": "세로_320x568_ABCD.png", "390x844": "세로_390x844_ABCD.png", "844x390": "가로_844x390_ABCD.png" };
 const PAD_BITS = { A: 1, B: 2, SELECT: 4, START: 8, RIGHT: 16, LEFT: 32, UP: 64, DOWN: 128, R: 256, L: 512 };
 
 async function padPage(url, { width, height, dpr }) {
@@ -430,8 +452,34 @@ const padBoxes = (page) =>
       if (r.width < 1 || r.height < 1 || getComputedStyle(n).visibility === "hidden") continue;
       out[n.dataset.key ?? (n.matches("[data-dpad]") ? "DIR" : n.id)] = { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
     }
-    return { boxes: out, art: window.webgba.skin.art };
+    const s = getComputedStyle(document.documentElement);
+    return { boxes: out, art: window.webgba.skin.art, screen: `${parseFloat(s.getPropertyValue("--sw"))}x${parseFloat(s.getPropertyValue("--sh"))}` };
   });
+
+function overlaps(b, view) {
+  const list = Object.entries(b);
+  const hits = [];
+  for (let i = 0; i < list.length; i++)
+    for (let j = i + 1; j < list.length; j++) {
+      const [n1, x] = list[i];
+      const [n2, y] = list[j];
+      if (x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5) hits.push(`${n1}×${n2}`);
+    }
+  const outside = list.filter(([, x]) => x.l < -0.5 || x.t < -0.5 || x.r > view.width + 0.5 || x.b > view.height + 0.5).map(([n]) => n);
+  return { hits, outside };
+}
+
+// 키 하나를 눌렀다 뗐을 때 player.held(게임에 갈 비트)
+const pressBits = (page, codes) =>
+  page.evaluate((codes) => {
+    const p = window.webgba.player;
+    return codes.map((code) => {
+      p.keyDown(code);
+      const bits = p.held;
+      p.keyUp(code);
+      return bits;
+    });
+  }, codes);
 
 // 둥근 버튼 넷의 잉크(불투명 칸 = 면·옆면·외곽선, 반투명 그림자 뺌) 사이 가장 가까운 빈 거리(CSS px).
 // 아트 칸 가운데끼리 거리 − 한 칸(같은 세로줄이면 빈 줄 수 × 한 칸).
@@ -473,22 +521,21 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
     ok(`${key}: 정의 없음 = 수정 전 빌드와 픽셀 같음`, diff === 0, `다른 픽셀 ${diff}`);
   }
 
-  await page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+  await turnOnCD(page);
   await page.waitForTimeout(300);
-  const { boxes: b, art } = await padBoxes(page);
-  const list = Object.entries(b);
-  const hits = [];
-  for (let i = 0; i < list.length; i++)
-    for (let j = i + 1; j < list.length; j++) {
-      const [n1, x] = list[i];
-      const [n2, y] = list[j];
-      if (x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5) hits.push(`${n1}×${n2}`);
-    }
-  const outside = list.filter(([, x]) => x.l < -0.5 || x.t < -0.5 || x.r > view.width + 0.5 || x.b > view.height + 0.5).map(([n]) => n);
+  const { boxes: b, art, screen } = await padBoxes(page);
+  const { hits, outside } = overlaps(b, view);
   ok(`${key}: C·D 보임·겹침 0·화면 안`, b.C && b.D && !hits.length && !outside.length, `겹침 ${hits.join(" ") || "0"} · 밖 ${outside.join(" ") || "0"}`);
   if (!b.C || !b.D) {
     await context.close();
     continue;
+  }
+  if (view.width < view.height) {
+    // 세로: 버튼 배율은 정의 없을 때와 같고, 자리가 모자라면 게임 화면만 줄어든다(3:2 그대로)
+    const [w0, h0] = before.screen.split("x").map(Number);
+    const [w1, h1] = screen.split("x").map(Number);
+    ok(`${key}: 세로 버튼 배율 그대로(줄이지 않음), 모자라면 게임 화면만 줄임`, art === before.art && w1 <= w0 && h1 <= h0 && Math.abs(w1 / h1 - 1.5) < 0.02, `배율 ${before.art}→${art} · 게임 화면 ${before.screen} → ${screen}`);
+    console.log(`측정 ${key}: 세로 게임 화면 ${before.screen} → ${screen} · 배율 ${before.art}→${art}`);
   }
   const column = b.C.b <= b.A.t + 0.5 && Math.abs(b.C.cx - b.A.cx) < 0.5 && b.D.b <= b.B.t + 0.5 && Math.abs(b.D.cx - b.B.cx) < 0.5;
   ok(`${key}: C 는 A 바로 위, D 는 B 바로 위`, column, JSON.stringify({ C: [b.C.cx, b.C.b], A: [b.A.cx, b.A.t], D: [b.D.cx, b.D.b], B: [b.B.cx, b.B.t] }));
@@ -505,7 +552,7 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
     let was = "";
     if (BASE_URL) {
       const base = await padPage(BASE_URL, view);
-      await base.page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+      await turnOnCD(base.page);
       await base.page.waitForTimeout(300);
       const old = await inkGaps(base.page);
       const ob = (await padBoxes(base.page)).boxes;
@@ -529,7 +576,7 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
   await touch("touchStart", [at("D", 1)]);
   const d = await held();
   await touch("touchEnd", []);
-  ok(`${key}: 터치 C → L, D → R`, c === PAD_BITS.L && d === PAD_BITS.R, `${c}/${d}`);
+  ok(`${key}: 터치 C → bit 10, D → bit 11`, c === CD_BITS.C && d === CD_BITS.D, `${c}/${d}`);
   await touch("touchStart", [at("A", 1), at("C", 2)]);
   const ac = await held();
   await touch("touchMove", [at("A", 1), at("D", 2)]);
@@ -540,41 +587,32 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
   const a = await held();
   await touch("touchEnd", []);
   const none = await held();
-  ok(`${key}: 두 손가락 A + C, C→D→B 미끄러짐, 떼기`, ac === (PAD_BITS.A | PAD_BITS.L) && ad === (PAD_BITS.A | PAD_BITS.R) && ab === (PAD_BITS.A | PAD_BITS.B) && a === PAD_BITS.A && none === 0, `${ac}/${ad}/${ab}/${a}/${none}`);
+  ok(`${key}: 두 손가락 A + C, C→D→B 미끄러짐, 떼기`, ac === (PAD_BITS.A | CD_BITS.C) && ad === (PAD_BITS.A | CD_BITS.D) && ab === (PAD_BITS.A | PAD_BITS.B) && a === PAD_BITS.A && none === 0, `${ac}/${ad}/${ab}/${a}/${none}`);
   const stick = { x: b.DIR.cx + b.DIR.w * 0.4, y: b.DIR.cy, id: 1 };
   await touch("touchStart", [stick, at("C", 2)]);
   const sc = await held();
   await touch("touchEnd", []);
-  ok(`${key}: 스틱 오른쪽 + C`, sc === (PAD_BITS.RIGHT | PAD_BITS.L), `${sc}`);
-  const keys = await page.evaluate(() => {
-    const p = window.webgba.player;
-    const one = (code) => {
-      p.keyDown(code);
-      const bits = p.held;
-      p.keyUp(code);
-      return bits;
-    };
-    return ["KeyC", "KeyI", "KeyV", "KeyU", "KeyZ", "KeyA", "KeyS"].map(one);
-  });
-  ok(`${key}: 키보드 C·I → L, V·U → R(A·L·R 키 그대로)`, keys.join() === [512, 512, 256, 256, 1, 512, 256].join(), keys.join(","));
+  ok(`${key}: 스틱 오른쪽 + C`, sc === (PAD_BITS.RIGHT | CD_BITS.C), `${sc}`);
+  const keys = await pressBits(page, ["KeyC", "KeyI", "KeyV", "KeyU", "KeyZ", "KeyA", "KeyS"]);
+  ok(`${key}: 키보드 C·I → C, V·U → D(A·L·R 키 그대로)`, keys.join() === [1024, 1024, 2048, 2048, 1, 512, 256].join(), keys.join(","));
   if (EXTRA_SHOTS[name]) await page.screenshot({ path: path.join(SHOTS, EXTRA_SHOTS[name]) });
 
   if (name === "390x844") {
-    const only = await page.evaluate(() => {
-      window.webgba.setExtraButtons({ C: "START" });
+    const only = await page.evaluate((input) => {
+      window.webgba.setInput(input);
       const shown = (k) => document.querySelector(`[data-key="${k}"]`).getBoundingClientRect().width > 0;
       const s = window.webgba.player;
       s.keyDown("Pad:C");
       const bits = s.held;
       s.keyUp("Pad:C");
       const one = { c: shown("C"), d: shown("D"), bits };
-      window.webgba.setExtraButtons({ C: "X", D: 3 });
+      window.webgba.setInput({ preset: "gba", buttons: [{ id: "X", role: "zz", bit: 12 }] });
       return { ...one, bad: window.webgba.state.extra, badShown: shown("C") || shown("D") };
-    });
-    ok(`${key}: C 만 정의하면 C 만(→ START), 모르는 이름은 무시(= 정의 없음)`, only.c && !only.d && only.bits === PAD_BITS.START && only.bad === null && !only.badShown, JSON.stringify(only));
+    }, { preset: "gba", buttons: [{ id: "C", role: "c", bit: 10 }] });
+    ok(`${key}: C 만 정의하면 C 만(→ bit 10), 모르는 role 은 터치 자리 없음(= C·D 없음)`, only.c && !only.d && only.bits === CD_BITS.C && only.bad === null && !only.badShown, JSON.stringify(only));
   }
 
-  await page.evaluate(() => window.webgba.setExtraButtons(null));
+  await page.evaluate(() => window.webgba.setInput(null));
   await page.waitForTimeout(300);
   const back = pixelDiff(plain, await shoot(page));
   const gone = await page.evaluate(() => {
@@ -585,6 +623,40 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
     return { bits, extra: window.webgba.state.extra, attr: document.getElementById("pad").dataset.extra ?? null };
   });
   ok(`${key}: 정의를 지우면 처음 화면과 픽셀 같음·C 키 없음`, back === 0 && gone.bits === 0 && gone.extra === null && gone.attr === null, `다른 픽셀 ${back} · ${JSON.stringify(gone)}`);
+
+  // 버튼 일부(방향·A·START 만): B·L·R·SELECT·C·D 자리 안 보임, 남은 것 겹침 0·화면 안, 키보드 X(B)·A(L) 는 아무것도 아님
+  await page.evaluate((input) => window.webgba.setInput(input), FEW_INPUT);
+  await page.waitForTimeout(300);
+  const few = await padBoxes(page);
+  const fewHit = overlaps(few.boxes, view);
+  const fewKeys = await pressBits(page, ["KeyZ", "KeyX", "KeyA", "KeyS", "Backspace", "Enter", "ArrowUp"]);
+  const fewShown = ["A", "START", "DIR"].every((n) => few.boxes[n]) && ["B", "L", "R", "SELECT", "C", "D"].every((n) => !few.boxes[n]);
+  ok(`${key}: 버튼 일부 — 정의한 자리만 보임·겹침 0·키는 정의한 버튼만`, fewShown && !fewHit.hits.length && !fewHit.outside.length && few.art === before.art && fewKeys.join() === [1, 0, 0, 0, 0, 8, 64].join(),
+    `보임 ${Object.keys(few.boxes).filter((n) => /^[A-Z]+$/.test(n)).join(",")} · 겹침 ${fewHit.hits.join(" ") || "0"} · 키 ${fewKeys.join(",")}`);
+
+  // 역할이 다른 버튼: 터치 A 자리 → 점프(bit 8), B 자리 → bit 9, C 자리 → bit 12, D 없음, START 자리 → bit 15, 키보드 M(extra)·Q(l2)
+  await page.evaluate((input) => window.webgba.setInput(input), ROLES_INPUT);
+  await page.waitForTimeout(300);
+  const roles = await padBoxes(page);
+  const rb = roles.boxes;
+  const rHit = overlaps(rb, view);
+  const tapBits = [];
+  for (const n of ["A", "B", "C", "START"]) {
+    if (!rb[n]) {
+      tapBits.push(-1);
+      continue;
+    }
+    await touch("touchStart", [{ x: rb[n].cx, y: rb[n].cy, id: 1 }]);
+    tapBits.push(await held());
+    await touch("touchEnd", []);
+  }
+  const roleKeys = await pressBits(page, ["KeyZ", "KeyX", "KeyC", "KeyM", "KeyQ", "Enter", "ArrowUp", "ArrowRight"]);
+  ok(`${key}: 역할이 다른 버튼 — 터치·키보드가 그 bit, D·L·R·SELECT 없음·겹침 0`,
+    tapBits.join() === [256, 512, 4096, 32768].join() && roleKeys.join() === [256, 512, 4096, 1 << 20, 1 << 21, 32768, 1, 8].join() && !rb.D && !rb.L && !rb.R && !rb.SELECT && !rHit.hits.length && !rHit.outside.length,
+    `터치 ${tapBits.join(",")} · 키 ${roleKeys.join(",")} · 겹침 ${rHit.hits.join(" ") || "0"}`);
+  await page.evaluate(() => window.webgba.setInput(null));
+  await page.waitForTimeout(300);
+  ok(`${key}: 버튼 일부·역할 정의를 지워도 처음 화면과 픽셀 같음`, pixelDiff(plain, await shoot(page)) === 0);
   ok(`${key}: 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
   await context.close();
 }
@@ -611,7 +683,7 @@ const CUSTOM_DEFAULT = { "--bg-sunken": "#070a14", "--bg-deep": "#070a14", "--bg
 
 if (EXTRA) {
   const { context, page } = await padPage(URL_BASE, { width: 1000, height: 640, dpr: 2 });
-  await page.evaluate(() => window.webgba.setExtraButtons({ C: "L", D: "R" }));
+  await turnOnCD(page);
   await page.waitForTimeout(300);
   const rows = await page.evaluate(async (custom) => {
     const T = await import("/js/shell/theme.js");

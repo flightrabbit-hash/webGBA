@@ -271,6 +271,7 @@
   "cfg.keys.press": "キーを押してください",
   "cfg.keys.slotTitle": "押してから使うキーを押してください · 右クリックで消去",
   "cfg.keys.resetTitle": "既定のキー配置に戻します (SAVE を押すと保存)",
+  "cfg.keys.game": "{name} が使うボタンです。ここで変えたキーはこのゲームだけに使います(早送りはすべてのゲーム)。",
   "cfg.lang.title": "表示言語",
   "cfg.lang.note": "webGBA の画面の文字を切り替えます。ゲーム(ROM · wasm)の中の文字は変わりません。",
 

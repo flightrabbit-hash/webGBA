@@ -3,7 +3,8 @@ import { bootHost, inspectModule, readEmbeddedRom, readRomPayload, SCREEN_H, SCR
 import { compileCode, gameInfo, problemText, readWgba, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
-import { codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, Player } from "../app/player.js";
+import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
+import { resolveInput } from "../core/wgba-format.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
 import * as i18n from "../shell/i18n.js";
@@ -79,6 +80,8 @@ const state = {
   opening: false,
   menuName: "",
   link: { linked: false, elsewhere: false },
+  // 지금 게임의 버튼 목록(resolveInput — 설명서 input, 없으면 GBA 10버튼)
+  input: GBA_LAYOUT,
 };
 
 const player = new Player({
@@ -149,6 +152,24 @@ function keysFromPrefs() {
   const keys = {};
   for (const name of KEY_ORDER) keys[name] = Array.isArray(saved[name]) ? saved[name].slice(0, 2) : [...DEFAULT_KEYS[name]];
   return keys;
+}
+
+// 키 배치: GBA 10버튼 게임(설명서 없음·preset gba 만)은 앱 전체 값(prefs.keys, 지금 그대로).
+// 설명서가 버튼을 정한 게임은 게임 id 별 사용자 배치(prefs.gameKeys[id]) → 설명서 keys → role 기본(GBA role 은 앱 전체 GBA 키).
+const savedGameKeys = (input) => (input.gba || !input.gameId ? null : (state.prefs.gameKeys?.[input.gameId] ?? null));
+const keysFor = (input = state.input) => layoutKeys(input, keysFromPrefs(), savedGameKeys(input));
+
+function applyInput(input) {
+  state.input = input ?? GBA_LAYOUT;
+  player.setLayout(state.input, keysFor(state.input));
+}
+
+/** 키 설정 창에 넘길 버튼 목록: 순서·이름·되돌릴 기본 키·안내 글(설명서가 버튼을 정한 게임만). */
+function keyLayout(input = state.input) {
+  if (input.gba) return null;
+  const order = [...input.buttons.map((b) => b.id), "FAST"];
+  const labels = Object.fromEntries(input.buttons.map((b) => [b.id, buttonLabel(b)]));
+  return { order, labels, defaults: layoutKeys(input, DEFAULT_KEYS), note: t("cfg.keys.game", { name: state.game?.label || state.game?.name || input.gameId }) };
 }
 
 const KEY_CODES = ["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "Space", "Enter", "Backspace", "Tab", "NumpadEnter"];
@@ -305,6 +326,8 @@ async function openPath(path, options = {}) {
 async function startHosted(host, game) {
   // 설명서가 있는 .wgba 는 창 제목도 "<이름> <버전>"
   state.game = { ...game, name: baseOf(game.path), title: game.label || (host.title ? `${baseOf(game.path)} · ${host.title}` : baseOf(game.path)) };
+  // 설명서의 버튼 목록(없으면 GBA 10버튼 — 키·게임패드 지금 그대로)
+  applyInput(game.input ?? null);
   showView("screen");
   layoutScreen();
   await player.start({ host, saveId: game.saveId, game: game.path });
@@ -512,7 +535,7 @@ async function openWasm(path, { preferPage = false } = {}) {
     if (rom) await core.webSetRom(build.key, rom);
     const { save, name } = await openSave(path);
     const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog });
-    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label });
+    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null });
     status(join(label || baseOf(path), romNote(rom), saveNote(hadSave, name)));
     if (info) core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기 ${path}`);
     return true;
@@ -556,6 +579,7 @@ async function closeGame({ quiet = false } = {}) {
   if (game.kind === "frame") el.frame.src = "about:blank";
   state.game = null;
   state.autoPaused = false;
+  if (!state.input.gba) applyInput(null);
   showView("start");
   syncControls();
   renderPanel();
@@ -864,11 +888,17 @@ const confirmDialog = (title, text) =>
   openDialog({ title, body: text, actions: [{ label: "CANCEL", value: false }, { label: "OK", go: true, value: true }] }).then(Boolean);
 
 function helpBody() {
-  const keys = keysFromPrefs();
+  const keys = keysFor();
   const list = document.createElement("dl");
   list.className = "help";
+  // 설명서가 버튼을 정한 게임이면 그 게임의 버튼만(설명서 label)
+  const order = state.input.gba ? KEY_ORDER : [...state.input.buttons.map((b) => b.id), "FAST"];
+  const nameOf = (id) => {
+    const b = state.input.gba ? null : state.input.buttons.find((x) => x.id === id);
+    return b ? buttonLabel(b) : t(`key.${id}`);
+  };
   const rows = [
-    ...KEY_ORDER.map((name) => [t(`key.${name}`), keys[name].map(keyName).join(" · ") || "—"]),
+    ...order.map((name) => [nameOf(name), (keys[name] ?? []).map(keyName).join(" · ") || "—"]),
     [t("help.fastToggle"), "Tab"],
     [t("help.pause"), "Pause"],
     [t("help.state"), "Shift+F1~F9 / F1~F9"],
@@ -957,7 +987,8 @@ async function settingsSnapshot() {
     favorites: [...favorites()],
     recent: [...(state.prefs.recent ?? [])],
     useDevelopKit: Boolean(ini.useDevelopKit),
-    keys: keysFromPrefs(),
+    keys: keysFor(),
+    keyLayout: keyLayout(),
     theme: state.prefs.theme ?? { mode: "dark", colors: {} },
   };
 }
@@ -977,6 +1008,18 @@ async function applySettings(next) {
     recent: next.recent,
     keys: next.keys,
   };
+  const input = state.input;
+  if (!input.gba && input.gameId) {
+    // 설명서가 버튼을 정한 게임: 버튼 키는 그 게임 id 에만, 빨리 감기(호스트 몫)는 앱 전체. 기본과 같으면 기록하지 않음.
+    patch.keys = { ...keysFromPrefs(), FAST: next.keys.FAST ?? [] };
+    const own = Object.fromEntries(input.buttons.map((b) => [b.id, next.keys[b.id] ?? []]));
+    const plain = layoutKeys(input, patch.keys);
+    const same = input.buttons.every((b) => own[b.id].join() === (plain[b.id] ?? []).join());
+    const gameKeys = { ...(state.prefs.gameKeys ?? {}) };
+    if (same) delete gameKeys[input.gameId];
+    else gameKeys[input.gameId] = own;
+    patch.gameKeys = gameKeys;
+  }
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
 
@@ -992,7 +1035,7 @@ async function applySettings(next) {
     state.prefs.wgbaLink = Boolean(next.wgbaLink);
   }
 
-  player.setKeys(next.keys);
+  player.setKeys(keysFor());
   player.setVolume(next.volume / 100);
   player.setMuted(Boolean(next.muted));
   player.fastScale = next.fastScale;

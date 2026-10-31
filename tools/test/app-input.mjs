@@ -1,5 +1,7 @@
 // 키 입력·빨리 감기 소리 시험(사용자 2026-10-27 "방향키가 가끔 안 먹음", "Space 빨리 감기 중 소리가 안 남"). 실제 앱을 CDP 로 다룬다. 마우스를 움직이지 않는다.
-//   node tools/test/app-input.mjs <exe> <작업 폴더> [gba] [wgba]
+//   node tools/test/app-input.mjs <exe> <작업 폴더> [gba] [wgba] [keymap]
+// keymap: <작업>\keymap\ 의 키 매핑 예제(keys-cd·keys-few·keys-roles .wgba, 롬 없음)로 설명서 input → 게임 비트·키 설정 창(그 게임의 버튼만,
+//   게임 id 별 기억)·게임을 닫으면 GBA 키로. gba 와 같이 돌리면 GBA 게임에 게임별 키가 섞이지 않는지도 본다.
 // 작업 폴더: rom\test.gba · port\<빌드>.wgba(웹 빌드 사본) · <롬>(그 빌드의 롬 사본). <빌드>·<롬> 은 WEBGBA_TEST_BUILD·WEBGBA_TEST_ROM(cdp.mjs).
 // port\ 에 가짜 롬 zz_dummy.gba 를 함께 두고 설정 "웹 빌드에 쓸 롬 파일 이름"(webRom)을 <롬> 으로 씨앗에 넣어, 이름으로 위 폴더의 롬을 찾는지도 본다.
 // 앱 폴더 <작업>\app_input 을 새로 만든다(.wgba 연결은 건드리지 않음: wgbaLink false). 결과 <작업>\app_input_result.json
@@ -25,7 +27,7 @@ const check = (name, ok, detail = "") => {
 };
 
 const BIT = { A: 1, B: 2, SELECT: 4, START: 8, RIGHT: 16, LEFT: 32, UP: 64, DOWN: 128, R: 256, L: 512 };
-const VK = { ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, KeyX: 88, KeyZ: 90, KeyK: 75, Enter: 13, Space: 32, Escape: 27, Tab: 9 };
+const VK = { ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, KeyX: 88, KeyZ: 90, KeyK: 75, KeyC: 67, KeyV: 86, KeyM: 77, KeyQ: 81, KeyN: 78, KeyA: 65, Enter: 13, Space: 32, Escape: 27, Tab: 9 };
 const KEY = { ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight", Enter: "Enter", Space: " ", Escape: "Escape", Tab: "Tab" };
 
 let app = null;
@@ -379,13 +381,95 @@ async function inputTests(label) {
   await sleep(150);
   const noCode = await since(at);
   await up("", { key: "ArrowLeft", windowsVirtualKeyCode: 37 });
-  await down("", { key: "ㅋ", windowsVirtualKeyCode: 90 });
+  // X 자리 자모(ㅌ, 가상 키 88) = B — 기본 키 Z↔X(0.3.0) 뒤 Z 자리(ㅋ)는 A 라 X 자리로 본다
+  await down("", { key: "ㅌ", windowsVirtualKeyCode: 88 });
   await sleep(150);
   const jamo = await since(at);
-  await up("", { key: "ㅋ", windowsVirtualKeyCode: 90 });
+  await up("", { key: "ㅌ", windowsVirtualKeyCode: 88 });
   await sleep(150);
   f = await since(at);
   check(`${label} I3 물리 키 이름(code)이 비어 오는 키(가상 키 입력·일부 입력기)도 키 번호로`, tail(noCode).every((k) => k & BIT.LEFT) && tail(jamo).every((k) => k & BIT.B) && tail(f).every((k) => !(k & (BIT.LEFT | BIT.B))), `${fmt(tail(noCode, 2))} | ${fmt(tail(jamo, 2))} | ${fmt(tail(f, 2))}`);
+}
+
+// 키 하나를 누른 채 몇 프레임 → 그동안 게임이 받은 비트(마지막 몇 프레임이 모두 같아야)
+async function sentWhile(code) {
+  const at = await mark();
+  await down(code);
+  await sleep(150);
+  const f = await since(at);
+  await up(code);
+  await sleep(80);
+  const last = tail(f, 3);
+  return last.length && last.every((k) => k === last[0]) ? last[0] : `흔들림 ${fmt(last)}`;
+}
+
+const keyRows = () => app.evaluate("[...document.querySelectorAll('#settings-keys .keys__name')].map((n) => n.textContent)");
+
+async function openGame(file) {
+  await app.evaluate(`${T}.openPath(${JSON.stringify(file)})`);
+  await app.evaluate(`new Promise((r) => { const t = () => (${T}.state.game && !${T}.state.opening ? r(true) : setTimeout(t, 50)); t(); })`);
+  await app.evaluate("document.getElementById('stage').focus(); true");
+  await sleep(600);
+  await app.evaluate(RECORD);
+}
+
+async function keymapTests() {
+  const dir = path.join(work, "keymap");
+  const file = (name) => path.join(dir, `${name}.wgba`);
+
+  await openGame(file("keys-cd"));
+  const cd = [await sentWhile("KeyC"), await sentWhile("KeyV"), await sentWhile("KeyZ"), await sentWhile("KeyA")];
+  check("keymap C·D: 키 C → bit 10, V → bit 11, Z → A, A → L", cd.join() === [1024, 2048, 1, 512].join(), cd.join(","));
+  await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
+  const rowsCd = await keyRows();
+  const note = await app.evaluate("(() => { const n = document.getElementById('settings-keys-game'); return n.hidden ? '' : n.textContent; })()");
+  check("keymap C·D: 키 설정 창 = 이 게임의 버튼 12개 + 빨리 감기, 안내 글", rowsCd.length === 13 && rowsCd.includes("C") && rowsCd.includes("D") && note.includes("키 C D"), `${rowsCd.join(",")} · ${note}`);
+  // C 의 첫 칸을 N 으로 바꿔 저장 → 이 게임 id 에만(앱 전체 GBA 키는 그대로)
+  await app.evaluate(`document.querySelectorAll('#settings-keys .keys__slot')[${rowsCd.indexOf("C") * 2}].click(); true`);
+  await sleep(100);
+  await tap("KeyN", 60);
+  await sleep(100);
+  await app.evaluate("document.getElementById('settings-save').click(); true");
+  await sleep(500);
+  await app.evaluate(`${T}.settings.close(); true`);
+  await sleep(200);
+  await app.evaluate("document.getElementById('stage').focus(); true");
+  const prefs = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
+  const afterN = [await sentWhile("KeyN"), await sentWhile("KeyC")];
+  check("keymap C·D: 키 설정에서 C = N 저장 → gameKeys[게임 id] 에만, 게임에 바로(N → bit 10, C 는 아무것도 아님)",
+    prefs.gameKeys?.["io.example.keys-cd"]?.C?.[0] === "KeyN" && !prefs.keys?.C && (prefs.keys?.A ?? ["KeyZ"])[0] === "KeyZ" && afterN.join() === "1024,0", `${JSON.stringify(prefs.gameKeys)} · ${afterN.join(",")}`);
+
+  await openGame(file("keys-few"));
+  const few = [await sentWhile("KeyZ"), await sentWhile("KeyX"), await sentWhile("KeyA"), await sentWhile("Enter"), await sentWhile("ArrowUp")];
+  check("keymap 일부: Z → A, X(B)·A(L) 는 아무것도 아님, Enter → START, ↑ → 위", few.join() === [1, 0, 0, 8, 64].join(), few.join(","));
+  await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
+  const rowsFew = await keyRows();
+  await app.evaluate(`${T}.settings.close(); true`);
+  check("keymap 일부: 키 설정 창 = 정의한 6개 + 빨리 감기", rowsFew.length === 7 && !rowsFew.includes("B") && !rowsFew.includes("L"), rowsFew.join(","));
+
+  await openGame(file("keys-roles"));
+  await app.evaluate("document.getElementById('stage').focus(); true");
+  const roles = [await sentWhile("KeyZ"), await sentWhile("KeyX"), await sentWhile("KeyC"), await sentWhile("KeyM"), await sentWhile("KeyQ"), await sentWhile("Enter"), await sentWhile("ArrowLeft")];
+  check("keymap 역할: Z·X·C·M·Q·Enter·← → bit 8·9·12·20·21·15·2", roles.join() === [256, 512, 4096, 1 << 20, 1 << 21, 32768, 4].join(), roles.join(","));
+  await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
+  const rowsRoles = await keyRows();
+  await app.evaluate(`${T}.settings.close(); true`);
+  check("keymap 역할: 키 설정 창에 설명서 이름(점프·공격·회전·메뉴·지도·달리기)", ["점프", "공격", "회전", "메뉴", "지도", "달리기"].every((n) => rowsRoles.includes(n)) && rowsRoles.length === 11, rowsRoles.join(","));
+
+  // 다시 열어도 게임별 키(C = N) 그대로
+  await openGame(file("keys-cd"));
+  const again = await sentWhile("KeyN");
+  check("keymap C·D: 다시 열어도 그 게임의 키(N → bit 10)", again === 1024, String(again));
+
+  // 게임을 닫으면 키 설정 창은 GBA 키(11줄), N 은 아무것도 아님
+  await app.evaluate(`${T}.closeGame().then(() => true)`);
+  await sleep(300);
+  await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
+  const rowsNone = await keyRows();
+  const noteNone = await app.evaluate("document.getElementById('settings-keys-game').hidden");
+  await app.evaluate(`${T}.settings.close(); true`);
+  const input = await app.evaluate(`(() => { const p = ${T}.player; return { gba: ${T}.state.input.gba, n: p.keymap.has('KeyN'), z: p.keymap.get('KeyZ') }; })()`);
+  check("keymap: 게임을 닫으면 GBA 10버튼(키 설정 11줄·안내 없음·N 없음·Z = A)", rowsNone.length === 11 && noteNone && input.gba && !input.n && input.z === 1, `${rowsNone.length}줄 · ${JSON.stringify(input)}`);
 }
 
 try {
@@ -411,6 +495,10 @@ try {
   await app.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
   for (const kind of kinds) {
+    if (kind === "keymap") {
+      await keymapTests();
+      continue;
+    }
     const label = kind === "gba" ? ".gba" : ".wgba";
     const file = kind === "gba" ? gba : wgba;
     await app.evaluate(`${T}.openPath(${JSON.stringify(file)})`);

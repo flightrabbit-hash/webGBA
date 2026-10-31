@@ -736,6 +736,11 @@ body[data-pad="off"] .pad {
   top: var(--face-up);
 }
 
+/* 게임(설명서 input)이 정의하지 않은 role 자리(main.js setInput). GBA 10버튼 게임에는 붙지 않는다. */
+.pad [data-off] {
+  display: none;
+}
+
 body[data-layout="portrait"] .app {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto var(--stage-h) minmax(0, 1fr);

@@ -1,6 +1,7 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { locale, t } from "../shell/i18n.js";
+import { resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { lang, locale, t } from "../shell/i18n.js";
 
 export const FRAME_MS = (280896 / 16777216) * 1000;
 const MAX_FRAMES_PER_TICK = 8;
@@ -22,12 +23,11 @@ export const DPAD_MODES = ["both", "opposite", "latest"];
 
 export const DPAD_DEFAULT = "latest";
 
-const RIGHT = 16;
-const LEFT = 32;
-const UP = 64;
-const DOWN = 128;
-const DIRS = RIGHT | LEFT | UP | DOWN;
-const DIR_BITS = [RIGHT, LEFT, UP, DOWN];
+/** 설명서가 없는 게임(.gba·옛 .wgba·.wasm)과 preset gba 만 쓰는 게임의 버튼 목록 = GBA 10버튼(비트 = BUTTONS 순서). */
+export const GBA_LAYOUT = Object.freeze(resolveInput(null));
+
+/** GBA 버튼과 같은 role → 그 GBA 버튼 이름(사용자가 바꾼 GBA 키를 그 role 의 기본 키로). */
+const ROLE_GBA = { a: "A", b: "B", select: "SELECT", start: "START", right: "RIGHT", left: "LEFT", up: "UP", down: "DOWN", r: "R", l: "L" };
 
 const VK_CODES = { 8: "Backspace", 9: "Tab", 13: "Enter", 16: "ShiftLeft", 17: "ControlLeft", 18: "AltLeft", 27: "Escape", 32: "Space", 37: "ArrowLeft", 38: "ArrowUp", 39: "ArrowRight", 40: "ArrowDown", 46: "Delete" };
 const KEY_CODES = { ArrowLeft: "ArrowLeft", ArrowUp: "ArrowUp", ArrowRight: "ArrowRight", ArrowDown: "ArrowDown", Enter: "Enter", " ": "Space", Backspace: "Backspace", Tab: "Tab", Escape: "Escape" };
@@ -55,6 +55,55 @@ export const DEFAULT_KEYS = {
   L: ["KeyA"],
   FAST: ["Space"],
 };
+
+/**
+ * 버튼 목록(resolveInput) → 키 표 { 버튼 id: [code…], FAST: [code…] }.
+ * gba 면 global(앱 전체 GBA 키 = 지금 그대로). 아니면 버튼마다 saved(이 게임의 사용자 배치) → 설명서 keys →
+ * role 기본(GBA 와 같은 role 은 global 의 그 버튼 키, c·d·l2·r2 는 ROLE_KEYS). 한 키는 한 버튼에만(먼저 정한 쪽).
+ */
+export function layoutKeys(layout, global = DEFAULT_KEYS, saved = null) {
+  const clone = (list) => (Array.isArray(list) ? list.filter((code) => typeof code === "string" && code) : []);
+  if (layout.gba) {
+    const out = {};
+    for (const name of [...BUTTONS, "FAST"]) out[name] = clone(global[name] ?? DEFAULT_KEYS[name]);
+    return out;
+  }
+  const out = { FAST: clone(global.FAST ?? DEFAULT_KEYS.FAST) };
+  const taken = new Set(out.FAST);
+  const take = (list) => list.filter((code) => !taken.has(code) && taken.add(code));
+  for (const b of layout.buttons) {
+    const own = Array.isArray(saved?.[b.id]) ? saved[b.id] : b.keys;
+    if (own) out[b.id] = take(clone(own));
+  }
+  for (const b of layout.buttons) {
+    if (out[b.id]) continue;
+    const gba = ROLE_GBA[b.role];
+    out[b.id] = take(clone(gba ? (global[gba] ?? DEFAULT_KEYS[gba]) : ROLE_KEYS[b.role]));
+  }
+  return out;
+}
+
+/** 키 설정·조작법에 보일 버튼 이름: 설명서 label(사용자 언어 → en → 첫 값) → GBA 버튼 이름 → id. */
+export function buttonLabel(button, language = lang()) {
+  const label = button.label;
+  const text = typeof label === "string" ? label : label && typeof label === "object" ? (label[language] ?? label.en ?? Object.values(label).find((v) => typeof v === "string")) : "";
+  if (text) return text;
+  return BUTTONS.includes(button.id) ? t(`key.${button.id}`) : button.id;
+}
+
+const AXIS_RE = /^([+-]?)axis(\d)$/;
+
+/** 버튼의 게임패드 배치 → 판정 함수 하나(표준 매핑 버튼 번호, 축은 ±0.5 넘으면). */
+function padTest(list) {
+  const tests = list.map((p) => {
+    if (typeof p === "number") return (gp) => Boolean(gp.buttons[p]?.pressed);
+    const m = AXIS_RE.exec(p);
+    if (!m) return () => false;
+    const axis = Number(m[2]);
+    return m[1] === "-" ? (gp) => (gp.axes[axis] ?? 0) < -0.5 : (gp) => (gp.axes[axis] ?? 0) > 0.5;
+  });
+  return (gp) => tests.some((test) => test(gp));
+}
 
 const WORKLET = `
 class WebGbaOut extends AudioWorkletProcessor {
@@ -96,24 +145,6 @@ class WebGbaOut extends AudioWorkletProcessor {
 }
 registerProcessor("webgba-out", WebGbaOut);`;
 
-function pad() {
-  let bits = 0;
-  for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
-    if (!gp) continue;
-    const b = (i) => gp.buttons[i]?.pressed;
-    if (b(0)) bits |= 1;
-    if (b(1)) bits |= 2;
-    if (b(8)) bits |= 4;
-    if (b(9)) bits |= 8;
-    if (b(15) || gp.axes[0] > 0.5) bits |= 16;
-    if (b(14) || gp.axes[0] < -0.5) bits |= 32;
-    if (b(12) || gp.axes[1] < -0.5) bits |= 64;
-    if (b(13) || gp.axes[1] > 0.5) bits |= 128;
-    if (b(5) || b(7)) bits |= 256;
-    if (b(4) || b(6)) bits |= 512;
-  }
-  return bits;
-}
 
 export class Player {
   constructor({ canvas, onStatus, onStats, onHalt }) {
@@ -142,8 +173,14 @@ export class Player {
     this.sent = 0;
     this.padPrev = 0;
     this.stamp = 0;
-    this.dirStamp = { [RIGHT]: 0, [LEFT]: 0, [UP]: 0, [DOWN]: 0 };
+    this.dirStamp = {};
     this.keymap = new Map();
+    this.layout = GBA_LAYOUT;
+    this.bitOf = new Map();
+    this.padMap = [];
+    this.dirs = { right: 0, left: 0, up: 0, down: 0 };
+    this.dirMask = 0;
+    this.dirBits = [];
     this.audio = null;
     this.squeeze = { at: 0, l: 0, r: 0, n: 0 };
     this.pace = { speed: 1, emu: 0, real: 0 };
@@ -158,7 +195,7 @@ export class Player {
     this.raf = 0;
     this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.tick = this.tick.bind(this);
-    this.setKeys(DEFAULT_KEYS);
+    this.setLayout(GBA_LAYOUT, DEFAULT_KEYS);
     this.attachPointer();
   }
 
@@ -247,14 +284,49 @@ export class Player {
     return Boolean(this.host);
   }
 
+  /**
+   * 게임의 버튼 목록(resolveInput 결과)으로 바꾼다: 버튼 id → 비트(① bit), role 로 방향 처리·게임패드 배치.
+   * keys(layoutKeys 결과)를 주면 키 표도 같이. 설명서 없는 게임은 GBA_LAYOUT — 비트·게임패드가 예전과 같다.
+   */
+  setLayout(layout, keys = null) {
+    this.layout = layout ?? GBA_LAYOUT;
+    this.bitOf = new Map();
+    this.padMap = [];
+    const dirs = { right: 0, left: 0, up: 0, down: 0 };
+    for (const b of this.layout.buttons) {
+      if (!Number.isInteger(b.bit)) continue;
+      const mask = 1 << b.bit;
+      this.bitOf.set(b.id, mask);
+      if (b.role in dirs && !dirs[b.role]) dirs[b.role] = mask;
+      if (b.pad?.length) this.padMap.push([mask, padTest(b.pad)]);
+    }
+    this.dirs = dirs;
+    this.dirMask = dirs.right | dirs.left | dirs.up | dirs.down;
+    this.dirBits = [dirs.right, dirs.left, dirs.up, dirs.down].filter(Boolean);
+    this.dirStamp = Object.fromEntries(this.dirBits.map((bit) => [bit, 0]));
+    this.padPrev = 0;
+    this.setKeys(keys ?? this.keys ?? {});
+  }
+
+  /** keys = { 버튼 id: [KeyboardEvent.code…], FAST: [...] } — 지금 버튼 목록에 있는 id 만 쓴다. */
   setKeys(keys) {
     this.keys = keys;
     this.keymap = new Map();
-    BUTTONS.forEach((name, bit) => {
-      for (const code of keys[name] ?? []) this.keymap.set(code, 1 << bit);
-    });
+    for (const [id, mask] of this.bitOf) {
+      for (const code of keys[id] ?? []) this.keymap.set(code, mask);
+    }
     for (const code of keys.FAST ?? []) this.keymap.set(code, "FAST");
     this.releaseAll();
+  }
+
+  padBits() {
+    let bits = 0;
+    if (!this.padMap.length) return 0;
+    for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
+      if (!gp) continue;
+      for (const [mask, test] of this.padMap) if (!(bits & mask) && test(gp)) bits |= mask;
+    }
+    return bits;
   }
 
   setDpadMode(mode) {
@@ -286,7 +358,7 @@ export class Player {
     if (hit !== "FAST" && !(before & hit)) {
       if (this.released & this.sent & hit) this.dropped |= hit;
       this.pressed |= hit;
-      if (hit & DIRS) this.dirStamp[hit] = ++this.stamp;
+      if (hit & this.dirMask) this.dirStamp[hit] = ++this.stamp;
     }
     return true;
   }
@@ -311,26 +383,28 @@ export class Player {
   }
 
   notePad(bits) {
-    const fresh = bits & ~this.padPrev & ~this.held & DIRS;
-    for (const bit of DIR_BITS) if (fresh & bit) this.dirStamp[bit] = ++this.stamp;
+    const fresh = bits & ~this.padPrev & ~this.held & this.dirMask;
+    for (const bit of this.dirBits) if (fresh & bit) this.dirStamp[bit] = ++this.stamp;
     this.padPrev = bits;
   }
 
+  // 방향 동시 누름 처리(사용자 설정)는 role up·down·left·right 버튼에 건다(규격 5.5).
   resolveDpad(keys) {
-    if (this.dpadMode === "both" || !(keys & DIRS)) return keys;
+    const dirs = this.dirMask;
+    if (this.dpadMode === "both" || !(keys & dirs)) return keys;
     if (this.dpadMode === "opposite") {
       let out = keys;
       for (const [a, b] of [
-        [RIGHT, LEFT],
-        [UP, DOWN],
+        [this.dirs.right, this.dirs.left],
+        [this.dirs.up, this.dirs.down],
       ]) {
-        if (keys & a && keys & b) out &= ~(this.dirStamp[a] >= this.dirStamp[b] ? b : a);
+        if (a && b && keys & a && keys & b) out &= ~(this.dirStamp[a] >= this.dirStamp[b] ? b : a);
       }
       return out;
     }
     let best = 0;
-    for (const bit of DIR_BITS) if (keys & bit && (!best || this.dirStamp[bit] > this.dirStamp[best])) best = bit;
-    return (keys & ~DIRS) | best;
+    for (const bit of this.dirBits) if (keys & bit && (!best || this.dirStamp[bit] > this.dirStamp[best])) best = bit;
+    return (keys & ~dirs) | best;
   }
 
   frameKeys(padBits, first) {
@@ -513,7 +587,7 @@ export class Player {
     if (this.paused) return;
     const speed = this.speed;
     this.acc += dt * speed;
-    const padBits = pad();
+    const padBits = this.padBits();
     this.notePad(padBits);
     const squeeze = this.audioFactor(speed);
     let ran = 0;
