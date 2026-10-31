@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { readWgba } from "../../src-bundle/src/js/core/wgba-read.js";
 
 const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
 const { chromium } = require("playwright-core");
@@ -24,7 +25,8 @@ const ok = (name, pass, detail = "") => {
   console.log(`${pass ? "통과" : "실패"} ${name}${detail ? ` — ${detail}` : ""}`);
 };
 const GAME_ID = "com.flightrabbit.rapid";
-const ROM_SHA1 = "86b5c42e7788ad8f51f47cb4434bb053652e8938";
+// 기대 롬 SHA-1 은 --new 파일의 rom 조각 머리(WGRM)에서 읽는다(저장소에 롬 SHA-1 글자를 두지 않음 — check-no-rom)
+const ROM_SHA1 = (await readWgba(new Uint8Array(fs.readFileSync(opt.new)))).romSha1;
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });

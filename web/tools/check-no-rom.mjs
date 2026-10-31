@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const BANNED_EXT = new Set([".gba", ".agb", ".gb", ".gbc", ".wgba", ".wgbp", ".sav", ".srm", ".zip", ".7z", ".rar", ".bin"]);
 const ALLOWED_WASM = new Set(["mgba_core.wasm"]);
+const EXAMPLE_WASM_MAX = 64 * 1024;
 const BIG = 1024 * 1024;
 const SAMPLE_COUNT = 64;
 const SAMPLE_SIZE = 32;
@@ -102,8 +103,10 @@ export function check(files, { needles = [], self = "" } = {}) {
     const ext = path.extname(file.rel).toLowerCase();
     const name = path.basename(file.rel);
     if (BANNED_EXT.has(ext)) problems.push(`넣으면 안 되는 형식: ${file.rel}`);
-    if (ext === ".wasm" && !ALLOWED_WASM.has(name)) problems.push(`mGBA 코어가 아닌 wasm: ${file.rel}`);
     const bytes = fs.readFileSync(file.full);
+    // .wgba 규격 예제의 작은 wasm(소스 game.c 옆, 롬 아님 — .gitignore 와 같은 자리)은 받되 아래 롬 조각 검사는 그대로
+    const example = /^docs\/wgba\/examples\/[^/]+\/game\.wasm$/.test(file.rel.replace(/\\/g, "/")) && bytes.length <= EXAMPLE_WASM_MAX;
+    if (ext === ".wasm" && !ALLOWED_WASM.has(name) && !example) problems.push(`mGBA 코어가 아닌 wasm: ${file.rel}`);
     bytesTotal += bytes.length;
     if (bytes.length > BIG) big.push(`${file.rel} ${bytes.length}`);
     if (ext === ".wasm" && wasmSections(bytes).includes("webgba.rom")) problems.push(`롬을 묶은 wasm 구획: ${file.rel}`);

@@ -670,7 +670,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText";
+const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 
 function inkShift(contentTop, contentBottom, ink) {
@@ -2766,7 +2766,8 @@ function renderInfo() {
   const game = state.game?.gameId ? state.game : null;
   // 소리 확인 한 줄(iOS 무음 원인 찾기용): 상태 · 표본률 · 오디오 세션. 시트가 열려 있는 동안 0.5초마다 고침.
   // 글이 같으면 다시 쓰지 않는다(같은 값 쓰기도 MutationObserver 를 깨워 문서 전체 centerInk 가 돎).
-  const audioLine = make("p", "note", "");
+  // 게임 줄·버전 줄·소리 줄은 상태 줄이라 잉크 세로 가운데(`.info__line`, INK_SINGLE) — 설명 글(.note)은 그대로.
+  const audioLine = make("p", "note info__line", "");
   const paintAudio = () => {
     const audio = player.audio;
     const text = audio
@@ -2777,8 +2778,8 @@ function renderInfo() {
   };
   paintAudio();
   el.sheetBody.replaceChildren(
-    ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
-    group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
+    ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note info__line", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
+    group("", make("p", "info__line", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );
   setTimeout(paintAudio, 500);

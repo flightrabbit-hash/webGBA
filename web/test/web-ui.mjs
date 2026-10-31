@@ -36,7 +36,7 @@ const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY;
 const MOTION = !ONLY_EXTRA && !ONLY_LIBRARY && (ONLY_MOTION || process.env.UI_MOTION !== "0");
 const LIBRARY = ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && process.env.UI_LIBRARY !== "0");
-const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
+const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "390x844|ko|info": "세로_390x844_정보_게임_소리.png","844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
 const table = [];
@@ -294,6 +294,28 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
     await snap(page, `${base}|settings`);
     await page.click("#sheetClose");
     await page.waitForTimeout(200);
+
+    // 정보 화면: 설명서 있는 게임 묶음(S2) + webGBA 묶음의 소리 줄(ios-audio)이 함께 — 겹침 0·잉크 세로 가운데
+    await page.evaluate(() => {
+      window.webgba.state.game = { id: "art", saveId: "dev.example.star", gameId: "dev.example.star", title: "Star Garden", version: "0.9.1", author: "example", build: "a".repeat(64), name: "star.wgba" };
+      window.webgba.openSheet("info");
+    });
+    await page.waitForSelector("#sheet:not([hidden])");
+    await page.waitForTimeout(700);
+    await fits(page, `${base}|info`, ".sheet__panel");
+    const infoLines = await page.evaluate(() => {
+      const groups = [...document.querySelectorAll("#sheetBody .group")];
+      const lines = groups.slice(0, 2).flatMap((g) => [...g.children]).map((n) => { const r = n.getBoundingClientRect(); return { text: n.textContent.trim(), top: r.top, bottom: r.bottom }; });
+      const overlap = lines.some((a, i) => i > 0 && a.top < lines[i - 1].bottom - 0.5);
+      return { game: groups[0]?.textContent.includes("Star Garden") && groups[0].textContent.includes("dev.example.star"), audio: lines.some((l) => /^(소리|Sound|サウンド|音)/.test(l.text)), overlap, count: lines.length };
+    });
+    ok(`${base}|info 게임 묶음 + 소리 줄 함께 · 겹침 0`, infoLines.game && infoLines.audio && !infoLines.overlap, JSON.stringify(infoLines));
+    // 상태 줄(게임 id 줄·버전 줄·소리 줄)과 묶음 제목. 설명 글(.note 문단)은 줄 칸이 아니라 재지 않음.
+    await measure(page, `${base}|info`, [".sheet__head", "#sheetBody .group__title", "#sheetBody .info__line"]);
+    await snap(page, `${base}|info`);
+    await page.click("#sheetClose");
+    await page.waitForTimeout(200);
+    await page.evaluate(() => (window.webgba.state.game = null));
 
     await page.evaluate(() => {
       const loader = window.webgba.openLoader({ title: "Pokemon Rapid", stages: ["check", "patch", "verify", "pack", "store", "open"] });
