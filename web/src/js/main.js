@@ -19,6 +19,7 @@ const el = {
   bar: $("bar"),
   btnOpen: $("btnOpen"),
   btnLibrary: $("btnLibrary"),
+  menuPanel: document.querySelector(".bar__group--files"),
   btnSaves: $("btnSaves"),
   btnQuick: $("btnQuick"),
   btnFast: $("btnFast"),
@@ -214,11 +215,15 @@ function applyPlayerPrefs() {
 
 function toast(text, level = "info", ms = TOAST_MS) {
   clearTimeout(state.toastTimer);
+  if (!text) {
+    hideLater(el.toast);
+    return;
+  }
   el.toast.replaceChildren(make("span", "toast__text", text));
   el.toast.classList.toggle("is-error", level === "error");
   el.toast.classList.toggle("is-warn", level === "warn");
-  el.toast.hidden = !text;
-  if (text && level !== "error") state.toastTimer = setTimeout(() => (el.toast.hidden = true), level === "warn" ? ms * 1.6 : ms);
+  showNow(el.toast);
+  if (level !== "error") state.toastTimer = setTimeout(() => hideLater(el.toast), level === "warn" ? ms * 1.6 : ms);
 }
 
 function safeInsets() {
@@ -235,24 +240,37 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, reducedMotion() ? 0 : ms));
 
-function hideLater(node, after) {
+// 여닫는 창 시간(web.css --pop-ms 와 같은 값). 움직임 줄이기면 0.
+const popMs = () => (reducedMotion() ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--pop-ms")) || 200);
+
+function stopHide(node) {
   clearTimeout(node.hideTimer);
-  if (reducedMotion()) {
-    node.hidden = true;
+  if (node.hideEnd) node.removeEventListener("animationend", node.hideEnd);
+  node.hideEnd = null;
+}
+
+// 닫는 움직임(.is-closing 의 fade-out)이 끝난 뒤 숨긴다 — animationend, 오지 않으면(탭 숨김 등) 시간 + 여유로.
+function hideLater(node, after) {
+  stopHide(node);
+  const finish = () => {
+    stopHide(node);
+    if (node.classList.contains("is-closing")) node.classList.remove("is-closing");
+    if (!node.hidden) node.hidden = true;
     after?.();
+  };
+  if (reducedMotion() || node.hidden) {
+    finish();
     return;
   }
   node.classList.add("is-closing");
-  node.hideTimer = setTimeout(() => {
-    node.classList.remove("is-closing");
-    node.hidden = true;
-    after?.();
-  }, 150);
+  node.hideEnd = (event) => event.target === node && finish();
+  node.addEventListener("animationend", node.hideEnd);
+  node.hideTimer = setTimeout(finish, popMs() + 80);
 }
 
 function showNow(node) {
-  clearTimeout(node.hideTimer);
-  node.classList.remove("is-closing");
+  stopHide(node);
+  if (node.classList.contains("is-closing")) node.classList.remove("is-closing");
   node.hidden = false;
 }
 
@@ -268,7 +286,7 @@ function layout() {
   const body = document.body;
   body.dataset.layout = landscape ? "landscape" : "portrait";
   body.dataset.pad = padOn ? "on" : "off";
-  if (landscape && state.menuOpen) setMenu(false);
+  if (landscape && (state.menuOpen || el.menuPanel.dataset.open)) setMenu(false, { instant: true });
   const dpr = window.devicePixelRatio || 1;
   const inset = safeInsets();
   const innerW = Math.max(0, width - inset.l - inset.r);
@@ -358,12 +376,15 @@ function syncControls() {
   document.body.dataset.view = running ? "game" : "start";
   const userPaused = running && holds.has("user");
   el.btnFast.setAttribute("aria-pressed", String(player.gameSpeed !== 1));
+  // 값이 같으면 쓰지 않는다: hidden·글자를 같은 값으로 다시 써도 MutationObserver 가 깨어 다음 프레임에
+  // 문서 전체 centerInk 가 돌았다(햄버거·시트를 열 때마다 hold → syncControls).
   const badge = el.btnFast.querySelector(".tool__badge") ?? el.btnFast.appendChild(make("span", "tool__badge"));
-  badge.textContent = speedText(player.gameSpeed);
-  badge.hidden = player.gameSpeed === 1;
+  const badgeText = speedText(player.gameSpeed);
+  if (badge.textContent !== badgeText) badge.textContent = badgeText;
+  if (badge.hidden !== (player.gameSpeed === 1)) badge.hidden = player.gameSpeed === 1;
   el.btnSound.setAttribute("aria-pressed", String(Boolean(state.prefs.muted)));
   setLabel(el.btnSound, state.prefs.muted ? "rail.unmute" : "rail.mute");
-  el.pauseVeil.hidden = !userPaused;
+  if (el.pauseVeil.hidden !== !userPaused) el.pauseVeil.hidden = !userPaused;
   const full = Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
@@ -371,11 +392,32 @@ function syncControls() {
   syncTools();
 }
 
-function setMenu(open) {
+// 세로 햄버거 창. 예전에는 열고 닫을 때마다 layout()(가상 버튼·화면 테두리·기능 버튼 전부 다시 그리기 + 루트 CSS 변수)을
+// 불러 그 프레임이 막혔고, 닫으면 display:none 으로 바로 사라졌다. 이제 data-open 만 바꿔 CSS transition(transform·opacity,
+// 합성 층)으로 여닫고, 닫기는 transition 이 끝난 뒤(transitionend, 늦으면 시간으로) 숨긴다. instant = 가로로 바뀔 때 바로.
+function setMenu(open, { instant = false } = {}) {
+  const panel = el.menuPanel;
+  clearTimeout(panel.menuTimer);
+  if (panel.menuEnd) panel.removeEventListener("transitionend", panel.menuEnd);
+  panel.menuEnd = null;
+  if (open) panel.dataset.open = "open";
+  else if (instant || reducedMotion() || !panel.dataset.open) delete panel.dataset.open;
+  else {
+    panel.dataset.open = "closing";
+    const finish = () => {
+      clearTimeout(panel.menuTimer);
+      panel.removeEventListener("transitionend", panel.menuEnd);
+      panel.menuEnd = null;
+      if (panel.dataset.open === "closing") delete panel.dataset.open;
+    };
+    panel.menuEnd = (event) => event.target === panel && event.propertyName === "transform" && finish();
+    panel.addEventListener("transitionend", panel.menuEnd);
+    panel.menuTimer = setTimeout(finish, popMs() + 80);
+  }
+  if (state.menuOpen === open) return;
   state.menuOpen = open;
   document.body.dataset.menu = open ? "open" : "";
   hold("menu", open);
-  layout();
 }
 
 function toggleSound() {
@@ -2035,6 +2077,11 @@ function onKeyDown(event) {
     }
     return;
   }
+  if (state.menuOpen && event.key === "Escape") {
+    event.preventDefault();
+    setMenu(false);
+    return;
+  }
   if (typing(event.target)) return;
   if ((event.ctrlKey || event.metaKey) && event.code === "KeyO") {
     event.preventDefault();
@@ -2151,7 +2198,7 @@ function wire() {
   el.sheetClose.addEventListener("click", () => closeSheet());
   el.sheet.addEventListener("click", (event) => event.target === el.sheet && closeSheet());
   el.dialog.addEventListener("click", (event) => event.target === el.dialog && state.dialogDone?.(null));
-  el.toast.addEventListener("click", () => (el.toast.hidden = true));
+  el.toast.addEventListener("click", () => hideLater(el.toast));
   el.bar.addEventListener("click", (event) => event.target.closest?.("button")?.blur());
   el.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 

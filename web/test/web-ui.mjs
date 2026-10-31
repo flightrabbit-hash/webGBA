@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { decodePng } from "./png.mjs";
 
 const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
-const { chromium } = require("playwright-core");
+const { chromium, webkit } = require("playwright-core");
 
 const [URL_BASE, SHOTS, ...rest] = process.argv.slice(2);
 const chromeAt = rest.indexOf("--chrome");
@@ -24,6 +24,9 @@ const VIEWS_ALL = [
 const VIEWS = VIEWS_ALL.filter((view) => !VIEW_FILTER || VIEW_FILTER.has(view.name));
 const LANGS = (process.env.UI_LANGS ?? "ko,en,ja").split(",");
 const INK_THRESHOLD = Number(process.env.INK_THRESHOLD ?? 48);
+// UI_MOTION_ONLY=1 이면 여닫기 움직임 시험만(UI_MOTION=0 이면 그것만 뺌). WebKit 이 설치돼 있으면 같은 시험을 WebKit 으로도.
+const ONLY_MOTION = process.env.UI_MOTION_ONLY === "1";
+const MOTION = ONLY_MOTION || process.env.UI_MOTION !== "0";
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "844x390|ko|library": "가로_844x390_보관함.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
@@ -176,7 +179,7 @@ async function seed(page) {
   });
 }
 
-for (const view of VIEWS) {
+for (const view of ONLY_MOTION ? [] : VIEWS) {
   for (const lang of LANGS) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport: view.viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     await context.addInitScript((lang) => {
@@ -201,7 +204,8 @@ for (const view of VIEWS) {
     await measure(page, `${base}|toast`, [".toast"]);
     await page.evaluate(() => window.webgba.toast(""));
 
-    const toolBoxes = () => page.evaluate(() => [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((b) => b.offsetParent !== null && !b.hidden).map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
+    // 닫힌 햄버거 창은 레이아웃에 남아 있고 visibility 로만 숨는다 → 보이는 것만 센다
+    const toolBoxes = () => page.evaluate(() => [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((b) => b.offsetParent !== null && !b.hidden && getComputedStyle(b).visibility !== "hidden").map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
     const overlap = (list) => list.some((x, i) => list.some((y, j) => j > i && x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5));
     const inView = (list) => list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height && x.r - x.l >= 44);
     if (landscape) {
@@ -298,14 +302,14 @@ for (const view of VIEWS) {
   }
 }
 
-for (const width of [320, 360, 375, 390, 414, 430]) {
+for (const width of ONLY_MOTION ? [] : [320, 360, 375, 390, 414, 430]) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width, height: 760 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
   const page = await context.newPage();
   await page.goto(URL_BASE);
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
   await page.waitForTimeout(300);
-  const boxesOf = (selector) => page.evaluate((selector) => [...document.querySelectorAll(selector)].filter((b) => b.offsetParent !== null).map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }), selector);
+  const boxesOf = (selector) => page.evaluate((selector) => [...document.querySelectorAll(selector)].filter((b) => b.offsetParent !== null && getComputedStyle(b).visibility !== "hidden").map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }), selector);
   const overlap = (list) => list.some((x, i) => list.some((y, j) => j > i && x.l < y.r - 0.5 && y.l < x.r - 0.5 && x.t < y.b - 0.5 && y.t < x.b - 0.5));
   const bar = await boxesOf(".bar .tool");
   ok(`너비 ${width}: 위 기능 버튼 겹침 0·화면 밖 0`, bar.length === 6 && !overlap(bar) && bar.every((x) => x.l >= 0 && x.r <= width), JSON.stringify(bar.map((x) => [x.id, Math.round(x.l), Math.round(x.r)])));
@@ -318,7 +322,7 @@ for (const width of [320, 360, 375, 390, 414, 430]) {
 }
 
 const IOS_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
-for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
+for (const viewport of ONLY_MOTION ? [] : [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
   for (const lang of LANGS) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: IOS_UA });
     await context.addInitScript((lang) => localStorage.setItem("webgba.prefs", JSON.stringify({ lang })), lang);
@@ -338,7 +342,7 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
   }
 }
 
-for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 1000 }, { width: 600, height: 400 }]) {
+for (const viewport of ONLY_MOTION ? [] : [{ width: 1280, height: 800 }, { width: 800, height: 1000 }, { width: 600, height: 400 }]) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport });
   await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
   const page = await context.newPage();
@@ -347,9 +351,10 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 1000
   await page.waitForTimeout(300);
   const info = await page.evaluate(() => {
     const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; };
-    const boxes = [...document.querySelectorAll(".bar .tool, #btnMenu, [data-key], [data-dpad], #screen")].filter((n) => n.offsetParent !== null).map((n) => n.getBoundingClientRect());
+    const seen = (n) => n.offsetParent !== null && getComputedStyle(n).visibility !== "hidden";
+    const boxes = [...document.querySelectorAll(".bar .tool, #btnMenu, [data-key], [data-dpad], #screen")].filter(seen).map((n) => n.getBoundingClientRect());
     const overlap = boxes.some((a, i) => boxes.some((b, j) => j > i && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5 && !(a.width === 0 || b.width === 0)));
-    return { tools: [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((n) => n.offsetParent !== null && vis(n)).length, keys: [...document.querySelectorAll("[data-key], [data-dpad]")].filter(vis).length, overlap, layout: document.body.dataset.layout };
+    return { tools: [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((n) => seen(n) && vis(n)).length, keys: [...document.querySelectorAll("[data-key], [data-dpad]")].filter(vis).length, overlap, layout: document.body.dataset.layout };
   });
   const a = await page.evaluate(() => { const r = document.querySelector('[data-key="A"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
   await page.mouse.move(a[0], a[1]);
@@ -372,7 +377,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 1000
 }
 
 const pixelTable = [];
-for (const dpr of [1, 2, 3]) {
+for (const dpr of ONLY_MOTION ? [] : [1, 2, 3]) {
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: true, hasTouch: true, deviceScaleFactor: dpr });
     await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
@@ -452,6 +457,121 @@ for (const dpr of [1, 2, 3]) {
   }
 }
 fs.writeFileSync(path.join(SHOTS, "픽셀_측정표.txt"), pixelTable.map((row) => `${row.key} · ${row.target}: ${row.value}`).join("\n"));
+
+// ── 여닫는 움직임(움직임 줄이기 끔, 세로 390x844) ──
+// 햄버거 창: transform·opacity 만 움직이고(레이아웃 상자 그대로), 닫는 동안 화면에 남았다가 끝나면 숨는다.
+// 두 번 누르기·열리는 중 닫기·닫는 중 다시 열기·바깥 누르기·ESC·항목 고르기, 그리고 시트·알림 닫기.
+async function motionChecks(engine, launcher) {
+  const context = await launcher.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, deviceScaleFactor: 2, ...(engine === "chromium" ? { isMobile: true } : {}) });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    localStorage.setItem("webgba.prefs", JSON.stringify({ lang: "ko" }));
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(URL_BASE);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+  // 첫 누름은 소리 켜기(AudioContext 만들기)가 같은 처리에 들어가 시작이 늦어진다 → 미리 한 번 깨워 두고 잰다
+  await page.evaluate(() => window.dispatchEvent(new PointerEvent("pointerdown")));
+  await page.waitForTimeout(700);
+  const out = await page.evaluate(async () => {
+    const panel = document.querySelector(".bar__group--files");
+    const btn = document.getElementById("btnMenu");
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const look = () => {
+      const s = getComputedStyle(panel);
+      const m = s.transform === "none" ? new DOMMatrixReadOnly() : new DOMMatrixReadOnly(s.transform);
+      return { open: panel.dataset.open ?? "", vis: s.visibility !== "hidden", op: +(+s.opacity).toFixed(3), ty: +m.m42.toFixed(2), menu: window.webgba.state.menuOpen, lay: `${panel.offsetLeft},${panel.offsetTop},${panel.offsetWidth},${panel.offsetHeight}` };
+    };
+    const record = (ms, act) =>
+      new Promise((done) => {
+        const start = performance.now();
+        act?.();
+        const frames = [{ t: 0, ...look() }];
+        const step = (now) => {
+          frames.push({ t: +(now - start).toFixed(1), ...look() });
+          if (now - start < ms) requestAnimationFrame(step);
+          else done(frames);
+        };
+        requestAnimationFrame(step);
+      });
+    const r = { property: getComputedStyle(panel).transitionProperty };
+    r.open = await record(320, () => btn.click());
+    r.close = await record(360, () => btn.click());
+    r.double = await record(360, () => (btn.click(), btn.click()));
+    btn.click();
+    await sleep(80);
+    r.midOpen = await record(360, () => btn.click());
+    btn.click();
+    await sleep(300);
+    btn.click();
+    await sleep(60);
+    r.reopen = await record(360, () => btn.click());
+    r.outside = await record(360, () => document.getElementById("screen").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" })));
+    btn.click();
+    await sleep(300);
+    r.esc = await record(360, () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })));
+    btn.click();
+    await sleep(300);
+    // 시트 그리기(IndexedDB 읽기)가 같은 때 돌아 닫기가 조금 늦게 시작할 수 있어 길게 본다
+    r.item = await record(700, () => document.getElementById("btnLibrary").click());
+    const sheet = document.getElementById("sheet");
+    r.itemSheet = !sheet.hidden;
+    await sleep(300);
+    const sheetLook = () => ({ hidden: sheet.hidden, closing: sheet.classList.contains("is-closing"), op: +(+getComputedStyle(sheet).opacity).toFixed(3) });
+    document.getElementById("sheetClose").click();
+    await sleep(60);
+    r.sheetMid = sheetLook();
+    await sleep(400);
+    r.sheetEnd = sheetLook();
+    const toast = document.getElementById("toast");
+    window.webgba.toast("여닫기 시험");
+    await sleep(250);
+    toast.click();
+    await sleep(60);
+    r.toastMid = { hidden: toast.hidden, closing: toast.classList.contains("is-closing") };
+    await sleep(400);
+    r.toastEnd = { hidden: toast.hidden };
+    return r;
+  });
+  const key = `여닫기 ${engine}`;
+  const last = (frames) => frames[frames.length - 1];
+  const shut = (frames) => !last(frames).vis && last(frames).open === "" && !last(frames).menu;
+  const middle = (frames) => frames.filter((f) => f.vis && f.op > 0.02 && f.op < 0.98).length;
+  const steady = (frames, dir) => frames.filter((f) => f.vis).every((f, i, list) => i === 0 || (dir > 0 ? f.op >= list[i - 1].op - 0.001 : f.op <= list[i - 1].op + 0.001));
+  const lastSeen = (frames) => Math.max(0, ...frames.filter((f) => f.vis && f.op > 0.02).map((f) => f.t));
+  const all = [out.open, out.close, out.double, out.midOpen, out.reopen, out.outside, out.esc, out.item].flat();
+  ok(`${key}: 햄버거 창은 transform·opacity 만 바뀜(레이아웃 상자 그대로)`, /opacity/.test(out.property) && /transform/.test(out.property) && !/top|left|height|width|margin/.test(out.property) && new Set(all.map((f) => f.lay)).size === 1, `${out.property} · 상자 ${[...new Set(all.map((f) => f.lay))].join(" / ")}`);
+  ok(`${key}: 열기 — 중간 프레임 ${middle(out.open)}개로 점점 나타남, 끝은 열림`, middle(out.open) >= 2 && steady(out.open, 1) && last(out.open).open === "open" && last(out.open).op === 1 && last(out.open).ty === 0);
+  ok(`${key}: 닫기 — 닫는 동안 화면에 남음(마지막으로 보인 ${lastSeen(out.close)}ms), 끝나면 숨김`, lastSeen(out.close) >= 100 && middle(out.close) >= 2 && steady(out.close, -1) && shut(out.close));
+  ok(`${key}: 빠르게 두 번 누르기 → 닫힘`, shut(out.double));
+  ok(`${key}: 열리는 중 닫기 → 그 자리에서 거꾸로 닫힘`, out.midOpen[0].vis && out.midOpen[0].op < 1 && shut(out.midOpen), JSON.stringify(out.midOpen[0]));
+  ok(`${key}: 닫는 중 다시 열기 → 열림`, last(out.reopen).open === "open" && last(out.reopen).op === 1 && last(out.reopen).menu);
+  ok(`${key}: 바깥 누르기 → 움직임 뒤 닫힘`, lastSeen(out.outside) >= 100 && shut(out.outside));
+  ok(`${key}: ESC → 움직임 뒤 닫힘`, lastSeen(out.esc) >= 100 && shut(out.esc));
+  ok(`${key}: 항목 고르기(보관함) → 창은 움직임 뒤 닫히고 시트 열림`, out.itemSheet && shut(out.item), JSON.stringify({ sheet: out.itemSheet, seen: lastSeen(out.item), end: last(out.item) }));
+  ok(`${key}: 시트 닫기 — 닫는 동안 남음 → 끝나면 숨김`, !out.sheetMid.hidden && out.sheetMid.closing && out.sheetEnd.hidden && !out.sheetEnd.closing, JSON.stringify([out.sheetMid, out.sheetEnd]));
+  ok(`${key}: 알림 누르기 — 닫는 동안 남음 → 끝나면 숨김`, !out.toastMid.hidden && out.toastMid.closing && out.toastEnd.hidden);
+  ok(`${key}: 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+  const lines = ["open", "close", "midOpen", "outside"].map((name) => `${name}: ${out[name].map((f) => `${f.t}ms ${f.vis ? `불투명도 ${f.op} · 위로 ${-f.ty}px` : "숨김"}`).join(" | ")}`);
+  fs.writeFileSync(path.join(SHOTS, `여닫기_프레임_${engine}.txt`), lines.join("\n"));
+  await context.close();
+}
+
+if (MOTION) {
+  await motionChecks("chromium", browser);
+  let wk = null;
+  try {
+    wk = await webkit.launch({ headless: true });
+  } catch (error) {
+    console.log(`WebKit 없음 — WebKit 여닫기 시험 건너뜀 (${error.message.split("\n")[0]})`);
+  }
+  if (wk) {
+    await motionChecks("webkit", wk);
+    await wk.close();
+  }
+}
 
 await browser.close();
 const failed = results.filter((r) => !r.pass);

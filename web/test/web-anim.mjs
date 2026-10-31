@@ -110,7 +110,7 @@ const standalone = () => Object.defineProperty(navigator, "standalone", { value:
   const closing = await page.evaluate(() => document.getElementById("sheet").classList.contains("is-closing") && !document.getElementById("sheet").hidden);
   await page.waitForTimeout(250);
   const closed = await page.evaluate(() => document.getElementById("sheet").hidden);
-  ok("창 닫힘도 짧게 사라진 뒤 숨김(150ms)", closing && closed);
+  ok("창 닫힘도 연 움직임을 거꾸로 한 뒤 숨김(200ms)", closing && closed);
   await context.close();
 }
 

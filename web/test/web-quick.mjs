@@ -145,7 +145,7 @@ async function layoutChecks(page, key, width, height) {
       const r = n.getBoundingClientRect();
       return { id: n.id || n.className, l: r.left, r: r.right, t: r.top, b: r.bottom };
     };
-    const tools = [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((n) => n.offsetParent !== null && !n.hidden).map(box);
+    const tools = [...document.querySelectorAll(".bar .tool, #btnMenu")].filter((n) => n.offsetParent !== null && !n.hidden && getComputedStyle(n).visibility !== "hidden").map(box);
     const panel = document.querySelector(".sheet__panel");
     const cards = [...document.querySelectorAll(".slots .slot")].map(box);
     const clipped = [...document.querySelectorAll(".slot__time, .seg__label, .slot__empty")].filter((n) => n.offsetParent !== null && n.scrollWidth > n.clientWidth + 1).map((n) => n.textContent);
