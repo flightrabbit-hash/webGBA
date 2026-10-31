@@ -260,6 +260,8 @@ pub fn open_main_window<R: Runtime>(
 
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(page_url(ENTRY)))
         .additional_browser_args(&args)
+        // 본 창은 앱 화면 밖으로 가지 않는다(웹 빌드 틀이 위 창을 다른 주소로 보내는 것 막기, 틀 sandbox 와 겹으로).
+        .on_navigation(|url| own_page(url))
         .initialization_script(THEME_GUARD)
         .data_directory(dir(WEBVIEW_DIR))
         .title(concat!("webGBA V", env!("CARGO_PKG_VERSION")))
@@ -286,11 +288,19 @@ pub fn open_main_window<R: Runtime>(
     Ok(window)
 }
 
+/// 본 창이 가도 되는 주소: 앱 화면 출처(`http://ui.localhost`)뿐.
+fn own_page(url: &tauri::Url) -> bool {
+    url.origin() == page_url("").origin()
+}
+
 /// 브라우저 가속키(F5·Ctrl+R·Ctrl+F 등)를 끄고 개발자 도구를 설정대로 연다. 게임 키(F1~F9 상태 저장)와 겹치지 않게.
+/// 틀(iframe, 안쪽 틀 포함)의 이동은 `web::frame_may_go` 로 거른다 — CSP 가 막지 못하는 "틀이 스스로 바깥 주소로 가기"
+/// (`location = "https://…?읽은 내용"`, 링크·meta refresh)를 막는다.
 #[cfg(windows)]
 fn tame_webview<R: Runtime>(window: &tauri::WebviewWindow<R>, dev_tools: bool) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-    use windows::core::Interface;
+    use webview2_com::{take_pwstr, NavigationStartingEventHandler};
+    use windows::core::{Interface, PWSTR};
 
     let _ = window.with_webview(move |platform| unsafe {
         let Ok(core) = platform.controller().CoreWebView2() else { return };
@@ -299,6 +309,23 @@ fn tame_webview<R: Runtime>(window: &tauri::WebviewWindow<R>, dev_tools: bool) {
         let _ = settings.SetAreDefaultContextMenusEnabled(dev_tools);
         if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
             let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+        }
+        let frames = NavigationStartingEventHandler::create(Box::new(|_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut uri = PWSTR::null();
+            args.Uri(&mut uri)?;
+            let uri = take_pwstr(uri);
+            if !crate::web::frame_may_go(&uri) {
+                // 주소 뒤쪽에 읽은 내용이 실려 있을 수 있어 출처만 남긴다.
+                let place = uri.parse::<tauri::Url>().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "?".into());
+                crate::logging::write("WARN", &format!("틀 이동 막음: {place}"));
+                args.SetCancel(true)?;
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        if core.add_FrameNavigationStarting(&frames, &mut token).is_err() {
+            crate::logging::write("ERROR", "틀 이동 거르기를 걸지 못함");
         }
     });
 }

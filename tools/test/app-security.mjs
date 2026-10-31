@@ -1,0 +1,124 @@
+// exe 보안 시험(S0, 2026-10-31 결정 101-3). 실제 앱을 CDP 로 다룬다. 마우스를 움직이지 않는다.
+//   node tools/test/app-security.mjs <exe> <작업 폴더>
+// 작업 폴더: 웹버전\<빌드>.wasm + index.html·app.js·<빌드>.js(포트 웹버전 폴더, 원래 페이지로 엶) · 그 위 폴더에 롬 하나.
+// 앱 폴더 <작업>\app_security(레지스트리 안 건드림). 결과 <작업>\app_security_result.json
+// 확인:
+//   - 틀(iframe)에 sandbox, 웹 빌드 응답에 CSP 머리
+//   - 페이지 자신의 /save 쓰기(PUT)는 됨, 다른 출처(본 창)가 보낸 쓰기는 거부(파일 그대로, 앱 기록에 남음)
+//   - 틀 안에서 바깥 주소로 요청하면 막힘, 틀이 스스로 바깥 주소로 가거나 위 창을 옮기려 해도 그대로
+//   - 본 창도 앱 화면 밖으로 가지 않음
+import fs from "fs";
+import path from "path";
+import { attach, connect, guardOthers, launch, prepareApp, runningIn, sleep, TEST_BUILD } from "./cdp.mjs";
+
+const [exe, work] = process.argv.slice(2);
+if (!exe || !work) {
+  console.error("사용법: node tools/test/app-security.mjs <exe> <작업 폴더>");
+  process.exit(2);
+}
+
+const PORT = 9341;
+const T = "window.__WEBGBA_TEST__";
+const OUTSIDE = "https://example.com/";
+const appDir = path.join(work, "app_security");
+const results = [];
+const check = (name, ok, detail = "") => {
+  results.push({ name, ok: Boolean(ok), detail });
+  console.log(`${ok ? "통과" : "실패"} ${name}${detail ? ` — ${detail}` : ""}`);
+};
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const logText = () => {
+  const file = path.join(appDir, "bin", "log", `${today()}.log`);
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+};
+const frameTargets = async () => (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).filter((t) => t.url.includes("game."));
+
+guardOthers(exe, work);
+fs.rmSync(appDir, { recursive: true, force: true });
+const appExe = prepareApp(exe, appDir);
+launch(appExe, PORT);
+let app = await attach(PORT);
+
+const webDir = path.join(work, "웹버전");
+const wasm = path.join(webDir, `${TEST_BUILD}.wasm`);
+const save = path.join(webDir, `${TEST_BUILD}.sav`);
+
+try {
+  const sandbox = await app.evaluate("document.getElementById('webframe').getAttribute('sandbox')");
+  check("틀 sandbox(위 창 이동·팝업 없음)", sandbox && /allow-scripts/.test(sandbox) && !/allow-top-navigation|allow-popups/.test(sandbox), sandbox);
+
+  fs.writeFileSync(save, Buffer.alloc(131072, 0x5a));
+  const before = fs.readFileSync(save);
+  check("포트 웹버전을 원래 페이지로 열기", await app.evaluate(`${T}.openPath(${JSON.stringify(wasm)}, { preferPage: true })`), "");
+  await sleep(4000);
+  const origin = await app.evaluate(`${T}.state.game?.origin ?? ""`);
+  const targets = await frameTargets();
+  const inner = targets.length ? await connect(PORT, { match: "game." }) : null;
+  check("틀 대상 찾기(CDP)", Boolean(inner), targets.map((t) => t.url).join(" | "));
+
+  if (inner) {
+    const csp = await inner.evaluate("fetch(location.href, { cache: 'no-store' }).then((r) => r.headers.get('content-security-policy') ?? '')");
+    check("응답에 CSP(connect-src 'self' 등)", /connect-src 'self'/.test(csp) && /form-action 'self'/.test(csp), csp.slice(0, 120));
+
+    const overlay = await inner.evaluate("document.getElementById('overlayText')?.textContent ?? ''");
+    check("CSP 아래에서도 페이지가 /rom 으로 롬을 받아 준비됨", /준비되었습니다/.test(overlay), overlay);
+
+    const own = await inner.evaluate(
+      "fetch('save', { cache: 'no-store' }).then((r) => r.arrayBuffer()).then((b) => fetch('save', { method: 'PUT', body: b }).then((r) => [r.status, b.byteLength]))",
+    );
+    check("페이지 자신의 /save 쓰기(PUT) 됨", own[0] === 200 && own[1] === 131072, JSON.stringify(own));
+
+    const outward = await inner.evaluate(
+      `fetch(${JSON.stringify(OUTSIDE)}, { mode: "no-cors" }).then(() => "sent", (e) => "blocked " + e.name)`,
+    );
+    check("틀 안에서 바깥 주소 요청은 막힘(CSP)", /^blocked/.test(outward), outward);
+
+    const other = await inner.evaluate(
+      `fetch(${JSON.stringify(origin.replace(/game\.[0-9a-f]+\./, "game.000000000000."))} + "/save", { mode: "no-cors" }).then(() => "sent", (e) => "blocked " + e.name)`,
+    );
+    check("틀 안에서 다른 빌드 출처 요청도 막힘(CSP)", /^blocked/.test(other), other);
+
+    await inner.evaluate(`(() => { try { top.location.href = ${JSON.stringify(OUTSIDE)}; } catch (e) {} return true; })()`).catch(() => {});
+    await sleep(1500);
+    check("틀이 위 창을 옮기지 못함", (await app.evaluate("location.origin")) === "http://ui.localhost", await app.evaluate("location.href"));
+
+    await inner.evaluate(`(() => { location.href = ${JSON.stringify(OUTSIDE)}; return true; })()`).catch(() => {});
+    await sleep(2000);
+    const after = await frameTargets();
+    check(
+      "틀이 스스로 바깥 주소로 가지 못함(앱이 막고 기록)",
+      after.length && after.every((t) => t.url.startsWith(origin)) && /틀 이동 막음: https:\/\/example\.com/.test(logText()),
+      after.map((t) => t.url).join(" | "),
+    );
+    inner.close();
+  }
+
+  const fresh = fs.readFileSync(save);
+  await app.evaluate(`fetch(${JSON.stringify(`${origin}/save`)}, { method: "POST", mode: "no-cors", body: new Uint8Array(131072) }).then(() => true, () => true)`);
+  await app.evaluate(`fetch(${JSON.stringify(`${origin}/save`)}, { method: "PUT", mode: "no-cors", body: new Uint8Array(131072) }).then(() => true, () => true)`);
+  await sleep(500);
+  check(
+    "다른 출처(본 창)가 보낸 /save 쓰기는 거부(파일 그대로, 기록)",
+    Buffer.compare(fresh, fs.readFileSync(save)) === 0 && /세이브 쓰기 거부/.test(logText()),
+    `처음과 같음 ${Buffer.compare(before, fs.readFileSync(save)) === 0}`,
+  );
+
+  await app.evaluate(`${T}.closeGame().then(() => true)`);
+  await app.evaluate(`(() => { location.href = ${JSON.stringify(OUTSIDE)}; return true; })()`).catch(() => {});
+  await sleep(2000);
+  app.close();
+  app = await connect(PORT);
+  const where = await app.evaluate("location.href");
+  check("본 창은 앱 화면 밖으로 가지 않음", where.startsWith("http://ui.localhost/"), where);
+} finally {
+  await app?.evaluate("document.getElementById('win-close').click(); true").catch(() => {});
+  app?.close();
+  for (let i = 0; i < 40 && runningIn(work); i++) await sleep(250);
+  fs.writeFileSync(path.join(work, "app_security_result.json"), JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`${results.length}개 중 ${results.length - failed}개 통과`);
+  process.exit(failed ? 1 : 0);
+}

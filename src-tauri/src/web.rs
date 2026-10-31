@@ -9,13 +9,18 @@
 //!   /rom, /save              웹 빌드 서버(server.js)와 같은 호환 경로(폴더에 같은 이름 파일이 없을 때만).
 //!                            /save 는 연 파일 옆 `<이름>.sav`(`store`)를 읽고 쓴다.
 //!                            /rom 은 wasm 안에 묶인 롬(`embed`, 사용자 정의 구획 webgba.rom)이 있으면 그것이 먼저.
+//!
+//! 보안(2026-10-31 결정 101-3): 폴더 빌드는 그 폴더 아래 파일을 읽을 수 있다(그대로 둠). 대신
+//!   - 모든 응답에 CSP(`csp`)를 붙여 밖(다른 출처·외부 망)으로 내보내는 길을 막는다.
+//!   - /save 쓰기는 그 빌드 자신의 페이지(`Origin` = 그 빌드 출처)가 보낸 것만 받는다(`from_own_page`).
+//!   - 틀(iframe)이 이 출처들 밖으로 가는 것은 `frame_may_go` 로 막는다(`ui::tame_webview`).
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
-use tauri::http::{Method, Request, Response, StatusCode};
+use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::{AppHandle, Runtime};
 
 use crate::error::{Error, Result};
@@ -149,6 +154,64 @@ pub fn origin(key: &str) -> String {
     }
 }
 
+/// 웹 빌드 출처(`http://game.<키>.localhost`)인지. 키는 열린 빌드가 아니어도 모양만 본다.
+fn is_build_origin(url: &tauri::Url) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    let host = host.to_ascii_lowercase();
+    let label = if cfg!(windows) {
+        if url.scheme() != "http" {
+            return false;
+        }
+        host.strip_prefix("game.").and_then(|rest| rest.strip_suffix(".localhost"))
+    } else {
+        if url.scheme() != SCHEME {
+            return false;
+        }
+        host.strip_suffix(".localhost")
+    };
+    url.port().is_none() && label.is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+/// 웹 빌드 틀(iframe, 그 안의 틀 포함)이 가도 되는 주소. 빌드 출처와, 망으로 나가지 않는 about:·data:·javascript:,
+/// 빌드 출처에서 만든 blob: 뿐이다. 바깥 주소로 가며 주소에 읽은 내용을 실어 보내는 길을 막는다.
+pub fn frame_may_go(uri: &str) -> bool {
+    let Ok(url) = uri.parse::<tauri::Url>() else { return false };
+    match url.scheme() {
+        "about" | "data" | "javascript" => true,
+        "blob" => url.path().parse::<tauri::Url>().map(|inner| is_build_origin(&inner)).unwrap_or(false),
+        _ => is_build_origin(&url),
+    }
+}
+
+/// 웹 빌드 출처의 모든 응답에 거는 CSP. 막을 것은 실행이 아니라 내보내기라 emscripten 페이지가 쓰는 인라인 스크립트·eval·wasm 은 둔다.
+///   - 요청·불러오기(fetch·XHR·WebSocket·sendBeacon·이미지·글꼴·소리·스크립트·워커·틀)는 이 빌드 출처('self')와 data:·blob: 만
+///     → 다른 빌드 출처(다른 키)와 외부 망은 모두 막힘
+///   - 양식 보내기는 'self' 만, `<base>` 는 'self' 만, 플러그인 없음
+///   - 이 페이지를 끼워 넣을 수 있는 곳은 앱 본 창과 자기 자신뿐
+fn csp() -> &'static str {
+    static CSP: OnceLock<String> = OnceLock::new();
+    CSP.get_or_init(|| {
+        let app = ui::page_url("").origin().ascii_serialization();
+        let local = "'self' data: blob:";
+        format!(
+            "default-src {local}; script-src {local} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src {local} 'unsafe-inline'; \
+             connect-src {local}; img-src {local}; media-src {local}; font-src {local}; worker-src {local}; frame-src {local}; \
+             manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' {app}"
+        )
+    })
+}
+
+/// 이 빌드 자신의 페이지가 보낸 요청인지. 브라우저는 POST·PUT 에 늘 `Origin` 을 붙이고 페이지가 바꿀 수 없다.
+/// 다른 빌드의 틀이 `fetch("http://game.<남의 키>.localhost/save", { method: "POST", mode: "no-cors" })` 로 보내면
+/// `Origin` 이 그 틀의 출처라 다르다. `Origin` 이 없거나 `null`(출처 없는 틀)이어도 받지 않는다.
+fn from_own_page(request: &Request<Vec<u8>>, key: &str) -> bool {
+    request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case(&origin(key)))
+}
+
 /// 호환 경로 /rom 이 줄 롬을 정한다(화면이 기억해 둔 롬이나 사람이 고른 롬).
 pub fn set_rom(key: &str, rom: Option<String>) -> Result<()> {
     with_mounts(|mounts| match mounts.get_mut(key) {
@@ -223,8 +286,14 @@ fn inject_bridge(mut html: Vec<u8>) -> Vec<u8> {
     html
 }
 
-/// `game` 스킴 응답. 큰 파일(웹 빌드 wasm 수십 MB)을 읽으므로 별도 Thread 에서 부른다.
+/// `game` 스킴 응답. 큰 파일(웹 빌드 wasm 수십 MB)을 읽으므로 별도 Thread 에서 부른다. 모든 응답에 CSP 를 붙인다.
 pub fn serve<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    let mut response = route(app, request);
+    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp()));
+    response
+}
+
+fn route<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let host = request.uri().host().unwrap_or_default().to_ascii_lowercase();
     let key = host.split('.').next().unwrap_or_default().to_string();
     let Some(mount) = with_mounts(|mounts| mounts.get(&key).cloned()) else {
@@ -268,12 +337,12 @@ pub fn serve<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Respo
             Some(body) => ui::ok(body, "application/octet-stream"),
             None => ui::error(StatusCode::NOT_FOUND, "no rom for this build"),
         },
-        "save" => serve_save(&mount, request),
+        "save" => serve_save(&key, &mount, request),
         _ => ui::error(StatusCode::NOT_FOUND, &crate::i18n::tr("rs.notFound")),
     }
 }
 
-fn serve_save(mount: &Mount, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+fn serve_save(key: &str, mount: &Mount, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if request.method() == Method::GET {
         return match store::read(&mount.save) {
             Ok(body) if !body.is_empty() => ui::ok(body, "application/octet-stream"),
@@ -282,6 +351,11 @@ fn serve_save(mount: &Mount, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         };
     }
     if request.method() == Method::PUT || request.method() == Method::POST {
+        if !from_own_page(&request, key) {
+            let from = request.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("(없음)");
+            crate::logging::write("WARN", &format!("세이브 쓰기 거부: 빌드 {key} 에 다른 출처 {from} 가 보냄"));
+            return ui::error(StatusCode::FORBIDDEN, "save can only be written by this build's own page");
+        }
         let body = request.body();
         if body.is_empty() || body.len() > 1024 * 1024 {
             return ui::error(StatusCode::BAD_REQUEST, "save must be 1 B .. 1 MiB");
@@ -336,6 +410,65 @@ mod tests {
         assert_eq!(guess_rom(&wasm, Some("other.gba")), Some(build.join("other.gba")), "설정 이름이 먼저");
         assert_eq!(guess_rom(&wasm, Some("missing.gba")), Some(build.join("game.gba")), "설정 이름이 없으면 다음 규칙");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn save_post(origin_header: Option<&str>) -> Request<Vec<u8>> {
+        let mut builder = Request::builder().method(Method::POST).uri("game://abc123def456.localhost/save");
+        if let Some(value) = origin_header {
+            builder = builder.header(header::ORIGIN, value);
+        }
+        builder.body(b"x".to_vec()).unwrap()
+    }
+
+    #[test]
+    fn save_write_only_from_own_build_page() {
+        let key = "abc123def456";
+        assert!(from_own_page(&save_post(Some(&origin(key))), key), "자기 출처");
+        assert!(from_own_page(&save_post(Some(&origin(key).to_ascii_uppercase())), key), "대소문자만 다름");
+        assert!(!from_own_page(&save_post(Some(&origin("0123456789ab"))), key), "다른 빌드 출처");
+        assert!(!from_own_page(&save_post(Some(&ui::page_url("").origin().ascii_serialization())), key), "앱 본 창");
+        assert!(!from_own_page(&save_post(Some("null")), key), "출처 없는 틀");
+        assert!(!from_own_page(&save_post(Some("https://evil.example")), key), "외부");
+        assert!(!from_own_page(&save_post(None), key), "Origin 없음");
+    }
+
+    #[test]
+    fn frames_stay_on_build_origins() {
+        let own = format!("{}/index.html?a=1", origin("abc123def456"));
+        assert!(frame_may_go(&own));
+        assert!(frame_may_go(&format!("{}/x", origin("0123456789ab"))), "다른 빌드 출처도 망 밖은 아님");
+        assert!(frame_may_go("about:blank"));
+        assert!(frame_may_go("about:srcdoc"));
+        assert!(frame_may_go("data:text/html,<p>x"));
+        assert!(frame_may_go(&format!("blob:{}/0b1c-uuid", origin("abc123def456"))));
+        assert!(!frame_may_go("blob:https://evil.example/0b1c-uuid"));
+        assert!(!frame_may_go("https://evil.example/?d=secret"));
+        assert!(!frame_may_go("http://evil.example/"));
+        assert!(!frame_may_go("http://localhost:8080/"));
+        assert!(!frame_may_go("http://127.0.0.1/"));
+        assert!(!frame_may_go(&ui::page_url("index.html").to_string()), "앱 화면을 틀에 넣지 않음");
+        assert!(!frame_may_go("http://game.localhost/"), "키 없음");
+        assert!(!frame_may_go("http://game.abc.evil.localhost/"), "키에 점");
+        assert!(!frame_may_go("http://game.abc123def456.localhost:81/"), "포트");
+        assert!(!frame_may_go("file:///C:/x.txt"));
+        assert!(!frame_may_go("not a url"));
+    }
+
+    #[test]
+    fn csp_keeps_everything_on_self() {
+        let policy = csp();
+        for directive in ["default-src", "connect-src", "img-src", "media-src", "font-src", "worker-src", "frame-src", "script-src", "style-src"] {
+            let part = policy.split(';').map(str::trim).find(|p| p.starts_with(&format!("{directive} "))).unwrap_or_else(|| panic!("{directive} 없음"));
+            let sources: Vec<&str> = part.split_whitespace().skip(1).collect();
+            assert!(sources.contains(&"'self'"), "{directive}");
+            assert!(
+                sources.iter().all(|s| ["'self'", "data:", "blob:", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'"].contains(s)),
+                "{directive} 에 바깥 출처: {part}"
+            );
+        }
+        assert!(policy.contains("form-action 'self'"));
+        assert!(policy.contains("object-src 'none'"));
+        assert!(HeaderValue::from_str(policy).is_ok());
     }
 
     #[test]
