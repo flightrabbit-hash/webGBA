@@ -5,7 +5,7 @@ import { bootScript } from "./core/script-host.js";
 import { resolveInput, romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
+import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
@@ -157,8 +157,8 @@ class WebPlayer extends Player {
   }
 
   ensureAudio() {
-    if (this.audio) {
-      if (this.audio.ac.state !== "running") this.audio.ac.resume().catch(() => {});
+    if (this.audio && !this.audio.stuck) {
+      if (this.audio.ac.state !== "running") this.wakeAudio(true);
       return Promise.resolve(this.audio);
     }
     if (!this.audioBoot) this.audioBoot = super.ensureAudio().finally(() => (this.audioBoot = null));
@@ -2764,11 +2764,24 @@ function renderInfo() {
   }
   // 설명서가 있는 .wgba 를 열고 있으면 그 게임: 이름·버전·id·만든 이·빌드 앞 8자리
   const game = state.game?.gameId ? state.game : null;
+  // 소리 확인 한 줄(iOS 무음 원인 찾기용): 상태 · 표본률 · 오디오 세션. 시트가 열려 있는 동안 0.5초마다 고침.
+  // 글이 같으면 다시 쓰지 않는다(같은 값 쓰기도 MutationObserver 를 깨워 문서 전체 centerInk 가 돎).
+  const audioLine = make("p", "note", "");
+  const paintAudio = () => {
+    const audio = player.audio;
+    const text = audio
+      ? t("web.info.audio", { state: audio.stuck ? "stuck" : audio.ac.state, rate: audio.ac.sampleRate, session: audioSessionType() || "-" })
+      : t("web.info.audioOff");
+    if (audioLine.textContent !== text) audioLine.textContent = text;
+    if (audioLine.isConnected) setTimeout(paintAudio, 500);
+  };
+  paintAudio();
   el.sheetBody.replaceChildren(
     ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
-    group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
+    group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );
+  setTimeout(paintAudio, 500);
 }
 
 function typing(target) {
@@ -2822,7 +2835,7 @@ function onKeyUp(event) {
 }
 
 function unlockAudio() {
-  if (!player.audio || player.audio.ac.state !== "running") player.ensureAudio();
+  if (!player.audio || player.audio.stuck || player.audio.ac.state !== "running") player.ensureAudio();
 }
 
 function onVisibility() {
@@ -2833,6 +2846,7 @@ function onVisibility() {
     if (state.prefs.pauseWhenHidden) hold("hidden", true);
   } else {
     hold("hidden", false);
+    player.resumeAudio();
     state.reg?.update().catch(() => {});
   }
   updateWake();
@@ -2925,6 +2939,7 @@ function wire() {
   coarse.addEventListener?.("change", layout);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", () => player.active && player.flushSave({ final: true }));
+  window.addEventListener("pageshow", (event) => event.persisted && player.resumeAudio());
   // ② 게임 틀을 눌러 초점이 틀로 가도 blur 가 온다 — 그때는 키를 놓지 않는다(틀이 키를 넘겨줌)
   window.addEventListener("blur", () => {
     if (!(state.scriptFrame && document.activeElement === state.scriptFrame)) player.releaseAll();

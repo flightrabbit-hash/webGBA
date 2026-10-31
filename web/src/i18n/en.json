@@ -64,6 +64,8 @@
   "web.help.touchTitle": "Touch · gamepad",
   "web.help.touch": "On-screen buttons work with several fingers at once, and sliding on the D-pad changes direction. Games that use a mouse are played by touching the screen.",
   "web.help.gamepad": "Gamepads use the standard layout (press any button once to connect).",
+  "web.info.audio": "Sound: {state} · {rate}Hz · {session}",
+  "web.info.audioOff": "Sound: not started yet",
   "web.info.about": "A GBA player that runs in the browser. .gba · .zip run on the mGBA core, and .wgba · .wasm on the built-in host. No ROMs, game files or official BIOS are included (mGBA's built-in HLE BIOS is used).",
   "web.update": "A new version is available",
   "web.updateGo": "Reload",

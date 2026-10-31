@@ -64,6 +64,8 @@
   "web.help.touchTitle": "タッチ · ゲームパッド",
   "web.help.touch": "画面ボタンは複数の指で同時に押せ、十字キーは指を滑らせると方向が変わります。マウスを使うゲームは画面を直接タップします。",
   "web.help.gamepad": "ゲームパッドは標準配置を使います(どのボタンでも一度押すと接続されます)。",
+  "web.info.audio": "サウンド: {state} · {rate}Hz · {session}",
+  "web.info.audioOff": "サウンド: まだ開始していません",
   "web.info.about": "ブラウザで動く GBA プレイヤーです。.gba · .zip は mGBA コアで、.wgba · .wasm は内蔵ホストで実行します。ROM・ゲームファイルと公式 BIOS は含まれていません(mGBA 内蔵の HLE BIOS を使用)。",
   "web.update": "新しいバージョンがあります",
   "web.updateGo": "再読み込み",
