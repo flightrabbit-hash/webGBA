@@ -144,5 +144,19 @@
   "web.autoSave": "オートセーブ",
   "web.autoSave.note": "プレイ時間で数えて、クイックスロット9番に上書きします",
   "web.autoSave.off": "オフ",
-  "web.autoSave.min": "{n}分"
+  "web.autoSave.min": "{n}分",
+  "web.lib.gameVersion": "{name} v{version}",
+  "web.wgba.opened": "{name} {version}",
+  "web.wgba.same": "{name} {version} — すでにライブラリにあるゲームです",
+  "web.wgba.updated": "{name} アップデート {from} → {to}",
+  "web.wgba.rebuilt": "{name} {version} — 新しいビルドに置き換えました",
+  "web.wgba.downgraded": "{name} {from} → {to}(前のバージョンに変更)",
+  "web.wgba.olderTitle": "前のバージョンです",
+  "web.wgba.olderText": "{name}: ライブラリには {now} があり、このファイルはそれより低い {version} です。前のバージョンに変えますか? セーブ・クイックスロットはそのまま引き継がれます",
+  "web.wgba.olderUse": "前のバージョンに変える",
+  "web.wgba.olderKeep": "いいえ",
+  "web.wgba.olderKept": "{name} {version} をそのままにします",
+  "web.wgba.migrated": "{name} {version} — 以前の .wgba のセーブ・クイックスロットを引き継ぎました",
+  "web.wgba.moveFailed": "以前のセーブを移せなかったため、以前の項目はそのまま残し、別に追加しました",
+  "wgba.newer": "新しい規格で作られた .wgba です。ページを再読み込みして新しいバージョンを取得してください"
 }

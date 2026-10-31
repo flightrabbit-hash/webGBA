@@ -144,5 +144,19 @@
   "web.autoSave": "Auto save",
   "web.autoSave.note": "Overwrites quick slot 9, counting play time only",
   "web.autoSave.off": "Off",
-  "web.autoSave.min": "{n} min"
+  "web.autoSave.min": "{n} min",
+  "web.lib.gameVersion": "{name} v{version}",
+  "web.wgba.opened": "{name} {version}",
+  "web.wgba.same": "{name} {version} — already in your library",
+  "web.wgba.updated": "{name} updated {from} → {to}",
+  "web.wgba.rebuilt": "{name} {version} — replaced with the new build",
+  "web.wgba.downgraded": "{name} {from} → {to} (changed to an older version)",
+  "web.wgba.olderTitle": "Older version",
+  "web.wgba.olderText": "{name}: your library has {now}, and this file is the older {version}. Change to the older version? Saves and quick slots carry over",
+  "web.wgba.olderUse": "Use the older version",
+  "web.wgba.olderKeep": "No",
+  "web.wgba.olderKept": "Kept {name} {version}",
+  "web.wgba.migrated": "{name} {version} — took over the saves and quick slots of the old .wgba",
+  "web.wgba.moveFailed": "Could not move the old saves, so the old entry was kept and the game was added separately",
+  "wgba.newer": "This .wgba was made with a newer format. Reload the page to get the new version"
 }

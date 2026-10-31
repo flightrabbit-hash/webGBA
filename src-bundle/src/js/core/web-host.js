@@ -39,6 +39,8 @@ function knownImport(item) {
   if (item.kind !== "function") return false;
   if (item.module === "env") return ENV_FUNCTIONS.has(item.name) || /^invoke_[a-z]+$/.test(item.name);
   if (item.module === "wasi_snapshot_preview1") return WASI_FUNCTIONS.has(item.name);
+  // .wgba 규격 4.1.2: 이 규격을 아는 호스트만 여는 표시(아무것도 하지 않음)
+  if (item.module === "webgba") return item.name === "v1";
   return false;
 }
 
@@ -65,10 +67,14 @@ const ROM_ZLIB = 1;
 
 const hexOf = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
+// 목차 없는 옛 .wgba: 컴파일한 모듈의 webgba.rom 구획(여럿이면 마지막). 새 .wgba 는 목차의 rom 조각을 readRomPayload 로.
 export async function readEmbeddedRom(module) {
   const found = WebAssembly.Module.customSections(module, ROM_SECTION);
   if (!found.length) return null;
-  const payload = new Uint8Array(found[found.length - 1]);
+  return readRomPayload(new Uint8Array(found[found.length - 1]));
+}
+
+export async function readRomPayload(payload) {
   const bad = (why) => new Error(t("host.embedBad", { why }));
   if (payload.length < ROM_HEADER || String.fromCharCode(...payload.subarray(0, 4)) !== ROM_MAGIC) throw bad(t("host.embedWhyHeader"));
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -211,7 +217,7 @@ class WebHost {
         return 0;
       },
     };
-    return { env, wasi_snapshot_preview1: wasi };
+    return { env, wasi_snapshot_preview1: wasi, webgba: { v1: () => {} } };
   }
 
   write(fd, bytes) {
@@ -378,7 +384,7 @@ class WebHost {
     const save = this.saveData();
     const rom = this.rom;
     await this.start();
-    this.placeRom(rom);
+    if (rom) this.placeRom(rom);
     this.placeSave(save);
     return this.init();
   }
@@ -395,7 +401,8 @@ class WebHost {
 export async function bootHost({ module, rom, save, log }) {
   const host = new WebHost(module, { log });
   await host.start();
-  host.placeRom(rom);
+  // 롬 없는 ① 게임(설명서 rom.required: false)은 rom 이 null
+  if (rom) host.placeRom(rom);
   const hadSave = host.placeSave(save);
   if (!host.init()) throw new Error(t("host.startFailed", { reason: host.halted }));
   return { host, hadSave };

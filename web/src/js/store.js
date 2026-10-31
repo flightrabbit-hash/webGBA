@@ -6,11 +6,16 @@ const DATA = "data";
 export const KIND_ROM = "rom";
 export const KIND_SAVE = "save";
 export const KIND_STATE = "state";
+export const KIND_CART = "cart";
 
+// rom:<보관 id> 는 게임 파일. save·state 는 "세이브 id" 로 묶는다 — 설명서가 있는 .wgba 는 게임 id(설명서 id, 버전이 바뀌어도 같음),
+// 그 밖(.gba·.wasm·옛 .wgba)은 보관 id. cart:<보관 id>:<label|front|spine> 은 롬팩 그림(라이브러리가 씀).
 export const romKey = (id) => `${KIND_ROM}:${id}`;
 export const saveKey = (id) => `${KIND_SAVE}:${id}`;
 export const stateKey = (id, slot) => `${KIND_STATE}:${id}:${slot}`;
+export const cartKey = (id, part) => `${KIND_CART}:${id}:${part}`;
 const stateRange = (id) => IDBKeyRange.bound(`${KIND_STATE}:${id}:`, `${KIND_STATE}:${id}:￿`);
+const cartRange = (id) => IDBKeyRange.bound(`${KIND_CART}:${id}:`, `${KIND_CART}:${id}:￿`);
 
 export function newId() {
   const random = new Uint8Array(4);
@@ -117,6 +122,64 @@ export function remove(key) {
 export function putRom({ id, name, file, type, sha1 = "", added = 0 }, data) {
   const now = Date.now();
   return put({ key: romKey(id), kind: KIND_ROM, id, name, file, type, sha1, added: added || now, opened: now }, data);
+}
+
+/**
+ * 설명서가 있는 .wgba 를 보관(한 번의 트랜잭션): 게임 파일 + 롬팩 그림(옛 그림은 지움).
+ * moveFrom 을 주면 그 옛 보관 id 의 세이브·퀵슬롯을 게임 id(info.gameId)로 옮기고 옛 키는 지운다 — 옛 .wgba(목차 없음)에서
+ * 새 .wgba 로 처음 바꿀 때 한 번(사용자 2026-10-31 이번 한 번 예외). 어디서든 실패하면 트랜잭션째 되돌아가 옛 항목이 그대로 남는다.
+ * 돌려주는 값: { record, moved: { save, states } }.
+ */
+export function putGame({ id, name, file, type, sha1 = "", added = 0, ...info }, data, { carts = [], moveFrom = "" } = {}) {
+  const now = Date.now();
+  const record = { ...info, key: romKey(id), kind: KIND_ROM, id, name, file, type, sha1, added: added || now, opened: now, size: data.length };
+  const moved = { save: false, states: 0 };
+  return run([META, DATA], "readwrite", (tx, done) => {
+    const meta = tx.objectStore(META);
+    const blobs = tx.objectStore(DATA);
+    meta.put(record);
+    blobs.put({ key: record.key, kind: KIND_ROM, data: bufferOf(data) });
+    meta.delete(cartRange(id));
+    blobs.delete(cartRange(id));
+    for (const cart of carts) {
+      const key = cartKey(id, cart.part);
+      meta.put({ key, kind: KIND_CART, id, part: cart.part, format: cart.format, width: cart.width, height: cart.height, size: cart.bytes.length });
+      blobs.put({ key, kind: KIND_CART, data: bufferOf(cart.bytes) });
+    }
+    if (moveFrom && info.gameId && moveFrom !== info.gameId) {
+      const moveOne = (from, to, change) => {
+        const head = meta.get(from);
+        head.onsuccess = () => {
+          if (!head.result) return;
+          const body = blobs.get(from);
+          body.onsuccess = () => {
+            if (!body.result) return;
+            meta.put({ ...head.result, ...change, key: to });
+            blobs.put({ ...body.result, key: to });
+            meta.delete(from);
+            blobs.delete(from);
+            if (head.result.kind === KIND_SAVE) moved.save = true;
+            else moved.states += 1;
+          };
+        };
+      };
+      moveOne(saveKey(moveFrom), saveKey(info.gameId), { id: info.gameId });
+      const slots = meta.getAll(stateRange(moveFrom));
+      slots.onsuccess = () => {
+        for (const slot of slots.result) moveOne(slot.key, stateKey(info.gameId, slot.slot), { id: info.gameId });
+      };
+    }
+    done({ record, moved });
+  });
+}
+
+export const cartBytes = (id, part) => bytes(cartKey(id, part));
+
+export function removeCarts(id) {
+  return run([META, DATA], "readwrite", (tx) => {
+    tx.objectStore(META).delete(cartRange(id));
+    tx.objectStore(DATA).delete(cartRange(id));
+  });
 }
 
 export function putSave(id, data, game = "") {

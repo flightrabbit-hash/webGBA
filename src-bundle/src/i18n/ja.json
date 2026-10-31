@@ -461,5 +461,16 @@
   "rs.noFolderOf": "フォルダーが分かりません",
   "rs.buildNotOpen": "開いていない Web ビルドです",
   "rs.saveTooBig": "セーブファイルが大きすぎます: {0}",
-  "rs.emptySave": "空のセーブは書き込みません"
+  "rs.emptySave": "空のセーブは書き込みません",
+  "wgba.noScript": "独自の JS で動くゲーム(runtime script)は、この webGBA ではまだ開けません",
+  "wgba.noScreen": "画面 {width}×{height} のゲームは、この webGBA ではまだ開けません(今は 240×160 のみ)",
+  "wgba.noNeeds": "このゲームに必要な機能({list})が、この webGBA にはまだありません",
+  "wgba.need.net": "マルチプレイ",
+  "wgba.newer": "新しい規格で作られた .wgba です。webGBA を新しいバージョンにしてください",
+  "wgba.badManifest": ".wgba の説明書が規格に合わないため開きません({why})",
+  "wgba.badRom": ".wgba の ROM 部分を読めませんでした。もう一度まとめてください",
+  "wgba.damaged": ".wgba が壊れています(目次と中身が違います)。ファイルをもう一度入手してください",
+  "wgba.badImports": "このゲームは webGBA が知らない外部関数を使っています{why}",
+  "info.game": "ゲーム: {name}",
+  "info.gameMeta": "id {id} · 作者 {author} · ビルド {build}"
 }

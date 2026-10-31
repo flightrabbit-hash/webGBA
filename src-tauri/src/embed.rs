@@ -49,8 +49,79 @@ fn read_leb<R: Read>(reader: &mut R) -> io::Result<(u64, u64)> {
     }
 }
 
-/// wasm 의 구획 머리만 따라가 `webgba.rom` 구획(여럿이면 마지막)을 찾는다. wasm 이 아니거나 망가졌거나 없으면 None.
+/// 롬 구획 찾기: 새 .wgba(규격 1, 첫 구획이 목차 `webgba.toc`)는 목차의 "rom" 항목으로 바로, 아니면(옛 .wgba·.wasm,
+/// 목차가 이상함) 구획 머리를 훑는다. 어느 쪽이든 없으면 None.
 pub fn find(path: &Path) -> Option<Embedded> {
+    find_by_toc(path).or_else(|| scan(path))
+}
+
+const TOC_SECTION: &str = "webgba.toc";
+const TOC_MAGIC: &[u8; 4] = b"WGTC";
+const TOC_MAJOR: u8 = 1;
+const TOC_HEAD: usize = 16;
+const TOC_ENTRY: usize = 80;
+
+fn u16_at(bytes: &[u8], at: usize) -> usize {
+    usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> u64 {
+    u64::from(u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]))
+}
+
+/// 목차(머리 16 + 항목 80×n, little endian — 규격 2.1)에서 "rom" 항목의 시작·끝. 그 자리가 WGRM 으로 시작해야 쓴다.
+fn find_by_toc(path: &Path) -> Option<Embedded> {
+    let file = File::open(path).ok()?;
+    let total = file.metadata().ok()?.len();
+    let mut reader = BufReader::new(file);
+    let mut head = [0u8; 9];
+    reader.read_exact(&mut head).ok()?;
+    if &head[..4] != b"\0asm" || head[8] != 0 {
+        return None;
+    }
+    let (size, _) = read_leb(&mut reader).ok()?;
+    let (name_len, name_used) = read_leb(&mut reader).ok()?;
+    if name_len != TOC_SECTION.len() as u64 || name_used + name_len > size {
+        return None;
+    }
+    let mut name = [0u8; 10];
+    reader.read_exact(&mut name).ok()?;
+    if name != TOC_SECTION.as_bytes() {
+        return None;
+    }
+    let mut top = [0u8; TOC_HEAD];
+    reader.read_exact(&mut top).ok()?;
+    if &top[..4] != TOC_MAGIC || top[4] != TOC_MAJOR {
+        return None;
+    }
+    let (head_len, entry_len, count) = (u16_at(&top, 6), u16_at(&top, 8), u16_at(&top, 10));
+    if head_len < TOC_HEAD || entry_len < TOC_ENTRY {
+        return None;
+    }
+    if head_len > TOC_HEAD {
+        reader.seek_relative((head_len - TOC_HEAD) as i64).ok()?;
+    }
+    let mut entry = vec![0u8; entry_len];
+    for _ in 0..count {
+        reader.read_exact(&mut entry).ok()?;
+        let name_end = entry[..32].iter().position(|&b| b == 0).unwrap_or(32);
+        if &entry[..name_end] != b"rom" {
+            continue;
+        }
+        let (start, end) = (u32_at(&entry, 32), u32_at(&entry, 36));
+        if start >= end || end > total {
+            return None;
+        }
+        reader.seek(SeekFrom::Start(start)).ok()?;
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic).ok()?;
+        return (&magic == MAGIC).then(|| Embedded { file: path.to_path_buf(), offset: start, len: end - start });
+    }
+    None
+}
+
+/// wasm 의 구획 머리만 따라가 `webgba.rom` 구획(여럿이면 마지막)을 찾는다. wasm 이 아니거나 망가졌거나 없으면 None.
+fn scan(path: &Path) -> Option<Embedded> {
     let file = File::open(path).ok()?;
     let total = file.metadata().ok()?.len();
     let mut reader = BufReader::new(file);
@@ -214,6 +285,64 @@ mod tests {
         cut.truncate(cut.len() - 10);
         std::fs::write(&file, cut).unwrap();
         assert_eq!(find(&file), None, "끝이 잘린 wasm");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 새 .wgba 모양: 머리 → 목차(첫 구획) → 원래 구획 → (가짜 롬 구획) → 롬 구획. 목차의 rom 항목 = 진짜 롬 구획 내용.
+    fn toc_wasm(rom_payload: &[u8], point_at_rom: bool) -> Vec<u8> {
+        let code = [1u8, 1, 0];
+        let decoy = custom(SECTION, &payload(&[9u8; 64], METHOD_STORE));
+        let rom_section = custom(SECTION, rom_payload);
+        let toc_len = TOC_HEAD + TOC_ENTRY;
+        let toc_section_len = custom(TOC_SECTION, &vec![0u8; toc_len]).len();
+        let rom_at = 8 + toc_section_len + code.len() + decoy.len();
+        let start = (rom_at + rom_section.len() - rom_payload.len()) as u32;
+        let end = (rom_at + rom_section.len()) as u32;
+        let (start, end) = if point_at_rom { (start, end) } else { (8, 40) };
+        let mut toc = Vec::new();
+        toc.extend_from_slice(TOC_MAGIC);
+        toc.extend_from_slice(&[TOC_MAJOR, 0]);
+        toc.extend_from_slice(&(TOC_HEAD as u16).to_le_bytes());
+        toc.extend_from_slice(&(TOC_ENTRY as u16).to_le_bytes());
+        toc.extend_from_slice(&1u16.to_le_bytes());
+        toc.extend_from_slice(&((rom_at + rom_section.len()) as u32).to_le_bytes());
+        let mut entry = vec![0u8; TOC_ENTRY];
+        entry[..3].copy_from_slice(b"rom");
+        entry[32..36].copy_from_slice(&start.to_le_bytes());
+        entry[36..40].copy_from_slice(&end.to_le_bytes());
+        entry[45] = 4;
+        toc.extend(entry);
+        let mut out = b"\0asm\x01\0\0\0".to_vec();
+        out.extend(custom(TOC_SECTION, &toc));
+        out.extend_from_slice(&code);
+        out.extend(decoy);
+        out.extend(rom_section);
+        out
+    }
+
+    #[test]
+    fn finds_the_rom_through_the_table() {
+        let dir = std::env::temp_dir().join("webgba-embed-toc");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rom: Vec<u8> = (0..200_000u32).map(|i| (i % 249) as u8).collect();
+        let packed = payload(&rom, METHOD_ZLIB);
+        let file = dir.join("new.wgba");
+        let bytes = toc_wasm(&packed, true);
+        std::fs::write(&file, &bytes).unwrap();
+        let by_toc = find_by_toc(&file).expect("목차로 찾음");
+        assert_eq!(by_toc.len, packed.len() as u64);
+        assert_eq!(find(&file), Some(by_toc.clone()), "목차가 있으면 목차 자리");
+        assert_eq!(read(&by_toc).unwrap(), rom);
+        assert_eq!(scan(&file), Some(by_toc), "훑기도 같은 자리(마지막 구획)");
+
+        std::fs::write(&file, toc_wasm(&packed, false)).unwrap();
+        assert_eq!(find_by_toc(&file), None, "목차 자리가 WGRM 이 아니면 쓰지 않음");
+        assert_eq!(read(&find(&file).expect("훑기로 찾음")).unwrap(), rom, "그때는 훑기");
+
+        let mut cut = bytes.clone();
+        cut.truncate(40);
+        std::fs::write(&file, cut).unwrap();
+        assert_eq!(find(&file), None, "목차까지 잘린 파일");
         std::fs::remove_dir_all(&dir).ok();
     }
 

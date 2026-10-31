@@ -231,6 +231,60 @@ await broken("모르는 종류 + 필수 깃발", async (buf) => {
 ok(compareVersions("1.2.0", "1.10.0") === -1 && compareVersions("1.2.0", "1.2.0-beta.1") === 1 && compareVersions("1.2.0-beta.2", "1.2.0-beta.10") === -1 && compareVersions("2.0.0", "2.0.0") === 0, "유의적 버전 비교");
 ok(updateAction({ version: "1.1.0", build: "x" }, { version: "1.2.0", build: "y" }) === "update" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.2.0", build: "y" }) === "update" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.1.0", build: "y" }) === "older" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.2.0", build: "x" }) === "same", "같은 id: 높은 버전·같은 버전 다른 빌드 = 묻지 않고 바꿈, 낮은 버전 = 경고, 같은 빌드 = 그대로");
 
+// 앱 읽기(wgba-read.js — exe·웹이 .wgba 를 여는 길, S2)
+const { readWgba, compileCode, supportProblem, pickText, gameInfo } = await import("../../src-bundle/src/js/core/wgba-read.js");
+const { bootHost, inspectModule, readRomPayload } = await import("../../src-bundle/src/js/core/web-host.js");
+const sha1 = (bytes) => crypto.createHash("sha1").update(bytes).digest("hex");
+const ra = await readWgba(a);
+ok(ra && ra.manifest.id === manifestA.id && ra.build === resA.buildId && ra.romSha1 === sha1(fakeRom) && Object.keys(ra.images).join() === "label,front,spine", "앱 읽기: 설명서·빌드·롬 SHA-1·롬팩 그림 셋", ra && `${ra.build.slice(0, 8)} ${Object.keys(ra.images)}`);
+const infoA = ra && gameInfo(ra);
+ok(infoA?.gameId === manifestA.id && infoA.cart.front.labelAt[0] === 6 && infoA.cart.spine.textArea.length === 4 && infoA.cart.color === "#3a6ea5", "앱 읽기: 게임 항목 값(id·버전·롬팩 자리·색)", JSON.stringify(infoA?.cart));
+const modR = await compileCode(ra.code);
+ok(inspectModule(modR).usable && WebAssembly.Module.customSections(modR, "webgba.rom").length === 0, "앱 읽기: code 조각만 컴파일(롬 구획 없음) · 내장 호스트로 쓸 수 있음");
+ok(same((await readRomPayload(ra.romPayload)).rom, fakeRom), "앱 읽기: rom 조각 → 롬(SHA-1 확인)");
+ok((await readWgba(new Uint8Array(legacyPack(Buffer.from(webapiWasm()), Buffer.from(fakeRom))))) === null && (await readWgba(webapiWasm())) === null, "앱 읽기: 목차 없는 옛 .wgba·.wasm → null(옛 길 그대로)");
+const errCode = async (bytes) => {
+  try {
+    await readWgba(bytes);
+    return "열림";
+  } catch (error) {
+    return error.code;
+  }
+};
+const tocA = await readTocFrom(a);
+const flip = (name, at = 3) => {
+  const copy = Uint8Array.from(a);
+  copy[tocA.entries.find((e) => e.name === name).start + at] ^= 0x55;
+  return copy;
+};
+ok((await errCode(flip("code", 20))) === "hash" && (await errCode(flip("rom", 40))) === "hash" && (await errCode(flip("manifest"))) === "hash", "앱 읽기: code·rom·설명서가 망가지면 열지 않음(SHA-256)");
+const labelBroken = await readWgba(flip("cart.label", 30));
+ok(labelBroken && !labelBroken.images.label && labelBroken.images.front, "앱 읽기: 롬팩 그림만 망가지면 그 그림만 빼고 엶");
+ok((await errCode(a.subarray(0, a.length - 1))) === "length", "앱 읽기: 잘린 파일(목차의 파일 길이와 다름) 열지 않음");
+const newer = (await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, needs: ["teleport"] } })).bytes;
+ok((await errCode(newer)) === "newer", "앱 읽기: 모르는 needs → 새 webGBA 필요");
+ok(supportProblem(manifestB)?.code === "script" && supportProblem({ ...manifestA, needs: ["net"] })?.code === "needs" && supportProblem({ ...manifestA, screen: { width: 320, height: 240 } })?.code === "screen" && supportProblem(manifestA) === null, "앱 읽기: 아직 못 여는 것(script·net·화면 크기) 가림");
+ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.name, "ja") === "Hello Web API" && pickText("포켓몬 Rapid", "en") === "포켓몬 Rapid", "이름 고르기: 사용자 언어 → en → 첫 값");
+// 가져오기 webgba.v1(규격 4.1.2) + 롬 없는 ① 시작
+function v1Wasm() {
+  const types = sec(1, vec([[0x60, 0, 1, 0x7f], [0x60, 1, 0x7f, 1, 0x7f], [0x60, 0, 0]]));
+  const imps = sec(2, vec([[...str("webgba"), ...str("v1"), 0, 2]]));
+  const funcs = sec(3, vec([[0], [1], [0]]));
+  const mem = sec(5, vec([[0x00, 3]]));
+  const exps = sec(7, vec([[...str("memory"), 2, 0], [...str("Web_Init"), 0, 1], [...str("Web_RunFrame"), 0, 2], [...str("Web_GetFramebuffer"), 0, 3]]));
+  const code = sec(10, vec([[...u(4), 0, 0x41, 1, 0x0b], [...u(4), 0, 0x41, 1, 0x0b], [...u(5), 0, 0x41, ...s(1024), 0x0b]]));
+  return new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...types, ...imps, ...funcs, ...mem, ...exps, ...code]);
+}
+const modV1 = await WebAssembly.compile(v1Wasm());
+let v1Ran = false;
+try {
+  const { host } = await bootHost({ module: modV1, rom: null, save: null });
+  v1Ran = host.runFrame(0) && host.framebuffer().length === 240 * 160 * 4;
+} catch (error) {
+  v1Ran = String(error);
+}
+ok(inspectModule(modV1).usable && v1Ran === true, "가져오기 webgba.v1 을 아는 함수로 받음 · 롬 없는 ① 시작(rom null)", String(v1Ran));
+
 // 명령줄
 const node = (args) => spawnSync(process.execPath, args, { encoding: "utf8" });
 const wasmFile = path.join(work, "hello.wasm");

@@ -1,5 +1,7 @@
 import { context } from "./bridge.js";
-import { bootHost, inspectModule, readEmbeddedRom } from "./core/web-host.js";
+import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
+import { compileCode, gameInfo, pickText, problemText, readWgba, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
+import { romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
 import { BUTTONS, codeOf, DEFAULT_KEYS, DPAD_MODES, Player } from "./app/player.js";
@@ -966,8 +968,9 @@ const typeOf = (name) => {
 async function keepRom(name, bytes, { id = "", added = 0, sha1 = "", file = name } = {}) {
   let existing = null;
   if (!id) {
+    // 같은 이름이면 같은 항목(지금까지 규칙). 설명서가 있는 게임 항목(게임 id 로 묶임)은 이름으로 덮어쓰지 않는다.
     try {
-      existing = await store.romByName(name);
+      existing = (await store.list(store.KIND_ROM)).find((item) => store.sameName(item.name, name) && !item.gameId) ?? null;
     } catch {}
   }
   const meta = { id: id || existing?.id || store.newId(), name, file, type: typeOf(file), sha1, added: added || existing?.added || 0 };
@@ -978,6 +981,144 @@ async function keepRom(name, bytes, { id = "", added = 0, sha1 = "", file = name
     storeFailed(error);
     return { ...meta, key: store.romKey(meta.id), kind: store.KIND_ROM, size: bytes.length, transient: true };
   }
+}
+
+// ── 설명서가 있는 .wgba(규격 1): 게임 id 로 묶기 ──
+// 세이브·퀵슬롯을 묶는 id: 설명서가 있는 .wgba 는 게임 id(버전이 바뀌어도 같음), 그 밖(.gba·.wasm·옛 .wgba)은 보관 id.
+const saveIdOf = (meta) => meta?.gameId || meta?.id || "";
+const titleOf = (meta) => (meta?.gameId ? pickText(meta.title, i18n.lang()) || meta.name : meta?.name ?? "");
+const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
+
+/** 목차가 있으면 readWgba 결과, 없으면 null. 망가졌으면 보일 문장으로 던짐. */
+async function inspectWgba(bytes) {
+  if (!isWasmBytes(bytes)) return null;
+  try {
+    return await readWgba(bytes);
+  } catch (error) {
+    logLine("WARN", `.wgba 목차·설명서를 읽지 못했습니다: ${reason(error)}`);
+    throw new Error(wgbaErrorText(error));
+  }
+}
+
+/** 보관한 .wgba 의 롬 구획 머리 SHA-1(풀지 않고 머리 36바이트만). 롬이 없으면 "". */
+function storedRomSha1(bytes) {
+  try {
+    const rom = wasmSections(bytes)
+      .filter((s) => s.id === 0 && s.name === "webgba.rom")
+      .at(-1);
+    return rom ? romHeader(bytes.subarray(rom.payload, rom.end)).sha1 : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 옛 세이브를 옮길 옛 항목(설계 3절, 이번 한 번 예외): 그 게임 id 의 세이브·퀵슬롯이 아직 없을 때만, 게임 id 가 없는 .wgba 보관 항목 중
+ * 롬 SHA-1 이 새 파일의 롬 조각과 같은 것 — 여럿이면 마지막에 연 것 하나. 롬이 없는 파일·.gba·.wasm 은 옮기지 않는다.
+ */
+async function oldSameGame(info, roms) {
+  if (!info.romSha1) return null;
+  try {
+    if (await store.meta(store.saveKey(info.gameId))) return null;
+    if ((await store.states(info.gameId)).length) return null;
+  } catch {
+    return null;
+  }
+  for (const rom of roms.filter((item) => item.type === "wgba" && !item.gameId).sort(byOpened)) {
+    let sha = rom.romSha1;
+    if (typeof sha !== "string") {
+      const bytes = await store.bytes(rom.key).catch(() => null);
+      sha = bytes ? storedRomSha1(bytes) : "";
+      if (bytes) store.patch(rom.key, { romSha1: sha }).catch(() => {});
+    }
+    if (sha === info.romSha1) return rom;
+  }
+  return null;
+}
+
+/**
+ * 게임 파일을 보관함에 넣기. 설명서가 없으면 지금 규칙(keepRom, 같은 이름 = 같은 항목). 설명서가 있으면 같은 게임 id = 같은 항목:
+ * 같은 빌드 → 그대로 · 높은 버전/같은 버전 다른 빌드 → 묻지 않고 바꿈(알림 한 줄) · 낮은 버전 → 경고(기본 아니요) — 규격 3.4.
+ * 같은 id 가 없으면 옛 .wgba 항목을 찾아 세이브·퀵슬롯을 게임 id 로 옮기고 그 항목을 새 것으로 바꾼다.
+ * 돌려주는 값 { meta, note, wgba } · 사용자가 그만두면 null.
+ */
+async function importGame(name, bytes, { replace = null, sha1 = "", file = name, keepName = true } = {}) {
+  const type = typeOf(file);
+  const wgba = type === "wgba" || type === "wasm" ? await inspectWgba(bytes) : null;
+  if (!wgba) return { meta: await keepRom(name, bytes, { id: replace?.id ?? "", added: replace?.added ?? 0, sha1, file }), note: "", wgba: null };
+  const problem = supportProblem(wgba.manifest);
+  if (problem) throw new Error(problemText(problem));
+  const info = gameInfo(wgba);
+  const shown = pickText(info.title, i18n.lang()) || name;
+  let roms = [];
+  try {
+    roms = await store.list(store.KIND_ROM);
+  } catch {}
+  const same = roms.filter((item) => item.gameId === info.gameId).sort(byOpened)[0] ?? null;
+  let note = "";
+  let target = null;
+  let moveFrom = "";
+  if (same) {
+    const action = updateAction({ version: same.version, build: same.build }, { version: info.version, build: info.build });
+    if (action === "older") {
+      const go = await openDialog({
+        title: t("web.wgba.olderTitle"),
+        body: [t("web.wgba.olderText", { name: shown, now: same.version, version: info.version })],
+        actions: [
+          { label: t("web.wgba.olderUse"), value: true, danger: true, id: "older-use" },
+          { label: t("web.wgba.olderKeep"), value: false, primary: true, id: "older-keep" },
+        ],
+      });
+      if (!go) {
+        toast(t("web.wgba.olderKept", { name: shown, version: same.version }), "warn");
+        return null;
+      }
+      note = t("web.wgba.downgraded", { name: shown, from: same.version, to: info.version });
+    } else if (action === "update") {
+      note = same.version === info.version ? t("web.wgba.rebuilt", { name: shown, version: info.version }) : t("web.wgba.updated", { name: shown, from: same.version, to: info.version });
+    } else {
+      note = t("web.wgba.same", { name: shown, version: info.version });
+    }
+    target = same;
+  } else {
+    target = await oldSameGame(info, roms);
+    if (target) moveFrom = target.id;
+    else if (replace) target = replace;
+  }
+  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, file, type, sha1, added: target?.added ?? 0 };
+  const carts = Object.entries(wgba.images).map(([part, image]) => ({ part, bytes: image.bytes, format: image.format, width: image.width, height: image.height }));
+  let saved = null;
+  await store.persist();
+  try {
+    saved = await store.putGame(meta, bytes, { carts, moveFrom });
+  } catch (error) {
+    if (!moveFrom) {
+      storeFailed(error);
+      return { meta: { ...meta, key: store.romKey(meta.id), kind: store.KIND_ROM, size: bytes.length, transient: true }, note, wgba };
+    }
+    // 옮기다 실패: 트랜잭션째 되돌아가 옛 항목·세이브는 그대로 — 새 게임은 따로 넣는다
+    logLine("WARN", `옛 세이브를 옮기지 못했습니다(옛 항목은 그대로): ${reason(error)}`);
+    toast(t("web.wgba.moveFailed"), "warn");
+    moveFrom = "";
+    try {
+      saved = await store.putGame({ ...meta, id: store.newId(), name, added: 0 }, bytes, { carts });
+    } catch (again) {
+      storeFailed(again);
+      return { meta: { ...meta, key: store.romKey(meta.id), kind: store.KIND_ROM, size: bytes.length, transient: true }, note, wgba };
+    }
+  }
+  if (moveFrom) {
+    const { moved } = saved;
+    logLine("INFO", `옛 .wgba 세이브를 게임 id 로 옮김 ${moveFrom} → ${info.gameId} (세이브 ${moved.save ? 1 : 0} · 퀵슬롯 ${moved.states})`);
+    if (moved.save || moved.states) note = t("web.wgba.migrated", { name: shown, version: info.version });
+  }
+  if (replace && replace.id !== saved.record.id) {
+    await store.remove(replace.key).catch(() => {});
+    await store.removeCarts(replace.id).catch(() => {});
+    await store.removeStates(saveIdOf(replace)).catch(() => {});
+  }
+  logLine("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 보관 → ${saved.record.key}${note ? ` (${note})` : ""}`);
+  return { meta: saved.record, note, wgba };
 }
 
 function zipText(error) {
@@ -1027,7 +1168,8 @@ async function readSave(id) {
 const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|wgba|wasm)$/i, "")}.sav`;
 
 async function startHosted(host, meta) {
-  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId: meta.id };
+  const saveId = saveIdOf(meta);
+  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "" };
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
@@ -1036,7 +1178,7 @@ async function startHosted(host, meta) {
   syncControls();
   layout();
   applyPlayerPrefs();
-  await player.start({ host, saveId: meta.id, game: meta.id });
+  await player.start({ host, saveId, game: saveId });
   applyPlayerPrefs();
   hold("sheet", Boolean(state.sheet));
   syncControls();
@@ -1045,7 +1187,7 @@ async function startHosted(host, meta) {
 
 async function openRom(meta, bytes) {
   const module = await coreModule();
-  const save = await readSave(meta.id);
+  const save = await readSave(saveIdOf(meta));
   const { host } = await bootHost({ module, rom: bytes, save, log: hostLog });
   await startHosted(host, meta);
   return meta.name;
@@ -1089,26 +1231,32 @@ async function webRomFor(meta) {
   return { info, bytes };
 }
 
-async function openWasm(meta, bytes) {
+// wgba: 보관할 때 이미 읽은 목차 결과(없으면 여기서 읽음). 목차가 있으면 code 조각만 컴파일(롬은 엔진 메모리 밖), 롬은 rom 조각에서.
+async function openWasm(meta, bytes, wgba) {
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: meta.name }));
+  if (wgba === undefined) wgba = await inspectWgba(bytes);
+  const problem = wgba ? supportProblem(wgba.manifest) : null;
+  if (problem) throw new Error(problemText(problem));
   let module;
   try {
-    module = await WebAssembly.compile(bytes);
+    module = await (wgba ? compileCode(wgba.code) : WebAssembly.compile(bytes));
   } catch (error) {
     throw new Error(t("status.wasmUnreadable", { reason: reason(error) }));
   }
   const report = inspectModule(module);
   if (!report.usable) {
     const why = report.unknown.length ? t("status.unknownImports", { list: `${report.unknown.slice(0, 3).join(", ")}${report.unknown.length > 3 ? " …" : ""}` }) : "";
-    throw new Error(t("web.needsGlue", { why }));
+    throw new Error(wgba ? t("wgba.badImports", { why }) : t("web.needsGlue", { why }));
   }
-  const embedded = await readEmbeddedRom(module);
-  const rom = embedded ? { bytes: embedded.rom } : await webRomFor(meta);
+  const embedded = wgba ? (wgba.romPayload ? await readRomPayload(wgba.romPayload) : null) : await readEmbeddedRom(module);
+  // 롬 없는 ① 게임(설명서 rom.required: false)
+  const romless = Boolean(wgba) && !embedded && wgba.manifest.rom?.required === false;
+  const rom = embedded ? { bytes: embedded.rom } : romless ? { bytes: null } : await webRomFor(meta);
   if (!rom) {
     toast(t("status.noRomPicked"), "warn");
     return "";
   }
-  const save = await readSave(meta.id);
+  const save = await readSave(saveIdOf(meta));
   const { host } = await bootHost({ module, rom: rom.bytes, save, log: hostLog });
   await startHosted(host, meta);
   return meta.name;
@@ -1204,18 +1352,30 @@ async function makeFromPatch(fileName, bytes, romFile) {
     throw new Error(text);
   }
   loader.set("store", 0);
-  const meta = await keepRom(chosen.name, made.wgba, { id: chosen.replace?.id ?? "", added: chosen.replace?.added ?? 0, sha1: made.sha1, file: `${fallback}.wgba` });
+  let kept;
+  try {
+    kept = await importGame(chosen.name, made.wgba, { replace: chosen.replace, sha1: made.sha1, file: `${fallback}.wgba`, keepName: false });
+  } catch (error) {
+    await loader.fail(reason(error), "store");
+    state.loader = null;
+    throw error;
+  }
+  if (!kept) {
+    loader.close();
+    state.loader = null;
+    return null;
+  }
   loader.set("store", 1);
   logLine("INFO", `패치로 만듦 ${fileName} + ${file.name} → ${chosen.name} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"})`);
-  return { meta, bytes: made.wgba, loader, note: t("status.patchMade", { name: chosen.name, base: made.base.name }) };
+  return { meta: kept.meta, bytes: made.wgba, loader, wgba: kept.wgba, note: join(t("status.patchMade", { name: chosen.name, base: made.base.name }), kept.note) };
 }
 
-async function launch(meta, bytes, { note = "", loader = null } = {}) {
+async function launch(meta, bytes, { note = "", loader = null, wgba = undefined } = {}) {
   await closeGame({ quiet: true });
   loader?.set("open", 0);
   let text;
   try {
-    text = meta.type === "wgba" || meta.type === "wasm" ? await openWasm(meta, bytes) : await openRom(meta, bytes);
+    text = meta.type === "wgba" || meta.type === "wasm" ? await openWasm(meta, bytes, wgba) : await openRom(meta, bytes);
   } catch (error) {
     if (loader) {
       await loader.fail(reason(error), "open");
@@ -1231,6 +1391,7 @@ async function launch(meta, bytes, { note = "", loader = null } = {}) {
   }
   loader?.finish();
   state.loader = null;
+  if (!note && meta.gameId) note = t("web.wgba.opened", { name: titleOf(meta), version: meta.version });
   if (!meta.transient) {
     savePrefs({ lastGame: store.romKey(meta.id) });
     store.patch(store.romKey(meta.id), { opened: Date.now() }).catch(() => {});
@@ -1279,10 +1440,11 @@ function openFile(file, patchRom = null) {
     if (ext === "wgbp") {
       const made = await makeFromPatch(name, bytes, patchRom);
       if (!made) return false;
-      return launch(made.meta, made.bytes, { note: made.note, loader: made.loader });
+      return launch(made.meta, made.bytes, { note: made.note, loader: made.loader, wgba: made.wgba });
     }
-    const meta = await keepRom(name, bytes);
-    return launch(meta, bytes);
+    const kept = await importGame(name, bytes);
+    if (!kept) return false;
+    return launch(kept.meta, bytes, { note: kept.note, wgba: kept.wgba });
   });
 }
 
@@ -1326,6 +1488,9 @@ async function closeGame({ quiet = false } = {}) {
   if (!quiet) toast(t("status.closed"));
 }
 
+// 설명서가 있는 게임은 목록 한 줄에 "포켓몬 Rapid v1.2.0"(롬팩 진열은 라이브러리 묶음에서)
+const gameLine = (rom) => (rom.gameId ? t("web.lib.gameVersion", { name: titleOf(rom), version: rom.version }) : "");
+
 async function refreshStart() {
   let roms = [];
   let saves = new Set();
@@ -1339,7 +1504,7 @@ async function refreshStart() {
       item({
         key: rom.key,
         name: rom.name,
-        meta: join(fmtSize(rom.size), t("web.start.lastPlayed", { time: fmtTime(rom.opened) }), saves.has(rom.id) ? t("web.start.hasSave") : ""),
+        meta: join(gameLine(rom), fmtSize(rom.size), t("web.start.lastPlayed", { time: fmtTime(rom.opened) }), saves.has(saveIdOf(rom)) ? t("web.start.hasSave") : ""),
         onOpen: () => openStored(rom.key),
         actions: [(() => {
           const mark = make("span", "item__go");
@@ -1471,7 +1636,7 @@ async function renderLibrary() {
       item({
         key: rom.key,
         name: rom.name,
-        meta: join(`.${rom.type}`, fmtSize(rom.size), t("web.lib.added", { date: fmtTime(rom.added) }), current ? t("web.lib.current") : ""),
+        meta: join(gameLine(rom), `.${rom.type}`, fmtSize(rom.size), t("web.lib.added", { date: fmtTime(rom.added) }), current ? t("web.lib.current") : ""),
         current,
         onOpen: () => {
           closeSheet();
@@ -1517,10 +1682,11 @@ async function renameRom(rom) {
     if (chosen.replace) {
       if (state.game?.id === chosen.replace.id) await closeGame({ quiet: true });
       await store.remove(chosen.replace.key);
-      await store.removeStates(chosen.replace.id).catch(() => {});
+      await store.removeCarts(chosen.replace.id).catch(() => {});
+      await store.removeStates(saveIdOf(chosen.replace)).catch(() => {});
     }
     await store.patch(rom.key, { name: chosen.name });
-    await store.patch(store.saveKey(rom.id), { game: chosen.name });
+    await store.patch(store.saveKey(saveIdOf(rom)), { game: chosen.name });
     if (state.game?.id === rom.id) {
       state.game.name = chosen.name;
       context.game = chosen.name;
@@ -1540,7 +1706,8 @@ async function deleteRom(rom) {
   await leaveRow(rom.key);
   try {
     await store.remove(rom.key);
-    await store.removeStates(rom.id);
+    await store.removeCarts(rom.id);
+    await store.removeStates(saveIdOf(rom));
     toast(t("web.deleted", { name: rom.name }));
   } catch (error) {
     toast(reason(error), "error");
@@ -1633,7 +1800,7 @@ async function renderSaves() {
   if (state.sheet !== "saves") return;
   const children = [];
   if (state.game) {
-    const { id, name } = state.game;
+    const { saveId: id, name } = state.game;
     const row = make("div", "start__actions");
     row.append(
       button({ label: t("web.save.export"), icon: "download", action: "export-current", onClick: () => exportSave(id, name) }),
@@ -1821,7 +1988,7 @@ async function renderQuick() {
   let list = [];
   let failed = false;
   try {
-    list = await store.states(game.id);
+    list = await store.states(game.saveId);
   } catch {
     failed = true;
   }
@@ -2109,7 +2276,10 @@ function renderInfo() {
     link.rel = "noopener";
     links.append(link);
   }
+  // 설명서가 있는 .wgba 를 열고 있으면 그 게임: 이름·버전·id·만든 이·빌드 앞 8자리
+  const game = state.game?.gameId ? state.game : null;
   el.sheetBody.replaceChildren(
+    ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
     group("", make("p", "", `webGBA ${BUILD.version} · ${BUILD.hash}`), make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );

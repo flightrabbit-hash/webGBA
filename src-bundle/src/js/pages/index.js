@@ -1,5 +1,6 @@
 import { core, win, onCloseRequested, onMaximized, onOpenFile, onOsDrag, onOsFileDrop } from "../bridge.js";
-import { bootHost, inspectModule, readEmbeddedRom, SCREEN_H, SCREEN_W } from "../core/web-host.js";
+import { bootHost, inspectModule, readEmbeddedRom, readRomPayload, SCREEN_H, SCREEN_W } from "../core/web-host.js";
+import { compileCode, gameInfo, problemText, readWgba, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, Player } from "../app/player.js";
@@ -302,7 +303,8 @@ async function openPath(path, options = {}) {
 }
 
 async function startHosted(host, game) {
-  state.game = { ...game, name: baseOf(game.path), title: host.title ? `${baseOf(game.path)} · ${host.title}` : baseOf(game.path) };
+  // 설명서가 있는 .wgba 는 창 제목도 "<이름> <버전>"
+  state.game = { ...game, name: baseOf(game.path), title: game.label || (host.title ? `${baseOf(game.path)} · ${host.title}` : baseOf(game.path)) };
   showView("screen");
   layoutScreen();
   await player.start({ host, saveId: game.saveId, game: game.path });
@@ -465,6 +467,18 @@ async function resolveWebRom(build, ask) {
 async function openWasm(path, { preferPage = false } = {}) {
   const bytes = await core.fileReadBytes(path);
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: baseOf(path) }));
+  // 목차(webgba.toc)가 있는 .wgba: 설명서를 보고 code 조각만 컴파일, 롬은 rom 조각에서. 없으면(옛 .wgba·.wasm) 지금 그대로.
+  let wgba = null;
+  try {
+    wgba = await readWgba(bytes);
+  } catch (error) {
+    core.log("WARN", `.wgba 목차·설명서를 읽지 못했습니다 ${path}: ${reason(error)}`);
+    throw new Error(wgbaErrorText(error));
+  }
+  const problem = wgba ? supportProblem(wgba.manifest) : null;
+  if (problem) throw new Error(problemText(problem));
+  const info = wgba ? gameInfo(wgba) : null;
+  const label = info ? titleLine(info, i18n.lang()) : "";
   const build = await core.webInspect(path, state.prefs.webRom || null);
   if (build.movedFrom) {
     const builds = { ...(state.prefs.webBuilds ?? {}) };
@@ -476,26 +490,31 @@ async function openWasm(path, { preferPage = false } = {}) {
   }
   let module = null;
   try {
-    module = await WebAssembly.compile(bytes);
+    module = await (wgba ? compileCode(wgba.code) : WebAssembly.compile(bytes));
   } catch (error) {
     throw new Error(t("status.wasmUnreadable", { reason: reason(error) }));
   }
   const report = inspectModule(module);
-  const embedded = await readEmbeddedRom(module);
+  const unknownWhy = () => (report.unknown.length ? t("status.unknownImports", { list: `${report.unknown.slice(0, 3).join(", ")}${report.unknown.length > 3 ? " …" : ""}` }) : "");
+  if (wgba && !report.usable) throw new Error(t("wgba.badImports", { why: unknownWhy() }));
+  const embedded = wgba ? (wgba.romPayload ? await readRomPayload(wgba.romPayload) : null) : await readEmbeddedRom(module);
   const romEmbedded = Boolean(embedded);
+  // 롬 없는 ① 게임(설명서 rom.required: false)
+  const romless = Boolean(wgba) && !romEmbedded && wgba.manifest.rom?.required === false;
   const romNote = (rom) => (romEmbedded ? t("status.romEmbedded") : rom ? t("status.romUsed", { name: baseOf(rom) }) : "");
-  if (report.usable && !(preferPage && build.page)) {
-    const rom = romEmbedded ? null : await resolveWebRom(build, true);
-    if (!romEmbedded && !rom) {
+  if (report.usable && (wgba || !(preferPage && build.page))) {
+    const rom = romEmbedded || romless ? null : await resolveWebRom(build, true);
+    if (!romEmbedded && !romless && !rom) {
       status(t("status.noRomPicked"), "warn");
       showView("start");
       return false;
     }
-    if (!romEmbedded) await core.webSetRom(build.key, rom);
+    if (rom) await core.webSetRom(build.key, rom);
     const { save, name } = await openSave(path);
-    const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : await loadRomBytes(rom), save, log: hostLog });
-    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded });
-    status(join(baseOf(path), romNote(rom), saveNote(hadSave, name)));
+    const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog });
+    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label });
+    status(join(label || baseOf(path), romNote(rom), saveNote(hadSave, name)));
+    if (info) core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기 ${path}`);
     return true;
   }
   module = null;
@@ -511,8 +530,7 @@ async function openWasm(path, { preferPage = false } = {}) {
     }
     return true;
   }
-  const why = report.unknown.length ? t("status.unknownImports", { list: `${report.unknown.slice(0, 3).join(", ")}${report.unknown.length > 3 ? " …" : ""}` }) : "";
-  throw new Error(t("status.needsGlue", { why }));
+  throw new Error(t("status.needsGlue", { why: unknownWhy() }));
 }
 
 function openFrame(url, { path, build, rom, romEmbedded }) {
@@ -886,10 +904,19 @@ async function showInfo() {
   pre.textContent = license || "MPL-2.0 — https://mozilla.org/MPL/2.0/";
   const lead = Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: `webGBA V${state.info?.version ?? ""}` });
   const sub = Object.assign(document.createElement("p"), { className: "dialog__sub", textContent: t("info.openSource") });
+  // 설명서가 있는 .wgba 를 열고 있으면 그 게임: 이름·버전·id·만든 이·빌드 앞 8자리
+  const game = state.game?.info;
+  const gameLines = game
+    ? [
+        Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: t("info.game", { name: state.game.label }) }),
+        t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) }),
+      ]
+    : [];
   await openDialog({
     title: t("info.title"),
     wide: true,
     body: [
+      ...gameLines,
       lead,
       LICENSE_LINE,
       t("info.about"),
@@ -1490,7 +1517,7 @@ async function boot() {
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);

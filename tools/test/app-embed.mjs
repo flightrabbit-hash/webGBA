@@ -13,6 +13,7 @@ import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { connect, guardOthers, launch, prepareApp, runningIn, sleep } from "./cdp.mjs";
 import { findRomSection, pack, HEADER_SIZE } from "../pack-wgba.mjs";
+import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 
 const [exe, work, wasmPath, romPath, ...extra] = process.argv.slice(2);
 if (!exe || !work || !wasmPath || !romPath) {
@@ -68,6 +69,12 @@ const noRomAround = (dir) => ![dir, path.dirname(dir)].some((d) => fs.readdirSyn
 const packedFile = path.join(packedDir, `${build}.wgba`);
 const plainFile = path.join(plainDir, `${build}.wgba`);
 const packedSave = path.join(packedDir, `${build}.sav`);
+// 새 규격(목차 → 설명서 → code → 롬, tools/wgba.mjs 와 같은 묶기) · ② script 는 아직 열지 않음
+const newManifest = { wgba: 1, id: "io.github.test.embed", version: "1.2.0", name: "내장 시험", runtime: "webapi" };
+const newFile = path.join(fresh("new_format", { [`${build}.wgba`]: (await packWgba({ wasm, manifest: newManifest, rom })).bytes }), `${build}.wgba`);
+const tinyWasm = Uint8Array.of(0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0);
+const scriptManifest = { wgba: 1, id: "io.github.test.script", version: "1.0.0", name: "시험", runtime: "script", entry: { style: "module" } };
+const scriptFile = path.join(fresh("new_script", { "script.wgba": (await packWgba({ wasm: tinyWasm, manifest: scriptManifest, js: new TextEncoder().encode("export default function () {}") })).bytes }), "script.wgba");
 
 const running = () => runningIn(work);
 async function start(args = []) {
@@ -212,19 +219,41 @@ try {
     await close(app);
   }
 
-  // 7. 여는 시간(같은 앱, 첫 번째는 버림): 옛 방식(구획 없음 + 옆 롬) / 묶은 것
+  // 9. 새 규격 .wgba: code 조각만 컴파일, 상태 줄·창 제목·정보 창에 이름·버전, 세이브는 옆 .sav 그대로
+  const newOk = await open(app, newFile);
+  said = await statusOf(app);
+  check("새 규격: 고르기 창 없이 열림 · 상태 줄 '내장 시험 1.2.0 · 내장 롬'", newOk && /^내장 시험 1\.2\.0 · 내장 롬/.test(said) && (await app.evaluate(`${T}.state.game?.kind`)) === "web", said);
+  const romInModule = await app.evaluate(`WebAssembly.Module.customSections(${T}.player.host.module, 'webgba.rom').length`);
+  check("새 규격: code 조각만 컴파일(모듈에 webgba.rom 없음) · 롬 SHA-1", romInModule === 0 && (await hostRomSha(app)) === romSha, `구획 ${romInModule}`);
+  const newTitle = await app.evaluate("document.getElementById('title').textContent");
+  check("새 규격: 창 제목에 이름·버전 · 경로 없음", /내장 시험 1\.2\.0/.test(newTitle) && noPath(newTitle + said), newTitle);
+  await app.evaluate(`(${T}.showInfo(), true)`);
+  await sleep(600);
+  const infoText = await app.evaluate("document.getElementById('dialog-body')?.textContent ?? ''");
+  await app.evaluate("document.querySelector('#dialog-actions button')?.click(); true");
+  await sleep(300);
+  check("새 규격: 정보 창에 게임 이름·버전·id", /게임: 내장 시험 1\.2\.0/.test(infoText) && /io\.github\.test\.embed/.test(infoText), infoText.slice(0, 120));
+  await close(app);
+  const scriptOk = await open(app, scriptFile);
+  said = await statusOf(app);
+  check("새 규격 ② script: 열지 않고 '아직' 안내", !scriptOk && /자체 JS/.test(said) && (await gameName(app)) === "", said);
+
+  // 7. 여는 시간(같은 앱, 첫 번째는 버림): 옛 방식(구획 없음 + 옆 롬) / 묶은 것 / 새 규격(code 조각만 컴파일)
   const before = [];
   const after = [];
+  const fresher = [];
   await timeOpen(app, plainFile);
   await timeOpen(app, packedFile);
+  await timeOpen(app, newFile);
   for (let i = 0; i < 3; i++) {
     before.push(await timeOpen(app, plainFile));
     after.push(await timeOpen(app, packedFile));
+    fresher.push(await timeOpen(app, newFile));
   }
   await close(app);
   const sizes = { plain: wasm.length, packed: packed.length, rom: rom.length };
-  fs.writeFileSync(path.join(work, "app_embed_timing.json"), JSON.stringify({ before, after, sizes }, null, 2));
-  check("시간: 여는 시간 재기", before.every((ms) => ms > 0) && after.every((ms) => ms > 0), `옛 방식 ${before.join("/")}ms(가운데 ${median(before)}) · 묶은 것 ${after.join("/")}ms(가운데 ${median(after)})`);
+  fs.writeFileSync(path.join(work, "app_embed_timing.json"), JSON.stringify({ before, after, fresher, sizes }, null, 2));
+  check("시간: 여는 시간 재기", [...before, ...after, ...fresher].every((ms) => ms > 0), `옛 방식 ${before.join("/")}ms(가운데 ${median(before)}) · 묶은 것 ${after.join("/")}ms(가운데 ${median(after)}) · 새 규격 ${fresher.join("/")}ms(가운데 ${median(fresher)})`);
 
   // 8. 끌어 놓기(실제 마우스)
   if (extra.includes("drop")) {

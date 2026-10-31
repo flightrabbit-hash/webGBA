@@ -42,7 +42,8 @@ async function newPage(viewport) {
 }
 
 const waitGame = (page, timeout = 90000) => page.waitForFunction(() => document.body.dataset.view === "game" && window.webgba.player.running, null, { timeout });
-const gameId = (page) => page.evaluate(() => window.webgba.state.game?.id ?? "");
+// 퀵슬롯을 묶는 id(설명서가 있는 .wgba 는 게임 id, 그 밖은 보관 id)
+const gameId = (page) => page.evaluate(() => window.webgba.state.game?.saveId ?? "");
 const frameNow = (page) => page.evaluate(() => window.webgba.player.host.ex.Web_GetFrameCount() >>> 0);
 const slotsOf = (page, id) => page.evaluate(async (id) => (await window.webgba.store.states(id)).map((s) => ({ slot: s.slot, saved: s.saved, auto: s.auto, size: s.size, thumb: s.thumb?.byteLength ?? 0 })).sort((a, b) => a.slot - b.slot), id);
 

@@ -464,10 +464,13 @@ async function testPatch() {
       const renamed = await page.evaluate(async () => {
         const roms = await window.webgba.store.list("rom");
         const saves = await window.webgba.store.list("save");
-        return { roms: roms.map((r) => [r.key, r.name]), saves: saves.map((s) => [s.key, s.game]) };
+        return { roms: roms.map((r) => [r.key, r.name, r.gameId ?? ""]), saves: saves.map((s) => [s.key, s.game]) };
       });
-      const romKey = renamed.roms.find((r) => r[1] === "새 이름")?.[0] ?? "";
-      ok("이름 바꾸기: 표시 이름만 바뀌고 키·세이브 짝 유지", romKey && renamed.saves.some((s) => s[0] === romKey.replace(/^rom:/, "save:") && s[1] === "새 이름") && saveBefore.includes(romKey.replace(/^rom:/, "save:")), JSON.stringify(renamed));
+      const renamedRom = renamed.roms.find((r) => r[1] === "새 이름");
+      const romKey = renamedRom?.[0] ?? "";
+      // 세이브 짝: 설명서가 있는 .wgba(새 규격으로 만든 .wgbp 결과)는 게임 id, 그 밖은 보관 id
+      const saveKeyOf = renamedRom?.[2] ? `save:${renamedRom[2]}` : romKey.replace(/^rom:/, "save:");
+      ok("이름 바꾸기: 표시 이름만 바뀌고 키·세이브 짝 유지", romKey && renamed.saves.some((s) => s[0] === saveKeyOf && s[1] === "새 이름") && saveBefore.includes(saveKeyOf), JSON.stringify(renamed));
       await page.click("#sheetClose");
       await filesMenu(page);
       await chooseFiles(page, "#btnOpen", [opt.wgbp]);

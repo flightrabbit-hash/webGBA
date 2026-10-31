@@ -144,5 +144,19 @@
   "web.autoSave": "자동 저장",
   "web.autoSave.note": "게임 시간 기준으로 퀵슬롯 9번 칸에 덮어씁니다",
   "web.autoSave.off": "끔",
-  "web.autoSave.min": "{n}분"
+  "web.autoSave.min": "{n}분",
+  "web.lib.gameVersion": "{name} v{version}",
+  "web.wgba.opened": "{name} {version}",
+  "web.wgba.same": "{name} {version} — 이미 보관함에 있는 게임입니다",
+  "web.wgba.updated": "{name} 업데이트 {from} → {to}",
+  "web.wgba.rebuilt": "{name} {version} — 새 빌드로 바꿨습니다",
+  "web.wgba.downgraded": "{name} {from} → {to}(이전 버전으로 바꿈)",
+  "web.wgba.olderTitle": "이전 버전입니다",
+  "web.wgba.olderText": "{name}: 보관함에는 {now} 이(가) 있고, 이 파일은 그보다 낮은 {version} 입니다. 이전 버전으로 바꿀까요? 세이브·퀵슬롯은 그대로 이어집니다",
+  "web.wgba.olderUse": "이전 버전으로 바꾸기",
+  "web.wgba.olderKeep": "아니요",
+  "web.wgba.olderKept": "{name} {version} 을(를) 그대로 둡니다",
+  "web.wgba.migrated": "{name} {version} — 옛 .wgba 의 세이브·퀵슬롯을 이어받았습니다",
+  "web.wgba.moveFailed": "옛 세이브를 옮기지 못해 옛 항목은 그대로 두고 따로 넣었습니다",
+  "wgba.newer": "새 규격으로 만든 .wgba 입니다. 페이지를 새로 고쳐 새 버전을 받아 주세요"
 }
