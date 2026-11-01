@@ -10,6 +10,49 @@ const STICK_REACH = 1.55;
 const KEY_MARGIN = 0.4;
 const KEY_MARGIN_MAX = 40;
 
+export const BUZZ_MS = 12;
+const SWITCH_HAPTIC_FROM = [18, 0];
+const SWITCH_HAPTIC_UNTIL = [26, 4];
+
+const newer = (a, b) => a[0] - b[0] || a[1] - b[1];
+
+function iosVersion(ua) {
+  const safari = /Version\/(\d+)(?:\.(\d+))?/.exec(ua);
+  const os = /OS (\d+)_(\d+)/.exec(ua);
+  const read = (m) => [Number(m[1]), Number(m[2] ?? 0)];
+  if (safari && Number(safari[1]) >= 18) return read(safari);
+  if (os && !(Number(os[1]) === 18 && Number(os[2]) === 6)) return read(os);
+  return null;
+}
+
+export function hapticKind(nav = navigator, win = window) {
+  const coarse = win.matchMedia?.("(pointer: coarse)").matches;
+  if (!coarse) return "";
+  if (typeof nav.vibrate === "function") return "vibrate";
+  const ua = nav.userAgent ?? "";
+  if (!/iPhone/.test(ua) || !("switch" in win.HTMLInputElement.prototype)) return "";
+  const version = iosVersion(ua);
+  return version && newer(version, SWITCH_HAPTIC_FROM) >= 0 && newer(version, SWITCH_HAPTIC_UNTIL) <= 0 ? "switch" : "";
+}
+
+export function buzz(kind) {
+  try {
+    if (kind === "vibrate") navigator.vibrate(BUZZ_MS);
+    if (kind !== "switch") return;
+    const label = document.createElement("label");
+    label.setAttribute("aria-hidden", "true");
+    label.style.display = "none";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.setAttribute("switch", "");
+    input.tabIndex = -1;
+    label.append(input);
+    document.head.append(label);
+    label.click();
+    label.remove();
+  } catch {}
+}
+
 const SECTORS_8 = [["RIGHT"], ["RIGHT", "DOWN"], ["DOWN"], ["DOWN", "LEFT"], ["LEFT"], ["LEFT", "UP"], ["UP"], ["UP", "RIGHT"]];
 const SECTORS_4 = [["RIGHT"], ["DOWN"], ["LEFT"], ["UP"]];
 
@@ -146,7 +189,7 @@ export class VirtualPad {
     if (event.type === "pointerup" || event.type === "pointercancel") {
       this.pointers.delete(event.pointerId);
       if (entry.owner === "stick") this.onStick(0, 0, false);
-      this.commit([]);
+      this.commit();
       return;
     }
     if (event.cancelable) event.preventDefault();
@@ -156,12 +199,11 @@ export class VirtualPad {
   track(event) {
     const entry = this.pointers.get(event.pointerId);
     const keys = this.hit(event.clientX, event.clientY, entry.owner);
-    const before = entry.keys;
     entry.keys = keys;
-    this.commit(keys.filter((name) => !before.includes(name)));
+    this.commit();
   }
 
-  commit(fresh) {
+  commit() {
     const next = new Set();
     for (const entry of this.pointers.values()) for (const name of entry.keys) next.add(name);
     for (const name of this.down) {
@@ -170,17 +212,18 @@ export class VirtualPad {
         this.onVisual(name, false);
       }
     }
+    let pressed = false;
     for (const name of next) {
       if (!this.down.has(name)) {
         this.onChange(name, true);
         this.onVisual(name, true);
+        if (!DIRS.includes(name)) pressed = true;
       }
     }
     this.down = next;
-    if (fresh.length && this.vibrate()) {
-      try {
-        navigator.vibrate?.(12);
-      } catch {}
+    if (pressed) {
+      const kind = this.vibrate();
+      if (kind) buzz(kind);
     }
   }
 
@@ -188,6 +231,6 @@ export class VirtualPad {
     const hadStick = [...this.pointers.values()].some((entry) => entry.owner === "stick");
     this.pointers.clear();
     if (hadStick) this.onStick(0, 0, false);
-    this.commit([]);
+    this.commit();
   }
 }

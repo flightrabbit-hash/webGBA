@@ -1205,6 +1205,7 @@ body[data-layout="landscape"] .key--start {
 }
 
 .sheet[data-sheet="library"] .sheet__body {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--gap-3);
@@ -1224,6 +1225,7 @@ body[data-layout="landscape"] .sheet[data-sheet="library"] .sheet__body {
   flex: none;
   flex-direction: column;
   justify-content: center;
+  height: var(--card-h, auto);
   min-height: 114px;
   padding: var(--gap-3);
   border: 0;
@@ -1441,6 +1443,7 @@ body[data-layout="landscape"] .lib__shelf {
 
 /* 책장: 한 칸(--slot-h = 위 표시 자리 14 + 옆면 + 선반 14)마다 선반 판(윗면·앞면·그림자)을 배경으로 — 굴려도 같이 움직임 */
 .lib__case {
+  --spine-out: 0.35;
   --board: calc(var(--slot-h, 120px) - 14px);
   display: flex;
   flex: 1 0 auto;
@@ -1521,23 +1524,30 @@ body[data-layout="landscape"] .lib__shelf {
   background: var(--accent);
 }
 
-.spine__gap {
-  position: absolute;
-  inset: 0;
-  display: none;
-  border: var(--px) dashed var(--line-strong);
-}
-
-.spine.is-out .spine__art > :not(.spine__gap) {
-  visibility: hidden;
-}
-
-.spine.is-out .spine__gap {
-  display: block;
+.spine.is-out .spine__art {
+  opacity: var(--spine-out);
 }
 
 .spine.is-out:hover .spine__art {
   transform: none;
+}
+
+.lib__fly {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.lib__fly > .lib__ghost {
+  position: absolute;
+  margin: 0;
+  transform-origin: 0 0;
+  transition: none;
+  will-change: transform, opacity;
 }
 
 .spine--add {
@@ -1839,6 +1849,15 @@ body[data-layout="landscape"] .lib__shelf {
 .switch:focus-visible {
   outline: var(--px) solid var(--accent);
   outline-offset: calc(var(--px) * 2);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.field--off .field__label {
+  color: var(--text-faint);
 }
 
 .keys {
