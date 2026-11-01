@@ -90,11 +90,14 @@ const ICON_COLORS = {
   icY: '#ffd04d', icO: '#e3901f', icR: '#ee5b53', icG: '#5fd46f', icB: '#4f8ef2', icBd: '#2f5bc0',
 };
 
+export function family(face, ink, outline) {
+  return { f: face, hi: mix(face, '#ffffff', 0.22 + 0.4 * lum(face)), lo: mix(face, outline, 0.22), side: mix(face, outline, 0.48), ink: inkFor(face, ink, outline) };
+}
+export { contrast as contrastRatio, mix as mixColor };
+
 function buildPalette(b, id) {
   const W = '#ffffff', K = '#000000', o = b.outline;
-  const fam = (face, ink) => ({
-    f: face, hi: mix(face, W, 0.22 + 0.4 * lum(face)), lo: mix(face, o, 0.22), side: mix(face, o, 0.48), ink: inkFor(face, ink, o),
-  });
+  const fam = (face, ink) => family(face, ink, o);
   const put = (out, p, f) => { out[p] = f.f; out[p + 'Hi'] = f.hi; out[p + 'Lo'] = f.lo; out[p + 'Side'] = f.side; out[p + 'Ink'] = f.ink; };
   const pal = {
     id, base: { ...b },

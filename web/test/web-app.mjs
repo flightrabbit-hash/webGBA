@@ -594,7 +594,7 @@ async function testKeymap() {
       return bits;
     }, gp);
 
-  // ① C·D(preset gba + c = 10, d = 11) — 320 세로: C·D 보임·버튼 배율 그대로·캡처
+  // ① C·D(preset gba + c = 10, d = 11) — 320 세로: C·D 보임·게임 화면 그대로(결정 102-11)·캡처
   {
     const { context, page } = await open("keys-cd", { width: 320, height: 568 });
     const touch = touchApi(await context.newCDPSession(page));
@@ -607,7 +607,7 @@ async function testKeymap() {
     ok("키 매핑 C·D: 터치 C·D·키보드 C → bit 10·11, Z → A(bit 0), 화면 막대도 그 bit",
       c.sent === 1024 && d.sent === 2048 && kc.sent === 1024 && kz.sent === 1 && c.lit.join() === "10" && d.lit.join() === "11" && kz.lit.join() === "0",
       `터치 C ${c.sent}[${c.lit}] D ${d.sent}[${d.lit}] · 키 C ${kc.sent} Z ${kz.sent}[${kz.lit}] · 보임 ${shown(r).join(",")} · 배율 ${art} · 게임 화면 ${Math.round(r.screen.w)}x${Math.round(r.screen.h)}`);
-    ok("키 매핑 C·D: 320 세로에서 버튼 배율 3(줄이지 않음)·버튼 8자리(C·D 포함) + 방향 보임", art === 3 && shown(r).length === 8 && r.DIR.w > 0, `배율 ${art} · ${shown(r).join(",")}`);
+    ok("키 매핑 C·D: 320 세로에서 게임 화면 320x213 그대로·버튼 정수 배율·버튼 8자리(C·D 포함) + 방향 보임", Math.round(r.screen.w) === 320 && Math.round(r.screen.h) === 213 && Number.isInteger(art) && art >= 2 && shown(r).length === 8 && r.DIR.w > 0, `배율 ${art} · 게임 화면 ${Math.round(r.screen.w)}x${Math.round(r.screen.h)} · ${shown(r).join(",")}`);
     ok("키 매핑 C·D: 게임패드 2·3 → C·D, 0 → A", (await padWith(page, { buttons: [2, 3, 0] })) === (1024 | 2048 | 1));
     const help = await helpRows(page);
     ok("키 매핑 C·D: 조작법 창에 A~L + C·D", help.some((h) => h.startsWith("C=") && h.includes("C · I")) && help.some((h) => h.startsWith("D=") && h.includes("V · U")) && help.some((h) => h.startsWith("A=")), help.join(" | "));

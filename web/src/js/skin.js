@@ -82,6 +82,40 @@ export function baseColors() {
     : { body: mix(bg, "#ffffff", 0.24), button: mix(raised, "#ffffff", 0.12), accent, ink: text, outline: mix(bg, "#000000", 0.6), cd };
 }
 
+const UI_INK_MIN = 4.5;
+
+function uiColors(p) {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name) => hexOf(style.getPropertyValue(name));
+  const tokens = (...names) => names.map(read).filter(Boolean);
+  const inkOf = (face, list) => {
+    const pick = list.find((ink) => PX.contrastRatio(face, ink) >= UI_INK_MIN);
+    return pick ?? list.reduce((best, ink) => (PX.contrastRatio(face, ink) > PX.contrastRatio(face, best) ? ink : best), list[0] ?? p.outline);
+  };
+  const out = { "--px-ol": p.outline, "--px-drop": p.shadow, "--px-well": p.well };
+  const put = (name, face, inks) => {
+    const f = PX.family(face, inks[0] ?? p.outline, p.outline);
+    out[`--px-${name}`] = f.f;
+    out[`--px-${name}-hi`] = f.hi;
+    out[`--px-${name}-side`] = f.side;
+    out[`--px-${name}-hov`] = PX.mixColor(f.f, f.hi, 0.4);
+    out[`--px-${name}-ink`] = inkOf(f.f, inks);
+  };
+  const text = tokens("--text", "--text-hi", "--bg-sunken", "--bg");
+  put("face", p.fb, text);
+  put("acc", read("--accent") || p.base.accent, tokens("--ink-accent", "--text", "--bg-sunken"));
+  put("dng", read("--danger") || p.base.accent, tokens("--ink-danger", "--ink-accent", "--bg-sunken", "--text"));
+  put("warn", read("--global") || p.base.accent, tokens("--ink-global", "--bg-sunken", "--text"));
+  out["--px-off"] = p.off;
+  out["--px-off-hi"] = p.offHi;
+  out["--px-off-side"] = p.offSide;
+  out["--px-off-ink"] = p.offInk;
+  const panel = read("--bg");
+  out["--px-pan-hi"] = panel ? PX.family(panel, panel, p.outline).hi : p.bodyHi;
+  const root = document.documentElement.style;
+  for (const [name, value] of Object.entries(out)) if (root.getPropertyValue(name) !== value) root.setProperty(name, value);
+}
+
 export class Skin {
   constructor({ pad, dpad }) {
     this.pad = pad;
@@ -99,6 +133,7 @@ export class Skin {
 
   refreshColors() {
     this.palette = PX.paletteOf(baseColors());
+    uiColors(this.palette);
     this.redraw();
   }
 

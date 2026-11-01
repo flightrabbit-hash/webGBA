@@ -117,9 +117,11 @@ async function inkRows(page, key, selector, limit = 12) {
         .map((n) => {
           // 글자 줄은 centerInk 가 translate 로 옮기므로, 그 줄이 차지하는 칸(카드에서 사진 아래)을 잰다
           if (n.classList.contains("slot__time")) {
-            const card = n.closest(".slot").getBoundingClientRect();
+            const slot = n.closest(".slot");
+            const card = slot.getBoundingClientRect();
+            const cs = getComputedStyle(slot);
             const shot = n.previousElementSibling.getBoundingClientRect();
-            return { left: card.left + 1, right: card.right - 1, top: shot.bottom, bottom: card.bottom - 1, inset: 10 };
+            return { left: card.left + parseFloat(cs.borderLeftWidth), right: card.right - parseFloat(cs.borderRightWidth), top: shot.bottom, bottom: card.bottom - parseFloat(cs.borderBottomWidth), inset: 10 };
           }
           const r = n.getBoundingClientRect();
           const s = getComputedStyle(n);

@@ -339,7 +339,7 @@ function showNow(node) {
 }
 
 const FRAME_ROWS = 3;
-const ART = { stick: 37, shoulderH: 17, pillH: 15, roundH: 27 };
+const ART = { stick: 37, shoulderH: 17, pillH: 15, pillW: 31, roundH: 27 };
 const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, h: 27 * 1.75 } };
 // C·D 가 있으면 A·B 묶음 위에 같은 모양 한 단(C 는 A 위, D 는 B 위): A·B 를 faceUp 만큼 내린다
 // (C 아래 ↔ A 위 사이 = D 아래 ↔ B 위 사이 = faceUp − 버튼 높이).
@@ -369,6 +369,7 @@ function layout() {
   const four = Boolean(state.extra);
   const faceH = face.h + (four ? faceUp(face, landscape) : 0);
   let art = state.art ?? 3;
+  let fit = "rows";
   skin.resize({ art, icon, dpr });
   syncTools();
   const ring = skin.px(2);
@@ -386,21 +387,26 @@ function layout() {
       sw = Math.floor(sh * 1.5);
     }
     let padH = innerH - barH - sh - edge * 2;
-    // 버튼 배율은 C·D 와 관계없이 A·B 만일 때와 같다(규격 5.4: 버튼을 줄여 그리지 않음).
     art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + face.h + ART.pillH))), 2, 6);
     if (four) {
-      // C·D 가 있으면 버튼 칸 = 위아래 여백 24 + 줄 간격 16 + L·R 줄 + 네 버튼 줄 + START 줄(+ 여유 4). 모자라면(좁은 세로 320·360 등)
-      // 버튼 크기는 그대로 두고 게임 화면을 그만큼 줄인다(3:2 영역 맞춤). 화면이 가장 작은 값(96)이어도 모자랄 때만 배율을 낮춘다.
-      const needPad = (a) => {
+      const rowsPad = (a) => {
         const u = skin.px(a) / dpr;
         return 44 + (ART.shoulderH + ART.pillH) * u + Math.round(faceH * u);
       };
-      if (needPad(art) > padH) {
-        sh = Math.max(96, Math.min(sh, Math.floor(innerH - barH - edge * 2 - needPad(art))));
+      const colsPad = (a) => {
+        const u = skin.px(a) / dpr;
+        return 36 + ART.shoulderH * u + Math.max(Math.round(faceH * u), (ART.stick + ART.pillH * 2) * u + 16);
+      };
+      const pick = (a) => (rowsPad(a) <= padH ? "rows" : colsPad(a) <= padH ? "compact" : "");
+      let a = art;
+      while (a > 2 && !pick(a)) a--;
+      fit = pick(a) || "compact";
+      art = a;
+      if (fit === "compact" && colsPad(art) > padH) {
+        sh = Math.max(96, Math.min(sh, Math.floor(innerH - barH - edge * 2 - colsPad(art))));
         sw = Math.floor(sh * 1.5);
         padH = innerH - barH - sh - edge * 2;
       }
-      while (art > 2 && needPad(art) > padH) art--;
     }
     root.setProperty("--side", "0px");
   } else if (padOn && landscape) {
@@ -430,6 +436,11 @@ function layout() {
   state.art = art;
   skin.resize({ art, icon, dpr });
   const unit = skin.px(art) / dpr;
+  if (fit === "compact") {
+    if (el.pad.dataset.fit !== fit) el.pad.dataset.fit = fit;
+  } else if (el.pad.dataset.fit) delete el.pad.dataset.fit;
+  root.setProperty("--pill-indent", `${Math.round(((ART.stick - ART.pillW) / 2) * unit)}px`);
+  root.setProperty("--px", `${skin.px(2) / dpr}px`);
   root.setProperty("--face-w", `${Math.round(face.w * unit)}px`);
   const up = Math.round(faceUp(face, landscape) * unit);
   root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
@@ -2548,7 +2559,9 @@ function selectField(label, note, options, value, onChange) {
   }
   select.value = String(value);
   select.addEventListener("change", () => onChange(select.value));
-  return field(label, note, select);
+  const pick = make("span", "pick");
+  pick.append(select);
+  return field(label, note, pick);
 }
 
 function switchField(label, note, value, onChange) {
@@ -2573,7 +2586,12 @@ function rangeField(label, note, value, onChange) {
   range.step = "5";
   range.value = String(Math.round(value * 100));
   range.setAttribute("aria-label", label);
-  range.addEventListener("input", () => onChange(Number(range.value) / 100));
+  const fill = () => range.style.setProperty("--fill", String(Number(range.value) / 100));
+  fill();
+  range.addEventListener("input", () => {
+    fill();
+    onChange(Number(range.value) / 100);
+  });
   return field(label, note, range);
 }
 

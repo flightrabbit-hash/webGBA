@@ -394,7 +394,7 @@ There are at most 4 face buttons, roles `a` `b` `c` `d`. **Touch C·D buttons ap
 
 - **Games that do not define C·D** (games with only `preset: "gba"`, older `.wgba`·`.wasm` without a manifest, `.gba`): the touch screen shows **only A·B**. The host never adds C·D on its own.
 - **Layout**: C·D sit in **one row right above A·B**, with the same size, spacing and shape as A·B (portrait and landscape). C above A, D above B (with only `c`, a single C above A).
-- **Narrow portrait screens** (width 320, 360, …): if there is not enough room for the C·D row, the host keeps the button size and **shrinks the game screen** instead.
+- **Narrow portrait screens** (width 320, 360, …): if there is not enough room for the C·D row, the host **keeps the game screen size** and re-fits the button scale (integer) and arrangement instead (button art is drawn only at integer scale, never smoothed).
 - Keyboard and gamepad always work for every defined button. Touch shows only buttons whose role has a touch position (5.2).
 
 ### 5.5 Host keys

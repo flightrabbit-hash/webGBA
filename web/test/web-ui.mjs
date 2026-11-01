@@ -47,19 +47,42 @@ const ok = (name, pass, detail = "") => {
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
+// 픽셀 버튼·팝업(2026-11-01): 둥근 모서리·흐린 그림자·filter 없음, 색은 토큰(:root 의 기본 테마 토큰 정의 밖 HEX 0)
+{
+  const css = await (await fetch(new URL("/css/web.css", URL_BASE))).text();
+  const radius = [...css.matchAll(/border-radius:\s*([^;]+);/g)].map((m) => m[1].trim()).filter((v) => !/^0(px)?$/.test(v));
+  const flat = (s) => {
+    let t = s;
+    while (/\([^()]*\)/.test(t)) t = t.replace(/\([^()]*\)/g, "");
+    return t;
+  };
+  const blurred = [...css.matchAll(/box-shadow:\s*([^;]+);/g)].flatMap((m) => flat(m[1]).split(",")).map((s) => s.trim()).filter((s) => s !== "none" && !/^(inset\s+)?\S+\s+\S+\s+0(\s|$)/.test(s));
+  const body = css.replace(/^:root\s*\{[\s\S]*?\n\}/m, "");
+  const hex = [...body.matchAll(/#[0-9a-f]{3,8}\b/gi)].map((m) => m[0]);
+  ok("web.css: border-radius 0 · 흐린 box-shadow 0 · filter 0 · :root 밖 HEX 0", !radius.length && !blurred.length && !/\bfilter:/.test(css) && !hex.length, `radius ${radius.join("/") || 0} · 흐림 ${blurred.join(" / ") || 0} · HEX ${hex.join(",") || 0}`);
+}
+
 async function shoot(page) {
   return decodePng(await page.screenshot());
 }
 
+// 픽셀 조작 칸(버튼·선택 칸·토글·범위·색)은 외곽선·옆면·그림자가 있어 잉크로 재면 틀이 섞인다 →
+// 줄 안 글자 잉크는 그 칸(틀 + 그림자)을 빼고 재고, 칸 자체는 틀(외곽선 포함, 그림자 뺌) 상자가 줄 가운데인지 따로 잰다.
+const CONTROLS = ".btn, .tool--small, .pick, .switch, input[type=range], input[type=color], .recent__all";
+const masked = (box, x, y) => box.mask?.some((m) => x >= m[0] && x < m[2] && y >= m[1] && y < m[3]);
+
 function inkCheck(image, dpr, box) {
   const x0 = Math.round((box.left + box.inset) * dpr);
   const x1 = Math.round((box.right - box.inset) * dpr);
-  const y0 = Math.round(box.top * dpr);
-  const y1 = Math.round(box.bottom * dpr);
+  // 위아래 1 기기 픽셀은 빼고 잰다: 칸이 0.5px 자리에 놓이면 브라우저가 칠할 때 정수 px 로 맞춰, 바깥 틀(외곽선) 한 줄이 상자 안에 끼는 일이 있다
+  const y0 = Math.round(box.top * dpr) + 1;
+  const y1 = Math.round(box.bottom * dpr) - 1;
   if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+  if (box.mask) box = { ...box, mask: box.mask.map((m) => m.map((v) => Math.round(v * dpr))) };
   const counts = new Map();
   for (let y = y0; y < y1; y += 2) {
     for (let x = x0; x < x1; x += 2) {
+      if (masked(box, x, y)) continue;
       const o = (y * image.width + x) * 4;
       const key = (image.data[o] << 16) | (image.data[o + 1] << 8) | image.data[o + 2];
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -76,6 +99,7 @@ function inkCheck(image, dpr, box) {
   for (let y = y0; y < y1; y++) {
     let ink = false;
     for (let x = x0; x < x1 && !ink; x++) {
+      if (masked(box, x, y)) continue;
       const o = (y * image.width + x) * 4;
       if (Math.max(Math.abs(image.data[o] - br), Math.abs(image.data[o + 1] - bgG), Math.abs(image.data[o + 2] - bb)) > INK_THRESHOLD) ink = true;
     }
@@ -92,8 +116,16 @@ function inkCheck(image, dpr, box) {
 
 async function boxes(page, selector, { limit = 12 } = {}) {
   return page.evaluate(
-    ([selector, limit]) => {
+    ([selector, limit, controls]) => {
       const vh = window.visualViewport?.height ?? innerHeight;
+      const px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--px")) || 2;
+      const frames = (node) =>
+        node.matches(controls)
+          ? []
+          : [...node.querySelectorAll(controls)].filter((c) => c.offsetParent !== null && c.getBoundingClientRect().width > 0).map((c) => {
+              const b = c.getBoundingClientRect();
+              return { name: c.className.split(" ")[0] || c.tagName.toLowerCase(), left: b.left - px, right: b.right + px, top: b.top - px, bottom: b.bottom + px };
+            });
       return [...document.querySelectorAll(selector)]
         .filter((node) => node.offsetParent !== null || getComputedStyle(node).position === "fixed")
         .slice(0, limit)
@@ -107,7 +139,10 @@ async function boxes(page, selector, { limit = 12 } = {}) {
           const bb = parseFloat(s.borderBottomWidth);
           const bl = parseFloat(s.borderLeftWidth);
           const radius = Math.max(parseFloat(s.borderTopLeftRadius) || 0, node.matches(".sheet__head") ? 16 : 0);
+          const inner = frames(node);
           return {
+            frames: inner,
+            mask: inner.map((f) => [f.left - 1, f.top - 1, f.right + 1, f.bottom + px + 1]),
             label: node.className.split(" ")[0] + (node.dataset.action ? `[${node.dataset.action}]` : ""),
             left: r.left + bl,
             right: r.right - parseFloat(s.borderRightWidth),
@@ -131,7 +166,7 @@ async function boxes(page, selector, { limit = 12 } = {}) {
         })
         .filter((b) => b.visible);
     },
-    [selector, limit],
+    [selector, limit, CONTROLS],
   );
 }
 
@@ -140,6 +175,12 @@ async function measure(page, key, selectors) {
   const dpr = await page.evaluate(() => devicePixelRatio);
   for (const selector of selectors) {
     for (const box of await boxes(page, selector)) {
+      for (const f of box.frames) {
+        const top = +(f.top - box.top).toFixed(2);
+        const bottom = +(box.bottom - f.bottom).toFixed(2);
+        table.push({ key, target: `${box.label} › ${f.name}(틀)`, top, bottom, diff: Math.abs(top - bottom) });
+        ok(`${key} ${box.label} › ${f.name} 틀 세로 가운데`, Math.abs(top - bottom) <= 1, `위 ${top} · 아래 ${bottom}`);
+      }
       const m = inkCheck(image, dpr, box);
       if (!m) continue;
       table.push({ key, target: box.label, top: m.top, bottom: m.bottom, diff: m.diff });
@@ -409,7 +450,7 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
 
 // ── C·D 버튼·키 매핑(게임 설명서 input 이 정의했을 때만 — main.js setInput, 시험은 window.webgba.setInput(설명서 input)) ──
 // 정의 없음: C·D 없고 수정 전 빌드(UI_BASE_URL)와 픽셀 같음. C·D 정의(preset gba + c = bit 10, d = bit 11): C 는 A 위·D 는 B 위,
-// 크기 = A·B, 겹침 0·화면 안, 버튼 배율 = 정의 없을 때와 같음(좁은 세로는 게임 화면을 줄임), 터치 C·D → bit 10·11,
+// 크기 = A·B, 겹침 0·화면 안, 세로는 게임 화면 그대로(좁으면 버튼 배율·배치만 다시 맞춤, 결정 102-11), 터치 C·D → bit 10·11,
 // 두 손가락(A + C)·미끄러짐(C→D→B)·스틱 + C, 키보드 C·I / V·U. 끄면 처음 화면과 픽셀 같음.
 // 버튼 일부(방향·A·START 만): 나머지 자리 안 보임·겹침 0. 역할이 다른 버튼(a = bit 8 …): 터치·키보드가 그 bit.
 const CD_INPUT = { preset: "gba", buttons: [{ id: "C", role: "c", bit: 10 }, { id: "D", role: "d", bit: 11 }] };
@@ -435,6 +476,7 @@ const turnOnCD = (page) => page.evaluate((input) => (window.webgba.setInput ? wi
 const EXTRA_VIEWS = [
   { width: 320, height: 568, dpr: 2 },
   { width: 360, height: 640, dpr: 3 },
+  { width: 375, height: 667, dpr: 2 },
   { width: 390, height: 844, dpr: 3 },
   { width: 568, height: 320, dpr: 2 },
   { width: 640, height: 360, dpr: 2.625 },
@@ -553,11 +595,10 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
     continue;
   }
   if (view.width < view.height) {
-    // 세로: 버튼 배율은 정의 없을 때와 같고, 자리가 모자라면 게임 화면만 줄어든다(3:2 그대로)
-    const [w0, h0] = before.screen.split("x").map(Number);
-    const [w1, h1] = screen.split("x").map(Number);
-    ok(`${key}: 세로 버튼 배율 그대로(줄이지 않음), 모자라면 게임 화면만 줄임`, art === before.art && w1 <= w0 && h1 <= h0 && Math.abs(w1 / h1 - 1.5) < 0.02, `배율 ${before.art}→${art} · 게임 화면 ${before.screen} → ${screen}`);
-    console.log(`측정 ${key}: 세로 게임 화면 ${before.screen} → ${screen} · 배율 ${before.art}→${art}`);
+    // 세로(결정 102-11): 게임 화면은 정의 없을 때와 같은 크기(폭 맞춤 3:2), 버튼 배율·배치만 다시 맞춤(정수 배율, 들어가는 가장 큰 값)
+    const fit = await page.evaluate(() => document.getElementById("pad").dataset.fit ?? "rows");
+    ok(`${key}: 세로 게임 화면 그대로(줄이지 않음), 버튼은 정수 배율 ${art}·배치 ${fit}`, screen === before.screen && Number.isInteger(art) && art >= 2 && art <= before.art, `배율 ${before.art}→${art} · 게임 화면 ${before.screen} → ${screen} · 배치 ${fit}`);
+    console.log(`측정 ${key}: 세로 게임 화면 ${before.screen} → ${screen} · 배율 ${before.art}→${art} · 배치 ${fit}`);
   }
   const column = b.C.b <= b.A.t + 0.5 && Math.abs(b.C.cx - b.A.cx) < 0.5 && b.D.b <= b.B.t + 0.5 && Math.abs(b.D.cx - b.B.cx) < 0.5;
   ok(`${key}: C 는 A 바로 위, D 는 B 바로 위`, column, JSON.stringify({ C: [b.C.cx, b.C.b], A: [b.A.cx, b.A.t], D: [b.D.cx, b.D.b], B: [b.B.cx, b.B.t] }));
