@@ -1,6 +1,7 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
 import { resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { NetHost } from "../core/net/net-host.js";
 import { lang, locale, t } from "../shell/i18n.js";
 
 export const FRAME_MS = (280896 / 16777216) * 1000;
@@ -166,8 +167,16 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt, onChange }) {
+  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, netNick }) {
     this.canvas = canvas;
+    this.net = new NetHost({
+      log: (level, text) => core.log(level === "warn" ? "WARN" : "INFO", `[멀티플레이] ${text}`),
+      onWant: (request) => onNetWant?.(request),
+      onChange: (snapshot) => onNetChange?.(snapshot),
+      onNotice: (info) => onNetNotice?.(info),
+      nick: () => netNick?.() ?? "",
+    });
+    globalThis.document?.addEventListener?.("visibilitychange", () => this.syncAway());
     this.ctx = canvas.getContext("2d");
     this.image = this.ctx.createImageData(SCREEN_W, SCREEN_H);
     this.onStatus = onStatus ?? (() => {});
@@ -433,7 +442,15 @@ export class Player {
     const host = this.host;
     if (!host?.script || !this.running) return;
     host.setInput(this.paused ? 0 : this.resolveDpad(this.held | this.padNow));
-    host.setSpeed(this.speed);
+    host.setSpeed(this.runSpeed);
+  }
+
+  get runSpeed() {
+    return this.net.locked ? 1 : this.speed;
+  }
+
+  syncAway() {
+    this.net.setAway(Boolean(this.host) && (this.paused || globalThis.document?.visibilityState === "hidden"));
   }
 
   notePad(bits) {
@@ -587,9 +604,10 @@ export class Player {
     this.applyVolume();
   }
 
-  async start({ host, saveId, game }) {
+  async start({ host, saveId, game, net = null }) {
     await this.stop();
     this.host = host;
+    this.net.attach(host, net ?? {});
     this.saveId = saveId;
     this.game = game;
     this.saveBase = host.saveData();
@@ -608,7 +626,7 @@ export class Player {
         this.running = false;
         this.onHalt(why);
       };
-      host.onStats = ({ fps }) => this.onStats({ fps, speed: this.speed });
+      host.onStats = ({ fps }) => this.onStats({ fps, speed: this.runSpeed });
       host.onChange = () => this.onChange();
       host.setVolume(this.muted ? 0 : this.volume);
     } else {
@@ -626,12 +644,14 @@ export class Player {
     this.statAt = this.last;
     this.raf = requestAnimationFrame(this.tick);
     this.pushScript();
+    this.syncAway();
   }
 
   async stop() {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.running = false;
+    this.net.detach();
     if (this.host?.script) await this.host.flush();
     if (this.host) await this.flushSave({ final: true });
     this.host?.dispose?.();
@@ -653,6 +673,7 @@ export class Player {
     if (paused) this.audio?.node.port.postMessage("clear");
     this.last = performance.now();
     this.acc = 0;
+    this.syncAway();
     if (this.host.script) {
       // 틀은 requestAnimationFrame 을 붙잡고 소리를 멈춘다(게임이 pause 이벤트를 무시해도 화면·소리가 선다)
       if (paused) this.host.setInput(0);
@@ -755,7 +776,7 @@ export class Player {
       if (this.host.takeSaveDirty()) this.queueSave();
       return;
     }
-    const speed = this.speed;
+    const speed = this.runSpeed;
     this.acc += dt * speed;
     const padBits = this.padBits();
     this.notePad(padBits);
@@ -770,11 +791,14 @@ export class Player {
         this.released = 0;
       }
       this.sent = input;
+      this.net.beforeFrame();
       if (!this.host.runFrame(input)) {
         this.running = false;
+        this.net.leave();
         this.onHalt(this.host.halted);
         return;
       }
+      this.net.afterFrame();
       ran++;
       const samples = this.host.audio();
       if (samples && this.audio) this.playAudio(samples, squeeze);
@@ -835,7 +859,7 @@ export class Player {
   }
 
   async loadState(slot) {
-    if (!this.canState) return false;
+    if (!this.canState || this.net.locked) return false;
     const bytes = await core.storeRead(this.saveId, slot);
     if (!bytes.length) return null;
     if (this.host.script) return this.host.stateLoad(bytes);
@@ -849,10 +873,11 @@ export class Player {
   }
 
   async reset() {
-    if (!this.host) return false;
+    if (!this.host || this.net.locked) return false;
     if (this.host.script) await this.host.flush();
     await this.flushSave();
     const ok = await this.host.reset();
+    this.net.resetGame();
     this.audio?.node.port.postMessage("clear");
     this.acc = 0;
     if (!ok) {

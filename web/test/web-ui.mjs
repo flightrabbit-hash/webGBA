@@ -31,11 +31,12 @@ const ONLY_EXTRA = process.env.UI_EXTRA_ONLY === "1";
 // UI_LIBRARY_ONLY=1 이면 라이브러리(책장)·첫 화면 최근 줄 시험만(UI_LIBRARY=0 이면 그것만 뺌): 320 세로 ~ 낮은 가로까지 겹침·화면 안·잉크 가운데·
 // 정수 배율·꺼내기/넣기·정렬·실행 중 칸, 그리고 꺼내기·넣기 움직임(transform·opacity, 닫을 때 움직임 뒤 숨김).
 const ONLY_LIBRARY = process.env.UI_LIBRARY_ONLY === "1";
-const EXTRA = ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && process.env.UI_EXTRA !== "0");
+const ONLY_NET = process.env.UI_NET_ONLY === "1";
+const EXTRA = !ONLY_NET && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
-const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY;
-const MOTION = !ONLY_EXTRA && !ONLY_LIBRARY && (ONLY_MOTION || process.env.UI_MOTION !== "0");
-const LIBRARY = ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && process.env.UI_LIBRARY !== "0");
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_NET;
+const MOTION = !ONLY_NET && !ONLY_EXTRA && !ONLY_LIBRARY && (ONLY_MOTION || process.env.UI_MOTION !== "0");
+const LIBRARY = !ONLY_NET && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && process.env.UI_LIBRARY !== "0"));
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "390x844|ko|info": "세로_390x844_정보_게임_소리.png","844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
@@ -1258,6 +1259,85 @@ if (LIBRARY) {
   fs.writeFileSync(path.join(SHOTS, "라이브러리_꺼내기_프레임.txt"), ["pull", "put"].map((name) => `${name}: ${out[name].map((f) => `${f.t}ms 옆면 ${f.op}/${f.ty}px${f.out ? " 빈칸" : ""} · 앞면 ${f.packOp} · 칸 ${f.state} ${f.gridOp}`).join(" | ")}`).join("\n"));
   await context.close();
 }
+
+// UI_NET_WGBA=<멀티플레이 예제 .wgba> 이면 멀티플레이 연결 창(고르기·방장 코드·QR·참가 코드 넣기)을 세 화면 크기 × 세 언어로 잰다(UI_NET_ONLY=1 이면 그것만).
+async function netChecks() {
+  const bytes = fs.readFileSync(process.env.UI_NET_WGBA).toString("base64");
+  for (const view of [...VIEWS, ...(VIEW_FILTER && !VIEW_FILTER.has("320x568") ? [] : [{ name: "320x568", viewport: { width: 320, height: 568 } }])]) {
+    for (const lang of LANGS) {
+      const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
+      await context.addInitScript((lang) => {
+        Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+        if (window !== window.top) return;
+        localStorage.setItem("webgba.installHint", "1");
+        localStorage.setItem("webgba.prefs", JSON.stringify({ lang, netNo: "1234" }));
+      }, lang);
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(URL_BASE);
+      await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+      await page.evaluate(async (b64) => {
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        await window.webgba.openFiles([new File([data], "net-demo.wgba")]);
+      }, bytes);
+      await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+      await page.evaluate(() => {
+        window.webgba.player.keyDown("KeyZ");
+        setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
+      });
+      await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+      await page.waitForTimeout(500);
+      const base = `${view.name}|${lang}`;
+      const parts = [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"];
+      await measure(page, `${base}|net-choose`, parts);
+      await fits(page, `${base}|net-choose`, ".sheet__panel");
+      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_고르기.png`) });
+      await page.click('[data-action="net-make"]');
+      await page.waitForFunction(() => document.querySelector('[data-action="net-offer"]')?.value, null, { timeout: 10000 });
+      await page.waitForTimeout(500);
+      await measure(page, `${base}|net-host`, [".sheet__head", ".net-member", ".net-line", ".net-actions"]);
+      await rows(page, `${base}|net-host`, ".net-member");
+      await page.click('[data-action="net-offer-qr"]');
+      await page.waitForTimeout(400);
+      const qr = await page.evaluate(() => {
+        const c = document.querySelector(".net-qr__img");
+        if (!c) return null;
+        const r = c.getBoundingClientRect();
+        return { w: r.width, h: r.height, px: c.width, inView: r.right <= innerWidth + 0.5 && r.left >= -0.5 };
+      });
+      ok(`${base}|net-qr QR 그림(정사각·화면 폭 안)`, qr && Math.abs(qr.w - qr.h) < 0.5 && qr.inView && qr.w >= 150, JSON.stringify(qr));
+      const lay = await page.evaluate(() => {
+        const body = document.getElementById("sheetBody");
+        const b = body.getBoundingClientRect();
+        const head = document.querySelector(".sheet__head").getBoundingClientRect();
+        const kids = [...body.children].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
+        const deep = [...body.querySelectorAll(".net-invite > *, .net-line > *, .net-member")].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
+        let overlap = 0;
+        for (let i = 1; i < kids.length; i++) if (kids[i].top < kids[i - 1].bottom - 0.5) overlap++;
+        return { overlap, wide: deep.filter((r) => r.right > b.right + 0.5 || r.left < b.left - 0.5).length, hScroll: body.scrollWidth > body.clientWidth + 1, top: Math.round((kids[0].top - head.bottom) * 10) / 10 };
+      });
+      ok(`${base}|net-qr 겹침·가로 넘침 없음, 제목 위 여백 16`, lay.overlap === 0 && lay.wide === 0 && !lay.hScroll && lay.top === 16, JSON.stringify(lay));
+      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_방장코드_QR.png`) });
+      await page.click('[data-action="net-cancel"]');
+      await page.waitForTimeout(400);
+      await page.evaluate(() => {
+        window.webgba.player.keyDown("KeyZ");
+        setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
+      });
+      await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+      await page.click('[data-action="net-join"]');
+      await page.waitForTimeout(400);
+      await measure(page, `${base}|net-join`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await fits(page, `${base}|net-join`, ".sheet__panel");
+      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_참가.png`) });
+      ok(`${base}|net 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+      await context.close();
+    }
+  }
+}
+
+if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0") await netChecks();
 
 if (MOTION) {
   await motionChecks("chromium", browser);

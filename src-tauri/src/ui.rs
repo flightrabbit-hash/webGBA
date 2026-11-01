@@ -298,8 +298,8 @@ fn own_page(url: &tauri::Url) -> bool {
 /// (`location = "https://…?읽은 내용"`, 링크·meta refresh)를 막는다.
 #[cfg(windows)]
 fn tame_webview<R: Runtime>(window: &tauri::WebviewWindow<R>, dev_tools: bool) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-    use webview2_com::{take_pwstr, NavigationStartingEventHandler};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Settings3, COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ, COREWEBVIEW2_PERMISSION_STATE_ALLOW};
+    use webview2_com::{take_pwstr, NavigationStartingEventHandler, PermissionRequestedEventHandler};
     use windows::core::{Interface, PWSTR};
 
     let _ = window.with_webview(move |platform| unsafe {
@@ -326,6 +326,27 @@ fn tame_webview<R: Runtime>(window: &tauri::WebviewWindow<R>, dev_tools: bool) {
         let mut token = 0i64;
         if core.add_FrameNavigationStarting(&frames, &mut token).is_err() {
             crate::logging::write("ERROR", "틀 이동 거르기를 걸지 못함");
+        }
+        // 멀티플레이 연결 창의 PASTE(navigator.clipboard.readText): 앱 화면 자신(ui.localhost)만 묻지 않고 허락한다.
+        // 게임 틀(빌드 출처·자체 JS 틀)의 요청은 WebView2 기본 동작 그대로.
+        let paste = PermissionRequestedEventHandler::create(Box::new(|_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+            args.PermissionKind(&mut kind)?;
+            if kind != COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ {
+                return Ok(());
+            }
+            let mut uri = PWSTR::null();
+            args.Uri(&mut uri)?;
+            let uri = take_pwstr(uri);
+            if uri.parse::<tauri::Url>().is_ok_and(|u| own_page(&u)) {
+                args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        if core.add_PermissionRequested(&paste, &mut token).is_err() {
+            crate::logging::write("ERROR", "클립보드 읽기 허락 처리기를 걸지 못함");
         }
     });
 }

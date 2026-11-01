@@ -665,8 +665,8 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 ### 7. Multiplayer
 
-> Multiplayer protocol 1 (draft). **The current webGBA does not connect players yet**: it does not open games with `needs: ["net"]`, never calls `Web_NetHost`, and `webgba.net` is `null`.
-> Games should simply hide their link menus in that case (7.8). The rest of this chapter is the planned protocol and may change.
+> Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi by **exchanging connection codes (or QR) twice** (room codes and a nearby-room list come in a later version). It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
+> An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
 
 #### 7.1 Overview
 
@@ -832,17 +832,17 @@ It does not open:
 
 ```text
 ┌ Multiplayer · Trade (2 players) ──────────┐
-│  [ Create room ]   [ Join with code ]      │
-│                                            │
-│  Nearby rooms                              │
-│   ● Player 4821 · Trade · 1/2     [Join]   │
-│   ○ Player 7730 · other version  (dimmed)  │
-│                                            │
-│  Connect without internet (code·QR)  [ > ] │
+│  Nickname [ Player 4821 ]                  │
+│  [ Host a room ]   [ Join ]                │
 │                                [ Cancel ]  │
 └────────────────────────────────────────────┘
+
+Host:  ① give the host code (111 characters · QR) to the other player → ② enter their answer code and connect
+Guest: ① enter the host code and press Next → ② give the answer code (· QR) to the host
 ```
 
+- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair is not host/host after connecting, the link is dropped.
+- A code is for one person, once. For 3 or more players the host makes a new host code per player (used codes and answer codes for another invite are refused).
 - Requests with a fixed role (create only, join only) start on that screen.
 - When the minimum player count is reached, it shows "Connected" and closes after 1 second. Any further confirmation (e.g. "Press A to start") happens inside the game.
 - Until the maximum is reached, the room host keeps a small indicator ("2/4 · waiting"); more players arrive as `JOIN`.
@@ -855,7 +855,8 @@ During a session the host keeps to: fast-forward and speed changes off (1×), lo
 
 - If the same keys and messages always give the same result (random numbers from a seed inside the game), `TO_ORDERED` alone keeps everyone in the same state.
 - Messages arrive between frames, so queue them and process them inside a frame.
-- If the host does not know multiplayer (`Web_NetHost` never called / `webgba.net` is `null`), hide the link menus. The current webGBA is such a host.
+- If the host does not know multiplayer (`Web_NetHost` never called / `webgba.net` is `null`), hide the link menus (older webGBA).
+- Examples: `docs/wgba/examples/net-webapi/` (① small C, no ROM) and `net-script/` (② one JS file) — A looks for players, the host's START runs one round, and everyone ends with the same hash.
 - By default only the same game build can connect (`compat: "exact"`). If different versions share the same link rules, put the same string in `compat`.
 - Do not send ROMs or other people's works in messages.
 

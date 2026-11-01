@@ -56,8 +56,11 @@ export function inspectModule(module) {
     missing,
     canState: exports.has("Web_StateSize") && exports.has("Web_StateSave") && exports.has("Web_StateLoad"),
     canPointer: exports.has("Web_Pointer"),
+    canNet: NET_EXPORTS.every((name) => exports.has(name)),
   };
 }
+
+const NET_EXPORTS = ["Web_NetWanted", "Web_NetEvent", "Web_NetOut", "Web_NetOutLen", "Web_NetOutClear", "Web_NetInBuffer", "Web_NetIn"];
 
 export const ROM_SECTION = "webgba.rom";
 const ROM_MAGIC = "WGRM";

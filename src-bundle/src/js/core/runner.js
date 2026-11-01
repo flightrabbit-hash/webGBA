@@ -507,8 +507,56 @@
       },
       exit: (reason) => send({ type: "exit", reason: String(reason ?? "").slice(0, 300) }),
       log: (level, text) => report(level, text),
-      net: null,
+      net: makeNet(data.net),
     });
+  }
+
+  const net = { host: null, onevent: null, onrecv: null, serial: 0 };
+  function makeNet(info) {
+    if (!info || typeof info !== "object") return null;
+    net.host = Object.freeze({ protocol: Number(info.protocol) || 1, ordered: info.ordered !== false, inputs: Boolean(info.inputs) });
+    const toOf = (to) => (to === "ordered" || to === "all" ? to : Number.isInteger(to) && to >= 0 && to < 8 ? to : null);
+    return Object.freeze({
+      get host() {
+        return net.host;
+      },
+      want: (options = {}) => {
+        net.serial = (net.serial % 255) + 1;
+        const o = options && typeof options === "object" ? options : {};
+        send({ type: "net", op: "want", purpose: String(o.purpose ?? ""), min: Number.isInteger(o.min) ? o.min : undefined, max: Number.isInteger(o.max) ? o.max : undefined, role: ["make", "join"].includes(o.role) ? o.role : "any", serial: net.serial });
+        return net.serial;
+      },
+      unwant: () => send({ type: "net", op: "unwant" }),
+      send: (to, bytes) => {
+        const target = toOf(to);
+        if (target === null) throw new Error(`webgba.net.send: 받는 곳이 규칙 밖입니다: ${to}`);
+        const view = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : null;
+        if (!view || !view.length || view.length > 16384) throw new Error("webgba.net.send: 바이트는 1~16384");
+        const data = view.slice().buffer;
+        send({ type: "net", op: "send", to: target, data }, [data]);
+      },
+      get onevent() {
+        return net.onevent;
+      },
+      set onevent(fn) {
+        net.onevent = typeof fn === "function" ? fn : null;
+      },
+      get onrecv() {
+        return net.onrecv;
+      },
+      set onrecv(fn) {
+        net.onrecv = typeof fn === "function" ? fn : null;
+      },
+    });
+  }
+  function onNet(data) {
+    try {
+      if (data.op === "hello" && net.host) net.host = Object.freeze({ protocol: Number(data.protocol) || 1, ordered: data.ordered !== false, inputs: Boolean(data.inputs) });
+      else if (data.op === "event" && net.onevent) net.onevent(data.kind | 0, data.a >>> 0, data.b >>> 0);
+      else if (data.op === "recv" && net.onrecv && data.data instanceof ArrayBuffer) net.onrecv(data.from | 0, new Uint8Array(data.data));
+    } catch (error) {
+      report("error", error);
+    }
   }
 
   function importText(text) {
@@ -663,6 +711,9 @@
         break;
       case "ping":
         send({ type: "pong", id: data.id });
+        break;
+      case "net":
+        onNet(data);
         break;
     }
   }

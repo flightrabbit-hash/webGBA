@@ -1,0 +1,22 @@
+{
+  "wgba": 1,
+  "id": "com.example.netdemo",
+  "version": "1.0.0",
+  "name": { "en": "Net demo", "ko": "통신 예제", "ja": "通信サンプル" },
+  "shortName": "Net demo",
+  "runtime": "webapi",
+  "author": "example",
+  "license": "MIT",
+  "screen": { "width": 240, "height": 160 },
+  "rom": { "required": false },
+  "input": { "preset": "gba" },
+  "multiplayer": {
+    "protocol": 1,
+    "players": { "min": 2, "max": 4 },
+    "compat": "exact",
+    "purposes": [
+      { "id": "party", "name": { "ko": "친구 게임", "en": "Party", "ja": "なかま" }, "players": [2, 4] }
+    ]
+  },
+  "cart": { "color": "#2f7d5b" }
+}

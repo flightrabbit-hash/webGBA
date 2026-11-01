@@ -2024,3 +2024,213 @@ label.cfg__swatch-row {
     transition: none;
   }
 }
+
+.dialog--net {
+  --dialog-w: 480px;
+}
+
+.dialog--net .dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  user-select: none;
+}
+
+.dialog--net .dialog__body p {
+  margin: 0;
+}
+
+.btn--danger {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger-hi);
+}
+
+.btn--danger:hover {
+  border-color: var(--danger-line-hi);
+}
+
+.btn:disabled {
+  color: var(--off);
+  cursor: default;
+}
+
+.net-note {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.net-step {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.net-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pad-tight);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.net-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.net-group__title {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.net-count {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.net-members {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.net-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+
+.net-member.is-current {
+  border-color: var(--accent-line);
+}
+
+.net-slot {
+  flex: none;
+  width: 30px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: 600 11px/20px var(--font-ui);
+  text-align: center;
+}
+
+.net-member__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.net-member__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-member__meta {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.net-code {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font: 12px/16px var(--font-mono);
+  word-break: break-all;
+  resize: none;
+  user-select: text;
+}
+
+.net-code:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.net-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-tight);
+}
+
+.net-qr {
+  display: flex;
+  justify-content: center;
+}
+
+.net-qr__img {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.net-scan {
+  display: flex;
+  justify-content: center;
+}
+
+.net-scan__video {
+  width: 100%;
+  max-width: 320px;
+  height: 220px;
+  object-fit: cover;
+  background: var(--bg-sunken);
+}
+
+.net-error {
+  color: var(--danger-hi);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.net-help {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.net-nick {
+  width: 200px;
+}
+
+.net-paste-hint {
+  color: var(--global-hi);
+}

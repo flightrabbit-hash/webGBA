@@ -1,0 +1,34 @@
+{
+  "wgba": 1,
+  "id": "com.example.netscript",
+  "version": "1.0.0",
+  "name": { "en": "Net script demo", "ko": "통신 JS 예제", "ja": "通信JSサンプル" },
+  "shortName": "Net JS",
+  "runtime": "script",
+  "entry": { "style": "module" },
+  "author": "example",
+  "license": "MIT",
+  "screen": { "width": 240, "height": 160 },
+  "rom": { "required": false },
+  "save": { "kind": "none" },
+  "input": {
+    "buttons": [
+      { "id": "UP", "role": "up", "code": "ArrowUp" },
+      { "id": "DOWN", "role": "down", "code": "ArrowDown" },
+      { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
+      { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
+      { "id": "A", "role": "a", "code": "KeyZ" },
+      { "id": "B", "role": "b", "code": "KeyX" },
+      { "id": "START", "role": "start", "code": "Enter" },
+      { "id": "SELECT", "role": "select", "code": "Backspace" }
+    ]
+  },
+  "multiplayer": {
+    "protocol": 1,
+    "players": { "min": 2, "max": 4 },
+    "purposes": [
+      { "id": "party", "name": { "ko": "친구 게임", "en": "Party", "ja": "なかま" }, "players": [2, 4] }
+    ]
+  },
+  "cart": { "color": "#5b3f8c" }
+}

@@ -5,6 +5,7 @@ const TOOL_ICONS = {
   btnLibrary: () => "library",
   btnSaves: () => "saves",
   btnQuick: () => "quickslot",
+  btnNet: () => "multiplayer",
   btnFast: (s) => (s.fast ? "fastForwardOn" : "fastForwardOff"),
   btnSound: (s) => (s.muted ? "soundOff" : "soundOn"),
   btnSettings: () => "settings",

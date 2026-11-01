@@ -263,7 +263,7 @@ ok(labelBroken && !labelBroken.images.label && labelBroken.images.front, "앱 �
 ok((await errCode(a.subarray(0, a.length - 1))) === "length", "앱 읽기: 잘린 파일(목차의 파일 길이와 다름) 열지 않음");
 const newer = (await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, needs: ["teleport"] } })).bytes;
 ok((await errCode(newer)) === "newer", "앱 읽기: 모르는 needs → 새 webGBA 필요");
-ok(supportProblem(manifestB) === null && supportProblem({ ...manifestA, needs: ["net"] })?.code === "needs" && supportProblem({ ...manifestA, screen: { width: 320, height: 240 } }) === null && supportProblem(manifestA) === null, "앱 읽기: script·240×160 아닌 화면은 엶(S4), needs net 은 가림");
+ok(supportProblem(manifestB) === null && supportProblem({ ...manifestA, needs: ["net"] }) === null && supportProblem({ ...manifestA, needs: ["net"] }, { net: false })?.code === "needs" && supportProblem({ ...manifestA, screen: { width: 320, height: 240 } }) === null && supportProblem(manifestA) === null, "앱 읽기: script·240×160 아닌 화면은 엶(S4), needs net 도 엶(MP1 — 모르는 호스트면 가림)");
 const rb = await readWgba(b);
 const levels = rb && (await rb.chunk("data.levels"));
 const noChunk = await rb.chunk("code").then(() => "열림", (e) => e.code);

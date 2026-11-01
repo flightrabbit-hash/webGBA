@@ -7,8 +7,8 @@ import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED,
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
-/** 이 호스트가 지금 해 줄 수 있는 needs(멀티플레이는 아직). */
-export const HOST_HAS = Object.freeze({ pointer: true, state: true, keyboard: true, net: false });
+/** 이 호스트가 지금 해 줄 수 있는 needs. */
+export const HOST_HAS = Object.freeze({ pointer: true, state: true, keyboard: true, net: true });
 
 /**
  * 파일 전체 바이트 → { toc, manifest, build, code, romPayload, romSha1, images } 또는 null(목차 없음).

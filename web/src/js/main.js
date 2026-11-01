@@ -2,7 +2,8 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
 import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
 import { bootScript } from "./core/script-host.js";
-import { resolveInput, romHeader, updateAction, wasmSections } from "./core/wgba-format.js";
+import { resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
+import { defaultNick, NetWindow, noticeLevel, noticeText } from "./app/net-window.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
 import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
@@ -41,6 +42,7 @@ const el = {
   menuPanel: document.querySelector(".bar__group--files"),
   btnSaves: $("btnSaves"),
   btnQuick: $("btnQuick"),
+  btnNet: $("btnNet"),
   btnFast: $("btnFast"),
   btnSound: $("btnSound"),
   btnMenu: $("btnMenu"),
@@ -198,7 +200,120 @@ const player = new WebPlayer({
     syncControls();
   },
   onChange: () => syncControls(),
+  onNetWant: (request) => netWant(request),
+  onNetChange: (snap) => {
+    netWin?.update(snap);
+    syncControls();
+  },
+  onNetNotice: (info) => {
+    const text = noticeText(info);
+    if (text) toast(text, noticeLevel(info));
+  },
+  netNick: () => netNick(),
 });
+
+function netNick() {
+  let no = state.prefs.netNo;
+  if (!/^\d{4}$/.test(String(no ?? ""))) {
+    no = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    savePrefs({ netNo: no });
+  }
+  return String(state.prefs.netNick ?? "").trim() || defaultNick(no);
+}
+
+const netKit = {
+  touch: window.matchMedia("(pointer: coarse)").matches,
+  qrSize: 220,
+  make: (tag, className, text) => make(tag, className, text),
+  button: ({ label, kind = "", onClick, disabled = false, action = "" }) => button({ label, kind, onClick, disabled, action }),
+  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), join: t("net.join") })[code] ?? code,
+  action: ({ id, primary = false, onClick }) => {
+    const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave") }[id] ?? id;
+    return button({ label, kind: primary ? "primary" : id === "leave" ? "danger" : "", onClick, action: `net-${id}` });
+  },
+  textArea: ({ value = "", readOnly = false, rows = 3, label = "", placeholder = "", action = "", onInput }) => {
+    const area = make("textarea", "net-code");
+    area.value = value;
+    area.rows = rows;
+    area.readOnly = readOnly;
+    area.spellcheck = false;
+    area.autocomplete = "off";
+    area.setAttribute("autocapitalize", "off");
+    area.setAttribute("aria-label", label);
+    if (placeholder) area.placeholder = placeholder;
+    if (action) area.dataset.action = action;
+    if (readOnly) area.addEventListener("focus", () => area.select());
+    if (onInput) area.addEventListener("input", () => onInput(area.value));
+    return area;
+  },
+  textInput: ({ value = "", maxLength = 16, label = "", action = "", onInput }) => {
+    const input = make("input", "dialog__input net-nick");
+    input.type = "text";
+    input.value = value;
+    input.maxLength = maxLength;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", label);
+    if (action) input.dataset.action = action;
+    if (onInput) input.addEventListener("input", () => onInput(input.value));
+    return input;
+  },
+  field: ({ label, control }) => field(label, "", control),
+  row: ({ tag, name, meta, current }) => {
+    const li = make("li", `item net-member${current ? " is-current" : ""}`);
+    const main = make("div", "item__main");
+    main.append(make("span", "item__name", name), make("span", "item__meta", meta));
+    li.append(make("span", "net-slot", tag), main);
+    return li;
+  },
+  line: (...nodes) => {
+    const row = make("div", "net-line");
+    row.append(...nodes);
+    return row;
+  },
+  list: (items, className) => {
+    const ul = make("ul", className);
+    for (const text of items) ul.append(make("li", "", text));
+    return ul;
+  },
+  note: (text) => make("p", "note net-note", text),
+  step: (text) => make("p", "net-step", text),
+  group: (title, ...children) => group(title, ...children),
+  title: (text) => {
+    el.sheetTitle.textContent = text;
+  },
+  mount: (body, actions) => {
+    const row = make("div", "net-actions");
+    row.append(...actions);
+    el.sheetBody.replaceChildren(...body, row);
+  },
+  notice: (text, level) => toast(text, level),
+  done: () => {
+    if (state.sheet === "net") closeSheet({ force: true });
+  },
+  nick: () => netNick(),
+  setNick: (value) => savePrefs({ netNick: String(value).slice(0, 16) }),
+};
+
+const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
+
+function netWant(request) {
+  if (!request) {
+    if (state.sheet === "net") netWin?.close();
+    syncControls();
+    return;
+  }
+  openNet(request);
+}
+
+function openNet(request = player.net.request) {
+  if (!request && !player.net.active) return;
+  if (state.menuOpen) setMenu(false);
+  if (state.dialogDone) state.dialogDone(null);
+  if (state.sheet && state.sheet !== "net") closeSheet();
+  if (state.sheet !== "net") openSheet("net");
+  netWin.show(request);
+}
 
 const padCode = (name) => `Pad:${name}`;
 
@@ -494,7 +609,7 @@ function syncTools() {
     skin.tool(node, {
       size,
       disabled: toolOff(node),
-      on: (node === el.btnFast && player.gameSpeed !== 1) || (node === el.btnSound && state.prefs.muted),
+      on: (node === el.btnFast && player.gameSpeed !== 1) || (node === el.btnSound && state.prefs.muted) || (node === el.btnNet && player.net.active),
       fast: player.gameSpeed !== 1,
       muted: state.prefs.muted,
       full,
@@ -524,6 +639,14 @@ function syncControls() {
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick()));
+  const netOn = running && Boolean(player.net.request || player.net.active);
+  if (el.btnNet.hidden !== !netOn) el.btnNet.hidden = !netOn;
+  if (el.btnFast.hidden !== netOn) el.btnFast.hidden = netOn;
+  const netBadge = el.btnNet.querySelector(".tool__badge") ?? el.btnNet.appendChild(make("span", "tool__badge"));
+  const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
+  if (netBadge.textContent !== netText) netBadge.textContent = netText;
+  if (netBadge.hidden !== !netText) netBadge.hidden = !netText;
+  el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();
 }
 
@@ -700,7 +823,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line";
+const INK_SINGLE = ".net-slot, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 
 function inkShift(contentTop, contentBottom, ink) {
@@ -1232,7 +1355,7 @@ async function readSave(id) {
 const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|wgba|wasm)$/i, "")}.sav`;
 
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
-async function startHosted(host, meta, input = null) {
+async function startHosted(host, meta, input = null, net = null) {
   const saveId = saveIdOf(meta);
   state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "" };
   context.game = meta.name;
@@ -1245,9 +1368,9 @@ async function startHosted(host, meta, input = null) {
   syncControls();
   layout();
   applyPlayerPrefs();
-  await player.start({ host, saveId, game: saveId });
+  await player.start({ host, saveId, game: saveId, net });
   applyPlayerPrefs();
-  hold("sheet", Boolean(state.sheet));
+  hold("sheet", Boolean(state.sheet) && state.sheet !== "net");
   syncControls();
   updateWake();
 }
@@ -1282,7 +1405,7 @@ async function openScript(meta, wgba) {
     onFrame: (frame) => (state.scriptFrame = frame),
     onHostKey: frameKey,
   });
-  await startHosted(host, meta, input);
+  await startHosted(host, meta, input, { manifest: wgba.manifest, build: wgba.build });
   return meta.name;
 }
 
@@ -1360,7 +1483,7 @@ async function openWasm(meta, bytes, wgba) {
   }
   const save = await readSave(saveIdOf(meta));
   const { host } = await bootHost({ module, rom: rom.bytes, save, log: hostLog, screen: wgba ? screenOf(wgba.manifest) : null });
-  await startHosted(host, meta, wgba ? resolveInput(wgba.manifest) : null);
+  await startHosted(host, meta, wgba ? resolveInput(wgba.manifest) : null, { manifest: wgba?.manifest ?? null, build: wgba ? wgba.build : report.canNet ? await sha256Hex(bytes) : "" });
   return meta.name;
 }
 
@@ -1805,6 +1928,10 @@ function togglePause() {
 const speedText = (value) => t("web.speed.value", { n: value });
 
 function setSpeed(value) {
+  if (player.net.locked) {
+    toast(t("net.blockSpeed"), "warn");
+    return;
+  }
   savePrefs({ gameSpeed: SPEEDS.includes(value) ? value : 1 });
   applyPlayerPrefs();
   syncControls();
@@ -1818,6 +1945,10 @@ function toggleFast() {
 
 async function resetGame() {
   if (!state.game) return;
+  if (player.net.locked) {
+    toast(t("net.blockReset"), "warn");
+    return;
+  }
   if (!(await confirmDialog(t("confirm.resetTitle"), t("confirm.resetText"), t("menu.reset")))) return;
   hold("user", false);
   if (await player.reset()) toast(t("status.reset"));
@@ -1845,13 +1976,18 @@ function openSheet(name) {
     history.pushState({ webgbaSheet: true }, "");
     state.sheetHistory = true;
   }
-  hold("sheet", true);
+  hold("sheet", name !== "net");
   renderSheet();
   el.sheetClose.focus({ preventScroll: true });
 }
 
-function closeSheet({ fromHistory = false } = {}) {
+function closeSheet({ fromHistory = false, force = false } = {}) {
   if (!state.sheet) return;
+  if (state.sheet === "net" && !force && netWin.open) {
+    if (fromHistory) state.sheetHistory = false;
+    netWin.requestClose();
+    return;
+  }
   state.sheet = "";
   state.lib.savesFor = null;
   hideLater(el.sheet, () => {
@@ -1870,7 +2006,7 @@ function closeSheet({ fromHistory = false } = {}) {
 function renderSheet() {
   const name = state.sheet;
   if (!name) return;
-  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo }[name];
+  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo, net: () => netWin.open && netWin.render() }[name];
   render?.();
 }
 
@@ -2369,6 +2505,10 @@ async function quickSave(slot, { auto = false } = {}) {
 
 async function quickLoad(slot) {
   if (!canQuick()) return false;
+  if (player.net.locked) {
+    toast(t("net.blockLoad"), "warn");
+    return false;
+  }
   try {
     const result = await player.loadState(slot);
     if (result) {
@@ -2402,7 +2542,7 @@ function revokeQuickUrls() {
 }
 
 function slotUsable(slot) {
-  return state.quick.tab === "save" ? slot !== AUTO_SLOT : state.quick.info.has(slot);
+  return state.quick.tab === "save" ? slot !== AUTO_SLOT : !player.net.locked && state.quick.info.has(slot);
 }
 
 function applyQuickTab() {
@@ -2489,6 +2629,7 @@ async function renderQuick() {
       failed ? make("p", "note note--warn", t("web.noStore")) : null,
       make("p", "note", minutes ? t("web.quick.noteAuto", { n: minutes }) : t("web.quick.noteAutoOff")),
       make("p", "note", t("web.quick.noteSav")),
+      player.net.locked ? make("p", "note note--warn", t("net.blockLoad")) : null,
     ),
   );
   applyQuickTab();
@@ -2906,6 +3047,7 @@ function wire() {
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
   el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
+  el.btnNet.addEventListener("click", () => openNet());
   el.btnSettings.addEventListener("click", () => openSheet("settings"));
   el.btnSound.addEventListener("click", toggleSound);
   el.btnMenu.addEventListener("click", () => setMenu(!state.menuOpen));
@@ -3241,7 +3383,7 @@ async function boot() {
   if (!state.storeBroken) store.persist();
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD };
+window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick } };
 
 boot().catch((error) => {
   console.error(error);

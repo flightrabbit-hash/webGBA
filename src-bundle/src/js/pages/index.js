@@ -6,7 +6,8 @@ import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
-import { resolveInput } from "../core/wgba-format.js";
+import { resolveInput, sha256Hex } from "../core/wgba-format.js";
+import { defaultNick, NetWindow, noticeLevel, noticeText } from "../app/net-window.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
 import * as i18n from "../shell/i18n.js";
@@ -53,6 +54,7 @@ const el = {
   btnFast: $("btn-fast"),
   btnStateSave: $("btn-state-save"),
   btnStateLoad: $("btn-state-load"),
+  btnNet: $("btn-net"),
   btnMute: $("btn-mute"),
   btnMuteIcon: $("btn-mute-icon"),
   btnSettings: $("btn-settings"),
@@ -96,7 +98,8 @@ const player = new Player({
   canvas: el.screen,
   onStatus: (text, level) => status(text, level),
   onStats: ({ fps, speed }) => {
-    el.statusRight.textContent = t("status.stats", { fps: fps.toFixed(1), speed, slot: slot() });
+    const stats = t("status.stats", { fps: fps.toFixed(1), speed, slot: slot() });
+    el.statusRight.textContent = player.net.active ? `${netStatus()} · ${stats}` : stats;
   },
   onHalt: (why) => {
     status(t("status.halted", { reason: why || t("status.haltUnknown") }), "error");
@@ -104,7 +107,166 @@ const player = new Player({
     syncControls();
   },
   onChange: () => syncControls(),
+  onNetWant: (request) => netWant(request),
+  onNetChange: (snap) => {
+    netWin?.update(snap);
+    syncControls();
+  },
+  onNetNotice: (info) => {
+    const text = noticeText(info);
+    if (text) status(text, noticeLevel(info));
+  },
+  netNick: () => netNick(),
 });
+
+function netNick() {
+  let no = state.prefs.netNo;
+  if (!/^\d{4}$/.test(String(no ?? ""))) {
+    no = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    state.prefs.netNo = no;
+    savePrefs({ netNo: no });
+  }
+  return String(state.prefs.netNick ?? "").trim() || defaultNick(no);
+}
+
+function netStatus() {
+  const s = player.net.session;
+  if (!s || s.closed) return "";
+  return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
+}
+
+const node = (tag, className, text) => {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+const netKit = {
+  touch: false,
+  qrSize: 200,
+  make: node,
+  button: ({ label, kind = "", onClick, disabled = false, action = "" }) => {
+    const b = node("button", kind === "primary" ? "btn btn--go net-btn" : kind === "danger" ? "btn btn--danger net-btn" : "btn net-btn", label);
+    b.type = "button";
+    b.disabled = disabled;
+    if (action) b.dataset.action = action;
+    if (onClick) b.addEventListener("click", onClick);
+    return b;
+  },
+  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", join: "JOIN" })[code] ?? code.toUpperCase(),
+  action: ({ id, primary = false, onClick }) => {
+    const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE" }[id] ?? id.toUpperCase());
+    b.type = "button";
+    b.dataset.action = `net-${id}`;
+    b.addEventListener("click", onClick);
+    return b;
+  },
+  textArea: ({ value = "", readOnly = false, rows = 3, label = "", placeholder = "", action = "", onInput }) => {
+    const area = node("textarea", "net-code");
+    area.value = value;
+    area.rows = rows;
+    area.readOnly = readOnly;
+    area.spellcheck = false;
+    area.setAttribute("aria-label", label);
+    if (placeholder) area.placeholder = placeholder;
+    if (action) area.dataset.action = action;
+    if (readOnly) area.addEventListener("focus", () => area.select());
+    if (onInput) area.addEventListener("input", () => onInput(area.value));
+    return area;
+  },
+  textInput: ({ value = "", maxLength = 16, label = "", action = "", onInput }) => {
+    const input = node("input", "cfg__input net-nick");
+    input.type = "text";
+    input.value = value;
+    input.maxLength = maxLength;
+    input.spellcheck = false;
+    input.setAttribute("aria-label", label);
+    if (action) input.dataset.action = action;
+    if (onInput) input.addEventListener("input", () => onInput(input.value));
+    return input;
+  },
+  field: ({ label, control }) => {
+    const row = node("label", "net-field");
+    row.append(node("span", "net-field__label", label), control);
+    return row;
+  },
+  row: ({ tag, name, meta, current }) => {
+    const li = node("li", `net-member${current ? " is-current" : ""}`);
+    const text = node("span", "net-member__text");
+    text.append(node("span", "net-member__name", name), node("span", "net-member__meta", meta));
+    li.append(node("span", "net-slot", tag), text);
+    return li;
+  },
+  line: (...nodes) => {
+    const row = node("div", "net-line");
+    row.append(...nodes);
+    return row;
+  },
+  list: (items, className) => {
+    const ul = node("ul", className);
+    for (const text of items) ul.append(node("li", "", text));
+    return ul;
+  },
+  note: (text) => node("p", "net-note", text),
+  step: (text) => node("p", "net-step", text),
+  group: (title, ...children) => {
+    const box = node("section", "net-group");
+    if (title) box.append(node("h3", "net-group__title", title));
+    box.append(...children.filter(Boolean));
+    return box;
+  },
+  title: (text) => {
+    el.dialogTitle.textContent = text;
+  },
+  mount: (body, actions) => {
+    el.dialogBody.replaceChildren(...body);
+    el.dialogActions.replaceChildren(...actions);
+  },
+  notice: (text, level) => status(text, level === "warn" ? "warn" : "info"),
+  done: () => closeNetLayer(),
+  nick: () => netNick(),
+  setNick: (value) => {
+    state.prefs.netNick = String(value).slice(0, 16);
+    savePrefs({ netNick: state.prefs.netNick });
+  },
+};
+
+const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
+let netLayer = false;
+
+function netWant(request) {
+  if (!request) {
+    if (netLayer) netWin.close();
+    syncControls();
+    return;
+  }
+  openNet(request);
+}
+
+function openNet(request = player.net.request) {
+  if (!request && !player.net.active) return;
+  closeMenu();
+  player.releaseAll();
+  if (settings.isOpen()) settings.close();
+  if (!netLayer && !el.layer.hidden) dialogDone?.(null);
+  netLayer = true;
+  dialogDone = () => netWin.requestClose();
+  el.dialog.classList.remove("dialog--wide");
+  el.dialog.classList.add("dialog--net");
+  el.layer.hidden = false;
+  netWin.show(request);
+}
+
+function closeNetLayer() {
+  if (!netLayer) return;
+  netLayer = false;
+  dialogDone = null;
+  el.layer.hidden = true;
+  el.dialog.classList.remove("dialog--net");
+  if (state.game?.kind === "frame") focusFrame();
+  else el.stage.focus();
+}
 
 const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 const dirOf = (path) => path.slice(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")));
@@ -238,10 +400,13 @@ const isFavorite = (path) => favorites().some((item) => samePath(item, path));
 function syncControls() {
   const hosted = player.active;
   el.btnPause.disabled = !hosted;
-  el.btnReset.disabled = !state.game;
-  el.btnFast.disabled = !hosted;
+  el.btnReset.disabled = !state.game || player.net.locked;
+  el.btnFast.disabled = !hosted || player.net.locked;
   el.btnStateSave.disabled = !player.canState;
-  el.btnStateLoad.disabled = !player.canState;
+  el.btnStateLoad.disabled = !player.canState || player.net.locked;
+  const netOn = hosted && Boolean(player.net.request || player.net.active);
+  el.btnNet.hidden = !netOn;
+  el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   el.btnFast.setAttribute("aria-pressed", String(player.fast));
   el.btnPauseIcon.style.setProperty("--icon", `url("/icons/${player.paused ? "player-play" : "player-pause"}.svg")`);
   el.btnPause.title = t(player.paused ? "rail.resume" : "rail.pause");
@@ -264,6 +429,7 @@ function syncControls() {
   el.railToggleIcon.style.setProperty("--icon", `url("/icons/${collapsed ? "layout-sidebar-left-expand" : "layout-sidebar-left-collapse"}.svg")`);
   el.title.textContent = state.game ? `webGBA — ${state.game.title || state.game.name}` : "webGBA";
   if (!state.game) el.statusRight.textContent = "";
+  else if (player.net.active) el.statusRight.textContent = netStatus();
   else if (state.game.kind === "frame") el.statusRight.textContent = t("status.frameKind", { mode: t(state.game.build.page ? "status.framePage" : "status.frameGlue") });
 }
 
@@ -356,7 +522,7 @@ async function startHosted(host, game) {
   state.screen = game.screen ?? null;
   showView(host.script ? "script" : "screen");
   layoutScreen();
-  await player.start({ host, saveId: game.saveId, game: game.path });
+  await player.start({ host, saveId: game.saveId, game: game.path, net: game.net ?? null });
   player.fastScale = state.prefs.fastScale ?? 4;
   player.pushScript();
   syncControls();
@@ -396,7 +562,7 @@ async function openScript(path, wgba, info, label) {
     },
     onHostKey: frameKey,
   });
-  await startHosted(host, { path, saveId: build.saveId, kind: "script", info, label, input, screen: state.screen });
+  await startHosted(host, { path, saveId: build.saveId, kind: "script", info, label, input, screen: state.screen, net: { manifest: wgba.manifest, build: wgba.build } });
   status(join(label || baseOf(path), saveNote(hadSave, name)));
   core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기(자체 JS ${wgba.manifest.entry?.style}) ${path}`);
   return true;
@@ -611,7 +777,7 @@ async function openWasm(path, { preferPage = false } = {}) {
     const { save, name } = await openSave(path);
     const screen = wgba ? screenOf(wgba.manifest) : null;
     const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog, screen });
-    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null, screen });
+    await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null, screen, net: { manifest: wgba?.manifest ?? null, build: wgba ? wgba.build : report.canNet ? await sha256Hex(bytes) : "" } });
     status(join(label || baseOf(path), romNote(rom), saveNote(hadSave, name)));
     if (info) core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기 ${path}`);
     return true;
@@ -1183,6 +1349,10 @@ async function saveStateTo(index) {
 }
 
 async function loadStateFrom(index) {
+  if (player.net.locked) {
+    status(t("net.blockState"), "warn");
+    return;
+  }
   if (!player.canState) {
     status(t("status.noStateSupport"), "warn");
     return;
@@ -1262,6 +1432,10 @@ function togglePause() {
 }
 
 function toggleFast() {
+  if (player.net.locked) {
+    status(t("net.blockSpeed"), "warn");
+    return;
+  }
   if (!player.active) return;
   player.setFast(!player.fast);
   syncControls();
@@ -1269,6 +1443,10 @@ function toggleFast() {
 }
 
 async function resetGame() {
+  if (player.net.locked) {
+    status(t("net.blockReset"), "warn");
+    return;
+  }
   if (!state.game) return;
   if (!(await confirmDialog(t("confirm.resetTitle"), t("confirm.resetText")))) return;
   if (state.game.kind === "frame") {
@@ -1332,11 +1510,11 @@ function menuItems(name) {
     const build = game?.build;
     return [
       { label: t(player.paused ? "menu.resume" : "menu.pause"), keys: "Pause", run: togglePause, disabled: !hosted },
-      { label: t("menu.reset"), keys: "Ctrl+R", run: resetGame, disabled: !game },
-      { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted, checked: player.fast },
+      { label: t("menu.reset"), keys: "Ctrl+R", run: resetGame, disabled: !game || player.net.locked },
+      { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted || player.net.locked, checked: player.fast },
       { sep: true },
       { label: t("menu.stateSave", { slot: slot() }), keys: `Shift+F${slot()}`, run: () => saveStateTo(slot()), disabled: !player.canState },
-      { label: t("menu.stateLoad", { slot: slot() }), keys: `F${slot()}`, run: () => loadStateFrom(slot()), disabled: !player.canState },
+      { label: t("menu.stateLoad", { slot: slot() }), keys: `F${slot()}`, run: () => loadStateFrom(slot()), disabled: !player.canState || player.net.locked },
       { head: t("menu.slots") },
       ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => ({ label: t("menu.slot", { slot: index }), checked: slot() === index, run: () => setSlot(index) })),
       { sep: true },
@@ -1544,7 +1722,7 @@ const focusInScript = () => Boolean(state.scriptFrame) && document.activeElement
 window.addEventListener("blur", () => {
   if (focusInScript()) return;
   player.releaseAll();
-  if (state.info?.settings?.pauseWhenHidden && player.active && !player.paused) {
+  if (state.info?.settings?.pauseWhenHidden && player.active && !player.paused && !player.net.request && !player.net.active) {
     player.setPaused(true);
     state.autoPaused = true;
     syncControls();
@@ -1588,6 +1766,7 @@ el.btnReset.addEventListener("click", resetGame);
 el.btnFast.addEventListener("click", toggleFast);
 el.btnStateSave.addEventListener("click", () => saveStateTo(slot()));
 el.btnStateLoad.addEventListener("click", () => loadStateFrom(slot()));
+el.btnNet.addEventListener("click", () => openNet());
 el.btnMute.addEventListener("click", toggleMute);
 $("btn-keys").addEventListener("click", () => openSettings("keys"));
 el.btnSettings.addEventListener("click", () => (settings.isOpen() ? settings.close() : openSettings("general")));

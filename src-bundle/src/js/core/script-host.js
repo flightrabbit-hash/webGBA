@@ -124,7 +124,25 @@ export class ScriptHost {
     this.onStats = null;
     this.onChange = null;
     this.onHostKey = onHostKey;
+    this.onNet = null;
     this.ready = false;
+  }
+
+  netPost(message, transfer = []) {
+    this.post({ type: "net", ...message }, transfer);
+  }
+
+  netFrom(data) {
+    const op = data.op;
+    if (op === "want") {
+      const num = (v) => (Number.isInteger(v) && v >= 0 && v <= 8 ? v : undefined);
+      this.onNet?.({ op, purpose: typeof data.purpose === "string" ? data.purpose.slice(0, 32) : "", min: num(data.min), max: num(data.max), role: ["any", "make", "join"].includes(data.role) ? data.role : "any", serial: Number.isInteger(data.serial) ? data.serial & 0xff : undefined });
+    } else if (op === "unwant") this.onNet?.({ op });
+    else if (op === "send") {
+      const to = data.to === "ordered" || data.to === "all" ? data.to : Number.isInteger(data.to) && data.to >= 0 && data.to < 8 ? data.to : null;
+      if (to === null || !(data.data instanceof ArrayBuffer) || !data.data.byteLength || data.data.byteLength > 16384) return;
+      this.onNet?.({ op, to, data: data.data });
+    }
   }
 
   get canState() {
@@ -227,6 +245,7 @@ export class ScriptHost {
         paused: this.paused,
         speed: this.speed,
         text: { tap: this.text.tap ?? "" },
+        net: this.manifest.multiplayer ? { protocol: 1, ordered: true, inputs: false } : null,
       },
       transfer,
     );
@@ -329,6 +348,9 @@ export class ScriptHost {
           altKey: Boolean(data.alt),
           metaKey: Boolean(data.meta),
         });
+        break;
+      case "net":
+        if (typeof data.op === "string") this.netFrom(data);
         break;
       case "exit":
         this.halt(String(data.reason ?? "").slice(0, 300) || (this.text.exited ?? "exit"));
