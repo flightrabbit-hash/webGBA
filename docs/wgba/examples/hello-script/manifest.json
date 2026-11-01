@@ -1,0 +1,25 @@
+{
+  "wgba": 1,
+  "id": "com.example.helloscript",
+  "version": "1.0.0",
+  "name": { "en": "Hello script", "ko": "자체 JS 예제", "ja": "自前JSサンプル" },
+  "shortName": "Hello JS",
+  "runtime": "script",
+  "entry": { "style": "module" },
+  "author": "example",
+  "license": "MIT",
+  "screen": { "width": 320, "height": 240 },
+  "rom": { "required": false },
+  "save": { "kind": "storage", "maxSize": 64 },
+  "input": {
+    "buttons": [
+      { "id": "UP", "role": "up", "code": "ArrowUp" },
+      { "id": "DOWN", "role": "down", "code": "ArrowDown" },
+      { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
+      { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
+      { "id": "JUMP", "role": "a", "code": "Space", "keys": ["KeyZ"], "label": "JUMP" },
+      { "id": "START", "role": "start", "code": "Enter" }
+    ]
+  },
+  "cart": { "color": "#2c5d8f" }
+}

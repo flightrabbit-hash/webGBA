@@ -92,9 +92,9 @@
   let frames = 0;
   let lastStamp = -1;
   function runRaf(id, fn) {
-    rafLive.set(
-      id,
-      nativeRaf((stamp) => {
+    rafLive.set(id, {
+      fn,
+      handle: nativeRaf((stamp) => {
         rafLive.delete(id);
         if (stamp !== lastStamp) {
           lastStamp = stamp;
@@ -102,7 +102,22 @@
         }
         fn(stamp);
       }),
-    );
+    });
+  }
+  function pumpRaf() {
+    if (paused || document.visibilityState !== "hidden" || !rafLive.size) return;
+    const due = [...rafLive.entries()];
+    rafLive.clear();
+    const stamp = now();
+    frames++;
+    for (const [, entry] of due) {
+      nativeCaf(entry.handle);
+      try {
+        entry.fn(stamp);
+      } catch (error) {
+        report("error", error);
+      }
+    }
   }
   W.requestAnimationFrame = function requestAnimationFrame(fn) {
     if (typeof fn !== "function") throw new TypeError("requestAnimationFrame: 함수가 아님");
@@ -115,7 +130,7 @@
     rafHeld.delete(id);
     const live = rafLive.get(id);
     if (live !== undefined) {
-      nativeCaf(live);
+      nativeCaf(live.handle);
       rafLive.delete(id);
     }
   };
@@ -527,6 +542,12 @@
         return net.serial;
       },
       unwant: () => send({ type: "net", op: "unwant" }),
+      board: (table) => {
+        if (table === null || table === undefined) return send({ type: "net", op: "board", board: null });
+        if (!table || typeof table !== "object") throw new Error("webgba.net.board: 객체 또는 null");
+        const plain = JSON.parse(JSON.stringify(table));
+        send({ type: "net", op: "board", board: plain });
+      },
       send: (to, bytes) => {
         const target = toOf(to);
         if (target === null) throw new Error(`webgba.net.send: 받는 곳이 규칙 밖입니다: ${to}`);
@@ -711,6 +732,9 @@
         break;
       case "ping":
         send({ type: "pong", id: data.id });
+        break;
+      case "tick":
+        pumpRaf();
         break;
       case "net":
         onNet(data);

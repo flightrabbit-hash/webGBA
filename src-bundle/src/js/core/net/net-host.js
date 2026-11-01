@@ -1,4 +1,5 @@
 import { EV, MSG_MAX, NetSession, PROTOCOL, SLOTS, TO_ALL, TO_ORDERED, WHY } from "./session.js";
+import { BOARD_MIN_MS, BOARD_POLL_FRAMES, boardConfig, boardSerial, decodeRow, encodeRow, readBoard, sameBoard, scriptBoard } from "./board.js";
 
 export { EV, WHY, TO_ALL, TO_ORDERED, PROTOCOL, MSG_MAX };
 
@@ -92,6 +93,11 @@ export class WebApiNetGame {
     return this.call(() => this.ex.Web_NetWanted() >>> 0) ?? 0;
   }
 
+  boardAt() {
+    if (typeof this.ex.Web_NetBoard !== "function") return 0;
+    return this.call(() => this.ex.Web_NetBoard() >>> 0) ?? 0;
+  }
+
   event(kind, a, b) {
     this.call(() => this.ex.Web_NetEvent(kind, a >>> 0, b >>> 0));
   }
@@ -173,13 +179,18 @@ export class ScriptNetGame {
 }
 
 export class NetHost {
-  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, makePeer = null, nick = () => "" } = {}) {
+  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, onBoard = () => {}, makePeer = null, nick = () => "", enabled = () => true } = {}) {
     this.log = log;
     this.onWant = onWant;
     this.onChange = onChange;
     this.onNotice = onNotice;
+    this.onBoard = onBoard;
     this.makePeer = makePeer;
     this.nick = nick;
+    this.enabled = enabled;
+    this.boardCfg = null;
+    this.watching = false;
+    this.resetBoard();
     this.game = null;
     this.config = null;
     this.compat = null;
@@ -216,6 +227,7 @@ export class NetHost {
 
   attach(host, { manifest = null, build = "" } = {}) {
     this.detach();
+    if (!this.enabled()) return false;
     let game = null;
     if (host?.script) {
       if (manifest?.multiplayer && typeof host.netPost === "function") game = new ScriptNetGame(host);
@@ -230,6 +242,7 @@ export class NetHost {
     this.game = game;
     this.manifest = manifest;
     this.build = build;
+    this.boardCfg = boardConfig(manifest);
     if (game.script) host.onNet = (message) => this.fromScript(message);
     game.hello();
     this.compat = compatKey({ id: manifest?.id ?? "", compat: config.compat, build, game: game.gameCompat() });
@@ -257,11 +270,101 @@ export class NetHost {
     this.away = false;
     this.ended = null;
     this.failed = null;
+    this.boardCfg = null;
+    this.resetBoard();
     if (this.requestOpen) {
       this.requestOpen = false;
       this.onWant(null);
     }
     this.changed();
+  }
+
+  resetBoard() {
+    clearTimeout(this.boardTimer);
+    this.boardTimer = 0;
+    this.board = null;
+    this.boardPtr = -1;
+    this.boardSeen = -1;
+    this.boardFrames = 0;
+    this.boardAt = 0;
+    this.boardNext = undefined;
+  }
+
+  get boardOn() {
+    return Boolean(this.boardCfg) && this.connected;
+  }
+
+  watchBoard(on) {
+    this.watching = Boolean(on);
+    if (this.watching) this.pollBoard();
+  }
+
+  openBoard() {
+    if (!this.boardCfg || !this.game || this.game.script || this.boardPtr >= 0) return;
+    this.boardPtr = this.game.boardAt();
+    if (this.boardPtr && this.boardPtr + 400 > this.game.host.u8.length) {
+      this.log("warn", `Web_NetBoard 위치가 wasm 메모리 밖(${this.boardPtr}) — 표를 쓰지 않음`);
+      this.boardPtr = 0;
+    }
+  }
+
+  pollBoard() {
+    if (!this.boardOn || !this.game || this.game.script) return;
+    this.openBoard();
+    if (this.boardPtr <= 0) return;
+    const u8 = this.game.host.u8;
+    const serial = boardSerial(u8, this.boardPtr);
+    if (serial < 0) {
+      this.boardPtr = 0;
+      return;
+    }
+    if (serial === this.boardSeen) return;
+    this.boardSeen = serial;
+    this.takeBoard(readBoard(u8, this.boardPtr).board ?? null);
+  }
+
+  takeBoard(board) {
+    const wait = this.boardAt + BOARD_MIN_MS - Date.now();
+    if (wait > 0) {
+      this.boardNext = board;
+      if (!this.boardTimer) this.boardTimer = setTimeout(() => {
+        this.boardTimer = 0;
+        const next = this.boardNext;
+        this.boardNext = undefined;
+        if (next !== undefined) this.takeBoard(next);
+      }, wait);
+      return;
+    }
+    this.boardAt = Date.now();
+    if (sameBoard(this.board, board)) return;
+    this.board = board;
+    if (this.boardCfg?.scope === "self") this.pushRow();
+    this.boardChanged();
+  }
+
+  pushRow() {
+    const s = this.session;
+    if (!s || s.closed) return;
+    const row = this.board?.rows?.[0];
+    s.setRow(row ? encodeRow({ ...row, slot: Math.max(0, s.slot) }) : null);
+  }
+
+  boardChanged() {
+    try {
+      this.onBoard();
+    } catch (error) {
+      this.log("warn", `상태 표 갱신 오류: ${error?.message ?? error}`);
+    }
+  }
+
+  boardData() {
+    const s = this.session;
+    const selfRows = new Map();
+    if (s && this.boardCfg?.scope === "self") for (const [slot, bytes] of s.rows) {
+      const row = decodeRow(bytes, slot);
+      if (row) selfRows.set(slot, row);
+    }
+    return { config: this.boardOn ? this.boardCfg : null, board: this.board, selfRows, gone: s?.gone ?? new Map() };
   }
 
   changed() {
@@ -313,6 +416,10 @@ export class NetHost {
       this.lastWanted = wanted;
       this.setRequest(this.requestOf(unpackWanted(wanted)));
     }
+    if (this.boardCfg && (this.watching || this.boardCfg.scope === "self") && ++this.boardFrames >= BOARD_POLL_FRAMES) {
+      this.boardFrames = 0;
+      this.pollBoard();
+    }
   }
 
   requestOf(w) {
@@ -334,6 +441,10 @@ export class NetHost {
       this.setRequest(this.requestOf({ purpose: found.index, min: Number.isInteger(message.min) ? message.min : found.min, max: Number.isInteger(message.max) ? message.max : found.max, role, serial }));
     } else if (message.op === "unwant") {
       this.setRequest(null);
+    } else if (message.op === "board") {
+      if (!this.boardCfg) return;
+      const board = scriptBoard(message.board);
+      if (board !== undefined) this.takeBoard(board);
     } else if (message.op === "send") {
       if (!this.active) return;
       const to = message.to === "ordered" ? TO_ORDERED : message.to === "all" ? TO_ALL : message.to;
@@ -342,7 +453,14 @@ export class NetHost {
     }
   }
 
+  syncEnabled() {
+    if (this.enabled() || (!this.request && !this.active)) return;
+    this.finish(WHY.CANCEL);
+    this.setRequest(null);
+  }
+
   setRequest(next) {
+    if (next && !this.enabled()) next = null;
     const prev = this.request;
     if (prev && next && prev.serial === next.serial && prev.purpose.index === next.purpose.index) return;
     if (this.session && !this.session.closed) this.session.close(WHY.LEFT);
@@ -460,8 +578,10 @@ export class NetHost {
     this.session = session;
     this.ended = null;
     this.failed = null;
+    if (!this.game.script) this.resetBoard();
     session.sink = this.sink(session);
     session.setAway(this.away);
+    if (this.boardCfg?.scope === "self" && this.board) this.pushRow();
     if (role === "make") session.start();
     this.changed();
     return session;

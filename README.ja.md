@@ -175,6 +175,7 @@ bin/
 | windows-rs・zip | Win32 API・.zip の ROM | MIT OR Apache-2.0・MIT |
 | Tabler Icons | アイコン | MIT |
 | pako 2.1.0 | .wgba の ROM 圧縮・.wgbp | MIT AND Zlib |
+| jsQR 1.4.0 | 接続コード QR の読み取り（BarcodeDetector のないブラウザー） | Apache-2.0 |
 
 mGBA — Copyright (c) 2013-2022 Jeffrey Pfau and contributors ・ https://mgba.io
 

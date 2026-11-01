@@ -74,7 +74,7 @@
   "web.info.about": "A GBA player that runs in the browser. .gba · .zip run on the mGBA core, and .wgba · .wasm on the built-in host. No ROMs, game files or official BIOS are included (mGBA's built-in HLE BIOS is used).",
   "web.update": "A new version is available",
   "web.updateGo": "Reload",
-  "info.others": "Tabler Icons (MIT), pako (MIT AND Zlib), Galmuri font (SIL OFL 1.1, © Lee Minseo).",
+  "info.others": "Tabler Icons (MIT), pako (MIT AND Zlib), jsQR (Apache-2.0), Galmuri font (SIL OFL 1.1, © Lee Minseo).",
   "host.embedFormat": "This webGBA does not know this built-in ROM format (format {version} · method {method}). Reload the page to get the new version",
   "patch.err.patchVersion": "{name} uses a patch format this webGBA does not know (format {version}). Reload the page to get the new version",
   "patch.err.romModified": "{rom} is the same game ({title} · {code} · rev {revision}) but a modified ROM (SHA-1 {sha1}…). An original ROM without patches, cheats or edits is needed — usable ROMs: {need}",

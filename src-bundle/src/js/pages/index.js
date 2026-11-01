@@ -7,7 +7,8 @@ import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
-import { defaultNick, NetWindow, noticeLevel, noticeText } from "../app/net-window.js";
+import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
+import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
 import { APP_API, Signal } from "../core/net/signal.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -56,6 +57,7 @@ const el = {
   btnStateSave: $("btn-state-save"),
   btnStateLoad: $("btn-state-load"),
   btnNet: $("btn-net"),
+  mpPanel: $("mppanel"),
   btnMute: $("btn-mute"),
   btnMuteIcon: $("btn-mute-icon"),
   btnSettings: $("btn-settings"),
@@ -112,12 +114,16 @@ const player = new Player({
   onNetChange: (snap) => {
     netWin?.update(snap);
     syncControls();
+    queueMp();
   },
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) status(text, noticeLevel(info));
   },
+  onNetBoard: () => queueMp(),
   netNick: () => netNick(),
+  netEnabled: () => state.prefs.netOn !== false,
+  hiddenClock: true,
 });
 
 function netNick() {
@@ -133,7 +139,10 @@ function netNick() {
 function netStatus() {
   const s = player.net.session;
   if (!s || s.closed) return "";
-  return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
+  if (!s.open) return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
+  const ms = s.memberList().filter((m) => !m.host && Number.isFinite(m.rtt)).map((m) => m.rtt);
+  const n = s.max > 1 ? `${s.count}/${s.max}` : s.count;
+  return ms.length ? t("board.summary", { n, ms: Math.round(Math.max(...ms)) }) : t("board.summaryHost", { n });
 }
 
 const node = (tag, className, text) => {
@@ -246,6 +255,118 @@ const netKit = {
 
 const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
 let netLayer = false;
+
+const TAB_HOLD_MS = 250;
+const mp = { open: false, frame: 0, tabAt: 0, tabOpened: false };
+
+function mpButton(icon, key, action, onClick) {
+  const b = node("button", "iconbtn iconbtn--xs");
+  b.type = "button";
+  b.dataset.action = action;
+  b.dataset.i18nTitle = key;
+  b.title = t(key);
+  const glyph = node("span", "icon");
+  glyph.style.setProperty("--icon", `url("/icons/${icon}.svg")`);
+  b.append(glyph);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+const mpTabKey = node("span", "mpb__key");
+mpTabKey.append(node("span", "mpb__tagtext", "Tab"));
+const mpTabHint = node("span", "mpb__text mpb__hint");
+mpTabHint.dataset.i18n = "board.tabHint";
+const mpBoard = new BoardPanel({
+  root: el.mpPanel,
+  roomLine: true,
+  head: [mpButton("world", "board.window", "board-window", () => mpToWindow()), mpButton("x", "win.close", "board-close", () => closeMp())],
+  footHint: [mpTabKey, mpTabHint],
+  textWidth: (text) => {
+    const ctx = (mp.ctx ??= document.createElement("canvas").getContext("2d"));
+    ctx.font = (mp.font ??= `11px ${getComputedStyle(document.body).fontFamily}`);
+    return ctx.measureText(text).width + 2;
+  },
+});
+
+const mpWanted = () => player.net.connected && (player.net.reached || player.net.session?.role === "join");
+
+function renderMp() {
+  mp.frame = 0;
+  if (!mp.open) return;
+  if (!player.net.active) {
+    closeMp();
+    return;
+  }
+  mpTabHint.textContent = t("board.tabHint");
+  const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
+  const changed = mpBoard.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
+  if (changed?.nodes.length) centerBoardNodes(changed.nodes);
+}
+
+function mpInk() {
+  centerBoardInk(el.mpPanel);
+  cancelAnimationFrame(mp.inkFrame);
+  mp.inkFrame = requestAnimationFrame(() => mp.open && centerBoardInk(el.mpPanel));
+}
+
+window.addEventListener("resize", () => mp.open && mpInk());
+
+function queueMp() {
+  if (mp.open && !mp.frame) mp.frame = requestAnimationFrame(renderMp);
+}
+
+function openMp() {
+  if (!player.net.active || mp.open) return;
+  mp.open = true;
+  el.panel.hidden = true;
+  el.mpPanel.hidden = false;
+  mpBoard.reset();
+  player.net.watchBoard(true);
+  renderMp();
+  layoutScreen();
+  mpInk();
+  syncControls();
+}
+
+function closeMp() {
+  if (!mp.open) return;
+  mp.open = false;
+  mp.tabOpened = false;
+  cancelAnimationFrame(mp.frame);
+  mp.frame = 0;
+  player.net.watchBoard(false);
+  el.mpPanel.hidden = true;
+  renderPanel();
+  syncControls();
+}
+
+function mpToWindow() {
+  closeMp();
+  openNet(player.net.request);
+}
+
+function onNetRail() {
+  if (mp.open) closeMp();
+  else if (mpWanted()) openMp();
+  else openNet();
+}
+
+function mpTabDown() {
+  if (mp.open) {
+    closeMp();
+    return;
+  }
+  openMp();
+  mp.tabOpened = mp.open;
+  mp.tabAt = performance.now();
+}
+
+function mpTabUp() {
+  if (!mp.tabOpened) return false;
+  mp.tabOpened = false;
+  if (performance.now() - mp.tabAt >= TAB_HOLD_MS) closeMp();
+  return true;
+}
 
 function netWant(request) {
   if (!request) {
@@ -419,6 +540,11 @@ function syncControls() {
   const netOn = hosted && Boolean(player.net.request || player.net.active);
   el.btnNet.hidden = !netOn;
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
+  const netLabel = mpWanted() ? "board.open" : "net.button";
+  if (el.btnNet.dataset.i18nTitle !== netLabel) {
+    el.btnNet.dataset.i18nTitle = netLabel;
+    el.btnNet.title = t(netLabel);
+  }
   el.btnFast.setAttribute("aria-pressed", String(player.fast));
   el.btnPauseIcon.style.setProperty("--icon", `url("/icons/${player.paused ? "player-play" : "player-pause"}.svg")`);
   el.btnPause.title = t(player.paused ? "rail.resume" : "rail.pause");
@@ -917,7 +1043,7 @@ function makeRow(item, { removable = false, missing = false } = {}) {
 
 function renderPanel() {
   const panel = state.prefs.panel;
-  el.panel.hidden = !panel;
+  el.panel.hidden = !panel || mp.open;
   layoutScreen();
   if (!panel) return;
   const isFav = panel === "favorites";
@@ -963,6 +1089,7 @@ async function activateRow(index) {
 }
 
 async function showPanel(name) {
+  if (mp.open) closeMp();
   const next = state.prefs.panel === name ? "" : name;
   await savePrefs({ panel: next });
   if (next === "files") await loadRoot({ select: state.game?.path });
@@ -1156,6 +1283,7 @@ function helpBody() {
   const rows = [
     ...order.map((name) => [nameOf(name), (keys[name] ?? []).map(keyName).join(" · ") || "—"]),
     [t("help.fastToggle"), "Tab"],
+    [t("help.netBoard"), "Tab"],
     [t("help.pause"), "Pause"],
     [t("help.state"), "Shift+F1~F9 / F1~F9"],
     [t("help.reset"), "Ctrl+R"],
@@ -1238,6 +1366,8 @@ async function settingsSnapshot() {
     fastScale: player.fastScale,
     dpadMode: player.dpadMode,
     slot: slot(),
+    netOn: state.prefs.netOn !== false,
+    netNick: String(state.prefs.netNick ?? ""),
     wgbaLink: state.link.linked,
     webRom: state.prefs.webRom ?? "",
     favorites: [...favorites()],
@@ -1259,6 +1389,8 @@ async function applySettings(next) {
     fastScale: next.fastScale,
     dpadMode: DPAD_MODES.includes(next.dpadMode) ? next.dpadMode : DPAD_DEFAULT,
     slot: next.slot,
+    netOn: next.netOn !== false,
+    netNick: [...String(next.netNick ?? "").trim()].slice(0, 12).join(""),
     webRom: String(next.webRom ?? "").trim(),
     favorites: next.favorites,
     recent: next.recent,
@@ -1278,6 +1410,7 @@ async function applySettings(next) {
   }
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
+  player.net.syncEnabled();
 
   const ini = state.info?.settings ?? {};
   const iniPatch = {};
@@ -1319,6 +1452,12 @@ async function setLang(id) {
 function refreshTexts() {
   syncControls();
   renderPanel();
+  mp.font = null;
+  if (mp.open) {
+    mpBoard.reset();
+    renderMp();
+    mpInk();
+  }
   if (!el.start.hidden) renderStart();
   setMaximized(document.documentElement.classList.contains("is-maximized"));
   if (state.menuName) closeMenu();
@@ -1482,6 +1621,7 @@ async function setSlot(index) {
 
 async function shutdown() {
   try {
+    netWin.pageHide();
     settings.close();
     await closeGame({ quiet: true });
   } finally {
@@ -1523,7 +1663,7 @@ function menuItems(name) {
     return [
       { label: t(player.paused ? "menu.resume" : "menu.pause"), keys: "Pause", run: togglePause, disabled: !hosted },
       { label: t("menu.reset"), keys: "Ctrl+R", run: resetGame, disabled: !game || player.net.locked },
-      { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted || player.net.locked, checked: player.fast },
+      player.net.active ? { label: t("board.open"), keys: "Tab", run: () => (mp.open ? closeMp() : openMp()), disabled: !mpWanted(), checked: mp.open } : { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted || player.net.locked, checked: player.fast },
       { sep: true },
       { label: t("menu.stateSave", { slot: slot() }), keys: `Shift+F${slot()}`, run: () => saveStateTo(slot()), disabled: !player.canState },
       { label: t("menu.stateLoad", { slot: slot() }), keys: `F${slot()}`, run: () => loadStateFrom(slot()), disabled: !player.canState || player.net.locked },
@@ -1674,7 +1814,9 @@ function hotkey(event) {
     return true;
   }
   if (event.key === "Tab" && player.active) {
-    toggleFast();
+    if (player.net.active) {
+      if (!event.repeat) mpTabDown();
+    } else toggleFast();
     return true;
   }
   return false;
@@ -1716,6 +1858,10 @@ function onKeyDown(event) {
 
 function onKeyUp(event) {
   const code = codeOf(event);
+  if (event.key === "Tab" && mpTabUp()) {
+    event.preventDefault();
+    return;
+  }
   if (player.active) {
     if (player.keyUp(code, event)) event.preventDefault();
   } else if (state.game?.kind === "frame" && el.layer.hidden && !settings.isOpen()) forwardKey(event);
@@ -1727,6 +1873,8 @@ document.addEventListener("keyup", onKeyUp, true);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) player.releaseAll();
 });
+
+window.addEventListener("pagehide", () => netWin.pageHide());
 
 // ② 게임 틀을 눌러 초점이 틀로 가도 본 창 blur 가 온다 — 그때는 키를 놓거나 멈추지 않는다(틀이 키를 넘겨줌)
 const focusInScript = () => Boolean(state.scriptFrame) && document.activeElement === state.scriptFrame;
@@ -1778,7 +1926,10 @@ el.btnReset.addEventListener("click", resetGame);
 el.btnFast.addEventListener("click", toggleFast);
 el.btnStateSave.addEventListener("click", () => saveStateTo(slot()));
 el.btnStateLoad.addEventListener("click", () => loadStateFrom(slot()));
-el.btnNet.addEventListener("click", () => openNet());
+el.btnNet.addEventListener("click", onNetRail);
+el.statusRight.addEventListener("click", () => {
+  if (mpWanted() && !mp.open) openMp();
+});
 el.btnMute.addEventListener("click", toggleMute);
 $("btn-keys").addEventListener("click", () => openSettings("keys"));
 el.btnSettings.addEventListener("click", () => (settings.isOpen() ? settings.close() : openSettings("general")));
@@ -1812,6 +1963,8 @@ settings.setup({
   keyName,
   keyOrder: SETTINGS_KEY_ORDER,
   defaultKeys: DEFAULT_KEYS,
+  vars: (key) => (key === "netNick" ? { name: (netNick(), defaultNick(state.prefs.netNo)) } : {}),
+  placeholder: (key) => (key === "netNick" ? (netNick(), defaultNick(state.prefs.netNo)) : undefined),
   onClose: () => {
     syncControls();
     if (state.game?.kind === "frame") focusFrame();

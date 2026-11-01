@@ -168,7 +168,7 @@
   "info.openSource": "포함된 오픈소스",
   "info.mgba": "mGBA 0.10.1 — Copyright © 2013-2022 Jeffrey Pfau 외 기여자. Mozilla Public License 2.0. https://mgba.io",
   "info.mgbaSource": "소스: https://github.com/mgba-emu/mgba/tree/0.10.1 (고치지 않고 정적 라이브러리로 묶음). 포함: blip_buf(LGPL-2.1), inih(BSD-3-Clause).",
-  "info.others": "Tauri 2 · WRY · TAO(Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs(MIT OR Apache-2.0), zip(MIT), Tabler Icons(MIT), pako(MIT AND Zlib).",
+  "info.others": "Tauri 2 · WRY · TAO(Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs(MIT OR Apache-2.0), zip(MIT), Tabler Icons(MIT), pako(MIT AND Zlib), jsQR(Apache-2.0).",
 
   "menu.open": "열기…",
   "menu.close": "닫기",
@@ -601,5 +601,35 @@
   "net.err.serverLost": "서버와 연결이 끊겼습니다. 새로 들어오는 사람은 받지 못할 수 있습니다.",
   "net.err.limit": "요청이 많아 잠시 쉬는 중입니다. 잠시 후 다시 하거나 '인터넷 없이 연결(코드·QR)'로 연결해주세요.",
   "net.fallback": "서버에 연결하지 못해 연결 코드로 연결합니다.",
-  "net.act.back": "뒤로"
+  "net.act.back": "뒤로",
+
+  "board.titleOf": "멀티플레이 · {purpose}",
+  "board.open": "멀티플레이 상태",
+  "board.window": "연결 창",
+  "board.room": "방 {code}",
+  "board.people": "사람 {n}",
+  "board.ai": "AI {n}",
+  "board.aiTag": "AI",
+  "board.me": "나",
+  "board.host": "방장",
+  "board.stall": "잠시 멈춤",
+  "board.joining": "연결 중",
+  "board.lost": "끊김",
+  "board.left": "나감",
+  "board.ms": "{ms}ms",
+  "board.tabHint": "누르는 동안 보기",
+  "board.summary": "사람 {n} · {ms}ms",
+  "board.summaryHost": "사람 {n}",
+  "help.netBoard": "멀티플레이 상태 보기(세션 중, 누르는 동안 · 짧게 누르면 열어 둠)",
+  "cfg.group.net": "멀티플레이",
+  "cfg.netOn": "멀티플레이 사용",
+  "cfg.netOn.note": "끄면 게임이 멀티플레이 창을 열지 않습니다. 게임 안 통신 메뉴는 다음에 게임을 열 때부터 숨겨집니다",
+  "cfg.netNick": "닉네임",
+  "cfg.netNick.note": "다른 기기에 보이는 이름입니다(12자까지). 비우면 '{name}'",
+
+  "cfg.netNick.reset": "기본 닉네임으로",
+
+  "cfg.netNick.default": "기본 닉네임",
+
+  "net.reachedNote": "연결됨 · {n}/{max} — 잠시 후 창을 닫습니다"
 }

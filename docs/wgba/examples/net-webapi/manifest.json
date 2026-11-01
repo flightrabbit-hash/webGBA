@@ -16,7 +16,22 @@
     "compat": "exact",
     "purposes": [
       { "id": "party", "name": { "ko": "친구 게임", "en": "Party", "ja": "なかま" }, "players": [2, 4] }
-    ]
+    ],
+    "board": {
+      "columns": [
+        { "id": "cmds", "type": "bar", "name": { "ko": "명령", "en": "Moves", "ja": "コマンド" }, "max": 200, "tone": "hp" },
+        { "id": "sent", "type": "number", "name": { "ko": "보냄", "en": "Sent", "ja": "送信" }, "suffix": { "ko": "회", "en": "x", "ja": "回" } },
+        { "id": "rank", "type": "rank", "name": { "ko": "순위", "en": "Rank", "ja": "順位" } },
+        { "id": "state", "type": "status", "name": { "ko": "상태", "en": "State", "ja": "状態" },
+          "labels": [
+            { "name": { "ko": "끝", "en": "Done", "ja": "完了" }, "tone": "good" },
+            { "name": { "ko": "진행 중", "en": "Playing", "ja": "進行中" }, "tone": "dim" }
+          ] }
+      ],
+      "names": [{ "ko": "로봇", "en": "Bot", "ja": "ボット" }],
+      "captions": [{ "ko": "{0}명 · 라운드 {1}", "en": "{0} players · round {1}", "ja": "{0}人 · ラウンド {1}" }],
+      "mark": { "ko": "옆 사람", "en": "Next", "ja": "となり" }
+    }
   },
   "cart": { "color": "#2f7d5b" }
 }

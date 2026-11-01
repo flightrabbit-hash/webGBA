@@ -50,6 +50,7 @@ const webapiArgs = { wasm: fs.readFileSync(path.join(webapiDir, "game.wasm")), m
 const files = {
   webapi: (await packWgba(webapiArgs)).bytes,
   variant: (await packWgba({ ...webapiArgs, data: [{ name: "other", bytes: new Uint8Array([1, 2, 3]) }] })).bytes,
+  plain: (await packWgba({ ...webapiArgs, manifest: { ...webapiArgs.manifest, multiplayer: { ...webapiArgs.manifest.multiplayer, board: undefined } } })).bytes,
   script: (await packWgba({ wasm: fs.readFileSync(path.join(scriptDir, "game.wasm")), js: fs.readFileSync(path.join(scriptDir, "game.js")), manifest: readJson(path.join(scriptDir, "manifest.json")) })).bytes,
 };
 
@@ -117,6 +118,23 @@ async function waitFor(fn, ms = 15000, step = 100) {
   return last;
 }
 
+const boardOf = (p) =>
+  p.page.evaluate(() => {
+    const b = window.webgba.net.board;
+    const cap = b.root.querySelector(".mpb__caption");
+    const rows = [...b.root.querySelectorAll(".mpb__row")].map((r) => ({
+      key: r.dataset.key,
+      seat: r.querySelector(".mpb__seat").textContent,
+      name: r.querySelector(".mpb__name").textContent,
+      me: r.classList.contains("is-me"),
+      ms: r.querySelector(".mpb__ms")?.textContent ?? "",
+      tag: [...r.querySelectorAll(".mpb__l1 .mpb__tag")].map((t) => t.textContent).join(","),
+      cells: [...r.querySelectorAll(".mpb__l2 > *")].map((c) => c.textContent).join("|"),
+      meter: r.querySelector(".mpb__meter")?.dataset.ratio ?? null,
+    }));
+    return { open: b.state.open, plain: b.root.querySelector(".mpb__panel").hasAttribute("data-plain"), rows, caption: cap.hidden ? "" : cap.textContent, room: b.root.querySelector(".mpb__room").textContent, paused: window.webgba.player.paused, sheet: window.webgba.state.sheet };
+  });
+
 const value = (p, action) => p.page.evaluate((a) => document.querySelector(`[data-action="${a}"]`)?.value ?? "", action);
 const sheet = (p) => p.page.evaluate(() => window.webgba.state.sheet);
 const offline = async (p) => {
@@ -163,7 +181,15 @@ async function pasteButtons(p, action) {
   }, action);
 }
 
+async function hostWindow(host) {
+  if ((await sheet(host)) === "net") return;
+  if (!(await host.page.evaluate(() => window.webgba.net.board.state.open))) await host.page.click("#btnNet");
+  if ((await sheet(host)) !== "net") await host.page.click('[data-action="board-window"]');
+  await host.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 5000 });
+}
+
 async function joinOne(host, guest, { snap = false, paste = false } = {}) {
+  await hostWindow(host);
   const offer = await waitFor(() => value(host, "net-offer"), 10000);
   host.codes.push(offer);
   const t0 = Date.now();
@@ -235,6 +261,8 @@ try {
   const after1 = await game(H);
   ok("방장 OPEN(0,1) → JOIN(1,2)", after1.events.includes("1:0:1") && after1.events.includes("2:1:2"), after1.events.join(" "));
   await shot(H, "방장_2명");
+  const autoClose = await waitFor(async () => (await sheet(H)) === "", 4000, 100);
+  ok("방장 창(연결 코드, 최소 2 < 최대 4): 최소 인원에 닿으면 1초 뒤 저절로 닫힘 → 상태 메뉴의 연결 창 단추로 다시 열어 더 초대", Boolean(autoClose));
   const j2 = await joinOne(H, G2);
   const j3 = await joinOne(H, G3);
   ok("4명 연결", j2.joined && j3.joined && (await game(H)).count === 4, `${j2.ms}ms · ${j3.ms}ms`);
@@ -282,6 +310,52 @@ try {
   const hashes = (ended ?? []).map((g) => g.hash);
   ok("① 순서 방송(TO_ORDERED) 한 라운드: 4명 해시 같음", ended && new Set(hashes).size === 1, `${hashes.join(" ")} · 명령 ${(ended ?? []).map((g) => g.applied).join("/")}`);
   await shot(G2, "라운드_끝");
+
+  // ── 상태 메뉴(① Web_NetBoard, scope all) ──
+  await H.page.click("#btnNet");
+  const bH = await waitFor(async () => {
+    const b = await boardOf(H);
+    const done = b.rows.filter((r) => r.key.startsWith("p")).map((r) => r.cells.split("|").pop());
+    return b.open && b.rows.length === 5 && b.caption && b.rows.filter((r) => r.ms).length >= 3 && done.length === 4 && done[0] && new Set(done).size === 1 ? b : null;
+  }, 10000);
+  ok("상태 메뉴: 세션 중 멀티플레이 단추 → 패널(연결 창 아님)·게임 계속", bH?.open && bH.sheet === "" && bH.paused === false, JSON.stringify({ open: bH?.open, sheet: bH?.sheet, paused: bH?.paused }));
+  ok("상태 메뉴 ①(Web_NetBoard·scope all): 사람 4 + AI 1·머리 글·막대 5·내 줄 1·방장 꼬리표", bH && bH.rows.filter((r) => r.key.startsWith("p")).length === 4 && bH.rows.filter((r) => r.seat === "AI").length === 1 && /4\D+1/.test(bH.caption) && bH.rows.every((r) => r.meter !== null) && bH.rows.filter((r) => r.me).length === 1 && bH.rows[0].tag.length > 0, (bH?.rows ?? []).map((r) => `${r.seat}:${r.name}:${r.tag}:${r.ms}:${r.cells}`).join(" / "));
+  await G1.page.click("#btnNet");
+  const cells = (b) => JSON.stringify((b?.rows ?? []).map((r) => [r.key, r.cells]));
+  const bG = await waitFor(async () => {
+    const b = await boardOf(G1);
+    return b.open && b.rows.length === 5 && b.rows.find((r) => r.me)?.ms && cells(b) === cells(await boardOf(H)) ? b : null;
+  }, 10000);
+  ok("상태 메뉴 ①: 방장·손님 표 내용 같음 · 손님 내 줄에 지연(ms)", bG && cells(bG) === cells(bH) && bG.rows.find((r) => r.me)?.ms, `손님 ${cells(bG)} · 방장(처음) ${cells(bH)} · 내 줄 ${bG?.rows.find((r) => r.me)?.ms}`);
+  await shot(H, "상태메뉴_방장");
+  await G1.page.click('[data-action="board-close"]');
+  ok("상태 메뉴 닫기(X)", await waitFor(async () => !(await boardOf(G1)).open, 3000));
+
+  // ── 탭 숨김(PC): Worker 시계로 프레임 유지 — 헤드리스는 실제로 숨겨지지 않아 visibilityState 를 바꿔 rAF 대신 Worker 시계만 돌게 함 ──
+  const hide = (p, on) =>
+    p.page.evaluate((hidden) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+      document.dispatchEvent(new Event("visibilitychange"));
+      const p2 = window.webgba.player;
+      return { clock: p2.clockOn, raf: p2.raf, away: p2.net.away };
+    }, on);
+  const hid = await hide(G2, true);
+  const stallSeen = [];
+  const t0 = Date.now();
+  let bigSent = false;
+  while (Date.now() - t0 < 30000) {
+    stallSeen.push(await H.page.evaluate(() => window.webgba.player.net.session.memberList().find((m) => m.slot === 2)?.stalled ?? null));
+    if (!bigSent && Date.now() - t0 > 24000) {
+      bigSent = true;
+      await press(G1, "KeyX");
+    }
+    await sleep(2000);
+  }
+  await sleep(1000);
+  const g2Hidden = await game(G2);
+  const shown = await hide(G2, false);
+  ok("탭 숨김 30초(PC): Worker 시계로 프레임 계속(rAF 멈춤)·PAUSE 안 보냄·방장 쪽 잠시 멈춤 0·숨긴 동안 받은 메시지 처리", hid.clock && hid.raf === 0 && !hid.away && stallSeen.every((s) => s === false) && g2Hidden.open === 1 && g2Hidden.bigOk >= 1 && !shown.clock && shown.raf > 0, `${JSON.stringify(hid)} → ${JSON.stringify(shown)} · 멈춤 ${stallSeen.join(",")} · 숨긴 쪽 큰 메시지 ${g2Hidden.bigOk}`);
   await press(G1, "KeyX");
   const big = await waitFor(async () => {
     const all = await Promise.all([H, G1, G2, G3].map(game));
@@ -290,9 +364,10 @@ try {
   ok("16384바이트 메시지(TO_ORDERED, 받기 자리 없으면 다음 프레임에): 모두 받음·내용 같음", big && big.every((g) => g.bigBad === 0), (big ?? []).map((g) => `${g.bigOk}/${g.bigBad}`).join(" "));
   const variant = await peer("X");
   await open(variant, "variant", "net-demo-other.wgba");
-  await H.page.click("#btnNet");
+  if (!(await boardOf(H)).open) await H.page.click("#btnNet");
+  await H.page.click('[data-action="board-window"]');
   await H.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 5000 });
-  ok("멀티플레이 단추로 창 다시 열기(방장 화면)", (await sheet(H)) === "net");
+  ok("상태 메뉴의 연결 창 단추로 창 다시 열기(방장 화면)", (await sheet(H)) === "net" && !(await boardOf(H)).open);
   await G3.context.close();
   const left = await waitFor(async () => {
     const g = await game(H);
@@ -377,6 +452,22 @@ try {
   ok("창에서 취소 → CLOSED(CANCEL) · 게임이 요청을 거둠 → 단추 숨김", cancel?.closed === 1 && (await waitFor(() => C1.page.evaluate(() => document.getElementById("btnNet").hidden), 3000)), `이유 ${cancel?.closed}`);
   await C1.context.close();
 
+  // ── 게임 값이 없는 게임(설명서에 board 없음): webGBA 값만 ──
+  const P1 = await peer("P1");
+  const P2 = await peer("P2", { viewport: { width: 320, height: 568 } });
+  for (const p of [P1, P2]) await open(p, "plain", "net-plain.wgba");
+  await hostOpen(P1);
+  const pj = await joinOne(P1, P2);
+  const plainClosed = await waitFor(async () => (await sheet(P1)) === "" && (await sheet(P2)) === "", 4000, 100);
+  await sleep(300);
+  await P2.page.click("#btnNet");
+  const pb2 = await waitFor(async () => {
+    const b = await boardOf(P2);
+    return b.open && b.rows.length === 2 && b.rows.some((r) => r.ms) ? b : null;
+  }, 8000);
+  ok("게임 값 없음(방장·손님 창 연결 뒤 저절로 닫힘): 사람 목록만(1P 방장·2P 나·지연)·둘째 줄 없음", pj.joined && plainClosed && pb2?.plain && pb2.rows.every((r) => r.cells === "") && pb2.rows[0].seat === "1P" && pb2.rows[1].me && !pb2.caption, (pb2?.rows ?? []).map((r) => `${r.seat}:${r.name}:${r.tag}:${r.ms}`).join(" / "));
+  for (const p of [P1, P2]) await p.context.close();
+
   // ── ② 자체 JS 두 명 ──
   const S1 = await peer("S1");
   const S2 = await peer("S2");
@@ -396,8 +487,8 @@ try {
   await waitFor(() => value(S1, "net-offer"), 10000);
   const sj = await joinOne(S1, S2);
   ok("② 두 명 연결(MessagePort ↔ 세션)", sj.joined, `${sj.ms}ms`);
-  await S1.page.click('[data-action="net-done"]');
-  await sleep(1500);
+  await waitFor(async () => (await sheet(S1)) === "", 4000, 100);
+  await sleep(300);
   await S1.page.evaluate(() => window.webgba.player.keyDown("Enter"));
   await sleep(150);
   await S1.page.evaluate(() => window.webgba.player.keyUp("Enter"));
@@ -407,6 +498,13 @@ try {
     return a?.ended && b?.ended ? [a, b] : null;
   }, 20000, 300);
   ok("② send(\"ordered\") 한 라운드: 두 명 해시 같음", sEnd && sEnd[0].hash === sEnd[1].hash, (sEnd ?? []).map((s) => `${s.hash}/${s.applied}`).join(" "));
+  await S2.page.click("#btnNet");
+  const sb = await waitFor(async () => {
+    const b = await boardOf(S2);
+    return b.open && b.rows.length === 2 && b.rows.every((r) => r.meter !== null && /F\d+/.test(r.cells)) ? b : null;
+  }, 10000);
+  const sentOf = (r) => Number(r.cells.split("|")[1]);
+  ok("상태 메뉴 ②(webgba.net.board·scope self): 두 기기 줄을 모아 보임·sent 큰 순 정렬·상태 꼬리표", sb && sentOf(sb.rows[0]) >= sentOf(sb.rows[1]) && sb.rows.every((r) => /\|.+$/.test(r.cells)), (sb?.rows ?? []).map((r) => `${r.seat}:${r.cells}`).join(" / "));
   await S2.context.close();
   const sLeave = await waitFor(async () => ((await scriptState(S1))?.events.some((e) => e.startsWith("3:1:")) ? scriptState(S1) : null), 20000, 300);
   ok("② 손님 페이지 닫힘 → 방장 onevent LEAVE(1)", Boolean(sLeave), sLeave?.events.slice(-2).join(" "));

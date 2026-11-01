@@ -28,7 +28,20 @@
     "players": { "min": 2, "max": 4 },
     "purposes": [
       { "id": "party", "name": { "ko": "친구 게임", "en": "Party", "ja": "なかま" }, "players": [2, 4] }
-    ]
+    ],
+    "board": {
+      "scope": "self",
+      "columns": [
+        { "id": "sent", "type": "bar", "name": { "ko": "보냄", "en": "Sent", "ja": "送信" }, "max": 120, "tone": "accent" },
+        { "id": "frame", "type": "number", "name": { "ko": "프레임", "en": "Frame", "ja": "フレーム" }, "prefix": { "ko": "F", "en": "F", "ja": "F" } },
+        { "id": "state", "type": "status", "name": { "ko": "상태", "en": "State", "ja": "状態" },
+          "labels": [
+            { "name": { "ko": "끝", "en": "Done", "ja": "完了" }, "tone": "good" },
+            { "name": { "ko": "기다림", "en": "Waiting", "ja": "待機" }, "tone": "warn" }
+          ] }
+      ],
+      "sort": { "column": "sent", "order": "desc" }
+    }
   },
   "cart": { "color": "#5b3f8c" }
 }

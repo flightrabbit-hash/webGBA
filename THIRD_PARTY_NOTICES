@@ -32,6 +32,7 @@ The app icon is the same artwork as Arbiter, by the same author.
 | zip                     | .zip 롬 꺼내기 / reading .zip ROMs     | MIT                 |
 | Tabler Icons            | 화면 아이콘 / UI icons                 | MIT                 |
 | pako 2.1.0              | .wgba 롬 압축 · .wgbp / zlib deflate   | MIT AND Zlib        |
+| jsQR 1.4.0              | QR 읽기(BarcodeDetector 없는 브라우저) | Apache-2.0          |
 
 그 밖의 Rust crate(serde, serde_json, thiserror, chrono, flate2 등)는 src-tauri/Cargo.lock
 에 적힌 판을 쓰며 각 crate 의 라이선스(대부분 MIT OR Apache-2.0)를 따릅니다.
@@ -73,6 +74,22 @@ pako 2.1.0
   creates from a .wgbp use it, so every PC produces the same bytes.
 
   전문 / full text: bin/core/licenses/pako-LICENSE.txt
+
+jsQR 1.4.0
+  Copyright 2017 Cosmo Wolfe · https://github.com/cozmo/jsQR
+  Apache License 2.0
+
+  src-bundle/src/js/vendor/jsqr.js 는 jsQR 1.4.0 의 dist/jsQR.js 에서 Shift_JIS 표
+  (한자 모드 글자 표)만 빈 표로 바꾼 것입니다(첫 줄에 바꾼 내용을 적음). 그 밖은
+  고치지 않았습니다. 휴대폰 브라우저에 BarcodeDetector 가 없을 때(iPhone 사파리 등)
+  연결 코드 QR 을 카메라로 읽는 데만 쓰고, 그때만 불러옵니다.
+
+  src-bundle/src/js/vendor/jsqr.js is jsQR 1.4.0's dist/jsQR.js with only the Shift_JIS
+  table (kanji mode) emptied (noted on the first line); nothing else is changed. It is
+  loaded only to read a connection-code QR with the camera when the phone browser has
+  no BarcodeDetector (e.g. Safari on iPhone).
+
+  전문 / full text: bin/core/licenses/jsqr-LICENSE.txt
 
 Galmuri (웹 버전에만 / web version only: web/src/fonts)
   Copyright (c) 2019-2025 Lee Minseo (quiple@quiple.dev),

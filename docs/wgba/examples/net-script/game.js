@@ -4,6 +4,8 @@
 //   A ask for players · START (host) start a round · SELECT stop multiplayer
 // Every player sends small commands with send("ordered"), folds them into one hash in the
 // order webGBA delivers them, and prints "net <json>" lines with webgba.log for tests.
+// Player status board (spec 7.9, scope "self"): each player gives only its own row with
+// webgba.net.board(); webGBA collects the rows of everyone and sorts them by "sent".
 
 const ROUND = 360;
 const T_START = 1;
@@ -71,8 +73,21 @@ export default async function start(webgba) {
     }
   });
 
+  let boardWait = 0;
+  let boardLast = "";
+  const board = () => {
+    if (!net?.board || !st.open || ++boardWait < 15) return;
+    boardWait = 0;
+    const values = [st.sent, st.frame, st.started ? (st.ended ? 1 : 0) : 2];
+    const key = values.join(",");
+    if (key === boardLast) return;
+    boardLast = key;
+    net.board({ rows: [{ values }] });
+  };
+
   const frame = () => {
     while (queue.length) apply(...queue.shift());
+    board();
     if (st.started && !st.ended && st.open) {
       st.frame++;
       if (st.frame <= ROUND) {

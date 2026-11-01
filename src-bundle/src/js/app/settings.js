@@ -64,6 +64,13 @@ const FIELDS = [
     ],
   },
   {
+    group: "net",
+    items: [
+      { key: "netOn", default: true },
+      { key: "netNick", type: "text", maxLength: 12, default: "" },
+    ],
+  },
+  {
     group: "save",
     note: true,
     items: [],
@@ -252,7 +259,7 @@ function fieldRow(item) {
 
   const hint = document.createElement("span");
   hint.className = "cfg__hint";
-  hint.textContent = t(`cfg.${item.key}.note`);
+  hint.textContent = t(`cfg.${item.key}.note`, hooks.vars?.(item.key) ?? {});
   text.append(hint);
 
   row.append(text, control(item, hint));
@@ -353,7 +360,9 @@ function textControl(item) {
   input.type = "text";
   input.className = "cfg__input cfg__input--text";
   input.spellcheck = false;
-  input.placeholder = t(`cfg.${item.key}.default`);
+  input.placeholder = hooks.placeholder?.(item.key) ?? t(`cfg.${item.key}.default`);
+  if (item.maxLength) input.maxLength = item.maxLength;
+  input.dataset.key = item.key;
   input.setAttribute("aria-label", t(`cfg.${item.key}`));
   input.value = draft[item.key] ?? "";
   input.addEventListener("input", () => {

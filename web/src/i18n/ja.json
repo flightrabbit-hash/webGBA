@@ -74,7 +74,7 @@
   "web.info.about": "ブラウザで動く GBA プレイヤーです。.gba · .zip は mGBA コアで、.wgba · .wasm は内蔵ホストで実行します。ROM・ゲームファイルと公式 BIOS は含まれていません(mGBA 内蔵の HLE BIOS を使用)。",
   "web.update": "新しいバージョンがあります",
   "web.updateGo": "再読み込み",
-  "info.others": "Tabler Icons(MIT)、pako(MIT AND Zlib)、Galmuri フォント(SIL OFL 1.1、© Lee Minseo)。",
+  "info.others": "Tabler Icons(MIT)、pako(MIT AND Zlib)、jsQR(Apache-2.0)、Galmuri フォント(SIL OFL 1.1、© Lee Minseo)。",
   "host.embedFormat": "この webGBA が知らない内蔵 ROM 形式です(形式 {version} · 方式 {method})。ページを再読み込みして新しいバージョンを取得してください",
   "patch.err.patchVersion": "{name} はこの webGBA が知らないパッチ形式です(形式 {version})。ページを再読み込みして新しいバージョンを取得してください",
   "patch.err.romModified": "{rom} は同じゲーム({title} · {code} · rev {revision})ですが、変更された ROM です(SHA-1 {sha1}…)。パッチ・チート・改変をしていない元の ROM が必要です — 使える ROM: {need}",

@@ -74,6 +74,17 @@ export class Signal {
     return this.request("POST", "room", { ...auth, close: 1 });
   }
 
+  closeBeacon(auth) {
+    try {
+      const send = globalThis.navigator?.sendBeacon;
+      if (typeof send !== "function") return false;
+      this.calls++;
+      return Boolean(send.call(globalThis.navigator, new URL("room", this.base).href, JSON.stringify({ ...auth, close: 1 })));
+    } catch {
+      return false;
+    }
+  }
+
   near() {
     return this.request("GET", "near");
   }
@@ -231,10 +242,18 @@ export class RoomHost {
   }
 
   close() {
-    const open = this.running && this.auth && !this.full;
+    const open = Boolean(this.auth) && !this.shut;
+    this.shut = true;
     this.stop();
     if (this.invite && !this.session.closed) this.session.cancelInvite(this.invite.id);
     this.invite = null;
     if (open) this.signal.close(this.auth).catch(() => {});
+  }
+
+  beacon() {
+    if (!this.auth || this.shut) return false;
+    this.shut = true;
+    this.stop();
+    return this.signal.closeBeacon(this.auth);
   }
 }

@@ -3,7 +3,8 @@ import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core
 import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
 import { bootScript } from "./core/script-host.js";
 import { resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
-import { defaultNick, NetWindow, noticeLevel, noticeText } from "./app/net-window.js";
+import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "./app/net-window.js";
+import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
@@ -213,12 +214,16 @@ const player = new WebPlayer({
   onNetChange: (snap) => {
     netWin?.update(snap);
     syncControls();
+    queueBoard();
   },
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) toast(text, noticeLevel(info));
   },
+  onNetBoard: () => queueBoard(),
   netNick: () => netNick(),
+  netEnabled: () => state.prefs.netOn !== false,
+  hiddenClock: !window.matchMedia("(pointer: coarse)").matches,
 });
 
 function netNick() {
@@ -336,6 +341,123 @@ function openNet(request = player.net.request) {
   if (state.sheet && state.sheet !== "net") closeSheet();
   if (state.sheet !== "net") openSheet("net");
   netWin.show(request);
+}
+
+const BOARD_WIDTHS = { portrait: { bar: 22, number: 30, rank: 26, status: 12 }, landscape: { bar: 20, number: 28, rank: 26, status: 12 } };
+const boardState = { open: false, frame: 0, timer: 0, end: null };
+const boardRoot = make("div", "mpb");
+boardRoot.id = "board";
+boardRoot.hidden = true;
+document.body.append(boardRoot);
+
+function boardButton(icon, key, action, onClick) {
+  const node = button({ icon, kind: "tool", action, onClick });
+  setLabel(node, key);
+  return node;
+}
+
+const boardPanel = new BoardPanel({
+  root: boardRoot,
+  head: [boardButton("dots", "board.window", "board-window", () => boardToWindow()), boardButton("x", "win.close", "board-close", () => closeBoard())],
+  widths: BOARD_WIDTHS.portrait,
+  bar: (meter, ratio, width) => {
+    const unit = (state.boardUnit ??= parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--px")) || 2);
+    meter.firstChild.style.width = `${Math.round(ratio * Math.floor(width / unit)) * unit}px`;
+  },
+  textWidth: (text) => {
+    const ctx = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
+    ctx.font = (state.boardFont ??= `12px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small")}`);
+    return ctx.measureText(text).width;
+  },
+  showMs: () => document.body.dataset.layout !== "landscape",
+});
+
+const boardWanted = () => player.net.connected && (player.net.reached || player.net.session?.role === "join");
+
+function boardLayout() {
+  const landscape = document.body.dataset.layout === "landscape";
+  document.documentElement.style.setProperty("--mpb-top", `${Math.round(el.stage.getBoundingClientRect().bottom)}px`);
+  boardPanel.widths = landscape ? BOARD_WIDTHS.landscape : BOARD_WIDTHS.portrait;
+  state.boardUnit = null;
+  state.boardFont = null;
+  boardPanel.reset();
+}
+
+function centerBoardNodes(nodes) {
+  state.backCache = new Map();
+  try {
+    inkMoves(nodes, [], new Map());
+  } finally {
+    state.backCache = null;
+  }
+}
+
+function renderBoard() {
+  boardState.frame = 0;
+  if (!boardState.open) return;
+  if (!player.net.active) {
+    closeBoard();
+    return;
+  }
+  const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
+  const changed = boardPanel.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
+  if (changed?.nodes.length) centerBoardNodes(changed.nodes);
+}
+
+function queueBoard() {
+  if (boardState.open && !boardState.frame) boardState.frame = requestAnimationFrame(renderBoard);
+}
+
+function stopBoardHide() {
+  clearTimeout(boardState.timer);
+  if (boardState.end) boardRoot.removeEventListener("transitionend", boardState.end);
+  boardState.end = null;
+}
+
+function openBoard() {
+  if (!player.net.active || boardState.open) return;
+  if (state.menuOpen) setMenu(false);
+  stopBoardHide();
+  boardState.open = true;
+  boardRoot.hidden = false;
+  boardLayout();
+  player.net.watchBoard(true);
+  renderBoard();
+  void boardRoot.offsetWidth;
+  boardRoot.dataset.open = "";
+  syncControls();
+}
+
+function closeBoard({ instant = false } = {}) {
+  if (!boardState.open) return;
+  boardState.open = false;
+  cancelAnimationFrame(boardState.frame);
+  boardState.frame = 0;
+  player.net.watchBoard(false);
+  delete boardRoot.dataset.open;
+  stopBoardHide();
+  const finish = () => {
+    stopBoardHide();
+    if (!boardState.open) boardRoot.hidden = true;
+  };
+  if (instant || reducedMotion()) finish();
+  else {
+    boardState.end = (event) => event.target.classList?.contains("mpb__panel") && finish();
+    boardRoot.addEventListener("transitionend", boardState.end);
+    boardState.timer = setTimeout(finish, popMs() + 80);
+  }
+  syncControls();
+}
+
+function boardToWindow() {
+  closeBoard({ instant: true });
+  openNet(player.net.request);
+}
+
+function onNetButton() {
+  if (boardState.open) closeBoard();
+  else if (boardWanted()) openBoard();
+  else openNet();
 }
 
 const padCode = (name) => `Pad:${name}`;
@@ -621,6 +743,10 @@ function layout() {
   fitRecent();
   if (state.sheet === "library") lockCard();
   requestAnimationFrame(() => {
+    if (boardState.open) {
+      boardLayout();
+      renderBoard();
+    }
     centerInk(document);
   });
 }
@@ -672,6 +798,13 @@ function syncControls() {
   const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
   if (netBadge.textContent !== netText) netBadge.textContent = netText;
   if (netBadge.hidden !== !netText) netBadge.hidden = !netText;
+  const netTone = player.net.connected && player.net.session.memberList().some((m) => m.stalled) ? "warn" : "";
+  if ((netBadge.dataset.tone ?? "") !== netTone) {
+    if (netTone) netBadge.dataset.tone = netTone;
+    else delete netBadge.dataset.tone;
+  }
+  const netLabel = boardWanted() ? "board.open" : "net.button";
+  if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();
 }
@@ -857,7 +990,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".net-slot, .net-room-code, .net-offline__label, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-slot, .net-room-code,.net-offline__label, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -3208,9 +3341,26 @@ async function setLang(id) {
   savePrefs({ lang: id });
   await i18n.use(id);
   context.quotaText = t("web.quota");
+  state.boardFont = null;
+  queueBoard();
   syncControls();
   refreshStart();
   renderSheet();
+}
+
+function nickSetting() {
+  const fallback = defaultNick(state.prefs.netNo ?? (netNick(), state.prefs.netNo));
+  const input = make("input", "dialog__input net-nick cfg-nick");
+  input.type = "text";
+  input.value = String(state.prefs.netNick ?? "");
+  input.placeholder = fallback;
+  input.maxLength = 12;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.dataset.action = "cfg-net-nick";
+  input.setAttribute("aria-label", t("cfg.netNick"));
+  input.addEventListener("input", () => savePrefs({ netNick: [...input.value].slice(0, 12).join("") }));
+  return field(t("cfg.netNick"), t("cfg.netNick.note", { name: fallback }), input);
 }
 
 function renderSettings() {
@@ -3283,6 +3433,15 @@ function renderSettings() {
     ),
     group(
       "",
+      switchField(t("cfg.netOn"), t("cfg.netOn.note"), p.netOn !== false, (on) => {
+        savePrefs({ netOn: on });
+        player.net.syncEnabled();
+        syncControls();
+      }),
+      nickSetting(),
+    ),
+    group(
+      "",
       (() => {
         const row = make("div", "start__actions");
         row.append(button({ label: t("help.title"), icon: "keyboard", onClick: () => openSheet("help") }), button({ label: t("info.title"), icon: "info", onClick: () => openSheet("info") }));
@@ -3329,6 +3488,7 @@ function renderInfo() {
     ["/licenses/blip_buf-LICENSE.txt", "blip_buf (LGPL-2.1)"],
     ["/licenses/inih-LICENSE.txt", "inih (BSD-3-Clause)"],
     ["/licenses/pako-LICENSE.txt", "pako (MIT AND Zlib)"],
+    ["/licenses/jsqr-LICENSE.txt", "jsQR (Apache-2.0)"],
     ["/fonts/Galmuri-OFL.txt", "Galmuri (OFL-1.1)"],
     ["https://github.com/flightrabbit-hash/webGBA", "GitHub"],
   ]) {
@@ -3389,6 +3549,11 @@ function onKeyDown(event) {
     setMenu(false);
     return;
   }
+  if (boardState.open && event.key === "Escape") {
+    event.preventDefault();
+    closeBoard();
+    return;
+  }
   if (typing(event.target)) return;
   if ((event.ctrlKey || event.metaKey) && event.code === "KeyO") {
     event.preventDefault();
@@ -3424,7 +3589,7 @@ function onVisibility() {
     if (player.active) player.flushSave();
     pad.releaseAll();
     player.releaseAll();
-    if (state.prefs.pauseWhenHidden) hold("hidden", true);
+    if (state.prefs.pauseWhenHidden && !(player.clockOn && player.net.active)) hold("hidden", true);
   } else {
     hold("hidden", false);
     player.resumeAudio();
@@ -3477,7 +3642,7 @@ function wire() {
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
   el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
-  el.btnNet.addEventListener("click", () => openNet());
+  el.btnNet.addEventListener("click", onNetButton);
   el.btnSettings.addEventListener("click", () => openSheet("settings"));
   el.btnSound.addEventListener("click", toggleSound);
   el.btnMenu.addEventListener("click", () => setMenu(!state.menuOpen));
@@ -3520,6 +3685,7 @@ function wire() {
   window.visualViewport?.addEventListener("resize", layout);
   coarse.addEventListener?.("change", layout);
   document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", () => netWin.pageHide());
   window.addEventListener("pagehide", () => player.active && player.flushSave({ final: true }));
   window.addEventListener("pageshow", (event) => event.persisted && player.resumeAudio());
   // ② 게임 틀을 눌러 초점이 틀로 가도 blur 가 온다 — 그때는 키를 놓지 않는다(틀이 키를 넘겨줌)
@@ -3598,7 +3764,7 @@ function wire() {
     return Boolean(node?.closest(".lib__card, .lib__fly")) || (record.type === "attributes" && node?.classList.contains("spine"));
   };
   new MutationObserver((records) => {
-    if (inkFrame || records.every((record) => libraryOwn(record) || el.choice.contains(record.target))) return;
+    if (inkFrame || records.every((record) => libraryOwn(record) || el.choice.contains(record.target) || boardRoot.contains(record.target))) return;
     inkFrame = requestAnimationFrame(() => {
       inkFrame = 0;
       centerInk(document);
@@ -3834,7 +4000,7 @@ async function boot() {
   if (!state.storeBroken) store.persist();
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick } };
+window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);

@@ -1,4 +1,5 @@
 import { CodeError, RTC_CONFIG, decodeCode, encodeCode, selectedPair, waitGathering } from "./lan.js";
+import { ROW_BYTES } from "./board.js";
 
 export const PROTOCOL = 1;
 export const EV = Object.freeze({ OPEN: 1, JOIN: 2, LEAVE: 3, CLOSED: 4, STALL: 5, RESUME: 6 });
@@ -18,6 +19,7 @@ const K_PAUSE = 0x11;
 const K_BYE = 0x12;
 const K_PING = 0x13;
 const K_PONG = 0x14;
+const K_ROW = 0x15;
 
 const HEARTBEAT_MS = 500;
 const STALL_MS = 1500;
@@ -105,7 +107,42 @@ export class NetSession {
     this.lastMembers = "";
     this.membersAt = 0;
     this.stats = { sent: 0, recv: 0, relayed: 0, dropped: 0 };
+    this.gone = new Map();
+    this.rows = new Map();
+    this.myRow = null;
     this.timer = setInterval(() => this.beat(), HEARTBEAT_MS);
+  }
+
+  rowPacket(from, bytes) {
+    const out = new Uint8Array(4 + (bytes ? ROW_BYTES : 0));
+    out[0] = K_ROW;
+    out[1] = from;
+    if (bytes) out.set(bytes, 4);
+    return out;
+  }
+
+  storeRow(slot, bytes) {
+    if (bytes) this.rows.set(slot, bytes.slice());
+    else this.rows.delete(slot);
+  }
+
+  setRow(bytes) {
+    if (bytes && (!(bytes instanceof Uint8Array) || bytes.length !== ROW_BYTES)) return false;
+    this.myRow = bytes ? bytes.slice() : null;
+    if (!this.open) return false;
+    this.storeRow(this.slot, this.myRow);
+    const packet = this.rowPacket(this.slot, this.myRow);
+    if (this.host) for (const l of this.links.values()) l.ready && this.sendTo(l, packet);
+    else this.sendTo(this.link, packet);
+    this.changed();
+    return true;
+  }
+
+  takeRow(from, b) {
+    if (from < 0 || from >= SLOTS || (b.length !== 4 && b.length !== 4 + ROW_BYTES)) return false;
+    this.storeRow(from, b.length === 4 ? null : b.subarray(4));
+    this.changed();
+    return true;
   }
 
   get host() {
@@ -149,6 +186,7 @@ export class NetSession {
     if (!this.host) return;
     this.members.set(0, { nick: this.nick, lastSeen: this.now(), rtt: null });
     this.opened = true;
+    if (this.myRow) this.storeRow(0, this.myRow);
     this.emit(EV.OPEN, 0, 1);
     this.changed();
   }
@@ -277,7 +315,9 @@ export class NetSession {
       this.links.set(slot, link);
       this.members.set(slot, { nick: cleanNick(hello.nick, `${slot + 1}P`), lastSeen: this.now(), rtt: pair?.rttMs ?? null });
       this.log("info", `자리 ${slot} 들어옴 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
+      this.gone.delete(slot);
       this.sendTo(link, ctl(K_WELCOME, { slot, max: this.max, members: this.wireMembers() }));
+      for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
       this.broadcastMembers(null, slot);
       this.emit(EV.JOIN, slot, this.count);
       link.resolve?.({ slot, nick: this.members.get(slot).nick });
@@ -299,6 +339,12 @@ export class NetSession {
     }
     if (kind === K_PAUSE && member) {
       this.setAwayOf(link.slot, b[1] === 1);
+      return;
+    }
+    if (kind === K_ROW && member) {
+      if (!this.takeRow(link.slot, b)) return;
+      const packet = this.rowPacket(link.slot, b.length === 4 ? null : b.subarray(4));
+      for (const l of this.links.values()) if (l.ready && l.slot !== link.slot) this.sendTo(l, packet);
       return;
     }
     if (kind === K_BYE) this.drop(link.slot, WHY.LEFT);
@@ -375,7 +421,10 @@ export class NetSession {
     this.links.delete(slot);
     link.state = "dead";
     link.ready = false;
+    const nick = this.members.get(slot)?.nick;
+    if (nick) this.gone.set(slot, { nick, left: why === WHY.LEFT });
     this.members.delete(slot);
+    if (this.rows.delete(slot)) for (const l of this.links.values()) l.ready && this.sendTo(l, this.rowPacket(slot, null));
     if (why !== WHY.LEFT) this.killLink(link);
     else this.killLink(link, 100);
     if (this.closed) return;
@@ -455,6 +504,7 @@ export class NetSession {
       link.state = "joined";
       this.applyMembers(w.members, null, true);
       this.opened = true;
+      if (this.myRow) this.setRow(this.myRow);
       this.log("info", `자리 ${this.slot} 로 들어감 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
       this.emit(EV.OPEN, this.slot, this.count);
       this.changed();
@@ -483,6 +533,10 @@ export class NetSession {
       this.setAwayOf(0, b[1] === 1);
       return;
     }
+    if (kind === K_ROW) {
+      if (b.length >= 2 && b[1] !== this.slot) this.takeRow(b[1], b);
+      return;
+    }
     if (kind === K_BYE) this.close(WHY.HOST_LEFT);
   }
 
@@ -496,13 +550,17 @@ export class NetSession {
     if (!first) {
       for (const slot of [...this.members.keys()]) {
         if (now.has(slot)) continue;
+        const why = left && left.slot === slot && Number.isInteger(left.why) ? left.why : WHY.LEFT;
+        this.gone.set(slot, { nick: this.members.get(slot).nick, left: why === WHY.LEFT });
         this.members.delete(slot);
-        this.emit(EV.LEAVE, slot, left && left.slot === slot && Number.isInteger(left.why) ? left.why : WHY.LEFT);
+        this.rows.delete(slot);
+        this.emit(EV.LEAVE, slot, why);
       }
     }
     let count = this.members.size;
     for (const [slot, item] of now) {
       const old = this.members.get(slot);
+      if (!old) this.gone.delete(slot);
       const entry = old ?? { lastSeen: this.now() };
       entry.nick = cleanNick(item.nick, `${slot + 1}P`);
       entry.rtt = Number.isFinite(item.rtt) ? item.rtt : null;

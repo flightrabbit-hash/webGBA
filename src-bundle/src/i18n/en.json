@@ -168,7 +168,7 @@
   "info.openSource": "Included open source",
   "info.mgba": "mGBA 0.10.1 — Copyright © 2013-2022 Jeffrey Pfau and contributors. Mozilla Public License 2.0. https://mgba.io",
   "info.mgbaSource": "Source: https://github.com/mgba-emu/mgba/tree/0.10.1 (bundled unmodified as a static library). Includes: blip_buf (LGPL-2.1), inih (BSD-3-Clause).",
-  "info.others": "Tauri 2 · WRY · TAO (Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs (MIT OR Apache-2.0), zip (MIT), Tabler Icons (MIT), pako (MIT AND Zlib).",
+  "info.others": "Tauri 2 · WRY · TAO (Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs (MIT OR Apache-2.0), zip (MIT), Tabler Icons (MIT), pako (MIT AND Zlib), jsQR (Apache-2.0).",
 
   "menu.open": "Open…",
   "menu.close": "Close",
@@ -601,5 +601,35 @@
   "net.err.serverLost": "Lost contact with the server. New players may not be able to join.",
   "net.err.limit": "Too many requests. Try again shortly, or use Connect without internet (code / QR).",
   "net.fallback": "Could not reach the server, so connecting with a code.",
-  "net.act.back": "Back"
+  "net.act.back": "Back",
+
+  "board.titleOf": "Multiplayer · {purpose}",
+  "board.open": "Multiplayer status",
+  "board.window": "Connection window",
+  "board.room": "Room {code}",
+  "board.people": "Players {n}",
+  "board.ai": "AI {n}",
+  "board.aiTag": "AI",
+  "board.me": "Me",
+  "board.host": "Host",
+  "board.stall": "Paused",
+  "board.joining": "Joining",
+  "board.lost": "Lost",
+  "board.left": "Left",
+  "board.ms": "{ms}ms",
+  "board.tabHint": "Hold to view",
+  "board.summary": "Players {n} · {ms}ms",
+  "board.summaryHost": "Players {n}",
+  "help.netBoard": "Multiplayer status (in a session: hold, or tap to keep open)",
+  "cfg.group.net": "Multiplayer",
+  "cfg.netOn": "Use multiplayer",
+  "cfg.netOn.note": "When off, games cannot open the multiplayer window. In-game link menus are hidden from the next time you open a game",
+  "cfg.netNick": "Nickname",
+  "cfg.netNick.note": "Shown to other players (up to 12 characters). Empty = \"{name}\"",
+
+  "cfg.netNick.reset": "Use the default nickname",
+
+  "cfg.netNick.default": "Default nickname",
+
+  "net.reachedNote": "Connected · {n}/{max} — closing this window"
 }

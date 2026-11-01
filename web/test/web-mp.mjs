@@ -43,6 +43,7 @@ const webapiArgs = { wasm: fs.readFileSync(path.join(opt.webapi, "game.wasm")), 
 const files = {
   webapi: (await packWgba(webapiArgs)).bytes,
   variant: (await packWgba({ ...webapiArgs, data: [{ name: "other", bytes: new Uint8Array([1, 2, 3]) }] })).bytes,
+  pair: (await packWgba({ ...webapiArgs, manifest: { ...webapiArgs.manifest, id: "com.example.netpair", multiplayer: { ...webapiArgs.manifest.multiplayer, players: { min: 2, max: 2 }, purposes: [{ ...webapiArgs.manifest.multiplayer.purposes[0], players: [2, 2] }] } } })).bytes,
 };
 
 const browser = await chromium.launch({ executablePath: BROWSERS[which], headless: true });
@@ -71,7 +72,7 @@ async function open(p, kind = "webapi") {
   const b64 = Buffer.from(files[kind]).toString("base64");
   await p.page.evaluate(async ({ b64, kind }) => {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    await window.webgba.openFiles([new File([bytes], kind === "variant" ? "net-demo-other.wgba" : "net-demo.wgba")]);
+    await window.webgba.openFiles([new File([bytes], kind === "webapi" ? "net-demo.wgba" : `net-demo-${kind}.wgba`)]);
   }, { b64, kind });
   await p.page.waitForFunction(() => window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 20000 });
 }
@@ -135,6 +136,10 @@ try {
   ok(`근처 방으로 2명 연결(${ms}ms · API 방장 ${hCalls}·손님 ${gCalls}회${local ? ` · Redis ${cmd}명령` : ""})`, both, JSON.stringify({ host: await game(H), guest: await game(G1) }));
   const closedG = await waitFor(async () => (await G1.page.evaluate(() => window.webgba.state.sheet)) === "", 5000);
   ok("손님 창은 연결 뒤 저절로 닫힘", Boolean(closedG));
+  const hostNote = await text(H, "#sheetBody .net-note");
+  const closedH = await waitFor(async () => (await H.page.evaluate(() => window.webgba.state.sheet)) === "", 4000, 100);
+  const hostActive = await H.page.evaluate(() => Boolean(window.webgba.net.win.roomHost?.active && window.webgba.net.win.roomHost.running));
+  ok("방장 창(최소 2 < 최대 4): 최소 인원에 닿으면 연결됨 표시 → 1초 뒤 저절로 닫힘 · 방 코드 받기는 최대 인원까지 계속", Boolean(closedH) && hostActive, `${hostNote} · 받기 ${hostActive}`);
 
   for (const name of REMOTE ? ["G2"] : ["G2", "G3"]) {
     const G = await peer(name, { nick: `손님 ${name}` });
@@ -154,9 +159,8 @@ try {
   if (!REMOTE) {
     const four = await waitFor(async () => (await game(H))?.count === 4, 8000);
     ok("4명 연결(방장 기준)", Boolean(four));
-    const shown = await H.page.evaluate(() => document.querySelector(".net-room-code"));
-    ok("가득 참(4/4): 방 코드 칸 없음", !shown);
-    await H.page.click('[data-action="net-done"]');
+    const parked = await waitFor(() => H.page.evaluate(() => window.webgba.net.win.roomHost?.parked === true && window.webgba.state.sheet === ""), 5000);
+    ok("창이 닫힌 채 방 코드로 3·4번째 연결 · 가득 참(4/4) → 방장 받기 멈춤", Boolean(parked));
     await sleep(600);
     const bar = await H.page.evaluate(() =>
       [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null && !n.closest(".bar__group--files")).map((n) => {
@@ -168,6 +172,25 @@ try {
     const spread = (k) => Math.max(...bar.map((b) => b[k])) - Math.min(...bar.map((b) => b[k]));
     ok("세션 중 상단 버튼 줄(멀티플레이 켜짐·배지 4/4): 위·아래 차이 0", bar.some((b) => b.id === "btnNet" && b.badge === "4/4") && spread("top") === 0 && spread("bottom") === 0 && spread("ct") === 0 && spread("cb") === 0, JSON.stringify(bar.map((b) => `${b.id}:${b.top}-${b.bottom}${b.badge ? `(${b.badge})` : ""}`)));
     await shot(H, "세션중_상단버튼_390x844.png");
+
+    // ── 최소 = 최대(2명, 교환처럼): 연결되면 방장 창도 1초 뒤 닫힘 ──
+    const A = await peer("A", { nick: "교환 방장" });
+    const B = await peer("B", { nick: "교환 손님" });
+    for (const p of [A, B]) await open(p, "pair");
+    await want(A);
+    await A.page.click('[data-action="net-room-make"]');
+    const codeP = await roomCode(A);
+    await want(B);
+    await B.page.click('[data-action="net-room-join"]');
+    await B.page.fill('[data-action="net-code-in"]', codeP);
+    await B.page.click('[data-action="net-code-go"]');
+    const pairOn = await waitFor(async () => (await game(A))?.count === 2 && (await game(B))?.open === 1, 25000, 200);
+    const tJoin = Date.now();
+    const pairClosed = await waitFor(async () => (await A.page.evaluate(() => window.webgba.state.sheet)) === "" && (await B.page.evaluate(() => window.webgba.state.sheet)) === "", 4000, 100);
+    const pairInfo = await A.page.evaluate(() => ({ badge: document.querySelector("#btnNet .tool__badge:not([hidden])")?.textContent ?? "", polling: Boolean(window.webgba.net.win.roomHost?.timer) }));
+    ok("최소 = 최대(2명): 방 코드로 연결 → 방장·손님 창 모두 1초 뒤 저절로 닫힘 · 배지 2/2 · 방장 받기 없음", pairOn && pairClosed && pairInfo.badge === "2/2" && !pairInfo.polling, `${Date.now() - tJoin}ms · ${JSON.stringify(pairInfo)}`);
+    await A.context.close();
+    await B.context.close();
 
     // ── 다른 버전: 흐림 표시·거부 ──
     const H2 = await peer("H2", { nick: "방장 2" });

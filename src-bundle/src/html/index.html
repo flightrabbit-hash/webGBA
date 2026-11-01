@@ -58,6 +58,9 @@
         <button type="button" class="iconbtn" id="btn-favorites" title="즐겨찾기" data-i18n-title="rail.favorites" aria-pressed="false">
           <span class="icon" style="--icon: url(&quot;/icons/bookmarks.svg&quot;)"></span>
         </button>
+        <button type="button" class="iconbtn" id="btn-net" title="멀티플레이" data-i18n-title="net.button" aria-pressed="false" hidden>
+          <span class="icon" style="--icon: url(&quot;/icons/users.svg&quot;)"></span>
+        </button>
         <button type="button" class="iconbtn" id="btn-star" title="즐겨찾기에 넣기 (Ctrl+D)" aria-pressed="false" disabled>
           <span class="icon" id="btn-star-icon" style="--icon: url(&quot;/icons/star.svg&quot;)"></span>
         </button>
@@ -76,9 +79,6 @@
         </button>
         <button type="button" class="iconbtn" id="btn-state-load" title="상태 불러오기 (F1~F9)" data-i18n-title="rail.stateLoad" disabled>
           <span class="icon" style="--icon: url(&quot;/icons/history.svg&quot;)"></span>
-        </button>
-        <button type="button" class="iconbtn" id="btn-net" title="멀티플레이" data-i18n-title="net.button" aria-pressed="false" hidden>
-          <span class="icon" style="--icon: url(&quot;/icons/users.svg&quot;)"></span>
         </button>
         <span class="railbar__sep" aria-hidden="true"></span>
         <button type="button" class="iconbtn" id="btn-mute" title="소리 끄기" aria-pressed="false">
@@ -102,6 +102,8 @@
         </div>
         <ul class="sidepanel__list" id="sidepanel-list" role="listbox" tabindex="0"></ul>
       </aside>
+
+      <aside class="sidepanel sidepanel--mp mpb" id="mppanel" hidden></aside>
 
       <main class="stage" id="stage" tabindex="-1">
         <canvas class="stage__screen" id="screen" width="240" height="160" hidden></canvas>

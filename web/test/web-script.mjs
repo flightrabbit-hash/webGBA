@@ -2,7 +2,7 @@
 // 크롬·웹킷 둘 다, 새 브라우저 프로필(시험 전용). 이 시험이 띄우는 서버가 web/dist 를 내주고 새는 요청을 센다(/__leak·업그레이드·UDP STUN).
 //   PLAYWRIGHT_DIR=<크롬용 playwright-core 폴더> WEBKIT_PLAYWRIGHT_DIR=<웹킷(설치된 빌드)과 맞는 playwright-core 폴더> \
 //     node web/test/web-script.mjs [--module <예제 module 폴더> --emscripten <예제 emscripten 폴더>] [--screen <160x144 ① .wgba>] [--only chromium|webkit]
-//   --module 이 없으면 저장소 docs/wgba/examples/net-script 로 격리 틀 규칙만 본다(S4 전용 항목 건너뜀).
+//   --module 이 없으면 저장소 docs/wgba/examples/hello-script(롬 없음)로 모든 항목(격리·그리기·키·세이브·퀵슬롯)을 본다. --emscripten 이 없으면 emscripten 항목만 건너뜀.
 // 예제 폴더: module = game.js·code.wasm·manifest.json, emscripten = manifest.json + out/game.js·game.wasm·game.data.
 // 시험이 그 자리에서 묶는 것: 그대로 / x-probe(밖으로 나가 보기) / x-probe.selfNav(틀이 스스로 다른 문서로) 변형.
 import fs from "node:fs";
@@ -67,8 +67,7 @@ async function pack(name, args) {
   fs.writeFileSync(file, (await packWgba(args)).bytes);
   return file;
 }
-const REPO = !opt.module;
-const mod = opt.module ?? path.join(here, "..", "..", "docs", "wgba", "examples", "net-script");
+const mod = opt.module ?? path.join(here, "..", "..", "docs", "wgba", "examples", "hello-script");
 const modManifest = readJson(path.join(mod, "manifest.json"));
 const modWasm = fs.existsSync(path.join(mod, "code.wasm")) ? path.join(mod, "code.wasm") : path.join(mod, "game.wasm");
 const modArgs = (extra = {}) => ({ wasm: fs.readFileSync(modWasm), js: fs.readFileSync(path.join(mod, "game.js")), manifest: { ...modManifest, ...extra } });
@@ -112,54 +111,6 @@ const FRAME_PROBE = `async ({ leak, ws, stun }) => {
   out.origin = String(self.origin);
   return out;
 }`;
-
-async function runRepo(name, browserType, launchOptions) {
-  who = name;
-  let browser;
-  try {
-    browser = await browserType.launch(launchOptions);
-  } catch (error) {
-    ok("브라우저 띄우기", false, error.message.split("\n")[0]);
-    return;
-  }
-  try {
-    const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
-      if (window === window.top) localStorage.setItem("webgba.installHint", "1");
-    });
-    const page = await context.newPage();
-    const pageErrors = [];
-    page.on("pageerror", (error) => pageErrors.push(error.message));
-    await page.goto(BASE);
-    await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
-    const [chooser] = await Promise.all([page.waitForEvent("filechooser", { timeout: 10000 }), page.click("#startOpen")]);
-    await chooser.setFiles(files.module);
-    await page.waitForFunction(() => !window.webgba.state.opening && document.body.dataset.view === "game" && window.webgba.player.running, null, { timeout: 30000 });
-    await sleep(800);
-    const frame = await page.evaluate(() => {
-      const f = document.querySelector("#screen .script-frame");
-      return f ? { sandbox: f.getAttribute("sandbox"), csp: /Content-Security-Policy[^>]+connect-src blob: data:/.test(f.srcdoc), runtime: document.body.dataset.runtime } : null;
-    });
-    ok("저장소 예제(net-script) 틀: sandbox=allow-scripts 만 · CSP meta(connect-src blob: data:)", frame?.sandbox === "allow-scripts" && frame.csp && frame.runtime === "script", JSON.stringify(frame));
-    const inner = page.frames().find((f) => f !== page.mainFrame());
-    hits.length = 0;
-    const probe = inner ? await inner.evaluate(`(${FRAME_PROBE})(${JSON.stringify({ leak: LEAK, ws: `ws://127.0.0.1:${server.address().port}/__leak-ws`, stun: `stun:127.0.0.1:${STUN_PORT}` })})`) : {};
-    await sleep(2500);
-    const blocked = ["fetch", "xhr", "webSocket", "eventSource", "image", "webRTC", "indexedDB", "cookie", "parentDom", "topDom", "popup", "tauriHere"];
-    const open = blocked.filter((k) => !String(probe[k] ?? "").startsWith("막힘"));
-    ok("막힘: 네트워크·저장소·위 창·팝업·WebRTC·Tauri(시험이 틀 안에서 시도)", inner && open.length === 0, open.length ? open.map((k) => `${k}=${probe[k]}`).join(", ") : blocked.map((k) => `${k}:${String(probe[k]).replace("막힘 ", "")}`).join(" "));
-    ok("서버가 받은 것 없음(fetch·XHR·WS·이미지·beacon·팝업·STUN)", hits.length === 0, hits.join(" | ") || "0건");
-    ok("틀 출처 null", probe.origin === "null", String(probe.origin));
-    ok("S4 전용 항목(그리기 측정·키·세이브·퀵슬롯·emscripten)", true, "건너뜀 — S4 예제 없음(저장소 예제로 대체)");
-    const unexpected = pageErrors.filter((m) => !/web-inspector:\/\/|blob:null\//.test(m));
-    ok("페이지 오류 없음", unexpected.length === 0, unexpected.slice(0, 3).join(" | "));
-  } catch (error) {
-    ok("시험 도중 오류", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" "));
-  } finally {
-    await browser.close();
-  }
-}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const median = (list) => {
@@ -305,7 +256,7 @@ async function run(name, browserType, launchOptions) {
       const bytes = await window.webgba.store.saveBytes(g.saveId);
       return { id: g.saveId, n: bytes && bytes.length === 4 ? new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true) : -1 };
     });
-    ok("세이브: webgba.save.write → 게임 id 키에 저장", save1.id === "io.example.s4.module" && save1.n === 2, JSON.stringify(save1));
+    ok("세이브: webgba.save.write → 게임 id 키에 저장", save1.id === modManifest.id && save1.n === 2, JSON.stringify(save1));
 
     // 4. 퀵슬롯
     from = await logCount();
@@ -374,6 +325,8 @@ async function run(name, browserType, launchOptions) {
     ok("틀이 스스로 다른 문서로 → 틀 지우고 멈춤", nav.halted && !nav.frame, JSON.stringify(nav));
 
     // 10. emscripten(SDL1) — files 조각·save.kind files·키(keyCode)
+    if (!files.emscripten) console.log(`건너뜀 [${who}] emscripten — --emscripten 예제 폴더 없음`);
+    else {
     await pick(files.emscripten);
     const asset = await waitLog(/^info asset hello from data chunk/, 8000);
     const first = await waitLog(/^info (no save|loaded \d+)/, 3000);
@@ -393,6 +346,7 @@ async function run(name, browserType, launchOptions) {
     await pick(files.emscripten);
     const reloaded = await waitLog(/^info loaded 1/, 8000);
     ok("emscripten: 다시 열면 FS 세이브를 /save/game.sav 에 놓음", reloaded, reloaded ?? (await logs()).join(" | "));
+    }
 
     // 11. ① 160×144(240×160 아닌 화면)
     if (files.screen) {
@@ -420,11 +374,11 @@ const wanted = opt.only ? [opt.only] : ["chromium", "webkit"];
 try {
   if (wanted.includes("chromium")) {
     const { chromium } = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url)("playwright-core");
-    await (REPO ? runRepo : run)("chromium", chromium, { executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+    await run("chromium", chromium, { executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
   }
   if (wanted.includes("webkit")) {
     const { webkit } = createRequire(process.env.WEBKIT_PLAYWRIGHT_DIR ?? process.env.PLAYWRIGHT_DIR ? path.join(process.env.WEBKIT_PLAYWRIGHT_DIR ?? process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url)("playwright-core");
-    await (REPO ? runRepo : run)("webkit", webkit, { headless: true });
+    await run("webkit", webkit, { headless: true });
   }
 } finally {
   server.close();

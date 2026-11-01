@@ -138,7 +138,9 @@ export class ScriptHost {
       const num = (v) => (Number.isInteger(v) && v >= 0 && v <= 8 ? v : undefined);
       this.onNet?.({ op, purpose: typeof data.purpose === "string" ? data.purpose.slice(0, 32) : "", min: num(data.min), max: num(data.max), role: ["any", "make", "join"].includes(data.role) ? data.role : "any", serial: Number.isInteger(data.serial) ? data.serial & 0xff : undefined });
     } else if (op === "unwant") this.onNet?.({ op });
-    else if (op === "send") {
+    else if (op === "board") {
+      if (data.board === null || (data.board && typeof data.board === "object" && JSON.stringify(data.board).length <= 8192)) this.onNet?.({ op, board: data.board });
+    } else if (op === "send") {
       const to = data.to === "ordered" || data.to === "all" ? data.to : Number.isInteger(data.to) && data.to >= 0 && data.to < 8 ? data.to : null;
       if (to === null || !(data.data instanceof ArrayBuffer) || !data.data.byteLength || data.data.byteLength > 16384) return;
       this.onNet?.({ op, to, data: data.data });

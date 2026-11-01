@@ -10,7 +10,31 @@ const SCAN_MS = 200;
 const PASTE_WAIT_MS = 1500;
 const NICK_MAX = 12;
 
-export const canScan = () => typeof globalThis.BarcodeDetector === "function" && Boolean(globalThis.navigator?.mediaDevices?.getUserMedia);
+const SCAN_EDGE = 640;
+
+export const canScan = (touch = false) => Boolean(globalThis.navigator?.mediaDevices?.getUserMedia) && (typeof globalThis.BarcodeDetector === "function" || touch);
+
+export async function frameReader() {
+  if (typeof globalThis.BarcodeDetector === "function") {
+    const detector = new globalThis.BarcodeDetector({ formats: ["qr_code"] });
+    return async (video) => (await detector.detect(video)).map((f) => f.rawValue);
+  }
+  if (typeof globalThis.jsQR !== "function") await import("../vendor/jsqr.js");
+  const decode = globalThis.jsQR;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  return async (video) => {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h || typeof decode !== "function") return [];
+    const scale = Math.min(1, SCAN_EDGE / Math.max(w, h));
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const found = decode(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, { inversionAttempts: "dontInvert" });
+    return found ? [found.data] : [];
+  };
+}
 
 export function purposeName(purpose) {
   return (purpose?.name && pickText(purpose.name, lang())) || t("net.purposeDefault");
@@ -112,6 +136,7 @@ export class NetWindow {
     this.joinInfo = null;
     this.joinTimer = 0;
     this.joinSeq = 0;
+    this.joinedRoom = "";
   }
 
   show(request) {
@@ -119,6 +144,7 @@ export class NetWindow {
     if (!this.request) return;
     const snap = this.net.snapshot();
     this.open = true;
+    this.stay = Boolean(snap.active && snap.reached);
     this.error = "";
     this.errorHelp = false;
     this.offerLan = false;
@@ -165,7 +191,7 @@ export class NetWindow {
         this.joinSeq++;
         this.net.cancel();
       }
-    } else if (this.roomHost && snap.reached) this.roomHost.setActive(false);
+    } else if (this.roomHost && snap.reached && snap.count >= snap.max) this.roomHost.setActive(false);
     if (this.invite && !this.net.active) this.invite = null;
     this.net.windowClosed();
     this.kit.done();
@@ -185,12 +211,21 @@ export class NetWindow {
     this.roomHost = null;
   }
 
+  get roomCode() {
+    return this.roomHost?.room || (this.net.active ? this.joinedRoom : "");
+  }
+
+  pageHide() {
+    this.roomHost?.beacon();
+  }
+
   update(snap = this.net.snapshot()) {
     if (this.roomHost && (!snap.active || snap.role !== "make")) {
-      this.roomHost.stop();
+      this.roomHost.close();
       this.roomHost = null;
     } else if (this.roomHost && snap.count < snap.max) this.roomHost.resume();
     if (!snap.active && this.joinInfo && !this.busy) this.clearJoin();
+    if (!snap.active) this.joinedRoom = "";
     if (!this.open) return;
     if (!snap.request && !snap.active) {
       this.close();
@@ -216,6 +251,7 @@ export class NetWindow {
       return;
     }
     if (this.screen === "joined" && snap.connected && !this.closeTimer) this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
+    if ((this.screen === "host" || this.screen === "room") && snap.reached && !this.stay && !this.closeTimer) this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
     if ((this.screen === "host" || this.screen === "room") && snap.active) {
       const canInvite = snap.count < snap.max;
       const shownInvite = this.screen === "host" ? Boolean(this.refs.inviteBox) : Boolean(this.refs.roomBox);
@@ -314,7 +350,7 @@ export class NetWindow {
     hint.classList.add("net-paste-hint");
     hint.hidden = true;
     const buttons = [];
-    if (canScan()) buttons.push(k.button({ label: k.label("scan"), action: `${action}-scan`, onClick: () => this.scan(area, onInput) }));
+    if (canScan(k.touch)) buttons.push(k.button({ label: k.label("scan"), action: `${action}-scan`, onClick: () => this.scan(area, onInput) }));
     buttons.push(k.button({ label: k.label("paste"), action: `${action}-paste`, onClick: () => this.paste(area, hint, onInput) }));
     buttons.push(k.button({ label: k.label(field === "answer" ? "connect" : "next"), kind: "primary", action: `${action}-go`, onClick: onGo, disabled: this.busy }));
     const scanBox = k.make("div", "net-scan");
@@ -360,7 +396,9 @@ export class NetWindow {
     if (this.scanner) return this.stopScan();
     const box = this.refs.scanBox;
     let stream = null;
+    let read = null;
     try {
+      read = await frameReader();
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
     } catch {
       this.setError(t("net.scanFailed"));
@@ -373,15 +411,14 @@ export class NetWindow {
     video.srcObject = stream;
     box.replaceChildren(video);
     box.hidden = false;
-    const detector = new globalThis.BarcodeDetector({ formats: ["qr_code"] });
     const scanner = { stream, timer: 0 };
     this.scanner = scanner;
     await video.play().catch(() => {});
     const tick = async () => {
       if (this.scanner !== scanner) return;
       try {
-        const found = await detector.detect(video);
-        const text = found.map((f) => cleanCode(f.rawValue)).find(Boolean);
+        const found = await read(video);
+        const text = found.map((value) => cleanCode(value)).find(Boolean);
         if (text) {
           area.value = text;
           onInput(text);
@@ -547,7 +584,7 @@ export class NetWindow {
       const members = k.make("ul", "net-members");
       members.append(...this.memberRows(snap));
       this.refs.members = members;
-      body = [];
+      body = snap.reached && !this.stay ? [k.note(t("net.reachedNote", { n: snap.count, max: snap.max }))] : [];
       if (snap.count < snap.max) {
         const box = k.make("div", "net-room");
         this.refs.roomBox = box;
@@ -568,6 +605,7 @@ export class NetWindow {
       members.append(...this.memberRows(snap));
       this.refs.members = members;
       body = this.fallback ? [k.note(t("net.fallback"))] : [];
+      if (snap.reached && !this.stay) body.push(k.note(t("net.reachedNote", { n: snap.count, max: snap.max })));
       body.push(k.group(t("net.room"), count, members));
       if (snap.count < snap.max) {
         const box = k.make("div", "net-invite");
@@ -713,6 +751,7 @@ export class NetWindow {
       if (seq !== this.joinSeq) throw new SessionError("closed");
       await this.signal.answer({ x: got.x, q: got.q, t: got.t, d: code });
       this.joinInfo = got;
+      this.joinedRoom = room;
       this.busy = false;
       this.error = "";
       this.errorHelp = false;

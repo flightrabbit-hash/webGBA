@@ -10,6 +10,7 @@ const SAVE_DELAY_MS = 1000;
 const POINTER_BUTTONS = 7;
 const POINTER_WHEEL_STEP = 40;
 const AUDIO_STALL_MS = 2000;
+const CLOCK_WORKER = "let t=0;onmessage=(e)=>{clearInterval(t);t=e.data>0?setInterval(()=>postMessage(0),e.data):0};";
 
 // iOS·Safari 의 Web Audio 는 기본이 ambient 라 무음 모드(벨소리 끔)에서 소리가 나지 않는다.
 // Audio Session API(Safari 16.4+)가 있으면 소리를 낼 때 playback 으로 바꾼다. 없는 브라우저(Chrome·WebView2)는 그대로.
@@ -167,16 +168,27 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, netNick }) {
+  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false }) {
     this.canvas = canvas;
+    this.hiddenClock = hiddenClock;
+    this.clock = null;
+    this.clockOn = false;
     this.net = new NetHost({
       log: (level, text) => core.log(level === "warn" ? "WARN" : "INFO", `[멀티플레이] ${text}`),
       onWant: (request) => onNetWant?.(request),
-      onChange: (snapshot) => onNetChange?.(snapshot),
+      onChange: (snapshot) => {
+        this.syncClock();
+        onNetChange?.(snapshot);
+      },
       onNotice: (info) => onNetNotice?.(info),
+      onBoard: () => onNetBoard?.(),
       nick: () => netNick?.() ?? "",
+      enabled: () => netEnabled?.() ?? true,
     });
-    globalThis.document?.addEventListener?.("visibilitychange", () => this.syncAway());
+    globalThis.document?.addEventListener?.("visibilitychange", () => {
+      this.syncClock();
+      this.syncAway();
+    });
     this.ctx = canvas.getContext("2d");
     this.image = this.ctx.createImageData(SCREEN_W, SCREEN_H);
     this.onStatus = onStatus ?? (() => {});
@@ -450,7 +462,39 @@ export class Player {
   }
 
   syncAway() {
-    this.net.setAway(Boolean(this.host) && (this.paused || globalThis.document?.visibilityState === "hidden"));
+    this.net.setAway(Boolean(this.host) && (this.paused || (globalThis.document?.visibilityState === "hidden" && !this.clockOn)));
+  }
+
+  syncClock() {
+    const want = this.hiddenClock && this.running && this.net.active && globalThis.document?.visibilityState === "hidden";
+    if (want === this.clockOn) return;
+    this.clockOn = want;
+    if (want) {
+      cancelAnimationFrame(this.raf);
+      this.raf = 0;
+      if (!this.clock) {
+        const url = URL.createObjectURL(new Blob([CLOCK_WORKER], { type: "text/javascript" }));
+        this.clock = new Worker(url);
+        URL.revokeObjectURL(url);
+        this.clock.onmessage = () => this.clockTick();
+      }
+      this.last = performance.now();
+      this.clock.postMessage(Math.floor(FRAME_MS));
+    } else {
+      this.clock?.postMessage(0);
+      if (this.running) {
+        cancelAnimationFrame(this.raf);
+        this.last = performance.now();
+        this.raf = requestAnimationFrame(this.tick);
+      }
+    }
+    this.syncAway();
+  }
+
+  clockTick() {
+    if (!this.clockOn || !this.running) return;
+    if (this.host?.script) this.host.post({ type: "tick" });
+    this.tick(performance.now());
   }
 
   notePad(bits) {
@@ -652,6 +696,7 @@ export class Player {
     this.raf = 0;
     this.running = false;
     this.net.detach();
+    this.syncClock();
     if (this.host?.script) await this.host.flush();
     if (this.host) await this.flushSave({ final: true });
     this.host?.dispose?.();
@@ -762,7 +807,7 @@ export class Player {
 
   tick(now) {
     if (!this.running) return;
-    this.raf = requestAnimationFrame(this.tick);
+    if (!this.clockOn) this.raf = requestAnimationFrame(this.tick);
     this.watchAudio(now, now - this.last);
     const dt = Math.min(now - this.last, 100);
     this.last = now;

@@ -7,6 +7,7 @@
 // 롬 구획은 옛 도구(pack-wgba·.wgbp)가 쓰던 것과 같은 바이트라, 옛 앱이 롬 구획을 빼고 다시 붙여도 결과가 같다.
 import { Inflate, deflate } from "../vendor/pako.js";
 import { concat, customSection, leb, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECTION } from "./wgbp.js";
+import { checkBoard } from "./net/board.js";
 
 export const SECTION_PREFIX = "webgba.";
 export const TOC_SECTION = "webgba.toc";
@@ -618,6 +619,7 @@ export function checkManifest(m, errors, warnings) {
       pids.add(p.id);
     }
     for (const n of [mp.players?.min, mp.players?.max]) if (n !== undefined && (!Number.isInteger(n) || n < 2 || n > 8)) errors.push("multiplayer 인원은 2~8");
+    if (mp.board !== undefined) checkBoard(mp.board, errors, warnings);
   }
   if (m.runtime === "script" && !["module", "emscripten"].includes(m.entry?.style)) errors.push(`entry.style 이 module·emscripten 이 아닙니다: ${m.entry?.style}`);
   // 규격 1 의 JS 조각 이름은 늘 "js"(묶기 도구·읽기 모두) — 다른 값은 무시된다
@@ -846,6 +848,8 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
         }
         const net = WEBAPI_NET.filter((n) => exportsSet.has(n)).length;
         if (net && net < WEBAPI_NET.length) warnings.push(`Web_Net* 일곱 개 중 ${net}개만 있습니다 — 멀티플레이를 쓰지 않는 것으로 봅니다`);
+        if (exportsSet.has("Web_NetBoard") && !m.multiplayer?.board) warnings.push("Web_NetBoard 가 있는데 설명서에 multiplayer.board 가 없습니다 — 상태 표를 읽지 않습니다");
+        if (m.multiplayer?.board && !exportsSet.has("Web_NetBoard")) warnings.push("multiplayer.board 가 있는데 Web_NetBoard 내보내기가 없습니다 — 사람 목록만 보입니다");
         const w = m.screen?.width ?? 240;
         const h = m.screen?.height ?? 160;
         const customButtons = (m.input?.buttons ?? []).length > 0 || (m.input?.preset ?? "gba") !== "gba";

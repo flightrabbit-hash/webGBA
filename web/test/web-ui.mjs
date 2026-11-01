@@ -32,15 +32,17 @@ const ONLY_EXTRA = process.env.UI_EXTRA_ONLY === "1";
 // 정수 배율·꺼내기/넣기·정렬·실행 중 칸, 그리고 꺼내기·넣기 움직임(transform·opacity, 닫을 때 움직임 뒤 숨김).
 const ONLY_LIBRARY = process.env.UI_LIBRARY_ONLY === "1";
 const ONLY_NET = process.env.UI_NET_ONLY === "1";
+// UI_BOARD_ONLY=1 이면 멀티플레이 상태 메뉴 시험만(UI_NET_WGBA 의 예제를 열고 가짜 세션·표로 320x568·390x844·844x390 × 세 언어)
+const ONLY_BOARD = process.env.UI_BOARD_ONLY === "1";
 // UI_CHOICE_ONLY=1 이면 선택 칸(아래에서 올라오는 옵션 목록) 시험만(UI_CHOICE=0 이면 그것만 뺌): 설정의 선택 칸마다 열기·고르기·닫기·키보드·게임패드·
 // 뒤로 가기·바깥 누르기, 320x568·390x844·844x390 화면 안·잉크 가운데·줄 여백, 6배 느린 CPU 열기 시간, WebKit 한 번.
 const ONLY_CHOICE = process.env.UI_CHOICE_ONLY === "1";
-const EXTRA = !ONLY_NET && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
+const EXTRA = !ONLY_NET && !ONLY_BOARD && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
-const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_NET;
-const MOTION = !ONLY_NET && !ONLY_EXTRA && !ONLY_LIBRARY && !ONLY_CHOICE && (ONLY_MOTION || process.env.UI_MOTION !== "0");
-const LIBRARY = !ONLY_NET && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_CHOICE && process.env.UI_LIBRARY !== "0"));
-const CHOICE = !ONLY_NET && (ONLY_CHOICE || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_LIBRARY && process.env.UI_CHOICE !== "0"));
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_NET || ONLY_BOARD;
+const MOTION = !ONLY_NET && !ONLY_BOARD && !ONLY_EXTRA && !ONLY_LIBRARY && !ONLY_CHOICE && (ONLY_MOTION || process.env.UI_MOTION !== "0");
+const LIBRARY = !ONLY_NET && !ONLY_BOARD && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_CHOICE && process.env.UI_LIBRARY !== "0"));
+const CHOICE = !ONLY_NET && !ONLY_BOARD && (ONLY_CHOICE || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_LIBRARY && process.env.UI_CHOICE !== "0"));
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "390x844|ko|info": "세로_390x844_정보_게임_소리.png","844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
@@ -1674,7 +1676,151 @@ async function netChecks() {
   }
 }
 
-if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0") await netChecks();
+// 멀티플레이 상태 메뉴: 예제 게임을 열고 가짜 세션(사람 4·AI 4, 잠시 멈춤·지연 3단계·탈락·이번 상대)과 게임 값 없는 세션(연결 중 1명)을
+// 세 화면 크기 × 세 언어로 잰다 — 잉크 세로 가운데, 줄 높이·간격, 줄 위·아래 여백, 같은 줄 버튼 위·아래 차이 0, 겹침, 화면 안, 게임 화면 가리지 않음.
+const BOARD_FIXTURE = {
+  columns: [
+    { id: "hp", type: "bar", name: { ko: "체력", en: "HP", ja: "HP" }, max: 100, tone: "hp" },
+    { id: "lv", type: "number", name: { ko: "레벨", en: "Level", ja: "レベル" }, prefix: "Lv" },
+    { id: "rank", type: "rank", name: { ko: "순위", en: "Rank", ja: "順位" } },
+    { id: "state", type: "status", name: { ko: "상태", en: "State", ja: "状態" }, labels: [{ name: { ko: "탈락", en: "Out", ja: "脱落" }, tone: "dim", dimRow: true }, { name: { ko: "준비 완료", en: "Ready", ja: "準備OK" }, tone: "good" }, { name: { ko: "AI가 대신", en: "AI", ja: "AI代行" }, tone: "dim" }] },
+  ],
+  names: [{ ko: "웅", en: "Brock" }, { ko: "이슬", en: "Misty" }, { ko: "마티스", en: "Surge" }, { ko: "민화", en: "Erika" }],
+  captions: [{ ko: "{0}-{1} 라운드", en: "Round {0}-{1}", ja: "ラウンド {0}-{1}" }],
+  mark: { ko: "이번 상대", en: "Next foe", ja: "次の相手" },
+};
+const BOARD_ROWS = [
+  { slot: 0, values: [81, 7, 1, 0] },
+  { slot: 1, values: [74, 6, 2, 0] },
+  { slot: null, nameLabel: 2, values: [66, 6, 3, 0] },
+  { slot: 2, values: [58, 5, 4, 0] },
+  { slot: null, nameLabel: 3, values: [52, 5, 5, 0], mark: true },
+  { slot: null, nameLabel: 4, values: [40, 5, 6, 0] },
+  { slot: 3, values: [23, 4, 7, 0] },
+  { slot: null, nameLabel: 1, values: [0, 4, 8, 1], dim: true },
+];
+
+async function boardSession(page, { plain }) {
+  await page.evaluate(
+    async ({ plain, fixture, rows }) => {
+      const { boardConfig, scriptBoard } = await import("/js/core/net/board.js");
+      const net = window.webgba.player.net;
+      const members = plain
+        ? [{ slot: 0, nick: "플레이어 7730", rtt: null }, { slot: 1, nick: "플라이", rtt: 9 }, { slot: 2, nick: "플레이어 5102", rtt: null }]
+        : [{ slot: 0, nick: "플레이어 7730", rtt: null }, { slot: 1, nick: "플라이", rtt: 12 }, { slot: 2, nick: "플레이어 4821", rtt: 38, stalled: true }, { slot: 3, nick: "달빛토끼", rtt: 160 }];
+      net.session = { closed: false, open: true, opened: true, role: "join", host: false, slot: 1, max: plain ? 4 : 8, get count() { return members.length; }, gone: new Map(), rows: new Map(), memberList: () => members.map((m) => ({ ...m, me: m.slot === 1, host: m.slot === 0, stalled: Boolean(m.stalled), away: false })), setAway() {}, close() {}, setRow() {} };
+      net.request = { serial: 9, purpose: net.config.purposes[0], min: 2, max: plain ? 4 : 8, role: "any" };
+      net.boardCfg = plain ? null : boardConfig({ multiplayer: { board: fixture } });
+      net.boardPtr = 0;
+      net.board = plain ? null : scriptBoard({ caption: 1, args: [4, 2], rows });
+      window.webgba.net.win.joinedRoom = "482153";
+      net.changed();
+    },
+    { plain, fixture: BOARD_FIXTURE, rows: BOARD_ROWS },
+  );
+}
+
+async function boardChecks() {
+  const bytes = fs.readFileSync(process.env.UI_NET_WGBA).toString("base64");
+  const views = [{ name: "390x844", viewport: { width: 390, height: 844 } }, { name: "844x390", viewport: { width: 844, height: 390 } }, { name: "320x568", viewport: { width: 320, height: 568 } }].filter((v) => !VIEW_FILTER || VIEW_FILTER.has(v.name));
+  const shots = { "390x844|ko|game": "웹_세로_390x844_상태메뉴.png", "844x390|ko|game": "웹_가로_844x390_상태메뉴.png", "320x568|ko|plain": "웹_세로_320x568_게임값없음.png" };
+  for (const view of views) {
+    for (const lang of LANGS) {
+      for (const plain of [false, true]) {
+        const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
+        await context.addInitScript((lang) => {
+          Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+          if (window !== window.top) return;
+          localStorage.setItem("webgba.installHint", "1");
+          localStorage.setItem("webgba.prefs", JSON.stringify({ lang, netNo: "1234" }));
+        }, lang);
+        const page = await context.newPage();
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(URL_BASE);
+        await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+        await page.evaluate(async (b64) => {
+          const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          await window.webgba.openFiles([new File([data], "net-demo.wgba")]);
+        }, bytes);
+        await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+        const key = `${view.name}|${lang}|${plain ? "plain" : "game"}`;
+        const toolsBefore = await page.evaluate(() => [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).length);
+        await boardSession(page, { plain });
+        await page.waitForTimeout(200);
+        await page.click("#btnNet");
+        await page.waitForFunction(() => window.webgba.net.board.state.open, null, { timeout: 5000 });
+        await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(500);
+        const info = await page.evaluate(() => {
+          const root = window.webgba.net.board.root;
+          const panel = root.querySelector(".mpb__panel").getBoundingClientRect();
+          const screen = document.getElementById("screen").getBoundingClientRect();
+          const rows = [...root.querySelectorAll(".mpb__row")];
+          let overlap = 0;
+          for (const line of root.querySelectorAll(".mpb__l1, .mpb__head, .mpb__foot")) {
+            const kids = [...line.children].filter((n) => !n.hidden && n.getBoundingClientRect().width > 0).map((n) => n.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+            for (let i = 1; i < kids.length; i++) if (kids[i].left < kids[i - 1].right - 0.5) overlap++;
+          }
+          for (const line of root.querySelectorAll(".mpb__l2")) {
+            const kids = [...line.children].map((n) => n.getBoundingClientRect()).filter((r) => r.width > 0);
+            for (let i = 1; i < kids.length; i++) if (kids[i].left < kids[i - 1].right - 0.5) overlap++;
+          }
+          const clipped = [...root.querySelectorAll(".mpb__text, .mpb__tagtext")].filter((n) => !n.closest("[hidden]") && n.scrollWidth > n.clientWidth + 1 && !n.matches(".mpb__name, .mpb__title")).map((n) => n.textContent);
+          return { landscape: document.body.dataset.layout === "landscape", panel: { top: panel.top, left: panel.left, right: panel.right, width: panel.width }, screenBottom: screen.bottom, rows: rows.length, overlap, clipped, tools: [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).length, plain: root.querySelector(".mpb__panel").hasAttribute("data-plain"), fast: getComputedStyle(document.getElementById("btnFast")).display };
+        });
+        ok(`${key} 상태 메뉴 줄 수(${plain ? "사람 3" : "사람 4 + AI 4"})·게임 값 ${plain ? "없음" : "있음"}`, info.rows === (plain ? 3 : 8) && info.plain === plain, JSON.stringify({ rows: info.rows, plain: info.plain }));
+        ok(`${key} 상태 메뉴 자리: ${info.landscape ? "좌측 316px" : "게임 화면 아래(게임 화면 가리지 않음)"}`, info.landscape ? Math.abs(info.panel.width - 316) < 1 : info.panel.top >= info.screenBottom - 0.5, `${JSON.stringify(info.panel)} 화면 아래 ${info.screenBottom}`);
+        ok(`${key} 상단 버튼 수 그대로·빨리 감기 자리에 멀티플레이`, info.tools === toolsBefore && info.fast === "none", `${toolsBefore} → ${info.tools} · 빨리 감기 ${info.fast}`);
+        ok(`${key} 상태 메뉴 겹침 없음·잘린 글 없음(이름·제목 제외)`, info.overlap === 0 && info.clipped.length === 0, `겹침 ${info.overlap} · 잘림 ${info.clipped.join(",")}`);
+        await measure(page, `${key}|board`, [".mpb__head", ".mpb__seat", ".mpb__l1", ".mpb__l2", ".mpb__tag", ".mpb__foot"]);
+        await rows(page, `${key}|board`, ".mpb__row");
+        // 항목 위·아래 여백: 줄 칸(1줄·2줄)이 항목 위·아래에서 같은 거리, 모든 항목 같은 짜임. 칸 안 글자·꼬리표·막대는 위 measure 가 잉크 가운데를 잰다
+        // (꼬리표 외곽선이 바탕색과 비슷한 줄이 있어 항목 전체 잉크로 항목끼리 비교하지 않음).
+        const pads = await page.evaluate(() => [...window.webgba.net.board.root.querySelectorAll(".mpb__row")].map((r) => {
+          const box = r.getBoundingClientRect();
+          const l1 = r.querySelector(".mpb__l1").getBoundingClientRect();
+          const last = (r.querySelector(".mpb__l2") ?? r.querySelector(".mpb__l1")).getBoundingClientRect();
+          return [+(l1.top - box.top).toFixed(2), +(box.bottom - last.bottom).toFixed(2)];
+        }));
+        ok(`${key}|board 항목 위·아래 여백 같음(모든 항목 같은 짜임)`, pads.every((p) => p[0] === p[1]) && new Set(pads.map((p) => p.join())).size === 1, JSON.stringify(pads[0]));
+        await lineUp(page, `${key}|board`, ".mpb__head", ":scope > button");
+        await fits(page, `${key}|board`, ".mpb__panel");
+        await barLineUp(page, `${key}|bar`);
+        if (shots[key]) await page.screenshot({ path: path.join(SHOTS, shots[key]) });
+        if (plain) {
+          // 설정: 멀티플레이 켜기·끄기 + 닉네임 칸(기본 "플레이어 + 숫자 4개")
+          await page.evaluate(() => window.webgba.openSheet("settings"));
+          await page.waitForTimeout(400);
+          const nick = await page.evaluate(() => {
+            const input = document.querySelector('[data-action="cfg-net-nick"]');
+            input?.closest(".field")?.scrollIntoView({ block: "center" });
+            const row = input?.closest(".group");
+            if (!input) return null;
+            const s = getComputedStyle(input);
+            const ctx = document.createElement("canvas").getContext("2d");
+            ctx.font = `${s.fontSize} ${s.fontFamily}`;
+            const room = input.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+            return { placeholder: input.placeholder, max: input.maxLength, switches: row.querySelectorAll(".switch").length, fits: ctx.measureText(input.placeholder).width <= room + 0.5 };
+          });
+          await page.waitForTimeout(300);
+          ok(`${key} 설정: 멀티플레이 켜기 칸 + 닉네임 칸(빈칸 = 플레이어 1234, 12자, 안내 글 잘림 없음)`, nick && /1234/.test(nick.placeholder) && nick.max === 12 && nick.switches === 1 && nick.fits, JSON.stringify(nick));
+          await page.evaluate(() => {
+            const group = document.querySelector('[data-action="cfg-net-nick"]').closest(".group");
+            group.dataset.uiNet = "1";
+          });
+          await measure(page, `${key}|settings-net`, ['[data-ui-net] .field']);
+          if (view.name === "390x844" && lang === "ko") await page.screenshot({ path: path.join(SHOTS, "웹_설정_닉네임.png") });
+        }
+        ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+        await context.close();
+      }
+    }
+  }
+}
+
+if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD) await netChecks();
+if (process.env.UI_NET_WGBA && (ONLY_BOARD || process.env.UI_BOARD === "1")) await boardChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

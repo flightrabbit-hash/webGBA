@@ -74,7 +74,7 @@
   "web.info.about": "브라우저에서 도는 GBA 실행기입니다. .gba · .zip 은 mGBA 코어로, .wgba · .wasm 은 내장 호스트로 실행합니다. 롬·게임 파일과 공식 BIOS 는 들어 있지 않습니다(mGBA 내장 HLE BIOS).",
   "web.update": "새 버전이 있습니다",
   "web.updateGo": "다시 불러오기",
-  "info.others": "Tabler Icons(MIT), pako(MIT AND Zlib), 갈무리 글꼴 Galmuri(SIL OFL 1.1, © Lee Minseo).",
+  "info.others": "Tabler Icons(MIT), pako(MIT AND Zlib), jsQR(Apache-2.0), 갈무리 글꼴 Galmuri(SIL OFL 1.1, © Lee Minseo).",
   "host.embedFormat": "이 webGBA 가 모르는 내장 롬 형식입니다(형식 {version} · 방식 {method}). 페이지를 새로 고쳐 새 버전을 받아 주세요",
   "patch.err.patchVersion": "{name} 은(는) 이 webGBA 가 모르는 패치 형식입니다(형식 {version}). 페이지를 새로 고쳐 새 버전을 받아 주세요",
   "patch.err.romModified": "{rom} 은(는) 같은 게임({title} · {code} · 개정 {revision})이지만 고쳐진 롬입니다(SHA-1 {sha1}…). 패치·치트·수정을 하지 않은 원래 롬이 필요합니다 — 쓸 수 있는 롬: {need}",

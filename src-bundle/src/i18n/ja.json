@@ -168,7 +168,7 @@
   "info.openSource": "含まれているオープンソース",
   "info.mgba": "mGBA 0.10.1 — Copyright © 2013-2022 Jeffrey Pfau ほか貢献者. Mozilla Public License 2.0. https://mgba.io",
   "info.mgbaSource": "ソース: https://github.com/mgba-emu/mgba/tree/0.10.1 (変更せずに静的ライブラリとして同梱)。同梱: blip_buf(LGPL-2.1), inih(BSD-3-Clause)。",
-  "info.others": "Tauri 2 · WRY · TAO(Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs(MIT OR Apache-2.0), zip(MIT), Tabler Icons(MIT), pako(MIT AND Zlib)。",
+  "info.others": "Tauri 2 · WRY · TAO(Apache-2.0 OR MIT), Microsoft Edge WebView2, windows-rs(MIT OR Apache-2.0), zip(MIT), Tabler Icons(MIT), pako(MIT AND Zlib)、jsQR(Apache-2.0)。",
 
   "menu.open": "開く…",
   "menu.close": "閉じる",
@@ -601,5 +601,35 @@
   "net.err.serverLost": "サーバーとの接続が切れました。新しく入る人を受け付けられないことがあります。",
   "net.err.limit": "リクエストが多いため一時的に休止中です。しばらくしてからやり直すか、「インターネットなしで接続（コード・QR）」を使ってください。",
   "net.fallback": "サーバーに接続できないため、接続コードでつなぎます。",
-  "net.act.back": "戻る"
+  "net.act.back": "戻る",
+
+  "board.titleOf": "マルチプレイ · {purpose}",
+  "board.open": "マルチプレイの状態",
+  "board.window": "接続画面",
+  "board.room": "部屋 {code}",
+  "board.people": "人数 {n}",
+  "board.ai": "AI {n}",
+  "board.aiTag": "AI",
+  "board.me": "自分",
+  "board.host": "ホスト",
+  "board.stall": "一時停止",
+  "board.joining": "接続中",
+  "board.lost": "切断",
+  "board.left": "退出",
+  "board.ms": "{ms}ms",
+  "board.tabHint": "押している間表示",
+  "board.summary": "人数 {n} · {ms}ms",
+  "board.summaryHost": "人数 {n}",
+  "help.netBoard": "マルチプレイの状態（セッション中：押している間・短く押すと開いたまま）",
+  "cfg.group.net": "マルチプレイ",
+  "cfg.netOn": "マルチプレイを使う",
+  "cfg.netOn.note": "オフにするとゲームはマルチプレイ画面を開けません。ゲーム内の通信メニューは次にゲームを開いたときから隠れます",
+  "cfg.netNick": "ニックネーム",
+  "cfg.netNick.note": "ほかの人に表示される名前です（12文字まで）。空欄なら「{name}」",
+
+  "cfg.netNick.reset": "既定のニックネームに戻す",
+
+  "cfg.netNick.default": "既定のニックネーム",
+
+  "net.reachedNote": "接続済み · {n}/{max} — まもなく閉じます"
 }

@@ -183,6 +183,7 @@ bin/
 | windows-rs · zip | Win32 API · .zip ROMs | MIT OR Apache-2.0 · MIT |
 | Tabler Icons | icons | MIT |
 | pako 2.1.0 | .wgba ROM compression · .wgbp | MIT AND Zlib |
+| jsQR 1.4.0 | Reading connection-code QR (browsers without BarcodeDetector) | Apache-2.0 |
 
 mGBA — Copyright (c) 2013-2022 Jeffrey Pfau and contributors · https://mgba.io
 
@@ -726,6 +727,7 @@ The game counts as supporting multiplayer only when all seven exist: `Web_NetWan
 | `Web_NetOutClear` | `()` | After reading all records | Empties the send area |
 | `Web_NetInBuffer` | `(u32 len) → ptr` | For each received message, before `Web_RunFrame` | Where to write `len` bytes. **0 = no room right now** → the host keeps the message and retries next frame (order preserved) |
 | `Web_NetIn` | `(u32 from, u32 len)` | After writing the bytes there | Confirms receipt. `from` = sender seat |
+| `Web_NetBoard` | `() → ptr` | Once after the session opens | Optional. Where the 400-byte player status table is (7.9.2). Read only when the manifest has `multiplayer.board` |
 | `Web_NetCompat` | `() → ptr` | Once before a session | Optional. A NUL-terminated ASCII compatibility key of up to 64 characters (e.g. a build hash). If present it is appended to the manifest `compat` and compared too |
 
 One host frame:
@@ -790,6 +792,7 @@ Use the `webgba.net` object the isolated frame provides (between frame and host 
 | `webgba.net.want({ purpose, min, max, role })` | Same as a non-zero ① `Web_NetWanted`. `purpose` = manifest id, `role` = `"any"`·`"make"`·`"join"`. Every call is a new request |
 | `webgba.net.unwant()` | Same as ① returning 0 (link finished) |
 | `webgba.net.send(to, bytes)` | `to` = seat 0–7 · `"ordered"` · `"all"`, up to 16384 bytes |
+| `webgba.net.board(table)` | Player status table (7.9.3). `null` = no table |
 
 | Host → game | Meaning |
 |---|---|
@@ -849,16 +852,124 @@ Guest: ① enter the host code and press Next → ② give the answer code (· Q
 - Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly.
 - Help when connecting fails: "Check that you are on the same Wi-Fi, that it is not a guest or public Wi-Fi, and that VPN is off."
 
-During a session the host keeps to: fast-forward and speed changes off (1×), loading states and reset blocked, opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others, `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
+During a session the host keeps to: fast-forward and speed changes off (1×), loading states and reset blocked, opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others (not when only the tab is hidden on a PC: frames keep running), `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
 
 #### 7.8 For game authors
 
 - If the same keys and messages always give the same result (random numbers from a seed inside the game), `TO_ORDERED` alone keeps everyone in the same state.
 - Messages arrive between frames, so queue them and process them inside a frame.
 - If the host does not know multiplayer (`Web_NetHost` never called / `webgba.net` is `null`), hide the link menus (older webGBA).
-- Examples: `docs/wgba/examples/net-webapi/` (① small C, no ROM) and `net-script/` (② one JS file) — A looks for players, the host's START runs one round, and everyone ends with the same hash.
+- Examples: `docs/wgba/examples/net-webapi/` (① small C, no ROM) and `net-script/` (② one JS file) — A looks for players, the host's START runs one round, everyone ends with the same hash, and both fill the player status board (7.9). A ② example without multiplayer is `hello-script/` (drawing, keys, save, quick slots).
 - By default only the same game build can connect (`compat: "exact"`). If different versions share the same link rules, put the same string in `compat`.
 - Do not send ROMs or other people's works in messages.
+
+#### 7.9 Player status board
+
+During a session webGBA shows the current players in the "Multiplayer" menu. webGBA fills the seat number, nickname, room host, connection state and latency (round trip to the room host, ms); the game may add values per player (HP, level, rank, state, …). The list shows even if the game gives nothing.
+
+Opening it: web = the "Multiplayer" button above the screen during a session (where fast-forward was), PC version (exe) = the "Multiplayer" button in the left tool bar or Tab (shown while held; a short press keeps it open). The game keeps running while the menu is open, and the menu never opens by itself when a game ends.
+
+##### 7.9.1 Manifest `multiplayer.board`
+
+| Key | Type | Required | Default | Meaning |
+|---|---|---|---|---|
+| `columns` | array (1–6) | yes | — | Column definitions. Array order = value order |
+| `columns[].id` | string (lowercase letters, digits, `-`, up to 16) | yes | — | Fixed column name |
+| `columns[].type` | `"bar"`·`"number"`·`"rank"`·`"status"` | yes | — | Kind (table below) |
+| `columns[].name` | localized text (up to 12) | yes | — | Shown column name |
+| `columns[].max` | integer 1–65535 | `bar` only | — | Bar maximum (a maximum given with the value wins) |
+| `columns[].tone` | `"hp"`·`"accent"` | no | `"accent"` | `bar` colour. `hp` = green above 50%, yellow above 25%, red below |
+| `columns[].prefix`·`suffix` | localized text (up to 4) | no | none | Text before / after a `number` (e.g. `"Lv"`) |
+| `columns[].labels` | array (1–15) | `status` only | — | `{ "name": localized text (up to 8), "tone": "normal"·"good"·"warn"·"bad"·"dim", "dimRow": true·false }`. Value 1 = first label |
+| `names` | array of localized text (1–32, up to 16 each) | no | none | Names of non-human rows (AI, …), picked by the row's `nameLabel` (1-based) |
+| `captions` | array of localized text (1–16, up to 24 each) | no | none | Header text with integer arguments in `{0}`·`{1}` |
+| `mark` | localized text (up to 8) | no | none | Meaning of a highlighted row (legend in the footer) |
+| `scope` | `"all"`·`"self"` | no | `"all"` | `all` = the game fills every row (all devices share the same state). `self` = each device gives only its own row; webGBA collects and shares them |
+| `sort` | `{ "column": id, "order": "desc"·"asc" }` | no | none | webGBA sorts the rows. Without it: `all` = the game's order, `self` = seat order |
+
+| Kind | Value (integer) | Shown as |
+|---|---|---|
+| `bar` | low 16 bits = current (u16), high 16 bits = maximum (0 = manifest `max`) | Pixel bar + number |
+| `number` | s32 | Number with `prefix`·`suffix`; if neither, the column name in front |
+| `rank` | 0 = none, 1–99 | Localized rank (`2위`·`2nd`·`2位`) |
+| `status` | 0 = none, 1– = `labels` number | Label. With `dimRow: true` the row is dimmed too |
+
+```json
+"board": {
+  "columns": [
+    { "id": "hp", "type": "bar", "name": { "ko": "체력", "en": "HP" }, "max": 100, "tone": "hp" },
+    { "id": "lv", "type": "number", "name": { "ko": "레벨", "en": "Level" }, "prefix": "Lv" },
+    { "id": "rank", "type": "rank", "name": { "ko": "순위", "en": "Rank" } },
+    { "id": "state", "type": "status", "name": { "ko": "상태", "en": "State" },
+      "labels": [{ "name": { "ko": "탈락", "en": "Out" }, "tone": "dim", "dimRow": true }, { "name": { "ko": "준비 완료", "en": "Ready" }, "tone": "good" }] }
+  ],
+  "names": [{ "ko": "웅", "en": "Brock" }],
+  "captions": [{ "ko": "{0}-{1} 라운드", "en": "Round {0}-{1}" }],
+  "mark": { "ko": "이번 상대", "en": "Next foe" }
+}
+```
+
+Without `board`, webGBA never reads game values (even if ① exports `Web_NetBoard`). Unknown keys are ignored.
+
+##### 7.9.2 ① Web API — `Web_NetBoard`
+
+| Function | Shape | Called | Meaning |
+|---|---|---|---|
+| `Web_NetBoard` | `() → ptr` | Once after the session opens (`OPEN`) | Where the 400-byte table is. 0 = no table. **Keep the same address for the whole session** |
+
+Buffer (little endian):
+
+| Offset | Type | Name | Meaning |
+|---|---|---|---|
+| 0 | u32 | `serial` | 0 = no table now. Add 1 on every change (skip 0). **Write it last, after every other field** |
+| 4 | u8 | `format` | `1` |
+| 5 | u8 | `rows` | Row count 0–8 (0 or 1 with `scope: "self"`) |
+| 6 | u8 | `flags` | Bit 0 = final result (game over). Others 0 |
+| 7 | u8 | `caption` | `captions` number (1-based), 0 = none |
+| 8 | s32 | `arg0` | Header `{0}` |
+| 12 | s32 | `arg1` | Header `{1}` |
+| 16 + 48×i | row i | | 48 bytes below |
+
+| Offset | Type | Name | Meaning |
+|---|---|---|---|
+| 0 | u8 | `slot` | 0–7 = session seat (a person), `0xFF` = not a person |
+| 1 | u8 | `flags` | Bit 0 = dimmed, bit 1 = highlighted |
+| 2 | u8 | `nameLabel` | `names` number (1-based) for a non-human row, 0 = none |
+| 3 | u8 | `nameLen` | Bytes in `name` below, 0–20 |
+| 4 | s32 × 6 | `values` | In column order; 0 for missing columns |
+| 28 | u8 × 20 | `name` | Name of a non-human row (UTF-8). `nameLabel` wins if set |
+
+- A human row (`slot` 0–7) always shows the webGBA nickname (never a game-given name).
+- While the menu is open (or with `scope: "self"`) the host reads only `serial` every 15 frames and the rest only when it changed. Writing `serial` last means a half-written table is never read.
+- 9 or more rows or `format` other than 1 = table ignored, `nameLen` 21 or more = name ignored, `slot` 8–254 = that row ignored, buffer outside wasm memory = table not used.
+- Do not change the table more than 4 times a second (faster changes still show at most 4 times a second).
+
+##### 7.9.3 ② Own JS — `webgba.net.board`
+
+```js
+webgba.net.board({
+  caption: 1, args: [4, 2], final: false,
+  rows: [
+    { slot: 0, values: [81, 7, 1, 0] },
+    { slot: null, nameLabel: 1, values: [66, 6, 3, 0] },
+    { slot: null, name: "Bot 3", values: [0, 4, 8, 1], dim: true },
+    { slot: 2, values: [{ value: 58, max: 100 }, 5, 4, 0], mark: true },
+  ],
+});
+webgba.net.board(null); // no table
+```
+
+- Values are the same integers as ① (`bar` also takes a `{ value, max }` object). Rows beyond 8 and values beyond 6 are dropped, non-integers become 0, unknown keys are ignored.
+- Sending the same content again is fine. The screen follows at most 4 times a second (only the latest is kept).
+- With `scope: "self"` put only your own row in `rows` (`slot` is ignored and taken as your seat).
+
+##### 7.9.4 What the host guarantees
+
+- Text from the game or other devices (names, nicknames) is shown **as text only** (never inserted as HTML). Control characters, direction overrides and zero-width characters are removed; names are cut at 16 and nicknames at 12 characters.
+- Colours, pictures and addresses are never taken from the game. Colours come from the `tone` name in the host theme.
+- `scope: "self"` rows travel as 48 bytes through the room host to everyone (at most 4 times a second per device).
+- The nickname of someone who left is kept until the session ends. If the game keeps using that seat number, the row shows that nickname with a "Left" (or "Lost") label.
+- Examples: `net-webapi` (① `Web_NetBoard`, `scope: "all"`, one AI row) and `net-script` (② `webgba.net.board`, `scope: "self"`, sorted).
 
 ---
 

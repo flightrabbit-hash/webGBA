@@ -10,6 +10,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { attach, guardOthers, launch, prepareApp, sleep } from "./cdp.mjs";
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
+import { decodePng } from "../../web/test/png.mjs";
 
 const [exe, work, example] = process.argv.slice(2);
 if (!exe || !work || !example) {
@@ -136,8 +137,9 @@ try {
   const lan = await app.evaluate(`(async () => { const lan = await import("/js/core/net/lan.js"); const out = []; for (const code of [${JSON.stringify(offer)}, ${JSON.stringify(answer)}]) for (const line of lan.decodeCode(code).sdp.split("\\r\\n").filter((l) => l.startsWith("a=candidate:"))) out.push(lan.lanCandidateOk(lan.parseCandidate(line))); return out; })()`);
   check("exe·웹 연결 코드 후보 모두 망 안", lan.length > 0 && lan.every(Boolean), JSON.stringify(lan));
   await app.screenshot(path.join(shots, "exe_방장_연결됨.png"));
-  await app.evaluate("document.querySelector('[data-action=net-done]').click()");
-  await sleep(600);
+  const exeClosed = await waitFor(() => app.evaluate("document.getElementById('layer').hidden"), 4000, 100);
+  check("exe: 최소 인원에 닿으면 연결 창이 1초 뒤 저절로 닫힘", exeClosed);
+  await sleep(300);
   const statusRight = await app.evaluate("document.getElementById('status-right').textContent");
   const railBtn = await app.evaluate("!document.getElementById('btn-net').hidden && document.getElementById('btn-net').getAttribute('aria-pressed')");
   check("exe: 상태 줄 멀티플레이 표시·레일 단추 켜짐", /2\/4/.test(statusRight) && railBtn === "true", `${statusRight} · ${railBtn}`);
@@ -150,6 +152,57 @@ try {
     return a?.ended && b?.ended ? [a, b] : null;
   }, 30000, 300);
   check("exe·웹 한 라운드 순서 방송 해시 같음", ended && ended[0].hash === ended[1].hash, (ended ?? []).map((g) => `${g.hash}/${g.applied}`).join(" "));
+
+  // 상태 메뉴(exe): Tab 누르는 동안 보기 · 짧게 누르면 열어 둠 · 다시 Tab 닫기 · 레일 단추 · 좌측 사이드 패널 폭 300 · 잉크 세로 가운데
+  const tab = (type) => app.send("Input.dispatchKeyEvent", { type, key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+  const panel = () => app.evaluate("(() => { const p = document.getElementById('mppanel'); const r = p.getBoundingClientRect(); return { shown: !p.hidden, left: Math.round(r.left), width: Math.round(r.width), rows: p.querySelectorAll('.mpb__row').length, files: !document.getElementById('sidepanel').hidden }; })()");
+  await tab("keyDown");
+  await sleep(700);
+  const held = await panel();
+  await tab("keyUp");
+  await sleep(300);
+  const afterHold = await panel();
+  check("exe 상태 메뉴: Tab 누르는 동안 보임(좌측·폭 300·사람 2 + AI 1) → 떼면 닫힘", held.shown && held.width === 300 && held.rows === 3 && !held.files && !afterHold.shown, `${JSON.stringify(held)} → ${JSON.stringify(afterHold)}`);
+  await tab("keyDown");
+  await sleep(80);
+  await tab("keyUp");
+  await sleep(500);
+  const kept = await panel();
+  const boxes = await app.evaluate(`[...document.querySelectorAll("#mppanel .mpb__tag, #mppanel .mpb__key, #mppanel .mpb__l1, #mppanel .mpb__l2, #mppanel .mpb__head, #mppanel .mpb__cap, #mppanel .mpb__foot")].filter((n) => !n.closest("[hidden]") && n.getBoundingClientRect().height > 0).map((n) => { const r = n.getBoundingClientRect(); const s = getComputedStyle(n); const chip = n.matches(".mpb__tag, .mpb__key"); return { chip, name: n.className.split(" ")[0] + " " + n.textContent.trim().slice(0, 10), left: r.left + parseFloat(s.borderLeftWidth) + (chip ? 1 : 3), right: r.right - parseFloat(s.borderRightWidth) - (chip ? 1 : 3), top: r.top + parseFloat(s.borderTopWidth), bottom: r.bottom - parseFloat(s.borderBottomWidth), mask: chip ? [] : [...n.querySelectorAll("button")].map((b) => { const q = b.getBoundingClientRect(); return [q.left - 1, q.top - 1, q.right + 1, q.bottom + 1]; }) }; })`);
+  const head = await app.evaluate(`(() => { const h = [...document.querySelectorAll("#mppanel .mpb__head > button")].map((b) => b.getBoundingClientRect()); return h.length > 1 ? Math.abs(h[0].top - h[1].top) + Math.abs(h[0].bottom - h[1].bottom) : -1; })()`);
+  const dpr = await app.evaluate("devicePixelRatio");
+  const image = decodePng(Buffer.from((await app.send("Page.captureScreenshot", { format: "png" })).data, "base64"));
+  const inkOf = (b) => {
+    const x0 = Math.round(b.left * dpr);
+    const x1 = Math.round(b.right * dpr);
+    const y0 = (b.chip ? Math.ceil(b.top * dpr) : Math.round(b.top * dpr)) + 1;
+    const y1 = (b.chip ? Math.floor(b.bottom * dpr) : Math.round(b.bottom * dpr)) - 1;
+    const masked = (x, y) => b.mask.some((m) => x >= m[0] * dpr && x < m[2] * dpr && y >= m[1] * dpr && y < m[3] * dpr);
+    const px = (x, y) => { const o = (y * image.width + x) * 4; return [image.data[o], image.data[o + 1], image.data[o + 2]]; };
+    const counts = new Map();
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (!masked(x, y)) { const k = px(x, y).join(); counts.set(k, (counts.get(k) ?? 0) + 1); }
+    const bg = [...counts].sort((a, c) => c[1] - a[1])[0]?.[0].split(",").map(Number) ?? [0, 0, 0];
+    let first = -1;
+    let last = -1;
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { if (masked(x, y)) continue; const p = px(x, y); if (Math.max(...p.map((v, i) => Math.abs(v - bg[i]))) > 48) { if (first < 0) first = y; last = y; break; } }
+    return first < 0 ? null : { top: first - y0, bottom: y1 - 1 - last };
+  };
+  const inks = boxes.map((b) => ({ name: b.name, ...(inkOf(b) ?? {}) })).filter((b) => Number.isFinite(b.top));
+  const worst = Math.max(...inks.map((b) => Math.abs(b.top - b.bottom)));
+  const ink = { dpr, count: inks.length, worst, bad: inks.filter((b) => Math.abs(b.top - b.bottom) > 1).map((b) => `${b.name} ${b.top}/${b.bottom}`), headTop: head };
+  check("exe 상태 메뉴: 짧게 누르면 열어 둠 · 잉크 세로 가운데(캡처 픽셀, 위·아래 차이 ≤ 1 기기 픽셀) · 머리 단추 위·아래 차이 0", kept.shown && ink.count > 10 && ink.worst <= 1 && ink.headTop === 0, `${JSON.stringify(ink)}`);
+  await app.screenshot(path.join(shots, "exe_상태메뉴.png"));
+  await tab("keyDown");
+  await tab("keyUp");
+  await sleep(300);
+  const closedByTab = await panel();
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await sleep(300);
+  const byRail = await panel();
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await sleep(300);
+  const railClosed = await panel();
+  check("exe 상태 메뉴: 다시 Tab → 닫힘 · 레일 멀티플레이 단추로 열고 닫기 · 닫으면 원래 파일 패널", !closedByTab.shown && byRail.shown && !railClosed.shown && railClosed.files, `${closedByTab.shown}/${byRail.shown}/${railClosed.shown}/${railClosed.files}`);
   await app.evaluate(`${T}.player.net.leave()`);
   const hostLeft = await waitFor(async () => ((await webGame())?.closed === 7 ? true : null), 8000);
   check("exe 방장 나감 → 웹 손님 CLOSED(HOST_LEFT)", hostLeft);

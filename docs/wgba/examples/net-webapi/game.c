@@ -8,6 +8,11 @@
 //   B       send one 16384-byte message to everyone (TO_ORDERED)
 //   SELECT  stop multiplayer (Web_NetWanted returns 0)
 //
+// Player status board (spec 7.9, scope "all"): Web_NetBoard() returns a fixed 400-byte table.
+// Every device folds the same TO_ORDERED commands, so every device fills the same rows:
+// commands per slot (bar + number), rank, state (done / waiting) and one non-human "Bot" row.
+// The table is rewritten at most every 15 frames, and serial is written last.
+//
 // During a round every player sends small commands with TO_ORDERED. Everybody folds the
 // commands into one hash in the order webGBA delivers them, so all screens show the same
 // colour bar at the end (the hash is also exported as Net_Hash for tests).
@@ -60,9 +65,56 @@ static int32_t started, ended;
 static uint32_t frame, rng = 1, hash = 2166136261u, applied, sent, fins, taken, prev_keys;
 static uint32_t big_ok, big_bad, stalls;
 static uint32_t ev_log[32], ev_count;
+static uint8_t board[400];
+static uint32_t board_serial, board_dirty, board_wait, rounds;
+static uint32_t cmds[8];
 
 static void fold(uint32_t x) {
   for (int i = 0; i < 4; i++) hash = (hash ^ ((x >> (i * 8)) & 255u)) * 16777619u;
+}
+
+static void put32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)v;
+  p[1] = (uint8_t)(v >> 8);
+  p[2] = (uint8_t)(v >> 16);
+  p[3] = (uint8_t)(v >> 24);
+}
+
+static void board_row(int i, uint32_t who, uint32_t flags, uint32_t label, const uint32_t *v) {
+  uint8_t *r = board + 16 + i * 48;
+  r[0] = (uint8_t)who;
+  r[1] = (uint8_t)flags;
+  r[2] = (uint8_t)label;
+  r[3] = 0;
+  for (int c = 0; c < 4; c++) put32(r + 4 + c * 4, v[c]);
+}
+
+static void fill_board(void) {
+  uint32_t bot = started ? (hash >> 3) % 200u : 0;
+  uint32_t score[8];
+  int n = count < 7 ? count : 7;
+  for (int s = 0; s < n; s++) score[s] = cmds[s];
+  score[n] = bot;
+  memset(board + 4, 0, sizeof board - 4);
+  board[4] = 1;
+  for (int i = 0; i <= n; i++) {
+    uint32_t rank = 1;
+    for (int j = 0; j <= n; j++) rank += score[j] > score[i];
+    uint32_t v[4] = {score[i], score[i], started ? rank : 0, 0};
+    if (i < n) {
+      v[3] = (fins >> i) & 1u ? 1u : started && !ended ? 2u : 0u;
+      board_row(i, (uint32_t)i, count > 1 && i == (slot + 1) % count ? 2u : 0u, 0, v);
+    } else {
+      board_row(i, 0xFFu, started ? 0u : 1u, 1, v);
+    }
+  }
+  board[5] = (uint8_t)(n + 1);
+  board[6] = ended ? 1 : 0;
+  board[7] = 1;
+  put32(board + 8, (uint32_t)count);
+  put32(board + 12, rounds);
+  board_serial = board_serial % 0xFFFFFFFEu + 1u;
+  put32(board, board_serial);
 }
 
 static int push(uint32_t to, const uint8_t *data, uint32_t n) {
@@ -120,11 +172,15 @@ static void apply(uint32_t from, const uint8_t *b, uint32_t len) {
     applied = 0;
     sent = 0;
     rng = 1;
+    rounds++;
+    for (int s = 0; s < 8; s++) cmds[s] = 0;
   }
   if (!started || ended) return;
   fold(type | ((uint32_t)b[1] << 8) | (from << 16));
   fold(value);
   applied++;
+  board_dirty = 1;
+  if (type == T_CMD && from < 8) cmds[from]++;
   if (type == T_FIN) {
     fins |= 1u << b[1];
     if (slot == 0 && (int32_t)popcount(fins) >= count) push_msg(T_END, applied);
@@ -147,8 +203,11 @@ EXPORT("Web_NetHost") void Web_NetHost(uint32_t protocol, uint32_t flags) {
 
 EXPORT("Web_NetWanted") uint32_t Web_NetWanted(void) { return wanted; }
 
+EXPORT("Web_NetBoard") uint8_t *Web_NetBoard(void) { return board; }
+
 EXPORT("Web_NetEvent") void Web_NetEvent(uint32_t kind, uint32_t a, uint32_t b) {
   ev_log[ev_count++ & 31] = (kind << 24) | ((a & 255u) << 16) | (b & 0xFFFFu);
+  board_dirty = 1;
   if (kind == EV_OPEN) {
     is_open = 1;
     slot = (int32_t)a;
@@ -164,6 +223,8 @@ EXPORT("Web_NetEvent") void Web_NetEvent(uint32_t kind, uint32_t a, uint32_t b) 
     wanted = 0;
     started = 0;
     out_len = 0;
+    board_dirty = 0;
+    put32(board, 0);
   } else if (kind == EV_STALL) {
     stalls++;
   }
@@ -243,6 +304,12 @@ EXPORT("Web_RunFrame") int Web_RunFrame(int keys) {
       if (((rng >> 16) % 10u) < 3u && push_msg(T_CMD, sent)) sent++;
       if (frame == ROUND_FRAMES) push_msg(T_FIN, sent);
     }
+  }
+  if (board_wait < 15) board_wait++;
+  if (board_dirty && is_open && board_wait >= 15) {
+    fill_board();
+    board_dirty = 0;
+    board_wait = 0;
   }
   draw();
   return 1;
