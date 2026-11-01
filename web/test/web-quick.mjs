@@ -259,14 +259,17 @@ async function layoutChecks(page, key, width, height) {
   const autoField = await page.evaluate(() => {
     const field = [...document.querySelectorAll(".field")].find((f) => /자동 저장/.test(f.textContent));
     if (!field) return null;
-    const select = field.querySelector("select");
-    return { value: select.value, options: [...select.options].map((o) => o.textContent) };
+    const pick = field.querySelector(".pick");
+    return { value: pick.dataset.value, options: [...pick.querySelectorAll(".pick__size")].map((o) => o.textContent) };
   });
   ok("설정: 자동 저장 끔/1/3/5/10/15/30분, 기본 5분", autoField?.value === "5" && autoField.options.join(",") === "끔,1분,3분,5분,10분,15분,30분", JSON.stringify(autoField));
   await page.evaluate(() => [...document.querySelectorAll(".field")].find((f) => /자동 저장/.test(f.textContent)).scrollIntoView({ block: "center" }));
   await page.waitForTimeout(200);
   await page.screenshot({ path: path.join(SHOTS, "설정_자동저장_세로_390x844.png") });
-  await (await page.evaluateHandle(() => [...document.querySelectorAll(".field")].find((f) => /자동 저장/.test(f.textContent)).querySelector("select"))).asElement().selectOption("1");
+  await page.click('.pick[aria-label="자동 저장"]');
+  await page.waitForSelector('#choice:not([hidden]) .choice__opt[data-value="1"]');
+  await page.click('.choice__opt[data-value="1"]');
+  await page.waitForFunction(() => !window.webgba.state.choiceDone);
   ok("설정 바꾸면 저장", await page.evaluate(() => JSON.parse(localStorage.getItem("webgba.prefs")).autoSave === 1));
 
   // 창이 열린 동안은 시간을 세지 않음

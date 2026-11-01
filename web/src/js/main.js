@@ -13,7 +13,7 @@ import { DIR_MODES, DIRS, VirtualPad, hapticKind } from "./pad.js";
 import { extractRom, ZIP_MAX, zipFile, ZipError } from "./core/zip.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
-import { iconStyle } from "./icons.js";
+import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 
 const { t } = i18n;
@@ -65,6 +65,10 @@ const el = {
   sheetTitle: $("sheetTitle"),
   sheetBody: $("sheetBody"),
   sheetClose: $("sheetClose"),
+  choice: $("choice"),
+  choiceTitle: $("choiceTitle"),
+  choiceList: $("choiceList"),
+  choiceClose: $("choiceClose"),
   dialog: $("dialog"),
   dialogTitle: $("dialogTitle"),
   dialogBody: $("dialogBody"),
@@ -100,6 +104,10 @@ const state = {
   opening: false,
   sheet: "",
   sheetHistory: false,
+  choiceDone: null,
+  choiceHistory: false,
+  choicePad: 0,
+  skipPop: 0,
   dialogDone: null,
   wake: null,
   wakeBusy: false,
@@ -652,8 +660,15 @@ const rgbOf = (value) => (/rgba?\(([^)]+)\)/.exec(value)?.[1] ?? "0,0,0,0").spli
 
 function visibleAlpha(node, style) {
   const color = rgbOf(style.color);
+  const cache = state.backCache;
+  const trail = [];
   let back = null;
   for (let at = node; at && at !== document.documentElement; at = at.parentElement) {
+    if (cache?.has(at)) {
+      back = cache.get(at);
+      break;
+    }
+    trail.push(at);
     const value = rgbOf(getComputedStyle(at).backgroundColor);
     if ((value[3] ?? 1) > 0.5) {
       back = value;
@@ -661,6 +676,7 @@ function visibleAlpha(node, style) {
     }
   }
   back ??= rgbOf(getComputedStyle(document.body).backgroundColor);
+  if (cache) for (const at of trail) cache.set(at, back);
   const diff = Math.max(1, ...[0, 1, 2].map((i) => Math.abs((color[i] ?? 0) - (back[i] ?? 0))));
   return Math.max(24, Math.min(230, Math.ceil((INK_VISIBLE / diff) * 255)));
 }
@@ -703,8 +719,59 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line";
+const INK_SINGLE = ".gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
+const FIT_ROWS = ".field, .choice__opt";
+const FIT_TEXT = ".field__label, .field__note, .choice__label";
+const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color]";
+
+function iconInkRows(name) {
+  const cache = (state.iconInk ??= new Map());
+  if (cache.has(name)) return cache.get(name);
+  const { fill, line } = iconBits(name);
+  let top = 16;
+  let bottom = -1;
+  for (let i = 0; i < 256; i++) {
+    if (!fill[i] && !line[i]) continue;
+    top = Math.min(top, i >> 4);
+    bottom = Math.max(bottom, i >> 4);
+  }
+  const rows = bottom < top ? 0 : bottom - top + 1;
+  cache.set(name, rows);
+  return rows;
+}
+
+function fitRows(root = document, known = null) {
+  const nodes = root.matches?.(FIT_ROWS) ? [root] : [...(root.querySelectorAll?.(FIT_ROWS) ?? [])];
+  if (!nodes.length) return [];
+  const before = new Map(nodes.map((node) => [node, node.style.height]));
+  for (const node of nodes) if (node.style.height) node.style.height = "";
+  const rootStyle = getComputedStyle(document.documentElement);
+  const px = parseFloat(rootStyle.getPropertyValue("--px")) || 2;
+  const ic = parseFloat(rootStyle.getPropertyValue("--ic")) || 16;
+  const sizes = [];
+  for (const node of nodes) {
+    if (!node.getClientRects().length) continue;
+    const style = getComputedStyle(node);
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (const text of node.querySelectorAll(FIT_TEXT)) {
+      const ink = known?.has(text) ? known.get(text) : text.textContent.trim() ? textInk(text) : null;
+      if (!ink) continue;
+      top = Math.min(top, ink.top);
+      bottom = Math.max(bottom, ink.bottom);
+    }
+    let content = bottom > top ? bottom - top : 0;
+    for (const control of node.querySelectorAll(FIT_CONTROLS)) content = Math.max(content, control.getBoundingClientRect().height + px * 2);
+    for (const icon of node.querySelectorAll(".icon")) if (getComputedStyle(icon).visibility === "visible") content = Math.max(content, (iconInkRows(icon.dataset.icon) * ic) / 16);
+    if (!content) continue;
+    const pad = parseFloat(style.getPropertyValue("--row-pad")) || 0;
+    const edge = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    sizes.push([node, Math.max(2, Math.round(content / 2) * 2) + pad * 2 + edge]);
+  }
+  for (const [node, height] of sizes) node.style.height = `${height}px`;
+  return nodes.filter((node) => node.style.height !== before.get(node));
+}
 
 function inkShift(contentTop, contentBottom, ink) {
   const dpr = window.devicePixelRatio || 1;
@@ -714,22 +781,56 @@ function inkShift(contentTop, contentBottom, ink) {
 }
 
 function centerInk(root = document) {
-  const pick = (selector) => (root.matches?.(selector) ? [root] : [...(root.querySelectorAll?.(selector) ?? [])]);
-  for (const node of pick(INK_SINGLE)) {
-    node.style.translate = "";
-    const ink = textInk(node);
-    if (!ink) continue;
-    const shift = inkShift(ink.contentTop, ink.contentBottom, ink);
-    if (shift && Math.abs(shift) < (ink.contentBottom - ink.contentTop) / 2) node.style.translate = `0 ${shift}px`;
+  state.backCache = new Map();
+  try {
+    centerInkPass(root);
+  } finally {
+    state.backCache = null;
   }
-  for (const node of pick(INK_BLOCK)) {
-    node.style.translate = "";
-    const inks = [...node.children].map((child) => (child.textContent.trim() ? textInk(child) : null)).filter(Boolean);
-    if (!inks.length) continue;
+}
+
+function inkMoves(singles, blocks, known) {
+  const moves = [];
+  for (const node of singles) {
+    const ink = textInk(node);
+    known.set(node, ink);
+    const shift = ink ? inkShift(ink.contentTop, ink.contentBottom, ink) : 0;
+    moves.push([node, shift && Math.abs(shift) < (ink.contentBottom - ink.contentTop) / 2 ? `0 ${shift}px` : ""]);
+  }
+  for (const node of blocks) {
+    const inks = [...node.children]
+      .map((child) => {
+        const ink = child.textContent.trim() ? textInk(child) : null;
+        known.set(child, ink);
+        return ink;
+      })
+      .filter(Boolean);
+    if (!inks.length) {
+      moves.push([node, ""]);
+      continue;
+    }
     const box = node.getBoundingClientRect();
     const union = { top: Math.min(...inks.map((i) => i.top)), bottom: Math.max(...inks.map((i) => i.bottom)) };
     const shift = inkShift(box.top, box.bottom, union);
-    if (shift && Math.abs(shift) < box.height / 2) node.style.translate = `0 ${shift}px`;
+    moves.push([node, shift && Math.abs(shift) < box.height / 2 ? `0 ${shift}px` : ""]);
+  }
+  for (const [node, value] of moves) {
+    if (node.inkMove === value) continue;
+    node.inkMove = value;
+    node.style.translate = value;
+  }
+}
+
+function centerInkPass(root) {
+  const pick = (selector) => (root.matches?.(selector) ? [root] : [...(root.querySelectorAll?.(selector) ?? [])]);
+  const known = new Map();
+  const singles = pick(INK_SINGLE);
+  const blocks = pick(INK_BLOCK);
+  inkMoves(singles, blocks, known);
+  const changed = fitRows(root, known);
+  if (changed.length) {
+    const inRows = (node) => changed.some((row) => row.contains(node));
+    inkMoves(singles.filter(inRows), blocks.filter(inRows), new Map());
   }
   const dpr = window.devicePixelRatio || 1;
   for (const node of pick("input.dialog__input")) {
@@ -1855,6 +1956,7 @@ function openSheet(name) {
 
 function closeSheet({ fromHistory = false } = {}) {
   if (!state.sheet) return;
+  const extra = closeChoiceQuiet() ? 1 : 0;
   state.sheet = "";
   state.lib.savesFor = null;
   hideLater(el.sheet, () => {
@@ -1867,7 +1969,7 @@ function closeSheet({ fromHistory = false } = {}) {
   hold("sheet", false);
   if (state.sheetHistory) {
     state.sheetHistory = false;
-    if (!fromHistory) history.back();
+    if (!fromHistory) history.go(-1 - extra);
   }
 }
 
@@ -2664,19 +2766,200 @@ function field(label, note, control) {
 }
 
 function selectField(label, note, options, value, onChange) {
-  const select = document.createElement("select");
-  select.setAttribute("aria-label", label);
+  const pick = make("button", "pick");
+  pick.type = "button";
+  pick.setAttribute("role", "combobox");
+  pick.setAttribute("aria-haspopup", "listbox");
+  pick.setAttribute("aria-expanded", "false");
+  pick.setAttribute("aria-controls", "choiceList");
+  pick.setAttribute("aria-label", label);
+  const shown = make("span", "pick__value");
+  pick.append(shown);
   for (const option of options) {
-    const node = document.createElement("option");
-    node.value = String(option.value);
-    node.textContent = option.label;
-    select.append(node);
+    const sizer = make("span", "pick__size", option.label);
+    sizer.setAttribute("aria-hidden", "true");
+    pick.append(sizer);
   }
-  select.value = String(value);
-  select.addEventListener("change", () => onChange(select.value));
-  const pick = make("span", "pick");
-  pick.append(select);
+  let current = String(value);
+  const paint = () => {
+    const option = options.find((item) => String(item.value) === current) ?? options[0];
+    shown.textContent = option?.label ?? "";
+    pick.dataset.value = current;
+  };
+  paint();
+  const open = async () => {
+    const picked = await openChoice({ title: label, options, value: current, from: pick });
+    if (picked === null || picked === current) return;
+    current = picked;
+    paint();
+    onChange(picked);
+  };
+  pick.addEventListener("click", open);
+  pick.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    open();
+  });
   return field(label, note, pick);
+}
+
+function choiceRows() {
+  return [...el.choiceList.querySelectorAll(".choice__opt")];
+}
+
+function showChoiceRow(row) {
+  const list = el.choiceList.getBoundingClientRect();
+  const box = row.getBoundingClientRect();
+  if (box.top < list.top) el.choiceList.scrollTop -= list.top - box.top;
+  else if (box.bottom > list.bottom) el.choiceList.scrollTop += box.bottom - list.bottom;
+}
+
+function moveChoice(to, { pad = false } = {}) {
+  const rows = choiceRows();
+  if (!rows.length) return;
+  const at = rows.findIndex((row) => row.tabIndex === 0);
+  const next = to === "first" ? 0 : to === "last" ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, (at < 0 ? 0 : at) + to));
+  for (const [i, row] of rows.entries()) {
+    row.tabIndex = i === next ? 0 : -1;
+    row.classList.toggle("is-focus", pad && i === next);
+  }
+  rows[next].focus({ preventScroll: true });
+  showChoiceRow(rows[next]);
+}
+
+function pickChoice(row = choiceRows().find((item) => item.tabIndex === 0)) {
+  if (row) state.choiceDone?.(row.dataset.value);
+}
+
+function readChoicePad() {
+  const s = { up: false, down: false, ok: false, back: false };
+  for (const gp of navigator.getGamepads?.() ?? []) {
+    if (!gp) continue;
+    const on = (i) => Boolean(gp.buttons[i]?.pressed);
+    const y = gp.axes[1] ?? 0;
+    s.up ||= on(12) || y < -0.5;
+    s.down ||= on(13) || y > 0.5;
+    s.ok ||= on(0);
+    s.back ||= on(1);
+  }
+  return s;
+}
+
+function startChoicePad() {
+  stopChoicePad();
+  if (!navigator.getGamepads) return;
+  let prev = readChoicePad();
+  let again = 0;
+  const tick = (now) => {
+    if (!state.choiceDone) return;
+    const s = readChoicePad();
+    const dir = s.up ? -1 : s.down ? 1 : 0;
+    const was = prev.up ? -1 : prev.down ? 1 : 0;
+    if (dir && dir !== was) {
+      moveChoice(dir, { pad: true });
+      again = now + 380;
+    } else if (dir && now >= again) {
+      moveChoice(dir, { pad: true });
+      again = now + 110;
+    }
+    if (s.ok && !prev.ok) pickChoice();
+    else if (s.back && !prev.back) state.choiceDone?.(null);
+    prev = s;
+    if (state.choiceDone) state.choicePad = requestAnimationFrame(tick);
+  };
+  state.choicePad = requestAnimationFrame(tick);
+}
+
+function stopChoicePad() {
+  cancelAnimationFrame(state.choicePad);
+  state.choicePad = 0;
+}
+
+function openChoice({ title, options, value, from = null }) {
+  if (state.choiceDone) state.choiceDone(null);
+  el.choiceTitle.textContent = title;
+  const rows = options.map((option) => {
+    const row = make("button", "choice__opt");
+    row.type = "button";
+    row.setAttribute("role", "option");
+    row.dataset.value = String(option.value);
+    const on = String(option.value) === String(value);
+    row.setAttribute("aria-selected", String(on));
+    row.tabIndex = -1;
+    row.append(make("span", "choice__label", option.label), iconNode("check"));
+    return row;
+  });
+  el.choiceList.replaceChildren(...rows);
+  el.choiceList.scrollTop = 0;
+  from?.setAttribute("aria-expanded", "true");
+  hold("choice", true);
+  if (!state.choiceHistory) {
+    history.pushState({ webgbaChoice: true }, "");
+    state.choiceHistory = true;
+  }
+  showNow(el.choice);
+  centerInk(el.choice);
+  const current = rows.find((row) => row.getAttribute("aria-selected") === "true") ?? rows[0];
+  if (current) {
+    current.tabIndex = 0;
+    const list = el.choiceList.getBoundingClientRect();
+    const box = current.getBoundingClientRect();
+    el.choiceList.scrollTop += box.top - list.top - (list.height - box.height) / 2;
+    current.focus({ preventScroll: true });
+  }
+  return new Promise((resolve) => {
+    const done = (picked) => {
+      if (state.choiceDone !== done) return;
+      state.choiceDone = null;
+      stopChoicePad();
+      from?.setAttribute("aria-expanded", "false");
+      hold("choice", false);
+      hideLater(el.choice, () => {
+        if (!state.choiceDone) el.choiceList.replaceChildren();
+      });
+      if (state.choiceHistory) {
+        state.choiceHistory = false;
+        if (!done.quiet) {
+          state.skipPop++;
+          history.back();
+        }
+      }
+      if (from?.isConnected) from.focus({ preventScroll: true });
+      resolve(picked);
+    };
+    state.choiceDone = done;
+    startChoicePad();
+  });
+}
+
+function closeChoiceQuiet() {
+  const done = state.choiceDone;
+  if (!done) return false;
+  const pushed = state.choiceHistory;
+  done.quiet = true;
+  done(null);
+  return pushed;
+}
+
+function onChoiceKey(event) {
+  const inside = el.choice.contains(document.activeElement);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    state.choiceDone?.(null);
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveChoice(event.key === "ArrowDown" ? 1 : -1);
+  } else if (event.key === "Home" || event.key === "End") {
+    event.preventDefault();
+    moveChoice(event.key === "Home" ? "first" : "last");
+  } else if (event.key === "Tab") {
+    event.preventDefault();
+    const row = choiceRows().find((item) => item.tabIndex === 0);
+    (document.activeElement === el.choiceClose ? row : el.choiceClose)?.focus({ preventScroll: true });
+  } else if ((event.key === "Enter" || event.key === " ") && !inside) {
+    event.preventDefault();
+    pickChoice();
+  }
 }
 
 function switchField(label, note, value, onChange, { disabled = false } = {}) {
@@ -2927,6 +3210,10 @@ function typing(target) {
 }
 
 function onKeyDown(event) {
+  if (state.choiceDone) {
+    onChoiceKey(event);
+    return;
+  }
   if (state.dialogDone) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -3083,7 +3370,24 @@ function wire() {
     if (!(state.scriptFrame && document.activeElement === state.scriptFrame)) player.releaseAll();
   });
   window.addEventListener("popstate", () => {
+    if (state.skipPop) {
+      state.skipPop--;
+      return;
+    }
+    if (state.choiceDone) {
+      state.choiceHistory = false;
+      state.choiceDone(null);
+      return;
+    }
     if (state.sheet) closeSheet({ fromHistory: true });
+  });
+  el.choiceList.addEventListener("click", (event) => {
+    const row = event.target.closest?.(".choice__opt");
+    if (row) pickChoice(row);
+  });
+  el.choiceClose.addEventListener("click", () => state.choiceDone?.(null));
+  el.choice.addEventListener("click", (event) => {
+    if (event.target === el.choice) state.choiceDone?.(null);
   });
   for (const name of ["fullscreenchange", "webkitfullscreenchange"]) document.addEventListener(name, () => (syncControls(), setTimeout(layout, 60)));
   document.addEventListener("gesturestart", (event) => event.preventDefault());
@@ -3137,7 +3441,7 @@ function wire() {
     return Boolean(node?.closest(".lib__card, .lib__fly")) || (record.type === "attributes" && node?.classList.contains("spine"));
   };
   new MutationObserver((records) => {
-    if (inkFrame || records.every(libraryOwn)) return;
+    if (inkFrame || records.every((record) => libraryOwn(record) || el.choice.contains(record.target))) return;
     inkFrame = requestAnimationFrame(() => {
       inkFrame = 0;
       centerInk(document);
