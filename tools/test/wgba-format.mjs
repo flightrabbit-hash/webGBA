@@ -86,7 +86,7 @@ const image = (w, h, rgb) => {
   for (let i = 0; i < w * h; i++) px.set([...rgb, i % 7 ? 255 : 0], i * 4);
   return new Uint8Array(encode(px, w, h));
 };
-const images = { label: image(96, 64, [240, 200, 80]), front: image(108, 88, [200, 64, 42]), spine: image(24, 88, [200, 64, 42]) };
+const images = { label: image(96, 64, [240, 200, 80]), front: image(108, 88, [200, 64, 42]), spine: image(36, 92, [200, 64, 42]) };
 const fakeRom = new Uint8Array(crypto.randomBytes(96 * 1024));
 fakeRom[0xb2] = 0x96;
 
@@ -99,7 +99,7 @@ const manifestA = {
   runtime: "webapi",
   save: { kind: "none" },
   input: { preset: "gba" },
-  cart: { color: "#3a6ea5", label: {}, front: { labelAt: [6, 10] }, spine: { textArea: [4, 10, 16, 64] } },
+  cart: { color: "#3a6ea5", label: {}, front: { labelAt: [6, 10] }, spine: { textArea: [4, 10, 28, 68] } },
 };
 const manifestB = {
   wgba: 1,
@@ -220,7 +220,7 @@ await broken("모르는 종류 + 필수 깃발", async (buf) => {
   const mixed = await packWgba({ wasm: webapiWasm(), manifest: manifestA, images: { ...images, front: image(54, 44, [1, 2, 3]) } });
   const res2 = await checkWgba(mixed.bytes);
   ok(res2.errors.length === 0 && res2.warnings.some((w) => /배수가 서로 다릅니다/.test(w)), "배수 다름 → 경고", res2.warnings.join(" / "));
-  const outside = await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, cart: { ...manifestA.cart, front: { labelAt: [20, 20] }, spine: { textArea: [4, 10, 16, 90] } } }, images });
+  const outside = await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, cart: { ...manifestA.cart, front: { labelAt: [20, 20] }, spine: { textArea: [4, 10, 28, 90] } } }, images });
   const res3 = await checkWgba(outside.bytes);
   ok(res3.errors.length === 0 && res3.warnings.some((w) => /labelAt/.test(w)) && res3.warnings.some((w) => /textArea/.test(w)), "라벨 자리·이름 자리가 그림 밖 → 경고", res3.warnings.join(" / "));
   const none = await packWgba({ wasm: webapiWasm(), manifest: manifestA, images: { front: images.front } });

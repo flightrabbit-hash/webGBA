@@ -101,7 +101,7 @@ node tools/run.cjs   # コマンド一覧
 - **① Web API(JS なし)** — wasm が `Web_Init`・`Web_RunFrame(keys)`・`Web_GetFramebuffer` などをエクスポートすれば、画面・音・入力・セーブは webGBA が受け持ちます。
 - **② 独自 JS** — emscripten のグルーなど自前の JS を持つゲーム。JS はオリジンのない隔離フレーム(sandbox iframe)の中だけで動き、ネットワーク・ほかのゲームの保存領域・アプリの機能には触れられません。
 - **説明書(manifest)** — 必須: `wgba`(1)・`id`(変わらないゲーム id — 同じ id の新しいバージョンは確認なしで更新)・`version`(x.y.z)・`name`・`runtime`。ボタン一覧(① ビット番号・② キーコード)を書けば、キーボード・ゲームパッド・タッチボタンの配置は webGBA が決めます。
-- **ロムパックの画像** — ウェブ版ライブラリの棚に並ぶロムパックのラベル(48×32)・前面(54×44)・側面(12×44)、同じ整数倍(推奨 2 倍: 96×64・108×88・24×88)、PNG・ロスレス WebP。すべて任意で、なければ本体の色(`cart.color`)と名前で既定のロムパックを描きます。
+- **ロムパックの画像** — ウェブ版ライブラリの棚に並ぶロムパックのラベル(48×32)・前面(54×44)・側面(18×46)、同じ整数倍(推奨 2 倍: 96×64・108×88・36×92)、PNG・ロスレス WebP。すべて任意で、なければ本体の色(`cart.color`)と名前で既定のロムパックを描きます。
 - **まとめる・検査** — `node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --manifest manifest.json [--cart-dir 画像フォルダ] [--js game.js]`、`node tools/wgba.mjs check game.wgba`。すぐ試せるサンプル: [docs/wgba/examples/hello-webapi](docs/wgba/examples/hello-webapi)。
 - **AI で作る** — 規格文書の最後の「Prompt for AI assistants」を自分の AI に貼り付けると、wasm を `.wgba` にまとめてくれます。
 

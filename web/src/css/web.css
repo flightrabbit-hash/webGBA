@@ -86,6 +86,14 @@
   --px-off-hi: var(--bg-raised);
   --px-off-side: var(--line);
   --px-off-ink: var(--text-faint);
+  --px-face-icol: transparent;
+  --px-acc-icol: transparent;
+  --px-dng-icol: transparent;
+  --px-off-icol: transparent;
+  --px-text-icol: transparent;
+  --px-accent-icol: transparent;
+  --ic: 16px;
+  --ic-lg: 24px;
   --head-h: 52px;
   --row-h: 52px;
   --field-h: 60px;
@@ -138,13 +146,32 @@ button {
 }
 
 .icon {
+  position: relative;
   display: inline-block;
   flex: none;
   width: 20px;
   height: 20px;
+}
+
+.icon::before,
+.icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--ic);
+  height: var(--ic);
+  margin: calc(var(--ic) / -2) 0 0 calc(var(--ic) / -2);
+  background: var(--icon-ol, var(--px-text-icol));
+  -webkit-mask: var(--ic-line) 0 0 / 100% 100% no-repeat;
+  mask: var(--ic-line) 0 0 / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+.icon::after {
   background: currentColor;
-  mask: var(--icon) center / contain no-repeat;
-  -webkit-mask: var(--icon) center / contain no-repeat;
+  -webkit-mask-image: var(--ic-fill);
+  mask-image: var(--ic-fill);
 }
 
 .app {
@@ -235,6 +262,7 @@ button {
   --face-side: var(--px-face-side);
   --face-hov: var(--px-face-hov);
   --face-ink: var(--px-face-ink);
+  --icon-ol: var(--px-face-icol);
   border-style: solid;
   border-width: var(--px) 0 calc(var(--px) * 2);
   border-color: var(--face-hi) transparent var(--face-side);
@@ -264,6 +292,7 @@ button {
   --face-side: var(--px-off-side);
   --face-hov: var(--px-off);
   --face-ink: var(--px-off-ink);
+  --icon-ol: var(--px-off-icol);
   cursor: default;
 }
 
@@ -644,6 +673,7 @@ body:not([data-view="start"]) .start {
   --face-side: var(--px-acc-side);
   --face-hov: var(--px-acc-hov);
   --face-ink: var(--px-acc-ink);
+  --icon-ol: var(--px-acc-icol);
 }
 
 .btn--danger:not(:disabled) {
@@ -652,6 +682,7 @@ body:not([data-view="start"]) .start {
   --face-side: var(--px-dng-side);
   --face-hov: var(--px-dng-hov);
   --face-ink: var(--px-dng-ink);
+  --icon-ol: var(--px-dng-icol);
 }
 
 .btn--small {
@@ -1410,17 +1441,17 @@ body[data-layout="landscape"] .lib__shelf {
 
 /* 책장: 한 칸(--slot-h = 위 표시 자리 14 + 옆면 + 선반 14)마다 선반 판(윗면·앞면·그림자)을 배경으로 — 굴려도 같이 움직임 */
 .lib__case {
-  --board: calc(var(--slot-h, 116px) - 14px);
+  --board: calc(var(--slot-h, 120px) - 14px);
   display: flex;
   flex: 1 0 auto;
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 0 2px;
-  min-height: var(--slot-h, 116px);
+  min-height: var(--slot-h, 120px);
   padding: 0 8px;
   border-radius: 0;
   background-color: var(--bg-sunken);
-  background-image: repeating-linear-gradient(to bottom, transparent 0 var(--board), var(--line-strong) var(--board) calc(var(--board) + 4px), var(--bg-hover) calc(var(--board) + 4px) calc(var(--board) + 10px), rgba(0, 0, 0, 0.45) calc(var(--board) + 10px) calc(var(--board) + 12px), transparent calc(var(--board) + 12px) var(--slot-h, 116px));
+  background-image: repeating-linear-gradient(to bottom, transparent 0 var(--board), var(--line-strong) var(--board) calc(var(--board) + 4px), var(--bg-hover) calc(var(--board) + 4px) calc(var(--board) + 10px), rgba(0, 0, 0, 0.45) calc(var(--board) + 10px) calc(var(--board) + 12px), transparent calc(var(--board) + 12px) var(--slot-h, 120px));
   box-shadow: inset 0 0 0 var(--px) var(--line);
 }
 
@@ -1431,7 +1462,7 @@ body[data-layout="landscape"] .lib__shelf {
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
-  height: var(--slot-h, 116px);
+  height: var(--slot-h, 120px);
   padding: 0 0 14px;
   border: 0;
   background: none;
@@ -1461,12 +1492,23 @@ body[data-layout="landscape"] .lib__shelf {
 .spine__name {
   position: absolute;
   overflow: hidden;
+  pointer-events: none;
+}
+
+.spine__text {
+  position: absolute;
+  top: 0;
+  left: 0;
   font-family: var(--font-small);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  writing-mode: vertical-rl;
-  pointer-events: none;
+  font-weight: 400;
+  line-height: 14px;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+.spine__line {
+  position: absolute;
 }
 
 .spine__run {
@@ -1499,7 +1541,7 @@ body[data-layout="landscape"] .lib__shelf {
 }
 
 .spine--add {
-  width: 40px;
+  width: 44px;
   color: var(--text-faint);
 }
 
@@ -1509,18 +1551,19 @@ body[data-layout="landscape"] .lib__shelf {
   left: 4px;
   right: 4px;
   bottom: 14px;
-  height: 88px;
+  height: 92px;
   border: var(--px) dashed var(--line-strong);
 }
 
 .spine--add .icon {
   position: absolute;
-  left: 10px;
-  bottom: 48px;
+  left: 12px;
+  bottom: 50px;
 }
 
 .spine--add:hover {
   color: var(--accent);
+  --icon-ol: var(--px-accent-icol);
 }
 
 .lib__empty {
@@ -1871,6 +1914,7 @@ body[data-layout="landscape"] .bar__group--quick {
   border-color: var(--px-acc-hi) transparent var(--px-acc-side);
   background: var(--px-acc);
   color: var(--px-acc-ink);
+  --icon-ol: var(--px-acc-icol);
   box-shadow: 0 calc(var(--px) * -1) 0 0 var(--px-ol), 0 var(--px) 0 0 var(--px-ol), calc(var(--px) * -1) 0 0 0 var(--px-ol), var(--px) 0 0 0 var(--px-ol);
 }
 
@@ -2408,6 +2452,8 @@ body[data-gate="on"] .app {
   width: 24px;
   height: 24px;
   color: var(--accent);
+  --icon-ol: var(--px-accent-icol);
+  --ic: var(--ic-lg);
 }
 
 .gate__text {
@@ -2635,16 +2681,4 @@ textarea {
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
-}
-
-.icon.icon--svg {
-  background: none;
-  -webkit-mask: none;
-  mask: none;
-}
-
-.icon svg {
-  display: block;
-  width: 100%;
-  height: 100%;
 }

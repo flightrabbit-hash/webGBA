@@ -192,7 +192,7 @@
     "color": "#3a6ea5",
     "label": { "chunk": "cart.label", "format": "png", "width": 96, "height": 64 },
     "front": { "chunk": "cart.front", "format": "png", "width": 108, "height": 88, "labelAt": [6, 10] },
-    "spine": { "chunk": "cart.spine", "format": "png", "width": 24, "height": 88, "textArea": [4, 10, 16, 64] }
+    "spine": { "chunk": "cart.spine", "format": "png", "width": 36, "height": 92, "textArea": [4, 10, 28, 68] }
   }
 }
 ```
@@ -429,11 +429,11 @@ webGBA 웹 버전의 라이브러리는 게임마다 롬팩(카트리지) 하나
 | --- | --- | --- | --- |
 | 라벨 | `cart.label` | 48×32 (3:2) | 앞면 라벨 창에 들어갈 그림만 |
 | 앞면 | `cart.front` | 54×44 | 롬팩 앞면 전체(몸통·라벨 창 바탕·홈 등). 몸통 바깥은 투명 |
-| 옆면(등) | `cart.spine` | 12×44 | 책장에 꽂혔을 때 보이는 옆면. 바깥은 투명 |
+| 옆면(등) | `cart.spine` | 18×46 | 책장에 꽂혔을 때 보이는 옆면. 바깥은 투명 |
 
 | 항목 | 규칙 |
 | --- | --- |
-| 크기 | 격자 × k, k 는 1~4. **세 그림은 같은 k** 를 씀. 권장 k = 2: 라벨 **96×64** · 앞면 **108×88** · 옆면 **24×88** |
+| 크기 | 격자 × k, k 는 1~4. **세 그림은 같은 k** 를 씀. 권장 k = 2: 라벨 **96×64** · 앞면 **108×88** · 옆면 **36×92** |
 | 형식 | PNG(권장, 팔레트 PNG 도 됨) 또는 **무손실** WebP. JPEG·GIF·SVG 는 받지 않음 |
 | 투명 | 됨. 라벨의 투명한 곳에는 앞면 그림(없으면 기본 라벨 바탕)이 비침 |
 | 용량 | 하나마다 64KB 이하 권장(256KB 를 넘으면 그 그림을 쓰지 않음) |
@@ -446,7 +446,7 @@ webGBA 웹 버전의 라이브러리는 게임마다 롬팩(카트리지) 하나
   "color": "#3a6ea5",
   "label": { "chunk": "cart.label", "format": "png", "width": 96, "height": 64 },
   "front": { "chunk": "cart.front", "format": "png", "width": 108, "height": 88, "labelAt": [6, 10] },
-  "spine": { "chunk": "cart.spine", "format": "png", "width": 24, "height": 88, "textArea": [4, 10, 16, 64] }
+  "spine": { "chunk": "cart.spine", "format": "png", "width": 36, "height": 92, "textArea": [4, 10, 28, 68] }
 }
 ```
 
@@ -789,7 +789,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31 이고 겹치지 않음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 도는데(`rom.required: false`) `webgba.v1` 이 없으면 경고, `js` 조각이 있으면 경고(쓰지 않음)
 - 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·겹치지 않음, 인원 2~8
 - ②: `js` 조각 있음, `entry.style`, `entry.js` 가 `"js"` 가 아니면 경고, 버튼마다 `code`, 가져온 공유 메모리(스레드) 없음
-- 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 넘으면 경고), 격자(48×32 · 54×44 · 12×44) × k(1~4)가 아니면 경고, 셋의 k 가 다르면 경고, 설명서의 형식·크기와 다르면 경고, `labelAt`·`textArea` 가 그림 밖이면 경고, 설명서에 있는데 조각이 없으면 오류, 조각이 있는데 설명서에 없으면 경고
+- 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 넘으면 경고), 격자(48×32 · 54×44 · 18×46) × k(1~4)가 아니면 경고, 셋의 k 가 다르면 경고, 설명서의 형식·크기와 다르면 경고, `labelAt`·`textArea` 가 그림 밖이면 경고, 설명서에 있는데 조각이 없으면 오류, 조각이 있는데 설명서에 없으면 경고
 - 기본 키(`keys`)에 호스트 몫 키(`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12`)가 있으면 경고
 
 ---
@@ -821,7 +821,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 게임 wasm 파일, 함께 빌드된 JS 가 있는지(emscripten 글루 등), 데이터 파일 목록, 롬처럼 게임 메모리에 놓을 큰 데이터가 있는지
 - 게임 이름(언어별도 됨), 게임 id(소문자 역도메인, 예 io.github.내아이디.게임이름 — 한 번 정하면 바꾸지 않음), 버전(x.y.z)
 - 화면 크기, 쓰는 버튼과 각 버튼의 뜻, 세이브가 있는지, 마우스를 쓰는지
-- 롬팩 그림이 있는지(라벨 48×32·앞면 54×44·옆면 12×44 의 같은 배수 1~4배, PNG 또는 무손실 WebP — 모두 선택), 롬팩 몸통 색(#RRGGBB)
+- 롬팩 그림이 있는지(라벨 48×32·앞면 54×44·옆면 18×46 의 같은 배수 1~4배, PNG 또는 무손실 WebP — 모두 선택), 롬팩 몸통 색(#RRGGBB)
 - 넣을 데이터에 대한 권리가 나에게 있는지(없으면 넣지 않는다)
 
 [파일 짜임]

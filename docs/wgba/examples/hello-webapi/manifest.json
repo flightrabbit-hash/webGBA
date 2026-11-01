@@ -13,6 +13,6 @@
   "cart": {
     "color": "#3a6ea5",
     "front": { "labelAt": [6, 10] },
-    "spine": { "textArea": [4, 10, 16, 64] }
+    "spine": { "textArea": [4, 10, 28, 68] }
   }
 }

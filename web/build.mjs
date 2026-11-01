@@ -8,6 +8,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { check } from "./tools/check-no-rom.mjs";
+import { ICON_NAMES } from "./src/js/icons.js";
 
 const web = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(web, "..");
@@ -17,7 +18,6 @@ const coreDir = path.join(root, "src-bundle", "bin", "core");
 const out = path.resolve(process.argv[2] ?? path.join(web, "dist"));
 
 const SHARED = ["app/player.js", "app/patch-loader.js", "core/web-host.js", "core/wgbp.js", "core/wgba-format.js", "core/wgba-read.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js"];
-const APP_ICONS = ["folder-open", "device-floppy", "player-pause", "player-play", "player-track-next", "settings", "arrows-maximize", "x", "refresh", "trash", "keyboard", "info-circle", "copy", "history", "plus", "arrow-back-up"];
 const LANGS = ["ko", "en", "ja"];
 const LICENSES = ["mgba-LICENSE.txt", "blip_buf-LICENSE.txt", "inih-LICENSE.txt", "pako-LICENSE.txt"];
 
@@ -57,7 +57,13 @@ fs.mkdirSync(out, { recursive: true });
 
 copyTree(src, out, (file) => [path.join(src, "sw.js"), path.join(src, "i18n")].includes(file));
 for (const rel of SHARED) copy(path.join(app, "js", rel), path.join(out, "js", rel));
-for (const name of APP_ICONS) copy(path.join(app, "icons", `${name}.svg`), path.join(out, "icons", `${name}.svg`));
+const iconNames = new Set(ICON_NAMES);
+const iconUses = [
+  ...fs.readFileSync(path.join(src, "index.html"), "utf8").matchAll(/data-icon="(\w+)"/g),
+  ...fs.readFileSync(path.join(src, "js", "main.js"), "utf8").matchAll(/\bicon: "(\w+)"|iconNode\("(\w+)"\)|\["(\w+)", "web\.gate\.|act\(t\("[\w.]+"\), "(\w+)"|\["(?:save|load)", "(\w+)"\]/g),
+].map((m) => m.slice(1).find(Boolean));
+if (iconUses.length < 20) fail(`아이콘 쓰는 곳을 못 찾았습니다(${iconUses.length})`);
+for (const name of iconUses) if (!iconNames.has(name)) fail(`icons.js 에 없는 아이콘 ${name}`);
 
 const webTables = Object.fromEntries(LANGS.map((id) => [id, readJson(path.join(src, "i18n", `${id}.json`))]));
 for (const id of LANGS) {

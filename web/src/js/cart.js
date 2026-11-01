@@ -1,4 +1,4 @@
-// 롬팩 그림(라이브러리 책장·첫 화면 최근 게임) — 앞면(54×44 격자)·옆면(12×44 격자)을 canvas 로 그린다.
+// 롬팩 그림(라이브러리 책장·첫 화면 최근 게임) — 앞면(54×44 격자)·옆면(18×46 격자)을 canvas 로 그린다.
 // .wgba 설명서의 그림(cart.label·front·spine, 같은 배수 k)이 있으면 그 바이트를 그대로(가장 가까운 점, 1:1) 쓰고,
 // 없는 것만 우리 기본 모양(오른쪽 위 모따기·위 꽂는 방향 ▼·아래 손잡이 홈 7줄 — 실제 카트리지·상표 모양 아님)을
 // cart.color(없으면 테마 색)로 그린다. 규격 6장: 다른 k·규격 밖 자리·망가진 그림은 "없음"으로 보고 오류 창 없음.
@@ -131,7 +131,7 @@ function defaultFront(color, withLabel) {
   return g;
 }
 
-/** 기본 옆면 12×44 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리의 종이). */
+/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리의 종이). */
 function defaultSpine(color) {
   const [W, H] = SPINE;
   const t = tones(color);
@@ -151,7 +151,7 @@ function defaultSpine(color) {
   // 글자(main.js)는 model.spineInk 로 이 몸통 색과 대비가 큰 검정·흰색을 쓴다.
   const [ax, ay, , ah] = CART_DEFAULT_TEXT_AREA;
   for (let y = ay; y < ay + ah; y++) paint(ax, y, t.hi);
-  for (const y of [39, 41]) for (let x = 3; x <= 8; x++) paint(x, y, t.lo);
+  for (const y of [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
   return g;
 }
 
@@ -251,7 +251,7 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(12k×44k). 이름 자리는 model.textArea. */
+/** 옆면 canvas(18k×46k). 이름 자리는 model.textArea. */
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);

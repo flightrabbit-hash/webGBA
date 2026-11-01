@@ -33,11 +33,11 @@ export const LIMITS = Object.freeze({
 export const CART_PARTS = Object.freeze({
   label: { chunk: "cart.label", unit: [48, 32] },
   front: { chunk: "cart.front", unit: [54, 44] },
-  spine: { chunk: "cart.spine", unit: [12, 44] },
+  spine: { chunk: "cart.spine", unit: [18, 46] },
 });
 /** 앞면 기본 라벨 자리(격자 단위)와 옆면 기본 이름 자리(격자 단위 x, y, 가로, 세로). */
 export const CART_DEFAULT_LABEL_AT = [3, 5];
-export const CART_DEFAULT_TEXT_AREA = [2, 5, 8, 32];
+export const CART_DEFAULT_TEXT_AREA = [2, 5, 14, 34];
 
 /**
  * 그림 없는 롬팩(.gba·설명서 없는 .wasm·옛 .wgba, 설명서에 cart.color 없음)의 기본 몸통 색(결정 102-8).
@@ -664,7 +664,7 @@ function checkCart(m, images, errors, warnings) {
     const k = scales.spine;
     const t = spine.textArea;
     const ok = Array.isArray(t) && t.length === 4 && t.every((n) => Number.isInteger(n) && n >= 0) && t[2] > 0 && t[3] > 0;
-    if (!ok || t[0] + t[2] > 12 * k || t[1] + t[3] > 44 * k) warnings.push("cart.spine.textArea 가 옆면 그림 밖입니다 — 이름을 쓰지 않습니다");
+    if (!ok || t[0] + t[2] > CART_PARTS.spine.unit[0] * k || t[1] + t[3] > CART_PARTS.spine.unit[1] * k) warnings.push("cart.spine.textArea 가 옆면 그림 밖입니다 — 이름을 쓰지 않습니다");
   }
 }
 

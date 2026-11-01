@@ -114,18 +114,18 @@
           <div class="start" id="start">
             <div class="start__head">
               <p class="start__hint" id="startHint"></p>
-              <button class="btn btn--primary" id="startOpen" type="button"><span class="icon" style="--icon: url('/icons/folder-open.svg')"></span><span class="btn__label" data-i18n="web.openShort"></span></button>
+              <button class="btn btn--primary" id="startOpen" type="button"><span class="icon" data-icon="folder"></span><span class="btn__label" data-i18n="web.openShort"></span></button>
             </div>
             <div class="recent" id="startList" hidden></div>
-            <button class="recent__all" id="startAll" type="button" hidden><span class="recent__allLabel"></span><span class="icon" style="--icon: url('/icons/chevron-right.svg')"></span></button>
+            <button class="recent__all" id="startAll" type="button" hidden><span class="recent__allLabel"></span><span class="icon" data-icon="chevron"></span></button>
             <p class="start__note" data-i18n="web.privacy"></p>
           </div>
           <div class="veil" id="pauseVeil" hidden>
             <p class="veil__title" data-i18n="stage.paused"></p>
             <div class="veil__actions">
-              <button class="btn btn--primary" id="veilResume" type="button"><span class="icon" style="--icon: url('/icons/player-play.svg')"></span><span data-i18n="menu.resume"></span></button>
-              <button class="btn" id="veilReset" type="button"><span class="icon" style="--icon: url('/icons/refresh.svg')"></span><span data-i18n="menu.reset"></span></button>
-              <button class="btn" id="veilClose" type="button"><span class="icon" style="--icon: url('/icons/x.svg')"></span><span data-i18n="web.closeGame"></span></button>
+              <button class="btn btn--primary" id="veilResume" type="button"><span class="icon" data-icon="play"></span><span data-i18n="menu.resume"></span></button>
+              <button class="btn" id="veilReset" type="button"><span class="icon" data-icon="refresh"></span><span data-i18n="menu.reset"></span></button>
+              <button class="btn" id="veilClose" type="button"><span class="icon" data-icon="x"></span><span data-i18n="web.closeGame"></span></button>
             </div>
           </div>
           <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
@@ -153,7 +153,7 @@
       <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
         <header class="sheet__head">
           <h2 class="sheet__title" id="sheetTitle"></h2>
-          <button class="tool tool--small" id="sheetClose" type="button" data-i18n-title="win.close" data-i18n-aria="win.close"><span class="icon" style="--icon: url('/icons/x.svg')"></span></button>
+          <button class="tool tool--small" id="sheetClose" type="button" data-i18n-title="win.close" data-i18n-aria="win.close"><span class="icon" data-icon="x"></span></button>
         </header>
         <div class="sheet__body" id="sheetBody"></div>
       </div>

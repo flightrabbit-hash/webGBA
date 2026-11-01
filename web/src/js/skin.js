@@ -83,6 +83,7 @@ export function baseColors() {
 }
 
 const UI_INK_MIN = 4.5;
+const ICON_LINE_MIN = 3;
 
 function uiColors(p) {
   const style = getComputedStyle(document.documentElement);
@@ -93,6 +94,7 @@ function uiColors(p) {
     return pick ?? list.reduce((best, ink) => (PX.contrastRatio(face, ink) > PX.contrastRatio(face, best) ? ink : best), list[0] ?? p.outline);
   };
   const out = { "--px-ol": p.outline, "--px-drop": p.shadow, "--px-well": p.well };
+  const iconLine = (ink) => (ink && PX.contrastRatio(ink, p.outline) >= ICON_LINE_MIN ? p.outline : "transparent");
   const put = (name, face, inks) => {
     const f = PX.family(face, inks[0] ?? p.outline, p.outline);
     out[`--px-${name}`] = f.f;
@@ -100,6 +102,7 @@ function uiColors(p) {
     out[`--px-${name}-side`] = f.side;
     out[`--px-${name}-hov`] = PX.mixColor(f.f, f.hi, 0.4);
     out[`--px-${name}-ink`] = inkOf(f.f, inks);
+    out[`--px-${name}-icol`] = iconLine(out[`--px-${name}-ink`]);
   };
   const text = tokens("--text", "--text-hi", "--bg-sunken", "--bg");
   put("face", p.fb, text);
@@ -110,6 +113,9 @@ function uiColors(p) {
   out["--px-off-hi"] = p.offHi;
   out["--px-off-side"] = p.offSide;
   out["--px-off-ink"] = p.offInk;
+  out["--px-off-icol"] = iconLine(p.offInk);
+  out["--px-text-icol"] = iconLine(read("--text"));
+  out["--px-accent-icol"] = iconLine(read("--accent"));
   const panel = read("--bg");
   out["--px-pan-hi"] = panel ? PX.family(panel, panel, p.outline).hi : p.bodyHi;
   const root = document.documentElement.style;

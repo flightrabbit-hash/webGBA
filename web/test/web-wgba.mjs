@@ -131,7 +131,8 @@ try {
   const live = await page.evaluate(() => Array.from(window.webgba.player.host.saveData().subarray(0x7f000, 0x7f004)).join(","));
   ok("옮기기: 게임이 옮긴 세이브로 시작", live === oldData.head, live);
   const carts = await page.evaluate(async () => (await window.webgba.store.list("cart")).map((c) => `${c.id}:${c.part}:${c.width}x${c.height}`).sort());
-  ok("롬팩 그림을 따로 보관(앞면 108x88·옆면 24x88)", carts.join() === [`${oldGame.id}:front:108x88`, `${oldGame.id}:spine:24x88`].join(), carts.join());
+  const wantCarts = Object.entries(NEW_WGBA.images).map(([part, image]) => `${oldGame.id}:${part}:${image.width}x${image.height}`).sort();
+  ok("롬팩 그림을 따로 보관(--new 파일의 규격 크기 그림, 옆면은 36x92 일 때만)", carts.join() === wantCarts.join() && carts.some((c) => c.endsWith(":spine:36x92")), carts.join());
   // 퀵슬롯 불러오기(옮긴 칸)
   const loaded = await page.evaluate(async () => {
     const r = await window.webgba.player.loadState(1);

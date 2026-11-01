@@ -406,7 +406,7 @@ export function partSize(kind, scale = 1) {
   const s = intScale(scale);
   const z = SIZES[kind === 'a' || kind === 'b' || kind === 'c' || kind === 'd' ? 'ab' : kind === 'l' || kind === 'r' ? 'shoulder' : kind === 'start' || kind === 'select' ? 'pill' : kind];
   if (!z) throw new Error(`pixel-ui: 모르는 부품: ${kind}`);
-  if (kind === 'icon' || kind === 'stick') return { w: z.w * s, h: z.h * s };
+  if (kind === 'icon' || kind === 'stick' || kind === 'knob') return { w: z.w * s, h: z.h * s };
   const extra = kind === 'iconButton' ? ICON_DEPTH + ICON_SHADOW : GAME_DEPTH + GAME_SHADOW;
   return { w: z.w * s, h: (z.h + extra) * s };
 }
@@ -633,10 +633,10 @@ export function renderStickKnob({ state = 'normal', scale = 1, palette } = {}) {
   return cached(palette, `knob|${st}|${s}`, () => {
     const D = KNOB_D, c = D / 2;
     const inside = circleInside(D);
-    const roles = buttonRoles('btn', st);
+    const base = buttonRoles('btn', st);
+    const roles = st === 'pressed' ? { ...base, face: base.lo, hi: base.face, lo: base.side } : base;
     const { art, faceBox } = extrude({
-      W: D, H: D, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW,
-      offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
+      W: D, H: D, inside, depth: 0, shadow: 0, roles,
       decor: (x, y) => {
         const dx = x + 0.5 - c, dy = y + 0.5 - c, r = Math.hypot(dx, dy);
         if (r >= 5 && r < 6.2) return dx + dy < 0 ? roles.lo : roles.hi; // 오목한 엄지 홈 테
@@ -646,9 +646,9 @@ export function renderStickKnob({ state = 'normal', scale = 1, palette } = {}) {
     });
     return finish('knob', art, s, palette, {
       state: st, faceBox,
-      hit: { x: 0, y: 0, w: D * s, h: (D + GAME_DEPTH) * s },
-      center: { x: c * s, y: (c + (st === 'pressed' ? 1 : 0)) * s },
-      inside, depth: GAME_DEPTH,
+      hit: { x: 0, y: 0, w: D * s, h: D * s },
+      center: { x: c * s, y: c * s },
+      inside, depth: 0,
     });
   });
 }

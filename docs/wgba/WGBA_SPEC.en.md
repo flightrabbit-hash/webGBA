@@ -202,7 +202,7 @@ JSON schema for validation: [wgba-manifest.schema.json](wgba-manifest.schema.jso
     "color": "#3a6ea5",
     "label": { "chunk": "cart.label", "format": "png", "width": 96, "height": 64 },
     "front": { "chunk": "cart.front", "format": "png", "width": 108, "height": 88, "labelAt": [6, 10] },
-    "spine": { "chunk": "cart.spine", "format": "png", "width": 24, "height": 88, "textArea": [4, 10, 16, 64] }
+    "spine": { "chunk": "cart.spine", "format": "png", "width": 36, "height": 92, "textArea": [4, 10, 28, 68] }
   }
 }
 ```
@@ -439,11 +439,11 @@ picking it pulls it out and shows the **front + label**. A `.wgba` may contain t
 | --- | --- | --- | --- |
 | Label | `cart.label` | 48×32 (3:2) | Only the picture inside the front's label window |
 | Front | `cart.front` | 54×44 | The whole cartridge front (body, label window background, grooves …). Transparent outside the body |
-| Spine | `cart.spine` | 12×44 | The side seen on the shelf. Transparent outside |
+| Spine | `cart.spine` | 18×46 | The side seen on the shelf. Transparent outside |
 
 | Item | Rule |
 | --- | --- |
-| Size | Grid × k, k from 1 to 4. **All three pictures use the same k.** Recommended k = 2: label **96×64** · front **108×88** · spine **24×88** |
+| Size | Grid × k, k from 1 to 4. **All three pictures use the same k.** Recommended k = 2: label **96×64** · front **108×88** · spine **36×92** |
 | Format | PNG (recommended, palette PNG fine) or **lossless** WebP. No JPEG, GIF or SVG |
 | Transparency | Allowed. Transparent parts of the label show the front picture (or the default label background) |
 | File size | 64KB or less each recommended (over 256KB the picture is not used) |
@@ -456,7 +456,7 @@ picking it pulls it out and shows the **front + label**. A `.wgba` may contain t
   "color": "#3a6ea5",
   "label": { "chunk": "cart.label", "format": "png", "width": 96, "height": 64 },
   "front": { "chunk": "cart.front", "format": "png", "width": 108, "height": 88, "labelAt": [6, 10] },
-  "spine": { "chunk": "cart.spine", "format": "png", "width": 24, "height": 88, "textArea": [4, 10, 16, 64] }
+  "spine": { "chunk": "cart.spine", "format": "png", "width": 36, "height": 92, "textArea": [4, 10, 28, 68] }
 }
 ```
 
@@ -799,7 +799,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
 - Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
-- Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 12×44) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
+- Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 18×46) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
 - Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning
 
 ---
@@ -831,7 +831,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - The game wasm file, whether JS was built with it (emscripten glue etc.), the data files, and whether there is large data such as a ROM to place in game memory
 - Game name (per language is fine), game id (lowercase reverse domain, e.g. io.github.myaccount.gamename — never changes once chosen), version (x.y.z)
 - Screen size, the buttons used and what each does, whether there is a save, whether it uses the mouse
-- Whether there is cartridge art (label 48×32, front 54×44, spine 12×44, all at the same scale 1–4×, PNG or lossless WebP — all optional), cartridge body colour (#RRGGBB)
+- Whether there is cartridge art (label 48×32, front 54×44, spine 18×46, all at the same scale 1–4×, PNG or lossless WebP — all optional), cartridge body colour (#RRGGBB)
 - Whether I have the rights to every piece of data that goes in (if not, it does not go in)
 
 [File layout]

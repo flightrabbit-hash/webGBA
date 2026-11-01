@@ -1030,21 +1030,21 @@ async function seedLibrary(page) {
       g.fillStyle = "#ffe39a";
       g.fillRect(66, 10, 14, 14);
     });
-    const spine = await png(24, 88, (g) => {
+    const spine = await png(36, 92, (g) => {
       g.fillStyle = "#04060d";
-      g.fillRect(0, 0, 24, 88);
+      g.fillRect(0, 0, 36, 92);
       g.fillStyle = "#2f6f5e";
-      g.fillRect(2, 2, 20, 84);
+      g.fillRect(2, 2, 32, 88);
       g.fillStyle = "#dfe4f0";
-      g.fillRect(4, 10, 16, 64);
+      g.fillRect(4, 10, 28, 68);
     });
     const fake = (n) => new Uint8Array(1024 + n);
     let t = Date.now();
     const opened = (id) => s.patch(s.romKey(id), { opened: (t -= 1000) });
     await s.putGame(
-      { id: "art", name: "star.wgba", file: "star.wgba", type: "wgba", gameId: "dev.example.star", version: "0.9.1", build: "a".repeat(64), title: "Star Garden", shortName: "Star", author: "example", romSha1: "", cart: { color: "#2f6f5e", label: { format: "png", width: 96, height: 64, scale: 2 }, front: { format: "png", width: 108, height: 88, scale: 2, labelAt: [6, 10] }, spine: { format: "png", width: 24, height: 88, scale: 2, textArea: [4, 10, 16, 64] } } },
+      { id: "art", name: "star.wgba", file: "star.wgba", type: "wgba", gameId: "dev.example.star", version: "0.9.1", build: "a".repeat(64), title: "Star Garden", shortName: "Star", author: "example", romSha1: "", cart: { color: "#2f6f5e", label: { format: "png", width: 96, height: 64, scale: 2 }, front: { format: "png", width: 108, height: 88, scale: 2, labelAt: [6, 10] }, spine: { format: "png", width: 36, height: 92, scale: 2, textArea: [4, 10, 28, 68] } } },
       fake(0),
-      { carts: [{ part: "label", bytes: label, format: "png", width: 96, height: 64 }, { part: "front", bytes: front, format: "png", width: 108, height: 88 }, { part: "spine", bytes: spine, format: "png", width: 24, height: 88 }] },
+      { carts: [{ part: "label", bytes: label, format: "png", width: 96, height: 64 }, { part: "front", bytes: front, format: "png", width: 108, height: 88 }, { part: "spine", bytes: spine, format: "png", width: 36, height: 92 }] },
     );
     await s.putSave("dev.example.star", new Uint8Array(4096), "star.wgba");
     await opened("art");

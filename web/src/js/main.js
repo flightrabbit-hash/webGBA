@@ -13,10 +13,25 @@ import { DIR_MODES, DIRS, VirtualPad } from "./pad.js";
 import { extractRom, ZipError } from "./zip.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
+import { iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 
 const { t } = i18n;
 const $ = (id) => document.getElementById(id);
+
+function iconSizes(dpr = window.devicePixelRatio || 1) {
+  const root = document.documentElement.style;
+  const size = (unit) => `${(16 * Math.max(1, Math.round(unit * dpr))) / dpr}px`;
+  if (root.getPropertyValue("--ic") !== size(1)) root.setProperty("--ic", size(1));
+  if (root.getPropertyValue("--ic-lg") !== size(1.5)) root.setProperty("--ic-lg", size(1.5));
+}
+
+{
+  const style = document.createElement("style");
+  style.textContent = iconStyle();
+  document.head.append(style);
+  iconSizes();
+}
 
 const el = {
   app: $("app"),
@@ -116,15 +131,19 @@ function fmtSize(bytes) {
   return `${(bytes / 1073741824).toFixed(1)}GB`;
 }
 
-function fmtTime(ms) {
+const pad2 = (n) => String(n).padStart(2, "0");
+
+// 칸 글자는 날짜와 시각 사이를 줄바꿈으로 둔다: 넓은 칸(nowrap)은 한 줄, 좁은 칸(pre-line, web.css 컨테이너 조건)은 늘 두 줄
+function fmtTime(ms, sep = " ") {
   if (!ms) return "";
-  return new Date(ms).toLocaleString(i18n.locale(), { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  const d = new Date(ms);
+  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}${sep}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function iconNode(name) {
   const span = document.createElement("span");
   span.className = "icon";
-  span.style.setProperty("--icon", `url("/icons/${name}.svg")`);
+  span.dataset.icon = name;
   return span;
 }
 
@@ -441,6 +460,7 @@ function layout() {
   } else if (el.pad.dataset.fit) delete el.pad.dataset.fit;
   root.setProperty("--pill-indent", `${Math.round(((ART.stick - ART.pillW) / 2) * unit)}px`);
   root.setProperty("--px", `${skin.px(2) / dpr}px`);
+  iconSizes(dpr);
   root.setProperty("--face-w", `${Math.round(face.w * unit)}px`);
   const up = Math.round(faceUp(face, landscape) * unit);
   root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
@@ -461,7 +481,6 @@ function layout() {
   fitRecent();
   requestAnimationFrame(() => {
     centerInk(document);
-    centerIcons(document);
   });
 }
 
@@ -722,85 +741,6 @@ function centerInk(root = document) {
   }
 }
 
-const iconInk = new Map();
-
-function iconUrl(node) {
-  const value = node.style.getPropertyValue("--icon") || getComputedStyle(node).getPropertyValue("--icon");
-  return /url\(["']?([^"')]+)["']?\)/.exec(value)?.[1] ?? "";
-}
-
-async function loadIconInk(url) {
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    const size = 96;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(image, 0, 0, size, size);
-    const data = ctx.getImageData(0, 0, size, size).data;
-    let top = size;
-    let bottom = -1;
-    let left = size;
-    let right = -1;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        if (data[(y * size + x) * 4 + 3] <= INK_ALPHA) continue;
-        top = Math.min(top, y);
-        bottom = Math.max(bottom, y);
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-      }
-    }
-    iconInk.set(url, bottom < 0 ? { dx: 0, dy: 0 } : { dx: (size - 1 - right - left) / 2 / size, dy: (size - 1 - bottom - top) / 2 / size });
-  } catch {
-    iconInk.set(url, { dx: 0, dy: 0 });
-  }
-  centerIcons(document);
-}
-
-const iconSvg = new Map();
-
-// 아이콘은 늘 span.icon. 넣는 svg(태블러)도 class 에 "icon" 이 있어 그대로 두면 다시 잡혀 svg 안에 svg 를 끝없이 넣고,
-// 그 변화가 MutationObserver 를 깨워 매 프레임 centerIcons 가 돌았다(안드로이드 프레임 떨어짐, 2026-10-30).
-function hydrateIcons(root = document) {
-  for (const node of root.querySelectorAll?.("span.icon:not(.icon--svg)") ?? []) {
-    const url = iconUrl(node);
-    if (!url) continue;
-    if (!iconSvg.has(url)) iconSvg.set(url, fetch(url).then((response) => (response.ok ? response.text() : "")).catch(() => ""));
-    node.classList.add("icon--svg");
-    iconSvg.get(url).then((text) => {
-      if (!text || node.querySelector("svg")) return;
-      const holder = document.createElement("template");
-      holder.innerHTML = text.trim();
-      const svg = holder.content.querySelector("svg");
-      if (!svg) return;
-      svg.classList.remove("icon");
-      node.replaceChildren(svg);
-    });
-  }
-}
-
-function centerIcons(root = document) {
-  hydrateIcons(root);
-  for (const node of root.querySelectorAll?.("span.icon") ?? []) {
-    const url = iconUrl(node);
-    if (!url) continue;
-    if (!iconInk.has(url)) {
-      iconInk.set(url, null);
-      loadIconInk(url);
-      continue;
-    }
-    const ink = iconInk.get(url);
-    if (!ink) continue;
-    const dx = Math.round(ink.dx * node.offsetWidth);
-    const dy = Math.round(ink.dy * node.offsetHeight);
-    node.style.translate = dx || dy ? `${dx}px ${dy}px` : "";
-  }
-}
-
 function setLabel(node, key) {
   node.dataset.i18nTitle = key;
   node.dataset.i18nAria = key;
@@ -944,12 +884,12 @@ function openDialog({ title, body = [], actions, input = null }) {
   });
 }
 
-const confirmDialog = (title, text, okLabel = "OK", danger = false) =>
+const confirmDialog = (title, text, okLabel = t("web.btn.ok"), danger = false) =>
   openDialog({
     title,
     body: [text],
     actions: [
-      { label: "CANCEL", value: false },
+      { label: t("web.btn.cancel"), value: false },
       { label: okLabel, value: true, primary: !danger, danger },
     ],
   });
@@ -984,8 +924,8 @@ async function askName({ title, text, value, fallback, selfId = "" }) {
       body: [text, t("web.name.rule", { max: NAME_MAX })],
       input: { value: current, maxLength: NAME_MAX, validate: nameProblem },
       actions: [
-        { label: "CANCEL", value: null },
-        { label: "OK", value: "ok", primary: true, takeInput: true, id: "name-ok" },
+        { label: t("web.btn.cancel"), value: null },
+        { label: t("web.btn.ok"), value: "ok", primary: true, takeInput: true, id: "name-ok" },
       ],
     });
     if (!result?.action) return null;
@@ -999,9 +939,9 @@ async function askName({ title, text, value, fallback, selfId = "" }) {
       title: t("web.name.takenTitle"),
       body: [t("web.name.takenText", { name })],
       actions: [
-        { label: "CANCEL", value: null },
+        { label: t("web.btn.cancel"), value: null },
         { label: t("web.name.other"), value: "other", id: "name-other" },
-        { label: t("web.name.overwrite"), value: "overwrite", danger: true, id: "name-overwrite" },
+        { label: t("web.btn.overwrite"), value: "overwrite", danger: true, id: "name-overwrite" },
       ],
     });
     if (choice === "overwrite") return { name, replace: same };
@@ -1372,7 +1312,7 @@ async function webRomFor(meta) {
   const result = await openDialog({
     title: t("web.wasmRom.title"),
     body: [t("web.wasmRom.text", { name: meta.name }), t("web.privacy")],
-    actions: [{ label: "CANCEL", value: null }, ...roms.slice(0, 4).map((item) => ({ label: item.name, value: item.key })), { label: t("web.pickRom"), primary: true, pick: true }],
+    actions: [{ label: t("web.btn.cancel"), value: null }, ...roms.slice(0, 4).map((item) => ({ label: item.name, value: item.key })), { label: t("web.pickRom"), primary: true, pick: true }],
   });
   if (!result) return null;
   let info;
@@ -1483,7 +1423,7 @@ async function makeFromPatch(fileName, bytes, romFile) {
       title: t("patch.title", { title: manifest.title }),
       body: [t("web.patch.intro", { name: fileName }), t("patch.need", { need: patchNeed(manifest) }), t("web.privacy")],
       actions: [
-        { label: "CANCEL", value: null },
+        { label: t("web.btn.cancel"), value: null },
         { label: t("web.pickRom"), primary: true, pick: true, id: "pick-rom" },
       ],
     });
@@ -1727,12 +1667,71 @@ function spineArt(rom, look) {
   art.style.height = `${cssOf(model, canvas.height)}px`;
   art.append(sizeCanvas(canvas, model));
   if (model.textArea) {
-    const [x, y, w, h] = model.textArea.map((v) => cssOf(model, v));
-    const name = make("span", "spine__name", spineName(rom));
-    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, lineHeight: `${w}px`, color: model.spineInk ?? cartArt.LABEL_INK });
+    const [x, y, w, h] = model.textArea.map((v) => Math.round(cssOf(model, v)));
+    const name = make("span", "spine__name");
+    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, color: model.spineInk ?? cartArt.LABEL_INK });
+    const text = make("span", "spine__text");
+    Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
+    for (const line of spineLines(spineName(rom), w, h, SPINE_PAD * model.unit)) {
+      const node = make("span", "spine__line", line.text);
+      Object.assign(node.style, { left: `${line.left}px`, top: `${line.top}px` });
+      text.append(node);
+    }
+    name.append(text);
     art.append(name);
   }
   return art;
+}
+
+const SPINE_FONT = 12;
+const SPINE_LINE = 14;
+const SPINE_INK = 13;
+const SPINE_PAD = 2;
+
+function spineLines(raw, w, h, pad) {
+  const style = { fontStyle: "normal", fontWeight: "400", fontSize: `${SPINE_FONT}px`, fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim() };
+  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const ctx = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
+  ctx.font = font;
+  const length = Math.max(0, h - pad * 2);
+  const widthOf = (text) => ctx.measureText(text).width;
+  const fits = (text) => widthOf(text) <= length;
+  const most = Math.max(1, Math.min(2, Math.floor((w - SPINE_INK) / SPINE_LINE) + 1));
+  const clip = (chars) => {
+    for (let n = chars.length; n > 0; n--) {
+      const text = `${chars.slice(0, n).join("").trimEnd()}…`;
+      if (fits(text)) return text;
+    }
+    return "…";
+  };
+  const lines = [];
+  let rest = String(raw ?? "").trim().replace(/\s+/g, " ");
+  while (rest && lines.length < most) {
+    const chars = Array.from(rest);
+    if (fits(rest)) {
+      lines.push(rest);
+      break;
+    }
+    if (lines.length === most - 1) {
+      lines.push(clip(chars));
+      break;
+    }
+    let cut = 0;
+    for (let n = chars.length - 1; n > 0 && !cut; n--) if (chars[n] === " " && fits(chars.slice(0, n).join(""))) cut = n;
+    if (!cut) {
+      cut = 1;
+      while (cut < chars.length && fits(chars.slice(0, cut + 1).join(""))) cut++;
+    }
+    lines.push(chars.slice(0, cut).join("").trimEnd());
+    rest = chars.slice(cut).join("").trimStart();
+  }
+  if (!lines.length) return [];
+  const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line)));
+  const top = Math.min(...inks.map((ink, i) => i * SPINE_LINE + ink.top));
+  const bottom = Math.max(...inks.map((ink, i) => i * SPINE_LINE + ink.bottom));
+  const base = Math.floor((w - (bottom - top)) / 2) - top;
+  const lift = baselineOffset(style, SPINE_LINE);
+  return lines.map((text, i) => ({ text, top: Math.round(base + i * SPINE_LINE - lift), left: pad + Math.floor((length - widthOf(text)) / 2) }));
 }
 
 async function loadRoms() {
@@ -1820,7 +1819,7 @@ function toggleFast() {
 
 async function resetGame() {
   if (!state.game) return;
-  if (!(await confirmDialog(t("confirm.resetTitle"), t("confirm.resetText")))) return;
+  if (!(await confirmDialog(t("confirm.resetTitle"), t("confirm.resetText"), t("menu.reset")))) return;
   hold("user", false);
   if (await player.reset()) toast(t("status.reset"));
 }
@@ -1956,7 +1955,7 @@ async function renderLibrary() {
   const card = make("section", "lib__card");
   card.setAttribute("aria-live", "polite");
   const head = make("div", "lib__shelfHead");
-  const sortBtn = button({ label: t(libSort() === "name" ? "web.lib.sortName" : "web.lib.sortRecent"), icon: "sort-descending", title: t("web.lib.sort"), kind: "small", action: "sort", onClick: () => {
+  const sortBtn = button({ label: t(libSort() === "name" ? "web.lib.sortName" : "web.lib.sortRecent"), icon: "sort", title: t("web.lib.sort"), kind: "small", action: "sort", onClick: () => {
     savePrefs({ libSort: libSort() === "name" ? "recent" : "name" });
     renderSheet();
   } });
@@ -2036,22 +2035,22 @@ function fillCard(key) {
   pack.addEventListener("click", () => openFromLibrary(rom));
   const side = make("div", "lib__text");
   const nameRow = make("div", "lib__line");
-  nameRow.append(make("span", "lib__name", displayName(rom)), button({ kind: "tool", icon: "info-circle", title: t("web.lib.info"), action: "info", onClick: () => showGameInfo(rom) }));
+  nameRow.append(make("span", "lib__name", displayName(rom)), button({ kind: "tool", icon: "info", title: t("web.lib.info"), action: "info", onClick: () => showGameInfo(rom) }));
   const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? ".wgba" : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : ""));
   const btns = make("div", "lib__btns");
   const act = (label, icon, action, onClick, kind = "") => button({ label, icon, action, kind, onClick });
   const list = running
     ? [
-        act(t("web.lib.resume"), "player-play", "resume", () => openFromLibrary(rom), "primary"),
-        act(t("web.saves"), "device-floppy", "saves", () => openGameSaves(rom)),
+        act(t("web.lib.resume"), "play", "resume", () => openFromLibrary(rom), "primary"),
+        act(t("web.saves"), "floppy", "saves", () => openGameSaves(rom)),
         act(t("menu.reset"), "refresh", "reset", () => (closeSheet(), resetGame())),
         act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet())),
         act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
         act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
       ]
     : [
-        act(t("web.lib.open"), "player-play", "open", () => openFromLibrary(rom), "primary"),
-        act(t("web.saves"), "device-floppy", "saves", () => openGameSaves(rom)),
+        act(t("web.lib.open"), "play", "open", () => openFromLibrary(rom), "primary"),
+        act(t("web.saves"), "floppy", "saves", () => openGameSaves(rom)),
         act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
         act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
       ];
@@ -2138,7 +2137,7 @@ function showGameInfo(rom) {
     t("web.lib.added", { date: fmtTime(rom.added) }),
     rom.opened ? t("web.start.lastPlayed", { time: fmtTime(rom.opened) }) : "",
   ];
-  openDialog({ title: displayName(rom), body: lines, actions: [{ label: "OK", value: true, primary: true, id: "info-ok" }] });
+  openDialog({ title: displayName(rom), body: lines, actions: [{ label: t("web.btn.ok"), value: true, primary: true, id: "info-ok" }] });
 }
 
 async function renameRom(rom) {
@@ -2233,7 +2232,7 @@ async function importSave(id, name) {
     toast(t("status.saveSizeBad", { kb: Math.round(cap / 1024) }), "warn");
     return;
   }
-  if (!(await confirmDialog(t("confirm.importTitle"), t("web.save.importText", { name: saveFile(name), file: file.name })))) return;
+  if (!(await confirmDialog(t("confirm.importTitle"), t("web.save.importText", { name: saveFile(name), file: file.name }), t("web.btn.overwrite")))) return;
   const bytes = new Uint8Array(await file.arrayBuffer());
   const current = isCurrentSave(id) ? state.game : null;
   if (current) await closeGame({ quiet: true });
@@ -2278,7 +2277,7 @@ async function renderSaves() {
     saves = saves.filter((save) => save.id === only.id);
     const back = make("div", "start__actions start__actions--left");
     back.append(
-      button({ label: t("web.library"), icon: "arrow-back-up", kind: "small", action: "back-library", onClick: () => openSheet("library") }),
+      button({ label: t("web.library"), icon: "back", kind: "small", action: "back-library", onClick: () => openSheet("library") }),
       button({ label: t("web.save.all"), kind: "small", action: "all-saves", onClick: () => ((state.lib.savesFor = null), renderSheet()) }),
     );
     const row = make("div", "start__actions");
@@ -2304,7 +2303,7 @@ async function renderSaves() {
       item({
         key: save.key,
         name: saveFile(name),
-        meta: join(fmtSize(save.size), t("web.save.savedAt", { time: fmtTime(save.saved) }), isCurrentSave(save.id) ? t("web.lib.current") : ""),
+        meta: join(fmtSize(save.size), fmtTime(save.saved), isCurrentSave(save.id) ? t("web.lib.current") : ""),
         current: isCurrentSave(save.id),
         actions: [
           button({ kind: "tool", icon: "download", title: t("web.save.export"), action: "export", onClick: () => exportSave(save.id, name) }),
@@ -2333,13 +2332,6 @@ function canQuick() {
 }
 
 const slotLabel = (slot) => (slot === AUTO_SLOT ? t("web.quick.autoLabel") : t("web.quick.slotLabel", { n: slot }));
-const pad2 = (n) => String(n).padStart(2, "0");
-
-// 칸 글자는 날짜와 시각 사이를 줄바꿈으로 둔다: 넓은 칸(nowrap)은 한 줄, 좁은 칸(pre-line, web.css 컨테이너 조건)은 늘 두 줄
-function fmtSlotTime(ms, sep = " ") {
-  const d = new Date(ms);
-  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}${sep}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
 
 function autoMinutes() {
   const value = Number(state.prefs.autoSave);
@@ -2423,7 +2415,7 @@ function quickTabs() {
   const tabs = make("div", "seg");
   tabs.setAttribute("role", "tablist");
   for (const [id, icon] of [
-    ["save", "device-floppy"],
+    ["save", "floppy"],
     ["load", "history"],
   ]) {
     const node = make("button", "seg__btn");
@@ -2445,7 +2437,7 @@ function slotCard(slot, info, latest) {
   const card = make("button", `slot${info && info.saved === latest ? " is-latest" : ""}`);
   card.type = "button";
   card.dataset.slot = String(slot);
-  card.setAttribute("aria-label", info ? `${slotLabel(slot)} · ${fmtSlotTime(info.saved)}` : `${slotLabel(slot)} · ${t("web.quick.empty")}`);
+  card.setAttribute("aria-label", info ? `${slotLabel(slot)} · ${fmtTime(info.saved)}` : `${slotLabel(slot)} · ${t("web.quick.empty")}`);
   const shot = make("span", `slot__shot${info?.thumb ? "" : " is-empty"}`);
   if (info?.thumb) {
     const url = URL.createObjectURL(new Blob([info.thumb], { type: "image/png" }));
@@ -2461,7 +2453,7 @@ function slotCard(slot, info, latest) {
   const num = make("span", `slot__num${slot === AUTO_SLOT ? " is-auto" : ""}`);
   num.append(make("span", "slot__tag", slot === AUTO_SLOT ? t("web.quick.auto") : String(slot)));
   shot.append(num);
-  card.append(shot, make("span", info ? "slot__time" : "slot__time is-empty", info ? fmtSlotTime(info.saved, "\n") : "—"));
+  card.append(shot, make("span", info ? "slot__time" : "slot__time is-empty", info ? fmtTime(info.saved, "\n") : "—"));
   card.addEventListener("click", () => pickSlot(slot));
   return card;
 }
@@ -2508,13 +2500,13 @@ async function pickSlot(slot) {
   const info = state.quick.info.get(slot);
   const label = slotLabel(slot);
   if (state.quick.tab === "save") {
-    if (info && !(await confirmDialog(t("web.quick.overTitle", { slot: label }), t("web.quick.overText", { time: fmtSlotTime(info.saved) }), t("web.quick.overOk")))) return;
+    if (info && !(await confirmDialog(t("web.quick.overTitle", { slot: label }), t("web.quick.overText", { time: fmtTime(info.saved) }), t("web.btn.overwrite")))) return;
     if (state.sheet !== "quick" || !(await quickSave(slot))) return;
     closeSheet();
     toast(t("web.quick.saved", { slot: label }));
     return;
   }
-  if (!(await confirmDialog(t("web.quick.loadTitle", { slot: label }), t("web.quick.loadText", { time: fmtSlotTime(info.saved) }), t("web.quick.loadOk")))) return;
+  if (!(await confirmDialog(t("web.quick.loadTitle", { slot: label }), t("web.quick.loadText", { time: fmtTime(info.saved) }), t("web.quick.loadOk")))) return;
   if (state.sheet !== "quick" || !(await quickLoad(slot))) return;
   closeSheet();
 }
@@ -2727,7 +2719,7 @@ function renderSettings() {
       "",
       (() => {
         const row = make("div", "start__actions");
-        row.append(button({ label: t("help.title"), icon: "keyboard", onClick: () => openSheet("help") }), button({ label: t("info.title"), icon: "info-circle", onClick: () => openSheet("info") }));
+        row.append(button({ label: t("help.title"), icon: "keyboard", onClick: () => openSheet("help") }), button({ label: t("info.title"), icon: "info", onClick: () => openSheet("info") }));
         return row;
       })(),
     ),
@@ -3018,14 +3010,13 @@ function wire() {
     inkFrame = requestAnimationFrame(() => {
       inkFrame = 0;
       centerInk(document);
-      centerIcons(document);
     });
   }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-state", "hidden", "class"] });
 
   context.onSaveFailed = (error) => {
     if (state.saveFailNotified) return;
     state.saveFailNotified = true;
-    openDialog({ title: t("web.saveFail.title"), body: [t("web.saveFail.text", { reason: error.message })], actions: [{ label: "OK", value: true, primary: true }] }).then(() => openSheet("saves"));
+    openDialog({ title: t("web.saveFail.title"), body: [t("web.saveFail.text", { reason: error.message })], actions: [{ label: t("web.btn.ok"), value: true, primary: true }] }).then(() => openSheet("saves"));
   };
   context.onSaved = () => {
     state.saveFailNotified = false;
@@ -3072,35 +3063,35 @@ function platform() {
 const GATE_STEPS = {
   iosSafari: [
     ["share", "web.gate.iosShare"],
-    ["square-plus", "web.gate.iosAdd"],
-    ["app-window", "web.gate.iosOpen"],
+    ["squarePlus", "web.gate.iosAdd"],
+    ["appWindow", "web.gate.iosOpen"],
   ],
   iosOther: [
-    ["external-link", "web.gate.openSafari"],
+    ["external", "web.gate.openSafari"],
     ["share", "web.gate.iosShare"],
-    ["square-plus", "web.gate.iosAdd"],
-    ["app-window", "web.gate.iosOpen"],
+    ["squarePlus", "web.gate.iosAdd"],
+    ["appWindow", "web.gate.iosOpen"],
   ],
   androidInApp: [
-    ["external-link", "web.gate.openChrome"],
-    ["dots-vertical", "web.gate.androidMenu"],
+    ["external", "web.gate.openChrome"],
+    ["dots", "web.gate.androidMenu"],
     ["download", "web.gate.androidInstall"],
-    ["app-window", "web.gate.openApp"],
+    ["appWindow", "web.gate.openApp"],
   ],
   android: [
-    ["dots-vertical", "web.gate.androidMenu"],
+    ["dots", "web.gate.androidMenu"],
     ["download", "web.gate.androidInstall"],
-    ["app-window", "web.gate.openApp"],
+    ["appWindow", "web.gate.openApp"],
   ],
   desktop: [
     ["download", "web.gate.desktopInstall"],
-    ["app-window", "web.gate.desktopOpen"],
+    ["appWindow", "web.gate.desktopOpen"],
   ],
   macSafari: [
     ["share", "web.gate.macDock"],
-    ["app-window", "web.gate.macOpen"],
+    ["appWindow", "web.gate.macOpen"],
   ],
-  unsupported: [["external-link", "web.gate.unsupported"]],
+  unsupported: [["external", "web.gate.unsupported"]],
 };
 
 function renderGate() {
@@ -3144,7 +3135,7 @@ function renderGate() {
     actions.append(
       button({
         label: t("web.gate.chrome"),
-        icon: "external-link",
+        icon: "external",
         action: "chrome",
         onClick: () => (location.href = `intent://${url.host}${url.pathname}${url.search}#Intent;scheme=https;package=com.android.chrome;end`),
       }),
@@ -3204,9 +3195,6 @@ async function settle() {
   state.glyphCache?.clear();
   state.baselineCache?.clear();
   centerInk(document);
-  centerIcons(document);
-  await Promise.race([Promise.allSettled([...iconSvg.values()]), new Promise((resolve) => setTimeout(resolve, 1500))]);
-  centerIcons(document);
   await new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
@@ -3220,7 +3208,6 @@ async function boot() {
     state.glyphCache?.clear();
     state.baselineCache?.clear();
     centerInk(document);
-    centerIcons(document);
   });
   if (!standalone() && !devBypass()) {
     showGate();

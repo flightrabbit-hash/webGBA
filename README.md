@@ -101,7 +101,7 @@ node tools/run.cjs   # 전체 명령 목록
 - **① Web API(JS 없음)** — wasm 이 `Web_Init`·`Web_RunFrame(keys)`·`Web_GetFramebuffer` 등을 내보내면 webGBA 가 화면·소리·입력·세이브를 맡습니다.
 - **② 자체 JS** — emscripten 글루 같은 자기 JS 가 있는 게임. JS 는 출처 없는 격리 틀(sandbox iframe) 안에서만 돌고, 네트워크·다른 게임의 저장소·앱 기능에 닿지 못합니다.
 - **설명서(manifest)** — 필수: `wgba`(1)·`id`(바뀌지 않는 게임 id — 같은 id 의 높은 버전은 묻지 않고 업데이트)·`version`(x.y.z)·`name`·`runtime`. 버튼 목록(① 비트 번호 · ② 키 코드)을 적으면 키보드·게임패드·터치 버튼 배치는 webGBA 가 정합니다.
-- **롬팩 그림** — 웹 버전 라이브러리 책장에 꽂힐 롬팩의 라벨(48×32)·앞면(54×44)·옆면(12×44), 같은 배수(권장 2배: 96×64·108×88·24×88), PNG·무손실 WebP. 모두 선택이고, 없으면 몸통 색(`cart.color`)과 이름으로 기본 롬팩을 그립니다.
+- **롬팩 그림** — 웹 버전 라이브러리 책장에 꽂힐 롬팩의 라벨(48×32)·앞면(54×44)·옆면(18×46), 같은 배수(권장 2배: 96×64·108×88·36×92), PNG·무손실 WebP. 모두 선택이고, 없으면 몸통 색(`cart.color`)과 이름으로 기본 롬팩을 그립니다.
 - **묶기·검사** — `node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --manifest manifest.json [--cart-dir 그림폴더] [--js game.js]`, `node tools/wgba.mjs check game.wgba`. 바로 해 볼 수 있는 예제: [docs/wgba/examples/hello-webapi](docs/wgba/examples/hello-webapi).
 - **AI 로 만들기** — 규격 문서 맨 아래 "AI 전용 프롬프트"를 자기 AI 에게 붙여 넣으면 자기 wasm 을 `.wgba` 로 묶어 줍니다.
 
