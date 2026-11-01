@@ -1,5 +1,7 @@
 // 웹 webGBA 버튼 진동 시험(로컬 전용): 게임 버튼(A·B·C·D·L·R·START·SELECT)만 진동하고 십자 패드·스틱은 진동하지 않음,
 // 설정 "버튼 진동" 기본 끔·지원하지 않는 기기는 회색 + 안내, 기기별 판정(hapticKind), iOS 스위치 방식 요소, 누르기 처리 시간.
+// 방향 진동: 설정 "방향 진동"(기본 끔) — 스틱·십자 패드 방향이 바뀔 때마다 한 번(중립 → 방향, 방향 → 다른 방향, 대각선 포함),
+// 같은 방향 유지·중립 복귀·죽은 영역 안 흔들림·경계 떨림에서는 추가 진동 없음, 끄면 0, 움직임 처리 시간.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-haptic.mjs <주소> <캡처 폴더> [--chrome <chrome.exe>]
 import fs from "node:fs";
 import path from "node:path";
@@ -25,10 +27,12 @@ async function open({ mobile, prefs = {} }) {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
     localStorage.setItem("webgba.prefs", JSON.stringify({ lang: "ko", ...prefs }));
     window.__log = [];
+    window.__buzzAt = [];
     Object.defineProperty(Navigator.prototype, "vibrate", {
       configurable: true,
       value(pattern) {
         window.__log.push(`buzz:${pattern}`);
+        window.__buzzAt.push(performance.now());
         return true;
       },
     });
@@ -47,14 +51,42 @@ async function open({ mobile, prefs = {} }) {
   return { context, page };
 }
 
-const vibrateRow = (page) =>
-  page.evaluate(() => {
+const vibrateRow = (page, label = "버튼 진동") =>
+  page.evaluate((label) => {
     window.webgba.openSheet("settings");
-    const row = [...document.querySelectorAll(".field")].find((n) => n.querySelector(".switch")?.getAttribute("aria-label") === "버튼 진동");
+    const rows = [...document.querySelectorAll(".field")];
+    const row = rows.find((n) => n.querySelector(".switch")?.getAttribute("aria-label") === label);
     if (!row) return null;
     const toggle = row.querySelector(".switch");
-    return { checked: toggle.getAttribute("aria-checked"), disabled: toggle.disabled, off: row.classList.contains("field--off"), note: row.querySelector(".field__note")?.textContent ?? "", opacity: +getComputedStyle(toggle).opacity, label: getComputedStyle(row.querySelector(".field__label")).color };
-  });
+    return { checked: toggle.getAttribute("aria-checked"), disabled: toggle.disabled, off: row.classList.contains("field--off"), note: row.querySelector(".field__note")?.textContent ?? "", opacity: +getComputedStyle(toggle).opacity, label: getComputedStyle(row.querySelector(".field__label")).color, after: rows[rows.indexOf(row) - 1]?.querySelector(".switch")?.getAttribute("aria-label") ?? "" };
+  }, label);
+
+const flip = (page, label) =>
+  page.evaluate((label) => {
+    window.webgba.openSheet("settings");
+    [...document.querySelectorAll(".switch")].find((n) => n.getAttribute("aria-label") === label).click();
+    document.getElementById("sheetClose").click();
+  }, label);
+
+// 걸음마다 [기다림(ms), 종류, 손가락, 대상, dx, dy] — dx·dy 는 대상 반지름(짧은 변의 절반) 단위.
+// 방향 진동은 시간 조건(떠나는 방향 유지 40ms·진동 사이 100ms)이 있어 사이를 띄운다.
+const pressTimed = (page, steps) =>
+  page.evaluate(async (steps) => {
+    window.__log.length = 0;
+    const root = document.getElementById("pad");
+    const center = (sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, rad: Math.min(r.width, r.height) / 2 };
+    };
+    const send = (type, id, at) => (type === "pointerdown" ? root : window).dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: at.x, clientY: at.y, pointerType: "touch", isPrimary: id === 1, bubbles: true, cancelable: true }));
+    for (const [wait, type, id, sel, dx = 0, dy = 0] of steps) {
+      if (wait) await new Promise((done) => setTimeout(done, wait));
+      const c = center(sel);
+      send(type, id, { x: c.x + dx * c.rad, y: c.y + dy * c.rad });
+    }
+    return [...window.__log];
+  }, steps);
+const dirKeys = (log) => log.filter((x) => x.startsWith("key:")).length;
 
 const press = (page, steps) =>
   page.evaluate((steps) => {
@@ -146,11 +178,120 @@ const buzzes = (log) => log.filter((x) => x.startsWith("buzz:")).length;
   await context.close();
 }
 
+// 1b) 방향 진동(스틱·십자 패드): 방향이 바뀔 때마다 한 번, 같은 방향 유지·중립 복귀·죽은 영역 흔들림·경계 떨림은 없음
+const S = "[data-dpad]";
+const STICK_ROUTE = [
+  [200, "pointerdown", 1, S, 0, 0],
+  [60, "pointermove", 1, S, 0.8, 0],
+  [60, "pointermove", 1, S, 0.85, 0.05],
+  [60, "pointermove", 1, S, 0.9, -0.05],
+  [120, "pointermove", 1, S, 0.6, 0.6],
+  [120, "pointermove", 1, S, 0, -0.8],
+  [120, "pointermove", 1, S, 0, 0],
+  [120, "pointerup", 1, S, 0, 0],
+];
+{
+  const { context, page } = await open({ mobile: true });
+  const row = await vibrateRow(page, "방향 진동");
+  ok("휴대폰: 설정 › 화면 \"버튼 진동\" 바로 아래 \"방향 진동\" 기본 끔 · 켤 수 있음 · 안내 글", row && row.after === "버튼 진동" && row.checked === "false" && !row.disabled && !row.off && row.note === "스틱·십자 패드의 방향이 바뀌면 짧게 진동합니다", JSON.stringify(row));
+  await page.evaluate(() => document.getElementById("sheetClose").click());
+  await page.waitForTimeout(400);
+
+  const offLog = await pressTimed(page, STICK_ROUTE);
+  ok(`방향: 끈 상태에서 스틱 오른쪽 → 오른쪽 아래 → 위 → 가운데 → 진동 0(방향 입력 ${dirKeys(offLog)}번)`, buzzes(offLog) === 0 && dirKeys(offLog) === 3, offLog.join(" "));
+  await flip(page, "방향 진동");
+  await page.waitForTimeout(400);
+  const pref = await page.evaluate(() => JSON.parse(localStorage.getItem("webgba.prefs")));
+  ok("방향: 켜면 설정에 남음 · 버튼 진동은 그대로 끔", pref.vibrateDir === true && pref.vibrate === false, JSON.stringify({ vibrateDir: pref.vibrateDir, vibrate: pref.vibrate }));
+
+  const stick = await pressTimed(page, STICK_ROUTE);
+  const before = stick.map((x, i) => (x.startsWith("buzz:") ? stick[i - 1] : null)).filter((x) => x !== null);
+  ok(
+    `방향: 스틱 중립 → 오른쪽 · 오른쪽 → 오른쪽 아래(대각선) · → 위 마다 한 번씩(합 ${buzzes(stick)}) · 같은 방향 안 움직임·가운데로 돌아올 때·손 뗄 때 0 · ${stick.find((x) => x.startsWith("buzz:"))}ms`,
+    buzzes(stick) === 3 && stick.filter((x) => x.startsWith("buzz:")).every((x) => x === "buzz:12"),
+    stick.join(" "),
+  );
+  ok("방향: 게임 입력 먼저, 진동은 그 뒤(진동 바로 앞이 방향 입력)", before.length === 3 && before.every((x) => x?.startsWith("key:")), before.join(" "));
+
+  const dead = await pressTimed(page, [
+    [200, "pointerdown", 1, S, 0, 0],
+    [30, "pointermove", 1, S, 0.1, 0],
+    [30, "pointermove", 1, S, -0.1, 0.05],
+    [30, "pointermove", 1, S, 0.05, -0.15],
+    [30, "pointermove", 1, S, 0.2, 0.1],
+    [30, "pointermove", 1, S, -0.15, -0.15],
+    [30, "pointerup", 1, S, 0, 0],
+  ]);
+  ok(`방향: 죽은 영역(25%) 안 흔들림 → 입력 0 · 진동 0(${buzzes(dead)})`, buzzes(dead) === 0 && dirKeys(dead) === 0, dead.join(" "));
+
+  const flickerSteps = (a, b, n, wait) => Array.from({ length: n }, (_, i) => [wait, "pointermove", 1, S, ...(i % 2 ? a : b)]);
+  const edge = await pressTimed(page, [[200, "pointerdown", 1, S, 0.2, 0], ...flickerSteps([0.2, 0], [0.3, 0], 16, 8), [60, "pointerup", 1, S, 0.2, 0]]);
+  ok(`방향: 죽은 영역 경계 떨림(8ms 마다 16번, 게임 입력 ${dirKeys(edge)}번) → 처음 들어갈 때 한 번뿐(${buzzes(edge)})`, buzzes(edge) === 1 && dirKeys(edge) >= 8, edge.join(" "));
+  const rad = (deg) => [0.8 * Math.cos((deg * Math.PI) / 180), 0.8 * Math.sin((deg * Math.PI) / 180)];
+  const sector = await pressTimed(page, [[200, "pointerdown", 1, S, ...rad(28)], [150, "pointermove", 1, S, ...rad(32)], ...flickerSteps(rad(32), rad(28), 16, 8), [60, "pointerup", 1, S, ...rad(28)]]);
+  ok(`방향: 오른쪽 ↔ 오른쪽 아래 경계 떨림(8ms 마다 16번, 게임 입력 ${dirKeys(sector)}번) → 오른쪽·오른쪽 아래 처음 한 번씩만(${buzzes(sector)})`, buzzes(sector) === 2 && dirKeys(sector) >= 8, sector.join(" "));
+  await page.evaluate(() => (window.__buzzAt.length = 0));
+  const wobble = await pressTimed(page, [[200, "pointerdown", 1, S, ...rad(28)], ...flickerSteps(rad(28), rad(32), 14, 50), [60, "pointerup", 1, S, ...rad(28)]]);
+  const gaps = await page.evaluate(() => window.__buzzAt.map((t, i, a) => (i ? Math.round(t - a[i - 1]) : 0)).slice(1));
+  ok(`방향: 느린 떨림(50ms 마다 14번) → 진동 사이 100ms 이상(${buzzes(wobble)}번, 간격 ${gaps.join("·") || "-"}ms)`, buzzes(wobble) >= 2 && gaps.every((g) => g >= 99), wobble.join(" "));
+
+  await page.evaluate(() => window.webgba.pad.setMode("dpad"));
+  const dpad = await pressTimed(page, [
+    [200, "pointerdown", 1, S, 0.8, 0],
+    [120, "pointermove", 1, S, 0, 0.8],
+    [120, "pointerup", 1, S, 0, 0.8],
+    [120, "pointerdown", 1, S, -0.8, 0],
+    [120, "pointermove", 1, S, -0.85, 0.05],
+    [60, "pointerup", 1, S, -0.85, 0.05],
+  ]);
+  ok(`방향: 십자 패드 오른쪽 · → 아래 · 손 떼고 왼쪽 마다 한 번씩(합 ${buzzes(dpad)}) · 같은 칸 안 움직임 0`, buzzes(dpad) === 3, dpad.join(" "));
+  await page.evaluate(() => window.webgba.pad.setMode("stick"));
+  const aOnly = await press(page, tap('[data-key="A"]'));
+  ok(`방향: 방향 진동만 켜면 A → 진동 0(${buzzes(aOnly)})`, buzzes(aOnly) === 0 && aOnly.some((x) => x.startsWith("key:")), aOnly.join(" "));
+  await flip(page, "버튼 진동");
+  await page.waitForTimeout(400);
+  const both = await pressTimed(page, [[200, "pointerdown", 1, S, 0.8, 0], [120, "pointerdown", 2, '[data-key="A"]'], [60, "pointerup", 2, '[data-key="A"]'], [60, "pointerup", 1, S, 0.8, 0]]);
+  ok(`방향: 둘 다 켜면 방향 한 번 + A 한 번(합 ${buzzes(both)})`, buzzes(both) === 2, both.join(" "));
+
+  // 스틱 움직임(pointermove) 처리 시간: 방향 진동 켬·끔을 50번씩 번갈아 20묶음, 한 번 평균(µs) — 움직일 때마다 방향이 바뀜
+  const timing = await page.evaluate(() => {
+    const root = document.getElementById("pad");
+    const r = document.querySelector("[data-dpad]").getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const rad = Math.min(r.width, r.height) / 2;
+    const at = (x, y) => ({ clientX: cx + x * rad, clientY: cy + y * rad, pointerType: "touch", bubbles: true, cancelable: true, pointerId: 9 });
+    const prefs = window.webgba.state.prefs;
+    const sum = { on: 0, off: 0 };
+    const count = { on: 0, off: 0 };
+    root.dispatchEvent(new PointerEvent("pointerdown", at(0, 0)));
+    for (let block = 0; block < 20; block++) {
+      const mode = block % 2 ? "on" : "off";
+      prefs.vibrateDir = mode === "on";
+      for (let i = 0; i < 50; i++) {
+        const t0 = performance.now();
+        window.dispatchEvent(new PointerEvent("pointermove", i % 2 ? at(0.8, 0) : at(0, -0.8)));
+        sum[mode] += performance.now() - t0;
+        count[mode]++;
+      }
+    }
+    window.dispatchEvent(new PointerEvent("pointerup", at(0, 0)));
+    prefs.vibrateDir = true;
+    return { on: +((sum.on / count.on) * 1000).toFixed(1), off: +((sum.off / count.off) * 1000).toFixed(1), moves: count.on + count.off };
+  });
+  ok(`방향: 스틱 움직임 처리 시간 한 번 평균 방향 진동 켬 ${timing.on}µs · 끔 ${timing.off}µs(${timing.moves}번)`, timing.on - timing.off < 100, JSON.stringify(timing));
+  fs.writeFileSync(path.join(SHOTS, "방향진동_움직임_처리시간.json"), JSON.stringify(timing, null, 2));
+  ok("방향: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
+  await context.close();
+}
+
 // 2) PC(마우스, pointer fine): navigator.vibrate 가 있어도 회색 + "지원하지 않습니다", 설정이 켜져 있어도 진동 없음
 {
-  const { context, page } = await open({ mobile: false, prefs: { vibrate: true } });
+  const { context, page } = await open({ mobile: false, prefs: { vibrate: true, vibrateDir: true } });
   const row = await vibrateRow(page);
   ok("PC: \"버튼 진동\" 회색(누를 수 없음) · \"이 기기는 진동을 지원하지 않습니다\"", row && row.disabled && row.off && row.checked === "false" && row.note === "이 기기는 진동을 지원하지 않습니다" && row.opacity < 1, JSON.stringify(row));
+  const dirRow = await vibrateRow(page, "방향 진동");
+  ok("PC: \"방향 진동\"도 회색 · 같은 안내", dirRow && dirRow.disabled && dirRow.off && dirRow.checked === "false" && dirRow.note === "이 기기는 진동을 지원하지 않습니다" && dirRow.opacity < 1, JSON.stringify(dirRow));
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SHOTS, "설정_버튼진동_PC_지원안함.png") });
   const clicked = await page.evaluate(() => {
@@ -161,6 +302,8 @@ const buzzes = (log) => log.filter((x) => x.startsWith("buzz:")).length;
   await page.waitForTimeout(400);
   const log = await press(page, tap('[data-key="A"]'));
   ok(`PC: 눌러도 값 안 바뀜 · A 눌러도 진동 0(${buzzes(log)})`, clicked === true && buzzes(log) === 0, log.join(" "));
+  const pcStick = await pressTimed(page, STICK_ROUTE);
+  ok(`PC: 방향 진동이 켜진 설정이어도 스틱 방향 → 진동 0(방향 입력 ${dirKeys(pcStick)}번)`, buzzes(pcStick) === 0 && dirKeys(pcStick) > 0, pcStick.join(" "));
   ok("PC: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
   await context.close();
 }

@@ -59,6 +59,8 @@
   "web.vibrate": "ボタンの振動",
   "web.vibrate.note": "ゲームボタンを押すと短く振動します(十字キー・スティックは除く)",
   "web.vibrate.unsupported": "この端末は振動に対応していません",
+  "web.vibrateDir": "方向の振動",
+  "web.vibrateDir.note": "スティック・十字キーの方向が変わると短く振動します",
   "web.wakeLock": "画面を消さない",
   "web.wakeLock.note": "プレイ中に画面が自動で消えないようにします",
   "web.pauseWhenHidden": "隠れたら一時停止",

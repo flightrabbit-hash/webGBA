@@ -11,6 +11,8 @@ const KEY_MARGIN = 0.4;
 const KEY_MARGIN_MAX = 40;
 
 export const BUZZ_MS = 12;
+export const DIR_HOLD_MS = 40;
+export const DIR_GAP_MS = 100;
 const SWITCH_HAPTIC_FROM = [18, 0];
 const SWITCH_HAPTIC_UNTIL = [26, 4];
 
@@ -69,16 +71,20 @@ export function stickDirs(dx, dy, radius) {
 }
 
 export class VirtualPad {
-  constructor({ root, onChange, onVisual, onStick, diagonal = () => false, vibrate = () => false }) {
+  constructor({ root, onChange, onVisual, onStick, diagonal = () => false, vibrate = () => "", vibrateDir = () => "" }) {
     this.root = root;
     this.onChange = onChange;
     this.onVisual = onVisual ?? (() => {});
     this.onStick = onStick ?? (() => {});
     this.diagonal = diagonal;
     this.vibrate = vibrate;
+    this.vibrateDir = vibrateDir;
     this.mode = "stick";
     this.pointers = new Map();
     this.down = new Set();
+    this.dirMask = 0;
+    this.dirSince = -Infinity;
+    this.dirBuzzAt = -Infinity;
     this.rects = null;
     this.enabled = true;
     this.handle = this.handle.bind(this);
@@ -221,10 +227,18 @@ export class VirtualPad {
       }
     }
     this.down = next;
-    if (pressed) {
-      const kind = this.vibrate();
-      if (kind) buzz(kind);
+    let mask = 0;
+    for (let i = 0; i < DIRS.length; i++) if (next.has(DIRS[i])) mask |= 1 << i;
+    let dirKind = "";
+    if (mask !== this.dirMask) {
+      const now = performance.now();
+      if (mask && now - this.dirSince >= DIR_HOLD_MS && now - this.dirBuzzAt >= DIR_GAP_MS) dirKind = this.vibrateDir();
+      if (dirKind) this.dirBuzzAt = now;
+      this.dirMask = mask;
+      this.dirSince = now;
     }
+    const kind = (pressed && this.vibrate()) || dirKind;
+    if (kind) buzz(kind);
   }
 
   releaseAll() {

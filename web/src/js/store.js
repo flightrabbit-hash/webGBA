@@ -231,6 +231,7 @@ export const DEFAULT_PREFS = {
   pad: "on",
   dirInput: "stick",
   vibrate: false,
+  vibrateDir: false,
   muted: false,
   volume: 0.8,
   gameSpeed: 1,

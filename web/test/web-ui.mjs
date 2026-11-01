@@ -32,15 +32,20 @@ const ONLY_EXTRA = process.env.UI_EXTRA_ONLY === "1";
 // 정수 배율·꺼내기/넣기·정렬·실행 중 칸, 그리고 꺼내기·넣기 움직임(transform·opacity, 닫을 때 움직임 뒤 숨김).
 const ONLY_LIBRARY = process.env.UI_LIBRARY_ONLY === "1";
 const ONLY_NET = process.env.UI_NET_ONLY === "1";
-const EXTRA = !ONLY_NET && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && process.env.UI_EXTRA !== "0"));
+// UI_CHOICE_ONLY=1 이면 선택 칸(아래에서 올라오는 옵션 목록) 시험만(UI_CHOICE=0 이면 그것만 뺌): 설정의 선택 칸마다 열기·고르기·닫기·키보드·게임패드·
+// 뒤로 가기·바깥 누르기, 320x568·390x844·844x390 화면 안·잉크 가운데·줄 여백, 6배 느린 CPU 열기 시간, WebKit 한 번.
+const ONLY_CHOICE = process.env.UI_CHOICE_ONLY === "1";
+const EXTRA = !ONLY_NET && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
-const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_NET;
-const MOTION = !ONLY_NET && !ONLY_EXTRA && !ONLY_LIBRARY && (ONLY_MOTION || process.env.UI_MOTION !== "0");
-const LIBRARY = !ONLY_NET && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && process.env.UI_LIBRARY !== "0"));
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_NET;
+const MOTION = !ONLY_NET && !ONLY_EXTRA && !ONLY_LIBRARY && !ONLY_CHOICE && (ONLY_MOTION || process.env.UI_MOTION !== "0");
+const LIBRARY = !ONLY_NET && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_CHOICE && process.env.UI_LIBRARY !== "0"));
+const CHOICE = !ONLY_NET && (ONLY_CHOICE || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_LIBRARY && process.env.UI_CHOICE !== "0"));
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "390x844|ko|info": "세로_390x844_정보_게임_소리.png","844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
 const table = [];
+const padTable = [];
 const ok = (name, pass, detail = "") => {
   results.push({ name, pass: Boolean(pass), detail });
   if (!pass) console.log(`실패 ${name}${detail ? ` — ${detail}` : ""}`);
@@ -218,6 +223,78 @@ async function rows(page, key, selector) {
   ok(`${key} ${selector} 줄 높이·간격 같음`, spread(info.heights) < 0.02 && spread(info.gaps) < 0.02, `높이 ${[...new Set(info.heights)].join("/")} · 간격 ${[...new Set(info.gaps)].join("/")}`);
 }
 
+// 줄마다 위 여백 = 아래 여백(줄 상자 → 글자 잉크·조작 칸 틀 중 바깥, 1px 이내), 모든 줄의 여백이 같음(1px 이내).
+// 위아래 선은 줄 상자 밖(앞 줄의 아래 선·묶음 구분선)이라 줄 상자에서 잰다. 아래로 굴리며 다 보이는 줄을 한 번씩 잰다.
+async function rowPads(page, key, selector) {
+  const dpr = await page.evaluate(() => devicePixelRatio);
+  const count = await page.evaluate((s) => document.querySelectorAll(s).length, selector);
+  const pads = new Map();
+  for (let round = 0; round <= count && pads.size < count; round++) {
+    const next = [...Array(count).keys()].find((i) => !pads.has(i));
+    await page.evaluate(([s, i]) => document.querySelectorAll(s)[i].scrollIntoView({ block: "start" }), [selector, next]);
+    await page.waitForTimeout(80);
+    const image = await shoot(page);
+    const list = await page.evaluate(
+      ([s, controls]) => {
+        const px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--px")) || 2;
+        const vh = window.visualViewport?.height ?? innerHeight;
+        return [...document.querySelectorAll(s)].map((node, i) => {
+          const r = node.getBoundingClientRect();
+          const st = getComputedStyle(node);
+          let top = 0;
+          let bottom = vh;
+          for (let at = node.parentElement; at; at = at.parentElement) {
+            const o = getComputedStyle(at).overflowY;
+            if (o === "auto" || o === "hidden" || o === "scroll") {
+              const c = at.getBoundingClientRect();
+              top = Math.max(top, c.top);
+              bottom = Math.min(bottom, c.bottom);
+            }
+          }
+          const frames = [...node.querySelectorAll(controls)]
+            .filter((c) => c.getBoundingClientRect().width > 0)
+            .map((c) => {
+              const b = c.getBoundingClientRect();
+              return { left: b.left - px, right: b.right + px, top: b.top - px, bottom: b.bottom + px };
+            });
+          const icons = [...node.querySelectorAll(".icon")]
+            .filter((c) => getComputedStyle(c).visibility === "visible" && c.getBoundingClientRect().width > 0)
+            .map((c) => {
+              const b = c.getBoundingClientRect();
+              return { left: b.left, right: b.right, top: b.top, bottom: b.bottom };
+            });
+          const label = (node.querySelector(".field__label, .choice__label")?.textContent ?? "").trim();
+          return { i, label, visible: r.height > 0 && r.top >= top - 0.5 && r.bottom <= bottom + 0.5, left: r.left, right: r.right, top: r.top + parseFloat(st.borderTopWidth), bottom: r.bottom - parseFloat(st.borderBottomWidth), inset: 3, frames, icons, mask: frames.map((f) => [f.left - 1, f.top - 1, f.right + 1, f.bottom + px + 1]) };
+        });
+      },
+      [selector, CONTROLS],
+    );
+    for (const row of list) {
+      if (!row.visible || pads.has(row.i)) continue;
+      const ink = inkCheck(image, dpr, row);
+      let top = ink ? ink.top : Infinity;
+      let bottom = ink ? ink.bottom : Infinity;
+      for (const f of row.frames) {
+        top = Math.min(top, f.top - row.top - 1 / dpr);
+        bottom = Math.min(bottom, row.bottom - f.bottom - 1 / dpr);
+      }
+      // 같은 줄 요소: 글자 잉크(조작 칸·아이콘 가림)의 가운데 = 조작 칸 틀·아이콘 칸의 가운데(위·아래가 같은 만큼 안쪽)
+      const text = inkCheck(image, dpr, { ...row, mask: [...row.mask, ...row.icons.map((c) => [c.left - 1, c.top - 1, c.right + 1, c.bottom + 1])] });
+      const textMid = text ? (row.top + row.bottom + text.top - text.bottom) / 2 : null;
+      const mids = [...row.frames, ...row.icons].map((f) => (f.top + f.bottom) / 2);
+      const align = textMid === null || !mids.length ? 0 : Math.max(...mids.map((m) => Math.abs(m - textMid)));
+      pads.set(row.i, { label: row.label, top: +top.toFixed(2), bottom: +bottom.toFixed(2), align: +align.toFixed(2), parts: mids.length + (text ? 1 : 0) });
+    }
+  }
+  const all = [...pads.values()];
+  for (const p of all) ok(`${key} ${p.label} 위·아래 여백 같음`, Number.isFinite(p.top) && Math.abs(p.top - p.bottom) <= 1, `위 ${p.top} · 아래 ${p.bottom}`);
+  for (const p of all.filter((x) => x.parts > 1)) ok(`${key} ${p.label} 같은 줄 요소(글자·조작 칸·아이콘) 위·아래 맞춤(가운데 차이 ${p.align}px)`, p.align <= 1, `${p.align}`);
+  const values = all.flatMap((p) => [p.top, p.bottom]);
+  const spread = values.length ? Math.max(...values) - Math.min(...values) : Infinity;
+  ok(`${key} 줄 ${all.length}/${count}개 여백 모두 같음(1px 이내)`, all.length === count && spread <= 1, `${Math.min(...values)}~${Math.max(...values)}px`);
+  return all;
+}
+
 async function snap(page, key) {
   if (SHOT_PLAN[key]) await page.screenshot({ path: path.join(SHOTS, SHOT_PLAN[key]) });
 }
@@ -331,9 +408,71 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
 
     await openSheet("#btnSettings");
     await fits(page, `${base}|settings`, ".sheet__panel");
-    await rows(page, `${base}|settings`, ".sheet__body .group:first-child .field");
     await measure(page, `${base}|settings`, [".sheet__head", ".field"]);
     await snap(page, `${base}|settings`);
+    // 첫 줄은 머리 선 바로 아래(묶음 제목·위 간격 없음), 묶음 구분선은 줄 사이 선(위아래 간격 없음) — 여백은 모두 줄 안 여백 하나
+    const edges = await page.evaluate(() => {
+      const body = document.getElementById("sheetBody");
+      body.scrollTop = 0;
+      const first = body.querySelector(".field").getBoundingClientRect().top - body.getBoundingClientRect().top;
+      const groups = [...body.querySelectorAll(".group")].map((g) => { const s = getComputedStyle(g); return [s.marginTop, s.marginBottom, s.paddingTop].map(parseFloat); });
+      const fieldGroups = groups.slice(0, -1);
+      return { first: +first.toFixed(2), extra: fieldGroups.flat().filter((v) => v > 0).length };
+    });
+    ok(`${base}|settings 첫 줄 = 머리 선 바로 아래 · 묶음 사이 덧 간격 0`, Math.abs(edges.first) < 0.5 && edges.extra === 0, JSON.stringify(edges));
+    const pads = await rowPads(page, `${base}|settings·여백`, "#sheetBody .field");
+    padTable.push({ key: base, pads });
+    const cut = await page.evaluate(() =>
+      [...document.querySelectorAll("#sheetBody .field__label, #sheetBody .field__note, #sheetBody .pick__value")]
+        .filter((n) => {
+          const row = n.closest(".field").getBoundingClientRect();
+          const r = n.getBoundingClientRect();
+          return n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1 || r.top < row.top - 0.5 || r.bottom > row.bottom + 0.5;
+        })
+        .map((n) => n.textContent.trim()),
+    );
+    ok(`${base}|settings 이름·설명·선택 값 잘림 0`, cut.length === 0, cut.join(" / "));
+    // 상태가 바뀌어도(토글 켜기·끄기) 같은 줄 요소 위·아래 그대로(손잡이는 가로로만), 나란한 단추(조작법·정보) 위·아래 같음
+    const states = await page.evaluate(async () => {
+      const edge = (n) => {
+        const b = n.getBoundingClientRect();
+        return [b.top, b.bottom];
+      };
+      const knobY = (n) => {
+        const m = getComputedStyle(n, "::after").transform;
+        return m && m !== "none" ? new DOMMatrixReadOnly(m).m42 : 0;
+      };
+      const frame = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const out = [];
+      for (const sw of document.querySelectorAll("#sheetBody .switch:not(:disabled)")) {
+        sw.scrollIntoView({ block: "center" });
+        await frame();
+        const a = edge(sw);
+        const ka = knobY(sw);
+        sw.click();
+        await frame();
+        const b = edge(sw);
+        const kb = knobY(sw);
+        sw.click();
+        await frame();
+        out.push({ name: sw.getAttribute("aria-label"), move: +Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])).toFixed(2), knob: +Math.abs(ka - kb).toFixed(2) });
+      }
+      const btns = [...document.querySelectorAll("#sheetBody .start__actions .btn")].map(edge);
+      return { out, btns: btns.length, btnDiff: btns.length > 1 ? +Math.max(...btns.map((b) => Math.max(Math.abs(b[0] - btns[0][0]), Math.abs(b[1] - btns[0][1])))).toFixed(2) : 0 };
+    });
+    ok(`${base}|settings 토글 ${states.out.length}개 켜기·끄기에 위·아래 그대로(손잡이 세로 0)`, states.out.length >= 3 && states.out.every((s) => s.move <= 0.5 && s.knob <= 0.5), JSON.stringify(states.out));
+    ok(`${base}|settings 나란한 단추(조작법·정보) 위·아래 같음(차이 ${states.btnDiff}px)`, states.btns === 2 && states.btnDiff <= 0.5, JSON.stringify(states));
+    // 묶음 제목 없음(설정 시트) · "버튼 진동" 바로 아래 "방향 진동" — 그 줄을 가운데로 굴려 줄·잉크 세로 가운데를 다시 잰다
+    const words = await (await fetch(new URL(`/i18n/${lang}.json`, URL_BASE))).json();
+    const vib = await page.evaluate(([button, dir]) => {
+      const rows = [...document.querySelectorAll("#sheetBody .field")];
+      const at = rows.findIndex((n) => n.querySelector(".switch")?.getAttribute("aria-label") === dir);
+      rows[at]?.scrollIntoView({ block: "center" });
+      return { titles: document.querySelectorAll("#sheetBody .group__title").length, next: at > 0 && rows[at - 1].querySelector(".switch")?.getAttribute("aria-label") === button };
+    }, [words["web.vibrate"], words["web.vibrateDir"]]);
+    ok(`${base}|settings 묶음 제목 0 · "${words["web.vibrate"]}" 바로 아래 "${words["web.vibrateDir"]}"`, vib.titles === 0 && vib.next, JSON.stringify(vib));
+    await page.waitForTimeout(150);
+    await measure(page, `${base}|settings·진동`, [".field"]);
     await page.click("#sheetClose");
     await page.waitForTimeout(200);
 
@@ -1474,6 +1613,283 @@ if (MOTION) {
   }
 }
 
+// ── 선택 칸 옵션 목록(아래에서 올라오는 시트, main.js openChoice) ──
+// 설정의 선택 칸마다: 열면 제목 = 항목 이름·listbox/option·현재 값 하나만 aria-selected·초점 = 현재 값(목록 안에 보임)·화면 안·겹침 0·잉크 가운데·줄 여백 같음,
+// 다른 값을 누르면 바로 반영(칸 글자·설정 저장)되고 닫힘(설정 시트는 그대로). 키보드(Enter·↑↓·Home·End·Esc·Tab), 게임패드(↓·A·B),
+// 닫기 단추·바깥 누르기·뒤로 가기(옵션 목록만 닫히고, 다음 뒤로 가기에 설정 시트), 열기 움직임(transform·opacity 200ms), 6배 느린 CPU 열기 시간, WebKit 한 번.
+if (CHOICE) {
+  const CHOICE_VIEWS = [
+    { name: "320x568", viewport: { width: 320, height: 568 } },
+    { name: "390x844", viewport: { width: 390, height: 844 } },
+    { name: "844x390", viewport: { width: 844, height: 390 } },
+  ];
+  const choicePage = async (launcher, engine, viewport, motion = false) => {
+    const context = await launcher.newContext({ viewport, hasTouch: true, deviceScaleFactor: 2, reducedMotion: motion ? "no-preference" : "reduce", ...(engine === "chromium" ? { isMobile: true } : {}) });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+      localStorage.setItem("webgba.prefs", JSON.stringify({ lang: "ko" }));
+      window.__pads = [];
+      Object.defineProperty(navigator, "getGamepads", { value: () => window.__pads, configurable: true });
+    });
+    const page = await context.newPage();
+    page.errors = [];
+    page.on("pageerror", (e) => page.errors.push(e.message));
+    await page.goto(URL_BASE);
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+    await page.evaluate(() => window.webgba.openSheet("settings"));
+    await page.waitForSelector("#sheet:not([hidden])");
+    await page.waitForTimeout(300);
+    return { context, page };
+  };
+  const picks = (page) => page.evaluate(() => [...document.querySelectorAll("#sheetBody .pick")].map((p) => ({ label: p.getAttribute("aria-label"), value: p.dataset.value, text: p.querySelector(".pick__value").textContent, options: [...p.querySelectorAll(".pick__size")].map((s) => s.textContent) })));
+  const markPick = (page, index) =>
+    page.evaluate((index) => {
+      for (const node of document.querySelectorAll("[data-test-pick]")) delete node.dataset.testPick;
+      const pick = document.querySelectorAll("#sheetBody .pick")[index];
+      pick.dataset.testPick = "1";
+      pick.scrollIntoView({ block: "center" });
+    }, index);
+  const openAt = async (page, index) => {
+    await markPick(page, index);
+    await page.click("[data-test-pick]");
+    await page.waitForSelector("#choice:not([hidden]) .choice__opt");
+    await page.waitForTimeout(60);
+  };
+  const closed = (page) => page.waitForFunction(() => !window.webgba.state.choiceDone && document.getElementById("choice").hidden, null, { timeout: 3000 }).then(() => true, () => false);
+  const choiceState = (page) =>
+    page.evaluate(() => {
+      const panel = document.querySelector(".choice__panel").getBoundingClientRect();
+      const list = document.getElementById("choiceList");
+      const lr = list.getBoundingClientRect();
+      const rows = [...list.querySelectorAll(".choice__opt")];
+      const focus = document.activeElement;
+      const fr = focus?.getBoundingClientRect?.();
+      const boxes = rows.map((r) => r.getBoundingClientRect());
+      return {
+        open: !document.getElementById("choice").hidden && Boolean(window.webgba.state.choiceDone),
+        title: document.getElementById("choiceTitle").textContent,
+        role: list.getAttribute("role"),
+        roles: rows.every((r) => r.getAttribute("role") === "option"),
+        count: rows.length,
+        labels: rows.map((r) => r.textContent),
+        values: rows.map((r) => r.dataset.value),
+        selected: rows.filter((r) => r.getAttribute("aria-selected") === "true").map((r) => r.dataset.value),
+        focusValue: focus?.classList?.contains("choice__opt") ? focus.dataset.value : null,
+        focusClose: focus?.id === "choiceClose",
+        padFocus: rows.filter((r) => r.classList.contains("is-focus")).map((r) => r.dataset.value),
+        focusVisible: fr ? fr.top >= lr.top - 0.5 && fr.bottom <= lr.bottom + 0.5 : false,
+        inside: panel.top >= -0.5 && panel.bottom <= (window.visualViewport?.height ?? innerHeight) + 0.5 && panel.left >= -0.5 && panel.right <= innerWidth + 0.5,
+        overlap: boxes.some((b, i) => i && b.top < boxes[i - 1].bottom - 0.5),
+        sheet: window.webgba.state.sheet,
+        sheetShown: !document.getElementById("sheet").hidden && !document.getElementById("sheet").classList.contains("is-closing"),
+        expanded: document.querySelector('.pick[aria-expanded="true"]')?.getAttribute("aria-label") ?? "",
+      };
+    });
+  const prefsOf = (page) => page.evaluate(() => localStorage.getItem("webgba.prefs"));
+  const pickAt = (page, index) => page.evaluate((index) => { const p = document.querySelectorAll("#sheetBody .pick")[index]; return { value: p.dataset.value, text: p.querySelector(".pick__value").textContent, label: p.getAttribute("aria-label"), focused: document.activeElement === p }; }, index);
+  const choose = async (page, index, value) => {
+    await openAt(page, index);
+    await page.click(`.choice__opt[data-value="${value}"]`);
+    return closed(page);
+  };
+  const autoIndex = async (page) => (await picks(page)).findIndex((p) => p.options.length === 7);
+
+  for (const view of CHOICE_VIEWS) {
+    const { context, page } = await choicePage(browser, "chromium", view.viewport);
+    const base = `${view.name}|ko|choice`;
+    const list = await picks(page);
+    ok(`${base} 설정 선택 칸 ${list.length}개(표시 언어·테마·방향 입력·가상 버튼·게임 재생 속도·자동 저장·방향키 동시 누름) · 기본 select 0`, list.length === 7 && (await page.evaluate(() => document.querySelectorAll("select").length)) === 0, list.map((p) => p.label).join(", "));
+    for (const [index, item] of list.entries()) {
+      const before = await pickAt(page, index);
+      await markPick(page, index);
+      const shutEdge = await page.evaluate(() => { const b = document.querySelector("[data-test-pick]").getBoundingClientRect(); return [b.top, b.bottom]; });
+      await openAt(page, index);
+      const openEdge = await page.evaluate(() => { const b = document.querySelector("[data-test-pick]").getBoundingClientRect(); return [b.top, b.bottom]; });
+      const st = await choiceState(page);
+      const key = `${base}|${index}`;
+      ok(`${key} "${before.label}" 선택 칸 열림(aria-expanded) 상태에도 위·아래 그대로`, Math.abs(shutEdge[0] - openEdge[0]) <= 0.5 && Math.abs(shutEdge[1] - openEdge[1]) <= 0.5, JSON.stringify({ shutEdge, openEdge }));
+      ok(
+        `${key} "${before.label}" 열기: 제목·listbox/option·옵션 ${item.options.length}개·현재 값만 선택·초점 = 현재 값(보임)·화면 안·겹침 0·설정 시트 그대로·aria-expanded`,
+        st.open && st.title === before.label && st.role === "listbox" && st.roles && st.count === item.options.length && st.labels.join("|") === item.options.join("|") && st.selected.join() === before.value && st.focusValue === before.value && st.focusVisible && st.inside && !st.overlap && st.sheet === "settings" && st.sheetShown && st.expanded === before.label,
+        JSON.stringify({ ...st, labels: undefined, values: undefined }),
+      );
+      await fits(page, key, ".choice__panel");
+      await measure(page, key, ["#choice .sheet__head", ".choice__opt"]);
+      const choicePads = await rowPads(page, `${key}·여백`, ".choice__opt");
+      if (view.name === "390x844" && index === 1) padTable.push({ key: `${view.name}|ko|옵션 목록(테마)`, pads: choicePads });
+      const at = st.values.indexOf(before.value);
+      const target = st.values[(at + 1) % st.values.length];
+      const targetLabel = st.labels[(at + 1) % st.values.length];
+      const prefsBefore = await prefsOf(page);
+      await page.click(`.choice__opt[data-value="${target}"]`);
+      const shut = await closed(page);
+      await page.waitForTimeout(150);
+      const after = await pickAt(page, index);
+      const sheetAfter = await page.evaluate(() => window.webgba.state.sheet);
+      ok(`${key} 다른 값 누르면 바로 반영·닫힘·저장·설정 시트 그대로(${before.text} → ${after.text})`, shut && after.value === target && (index === 0 || after.text === targetLabel) && (await prefsOf(page)) !== prefsBefore && sheetAfter === "settings", JSON.stringify({ shut, after, target, targetLabel, sheetAfter }));
+      ok(`${key} 닫은 뒤 초점이 그 칸으로`, index <= 1 || after.focused, JSON.stringify(after));
+      const back = await choose(page, index, before.value);
+      const restored = await pickAt(page, index);
+      ok(`${key} 처음 값으로 되돌림`, back && restored.value === before.value, JSON.stringify(restored));
+    }
+
+    const auto = await autoIndex(page);
+    const autoBefore = await pickAt(page, auto);
+    await markPick(page, auto);
+    await page.focus("[data-test-pick]");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("#choice:not([hidden]) .choice__opt");
+    const k0 = await choiceState(page);
+    await page.keyboard.press("ArrowDown");
+    const k1 = await choiceState(page);
+    await page.keyboard.press("Enter");
+    const kShut = await closed(page);
+    const kAfter = await pickAt(page, auto);
+    const nextValue = k0.values[k0.values.indexOf(autoBefore.value) + 1];
+    ok(`${base} 키보드: Enter 로 열기(초점 = 현재 값) → ↓ 다음 값 → Enter 고르고 닫힘 · 초점 칸으로`, k0.focusValue === autoBefore.value && k1.focusValue === nextValue && kShut && kAfter.value === nextValue && kAfter.focused, JSON.stringify({ k0: k0.focusValue, k1: k1.focusValue, kAfter }));
+    await page.keyboard.press("ArrowUp");
+    await page.waitForSelector("#choice:not([hidden]) .choice__opt");
+    await page.keyboard.press("End");
+    const kEnd = await choiceState(page);
+    await page.keyboard.press("Home");
+    const kHome = await choiceState(page);
+    await page.keyboard.press("Tab");
+    const kTab1 = await choiceState(page);
+    await page.keyboard.press("Tab");
+    const kTab2 = await choiceState(page);
+    await page.keyboard.press("Escape");
+    const escShut = await closed(page);
+    const escAfter = await pickAt(page, auto);
+    ok(
+      `${base} 키보드: 칸에서 ↑ 로 열기 · End 끝 · Home 처음 · Tab 은 닫기 단추 ↔ 목록 안에서만 · Esc 닫힘(값 그대로·초점 칸으로·설정 시트 그대로)`,
+      kEnd.focusValue === kEnd.values.at(-1) && kHome.focusValue === kHome.values[0] && kTab1.focusClose && kTab2.focusValue === kHome.values[0] && escShut && escAfter.value === nextValue && escAfter.focused && (await page.evaluate(() => window.webgba.state.sheet)) === "settings",
+      JSON.stringify({ end: kEnd.focusValue, home: kHome.focusValue, tab1: kTab1.focusClose, tab2: kTab2.focusValue, escAfter }),
+    );
+    await choose(page, auto, autoBefore.value);
+
+    await openAt(page, auto);
+    await page.click("#choiceClose");
+    const xShut = await closed(page);
+    await openAt(page, auto);
+    await page.mouse.click(view.viewport.width / 2, 12);
+    const outShut = await closed(page);
+    const outSheet = await page.evaluate(() => window.webgba.state.sheet);
+    await openAt(page, auto);
+    await page.goBack();
+    const histShut = await closed(page);
+    const histSheet = await page.evaluate(() => window.webgba.state.sheet);
+    await page.goBack();
+    await page.waitForTimeout(400);
+    const sheetGone = await page.evaluate(() => window.webgba.state.sheet === "" && !window.webgba.state.choiceDone);
+    ok(`${base} 닫기 단추·바깥 누르기·뒤로 가기로 옵션 목록만 닫힘, 다음 뒤로 가기에 설정 시트 닫힘`, xShut && outShut && outSheet === "settings" && histShut && histSheet === "settings" && sheetGone, JSON.stringify({ xShut, outShut, outSheet, histShut, histSheet, sheetGone }));
+    await page.evaluate(() => window.webgba.openSheet("settings"));
+    await page.waitForTimeout(300);
+    await choose(page, auto, "10");
+    await page.goBack();
+    await page.waitForTimeout(400);
+    ok(`${base} 고른 뒤 뒤로 가기 한 번에 설정 시트 닫힘(남는 기록 0)`, await page.evaluate(() => window.webgba.state.sheet === ""), "");
+    await page.evaluate(() => window.webgba.openSheet("settings"));
+    await page.waitForTimeout(300);
+    await choose(page, auto, autoBefore.value);
+
+    if (view.name === "390x844") {
+      const pad = (pressed) => page.evaluate((pressed) => (window.__pads = [{ buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: pressed.includes(i) })), axes: [0, 0, 0, 0] }]), pressed);
+      await openAt(page, auto);
+      const g0 = await choiceState(page);
+      await pad([13]);
+      await page.waitForTimeout(80);
+      await pad([]);
+      await page.waitForTimeout(80);
+      const g1 = await choiceState(page);
+      await pad([0]);
+      await page.waitForTimeout(80);
+      await pad([]);
+      const gShut = await closed(page);
+      const gAfter = await pickAt(page, auto);
+      const gNext = g0.values[g0.values.indexOf(autoBefore.value) + 1];
+      await openAt(page, auto);
+      await pad([1]);
+      await page.waitForTimeout(80);
+      await pad([]);
+      const gBack = await closed(page);
+      const gKeep = await pickAt(page, auto);
+      ok(`${base} 게임패드: ↓ 다음 값(초점 표시) · A 고르고 닫힘 · B 그대로 닫힘`, g1.focusValue === gNext && g1.padFocus.join() === gNext && gShut && gAfter.value === gNext && gBack && gKeep.value === gNext, JSON.stringify({ g1: g1.focusValue, pad: g1.padFocus, gAfter, gKeep }));
+      await choose(page, auto, autoBefore.value);
+      const themeAt = list.findIndex((p) => p.options.length >= 10);
+      await openAt(page, themeAt);
+      await page.screenshot({ path: path.join(SHOTS, "세로_390x844_선택목록_테마.png") });
+      await page.click("#choiceClose");
+      await closed(page);
+    }
+    ok(`${base} 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
+    await context.close();
+  }
+
+  {
+    const { context, page } = await choicePage(browser, "chromium", { width: 390, height: 844 }, true);
+    const themeAt = (await picks(page)).findIndex((p) => p.options.length >= 10);
+    await markPick(page, themeAt);
+    await page.waitForTimeout(100);
+    const anim = await page.evaluate(async () => {
+      document.querySelector("[data-test-pick]").click();
+      const shown = document.getElementById("choice");
+      const runs = [shown, shown.querySelector(".choice__panel")].map((n) => n.getAnimations().map((a) => ({ name: a.animationName, ms: a.effect.getTiming().duration })));
+      await new Promise((done) => setTimeout(done, 300));
+      return { runs, sheet: !document.getElementById("sheet").hidden && document.getElementById("sheet").getAnimations().length === 0 };
+    });
+    ok("옵션 목록 열기 움직임: 바탕 fade-in·판 rise-in(transform·opacity) 200ms, 뒤 설정 시트는 움직이지 않음", anim.runs[0][0]?.name === "fade-in" && anim.runs[1][0]?.name === "rise-in" && anim.runs.every((r) => r[0]?.ms === 200) && anim.sheet, JSON.stringify(anim));
+    await page.click("#choiceClose");
+    await closed(page);
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+    const times = [];
+    for (let i = 0; i < 6; i++) {
+      times.push(
+        await page.evaluate(async () => {
+          const pick = document.querySelector("[data-test-pick]");
+          const t0 = performance.now();
+          pick.click();
+          const t1 = performance.now();
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          const t2 = performance.now();
+          window.webgba.state.choiceDone?.(null);
+          await new Promise((done) => setTimeout(done, 400));
+          return { handler: +(t1 - t0).toFixed(1), frame: +(t2 - t0).toFixed(1) };
+        }),
+      );
+    }
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    const mid = (key) => times.map((x) => x[key]).sort((a, b) => a - b)[Math.floor(times.length / 2)];
+    ok(`6배 느린 CPU: 테마 옵션 목록 열기 처리 가운데값 ${mid("handler")}ms · 다음 두 프레임까지 ${mid("frame")}ms(6번)`, mid("handler") <= 50, JSON.stringify(times));
+    fs.writeFileSync(path.join(SHOTS, "선택목록_열기시간_6배.json"), JSON.stringify(times, null, 2));
+    await context.close();
+  }
+
+  let wkChoice = null;
+  try {
+    wkChoice = await webkit.launch({ headless: true });
+  } catch (error) {
+    console.log(`WebKit 없음 — WebKit 옵션 목록 시험 건너뜀 (${error.message.split("\n")[0]})`);
+  }
+  if (wkChoice) {
+    const { context, page } = await choicePage(wkChoice, "webkit", { width: 390, height: 844 });
+    const auto = await autoIndex(page);
+    const before = await pickAt(page, auto);
+    await openAt(page, auto);
+    const st = await choiceState(page);
+    const target = st.values[(st.values.indexOf(before.value) + 1) % st.values.length];
+    await page.click(`.choice__opt[data-value="${target}"]`);
+    const shut = await closed(page);
+    const after = await pickAt(page, auto);
+    await openAt(page, auto);
+    await page.keyboard.press("Escape");
+    const esc = await closed(page);
+    ok("WebKit: 옵션 목록 열기(초점 = 현재 값·화면 안)·고르기·Esc 닫기", st.open && st.focusValue === before.value && st.inside && shut && after.value === target && esc && page.errors.length === 0, JSON.stringify({ focus: st.focusValue, inside: st.inside, shut, after, esc, errors: page.errors }));
+    await context.close();
+    await wkChoice.close();
+  }
+}
+
 await browser.close();
 const failed = results.filter((r) => !r.pass);
 const worst = new Map();
@@ -1484,6 +1900,7 @@ for (const row of table) {
 fs.writeFileSync(path.join(SHOTS, "화면규칙_결과.json"), JSON.stringify({ results, table }, null, 2));
 const lines = [...worst.entries()].map(([k, v]) => `${k}: 최대 차이 ${v}px`);
 fs.writeFileSync(path.join(SHOTS, "잉크가운데_표.txt"), lines.join("\n"));
+if (padTable.length) fs.writeFileSync(path.join(SHOTS, "줄여백_표.txt"), padTable.map(({ key, pads }) => [key, ...pads.map((p) => `  ${p.label}: 위 ${p.top} · 아래 ${p.bottom} · 같은 줄 가운데 차이 ${p.align}`)].join("\n")).join("\n\n"));
 console.log(`잉크 측정 ${table.length}곳 · 최대 차이 ${Math.max(0, ...table.map((r) => r.diff))}px`);
 console.log(`결과: ${results.length - failed.length}/${results.length} 통과`);
 process.exit(failed.length ? 1 : 0);

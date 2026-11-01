@@ -58,6 +58,16 @@ async function chooseFiles(page, clickSelector, files) {
   await chooser.setFiles(files);
 }
 
+// 설정 선택 칸(아래에서 올라오는 옵션 목록): 칸을 누르고 값이 value 인 줄을 누른다
+async function choose(page, label, value) {
+  await page.waitForSelector(`.pick[aria-label="${label}"]`);
+  await page.evaluate((label) => document.querySelector(`.pick[aria-label="${label}"]`).scrollIntoView({ block: "center" }), label);
+  await page.click(`.pick[aria-label="${label}"]`);
+  await page.waitForSelector(`#choice:not([hidden]) .choice__opt[data-value="${value}"]`);
+  await page.click(`.choice__opt[data-value="${value}"]`);
+  await page.waitForFunction(() => !window.webgba.state.choiceDone);
+}
+
 const filesMenu = async (page) => {
   if (await page.isVisible("#btnMenu")) {
     await page.click("#btnMenu");
@@ -226,7 +236,7 @@ async function testPad() {
   ok("버튼 그림 바깥 가장자리 근처(+10px) 탭도 그 버튼", nearA === bitsOf("A"), `${nearA}`);
   ok("A·B 사이 탭은 하나만 눌림", between === bitsOf("A") || between === bitsOf("B"), `${between}`);
   await page.click("#btnSettings");
-  await page.selectOption('select[aria-label="방향 입력"]', "dpad");
+  await choose(page, "방향 입력", "dpad");
   const mode = await page.evaluate(() => [document.querySelector("[data-dpad]").dataset.mode, JSON.parse(localStorage.getItem("webgba.prefs")).dirInput]);
   await page.click("#sheetClose");
   const r2 = await rects(page);
@@ -273,7 +283,7 @@ async function testGba() {
   const speedDefault = await page.evaluate(() => window.webgba.player.gameSpeed);
   const at1 = await countFrames();
   await page.click("#btnSettings");
-  await page.selectOption('select[aria-label="게임 재생 속도"]', "2");
+  await choose(page, "게임 재생 속도", "2");
   await page.click("#sheetClose");
   await page.waitForTimeout(300);
   const at2 = await countFrames();
@@ -588,10 +598,10 @@ async function testUpdateNotice() {
 async function testLang() {
   const { context, page } = await newPage();
   await page.click("#btnSettings");
-  await page.selectOption('select[aria-label="표시 언어"]', "en");
+  await choose(page, "표시 언어", "en");
   await page.waitForTimeout(300);
   const en = await page.getAttribute("#btnOpen", "title");
-  await page.selectOption('select[aria-label="Display language"]', "ja").catch(() => {});
+  await choose(page, "Display language", "ja").catch(() => {});
   await page.waitForTimeout(300);
   const ja = await page.getAttribute("#btnOpen", "title");
   ok("언어 바꾸기(영어·일본어)", /Open/.test(en) && /開く/.test(ja), `${en} / ${ja}`);
