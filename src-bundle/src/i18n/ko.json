@@ -56,6 +56,8 @@
   "key.LEFT": "왼쪽 ←",
   "key.RIGHT": "오른쪽 →",
   "key.FAST": "빨리 감기(누르는 동안)",
+  "key.C": "C",
+  "key.D": "D",
   "keyCode.ShiftRight": "오른쪽 Shift",
   "keyCode.ShiftLeft": "왼쪽 Shift",
   "keyCode.ControlLeft": "왼쪽 Ctrl",

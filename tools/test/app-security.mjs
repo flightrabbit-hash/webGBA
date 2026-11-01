@@ -85,6 +85,31 @@ try {
     await sleep(1500);
     check("틀이 위 창을 옮기지 못함", (await app.evaluate("location.origin")) === "http://ui.localhost", await app.evaluate("location.href"));
 
+    // WebRTC(결정 102-3): 멀티플레이 설명서가 없는 게임 틀에서는 지워져 생성 실패. 틀 자신·window[0] 자식·src 없는 자식 모두.
+    const rtc = await inner.evaluate(
+      "(() => { const out = { top: typeof RTCPeerConnection, webkit: typeof window.webkitRTCPeerConnection, channel: typeof RTCDataChannel }; " +
+        "try { new RTCPeerConnection(); out.make = 'made'; } catch (e) { out.make = 'blocked ' + e.name; } " +
+        "const f = document.createElement('iframe'); document.body.append(f); out.childNoSrc = typeof window[0]?.RTCPeerConnection; out.childWin = typeof f.contentWindow?.RTCPeerConnection; return out; })()",
+    );
+    check(
+      "WebRTC 막힘(설명서에 멀티플레이 없음): RTCPeerConnection 없음·생성 실패·자식 틀에도 없음",
+      rtc.top === "undefined" && rtc.webkit === "undefined" && rtc.channel === "undefined" && /^blocked/.test(rtc.make) && rtc.childNoSrc === "undefined" && rtc.childWin === "undefined",
+      JSON.stringify(rtc),
+    );
+    const dnsHead = await inner.evaluate("fetch(location.href, { cache: 'no-store' }).then((r) => r.headers.get('x-dns-prefetch-control') ?? '')");
+    const frameSrc = /frame-src ([^;]+)/.exec(csp)?.[1]?.trim() ?? "";
+    check("DNS 미리 찾기 끔 머리 + CSP frame-src 'none'(자식 틀로 WebRTC 다시 못 얻음)", dnsHead === "off" && frameSrc === "'none'", `dns=${dnsHead} · frame-src=${frameSrc}`);
+    // 동적으로 넣은 dns-prefetch·preconnect 링크는 차단 스크립트가 바로 떼어 낸다(DOM 에 안 남음)
+    const hintGone = await inner.evaluate(
+      "(async () => { for (const rel of ['dns-prefetch', 'preconnect']) { const l = document.createElement('link'); l.rel = rel; l.href = 'http://d102-x-' + rel + '.example.com'; document.head.append(l); } await new Promise((r) => setTimeout(r, 200)); return document.querySelectorAll('link[rel=\"dns-prefetch\"], link[rel=\"preconnect\"]').length; })()",
+    );
+    check("넣은 dns-prefetch·preconnect 링크를 떼어 냄", hintGone === 0, String(hintGone));
+    // blob 자식 틀(다른 출처)은 frame-src 'none' 이 막는다
+    const blobChild = await inner.evaluate(
+      "(async () => { const url = URL.createObjectURL(new Blob(['<p>x</p>'], { type: 'text/html' })); const f = document.createElement('iframe'); f.src = url; document.body.append(f); await new Promise((r) => setTimeout(r, 400)); try { return typeof f.contentWindow.RTCPeerConnection === 'undefined' ? 'blocked' : 'open ' + typeof f.contentWindow.RTCPeerConnection; } catch (e) { return 'blocked ' + e.name; } })()",
+    );
+    check("blob 자식 틀(다른 출처)로 WebRTC 못 얻음", /^blocked/.test(blobChild), blobChild);
+
     await inner.evaluate(`(() => { location.href = ${JSON.stringify(OUTSIDE)}; return true; })()`).catch(() => {});
     await sleep(2000);
     const after = await frameTargets();
@@ -95,6 +120,11 @@ try {
     );
     inner.close();
   }
+
+  // 본 창(앱 화면, ui.localhost)은 WebRTC 를 그대로 둔다 — 멀티플레이는 호스트(이 창)가 하고 게임 틀에는 안 준다(결정 102-3).
+  // 설명서에 멀티플레이가 있는 게임의 통신도 이 창에서 webgba.net 으로 이어진다. 게임 틀에서만 WebRTC 를 지운 것과 대비.
+  const mainRtc = await app.evaluate("typeof RTCPeerConnection");
+  check("본 창은 WebRTC 유지(멀티플레이 호스트는 이 창)", mainRtc === "function", mainRtc);
 
   const fresh = fs.readFileSync(save);
   await app.evaluate(`fetch(${JSON.stringify(`${origin}/save`)}, { method: "POST", mode: "no-cors", body: new Uint8Array(131072) }).then(() => true, () => true)`);

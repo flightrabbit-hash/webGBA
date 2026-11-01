@@ -436,8 +436,8 @@ async function keymapTests() {
   await app.evaluate("document.getElementById('stage').focus(); true");
   const prefs = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
   const afterN = [await sentWhile("KeyN"), await sentWhile("KeyC")];
-  check("keymap C·D: 키 설정에서 C = N 저장 → gameKeys[게임 id] 에만, 게임에 바로(N → bit 10, C 는 아무것도 아님)",
-    prefs.gameKeys?.["io.example.keys-cd"]?.C?.[0] === "KeyN" && !prefs.keys?.C && (prefs.keys?.A ?? ["KeyZ"])[0] === "KeyZ" && afterN.join() === "1024,0", `${JSON.stringify(prefs.gameKeys)} · ${afterN.join(",")}`);
+  check("keymap C·D: 키 설정에서 C = N 저장 → gameKeys[게임 id] 에만(앱 전체 C 는 빈 채), 게임에 바로(N → bit 10, C 는 아무것도 아님)",
+    prefs.gameKeys?.["io.example.keys-cd"]?.C?.[0] === "KeyN" && (prefs.keys?.C ?? []).length === 0 && (prefs.keys?.A ?? ["KeyZ"])[0] === "KeyZ" && afterN.join() === "1024,0", `${JSON.stringify(prefs.gameKeys)} · ${afterN.join(",")}`);
 
   await openGame(file("keys-few"));
   const few = [await sentWhile("KeyZ"), await sentWhile("KeyX"), await sentWhile("KeyA"), await sentWhile("Enter"), await sentWhile("ArrowUp")];
@@ -461,15 +461,44 @@ async function keymapTests() {
   const again = await sentWhile("KeyN");
   check("keymap C·D: 다시 열어도 그 게임의 키(N → bit 10)", again === 1024, String(again));
 
-  // 게임을 닫으면 키 설정 창은 GBA 키(11줄), N 은 아무것도 아님
+  // 게임을 닫으면 키 설정 창 = GBA 10버튼 + C·D(정의 없는 경우를 위한 빈 칸, 결정 102, 사용자 2026-11-01). N 은 아무것도 아님.
   await app.evaluate(`${T}.closeGame().then(() => true)`);
   await sleep(300);
   await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
   const rowsNone = await keyRows();
   const noteNone = await app.evaluate("document.getElementById('settings-keys-game').hidden");
+  // C·D 칸은 보이고 기본값은 빈 상태("—")
+  const cdEmpty = await app.evaluate(
+    "(() => { const names = [...document.querySelectorAll('#settings-keys .keys__name')].map((n) => n.textContent); const slotsOf = (name) => { const i = names.indexOf(name); return [...document.querySelectorAll('#settings-keys .keys__slot')].slice(i * 2, i * 2 + 2).map((s) => s.textContent); }; return { c: slotsOf('C'), d: slotsOf('D') }; })()",
+  );
   await app.evaluate(`${T}.settings.close(); true`);
   const input = await app.evaluate(`(() => { const p = ${T}.player; return { gba: ${T}.state.input.gba, n: p.keymap.has('KeyN'), z: p.keymap.get('KeyZ') }; })()`);
-  check("keymap: 게임을 닫으면 GBA 10버튼(키 설정 11줄·안내 없음·N 없음·Z = A)", rowsNone.length === 11 && noteNone && input.gba && !input.n && input.z === 1, `${rowsNone.length}줄 · ${JSON.stringify(input)}`);
+  check(
+    "keymap: 게임을 닫으면 GBA 버튼 + C·D 빈 칸(키 설정 13줄·C·D '—'·안내 없음·N 없음·Z = A)",
+    rowsNone.length === 13 && rowsNone.includes("C") && rowsNone.includes("D") && cdEmpty.c.join() === "—,—" && cdEmpty.d.join() === "—,—" && noteNone && input.gba && !input.n && input.z === 1,
+    `${rowsNone.length}줄 · ${JSON.stringify(cdEmpty)} · ${JSON.stringify(input)}`,
+  );
+
+  // 정의 없는 상태에서 C 칸을 M 으로 지정·저장 → 앱 전체 키(prefs.keys.C), 다시 열어도 유지. GBA 게임에는 C 가 없어 M 을 눌러도 입력 비트로 안 간다.
+  await app.evaluate(`${T}.openSettings('keys').then(() => new Promise((r) => setTimeout(() => r(true), 300)))`);
+  const cRows = await keyRows();
+  await app.evaluate(`(() => { const names = [...document.querySelectorAll('#settings-keys .keys__name')].map((n) => n.textContent); const i = names.indexOf('C'); document.querySelectorAll('#settings-keys .keys__slot')[i * 2].click(); return true; })()`);
+  await sleep(100);
+  await tap("KeyM", 60);
+  await sleep(100);
+  await app.evaluate("document.getElementById('settings-save').click(); true");
+  await sleep(500);
+  await app.evaluate(`${T}.settings.close(); true`);
+  const prefsCd = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
+  await openGame(path.join(work, "games", "test.gba"));
+  const mGba = await sentWhile("KeyM");
+  check(
+    "keymap: 정의 없는 C = M 저장 → prefs.keys.C, GBA 게임엔 전달 안 됨(M → 아무것도 아님)",
+    prefsCd.keys?.C?.[0] === "KeyM" && mGba === 0 && cRows.includes("C"),
+    `prefs.keys.C=${JSON.stringify(prefsCd.keys?.C)} · M=${mGba}`,
+  );
+  await app.evaluate(`${T}.closeGame().then(() => true)`).catch(() => {});
+  await sleep(200);
 }
 
 try {

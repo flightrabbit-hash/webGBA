@@ -56,6 +56,8 @@
   "key.LEFT": "左 ←",
   "key.RIGHT": "右 →",
   "key.FAST": "早送り(押している間)",
+  "key.C": "C",
+  "key.D": "D",
   "keyCode.ShiftRight": "右 Shift",
   "keyCode.ShiftLeft": "左 Shift",
   "keyCode.ControlLeft": "左 Ctrl",

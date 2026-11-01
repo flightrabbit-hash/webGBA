@@ -25,8 +25,10 @@ const ok = (name, pass, detail = "") => {
   console.log(`${pass ? "통과" : "실패"} ${name}${detail ? ` — ${detail}` : ""}`);
 };
 const GAME_ID = "com.flightrabbit.rapid";
-// 기대 롬 SHA-1 은 --new 파일의 rom 조각 머리(WGRM)에서 읽는다(저장소에 롬 SHA-1 글자를 두지 않음 — check-no-rom)
-const ROM_SHA1 = (await readWgba(new Uint8Array(fs.readFileSync(opt.new)))).romSha1;
+// 기대 롬 SHA-1·게임 이름은 --new 파일에서 읽는다(저장소에 롬 SHA-1·고정 이름을 두지 않음 — check-no-rom, 이름이 바뀌어도 시험이 따라감)
+const NEW_WGBA = await readWgba(new Uint8Array(fs.readFileSync(opt.new)));
+const ROM_SHA1 = NEW_WGBA.romSha1;
+const GAME_NAME = typeof NEW_WGBA.manifest.name === "string" ? NEW_WGBA.manifest.name : NEW_WGBA.manifest.name?.en ?? "";
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
@@ -117,7 +119,7 @@ try {
   const openMs = Date.now() - t0;
   const newGame = await gameNow();
   const toast1 = await toastText();
-  ok("새 .wgba: 열림 · 세이브 id = 게임 id", newGame && newGame.saveId === GAME_ID && newGame.version === "1.2.0" && newGame.title === "포켓몬 Rapid", JSON.stringify(newGame));
+  ok("새 .wgba: 열림 · 세이브 id = 게임 id", newGame && newGame.saveId === GAME_ID && newGame.version === "1.2.0" && newGame.title === GAME_NAME, JSON.stringify(newGame));
   ok("새 .wgba: code 조각만 컴파일(모듈에 webgba.rom 없음) · 롬 SHA-1", (await moduleHasRom()) === 0 && (await romSha()) === ROM_SHA1, `${openMs}ms`);
   const moved = await savesOf(GAME_ID);
   const left = await savesOf(oldGame.id);
@@ -142,7 +144,7 @@ try {
   await page.waitForSelector('.lib__card[data-state="open"] .lib__name');
   const libLine = `${await page.textContent(".lib__card .lib__name")} ${await page.textContent(".lib__card .lib__meta")}`;
   const spineText = await page.textContent(`.spine[data-key="rom:${oldGame.id}"] .spine__name`).catch(() => "");
-  ok("라이브러리: 꺼낸 롬팩 = 이름·버전(포켓몬 Rapid v1.2.0), 옆면 = 짧은 이름(Rapid)", /포켓몬 Rapid v1\.2\.0/.test(libLine) && spineText === "Rapid", `${libLine} · ${spineText}`);
+  ok("라이브러리: 꺼낸 롬팩 = 이름·버전(<이름> v1.2.0), 옆면 = 짧은 이름(Rapid)", libLine.includes(`${GAME_NAME} v1.2.0`) && spineText === "Rapid", `${libLine} · ${spineText}`);
   await page.screenshot({ path: path.join(SHOTS, "라이브러리_이름버전.png") });
   await page.click("#sheetClose");
 

@@ -1718,7 +1718,7 @@ function spineArt(rom, look) {
   if (model.textArea) {
     const [x, y, w, h] = model.textArea.map((v) => cssOf(model, v));
     const name = make("span", "spine__name", spineName(rom));
-    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, lineHeight: `${w}px`, color: cartArt.LABEL_INK });
+    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, lineHeight: `${w}px`, color: model.spineInk ?? cartArt.LABEL_INK });
     art.append(name);
   }
   return art;

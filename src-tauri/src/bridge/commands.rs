@@ -262,8 +262,9 @@ pub fn assoc_set(link: bool) -> Result<crate::assoc::Status> {
 /* ── 웹 빌드 ── */
 
 #[tauri::command]
-pub async fn web_inspect(path: String, rom_name: Option<String>) -> Result<web::Build> {
-    offload(move || web::inspect(&path, rom_name.as_deref())).await
+pub async fn web_inspect(path: String, rom_name: Option<String>, allow_net: Option<bool>) -> Result<web::Build> {
+    let allow_net = allow_net.unwrap_or(false);
+    offload(move || web::inspect(&path, rom_name.as_deref(), allow_net)).await
 }
 
 #[tauri::command]
