@@ -9,8 +9,13 @@
 // webGBA 는 일반 권한(asInvoker)으로 뜬다. 아비터처럼 빌드와 실행을 나눌 이유는 없지만
 // 같은 명령 이름을 쓰려고 표 모양은 그대로 둔다.
 
+const os = require("os");
+
 const BUNDLE = "src-bundle";
 const CARGO = "--manifest-path src-tauri/Cargo.toml";
+
+// 릴리스 exe 에서 빌드 PC 의 사용자 폴더 경로(cargo 레지스트리 등)를 `~` 로 변경. 명령은 cmd 에서 실행(tools/exec.cjs, shell: true).
+const RELEASE = `set "RUSTFLAGS=--remap-path-prefix=${os.homedir()}=~" && tauri build`;
 
 module.exports = {
   /* ─────────────── 앱 빌드·실행 ─────────────── */
@@ -26,10 +31,11 @@ module.exports = {
     run: [`node ${BUNDLE}/build-dist.cjs`, `cargo build ${CARGO} --no-default-features`],
   },
 
-  // 릴리스는 기본 기능으로 빌드한다 — custom-protocol 이 꺼지면 화면이 실행 파일에 포함되지 않는다.
+  // 릴리스는 tauri build 로 빌드. cargo build --release 는 화면을 실행 파일에 포함하지 않고 빌드 폴더의 dist 를 조회한다.
+  // 화면 조립(build-dist)은 tauri.conf.json 의 beforeBuildCommand 가 실행.
   "app:build:release": {
-    detail: "릴리스 빌드 (target/release)",
-    run: [`node ${BUNDLE}/build-fresh.cjs`, `node ${BUNDLE}/build-dist.cjs`, `cargo build --release ${CARGO}`],
+    detail: "릴리스 빌드 (tauri build → target/release)",
+    run: [`node ${BUNDLE}/build-fresh.cjs`, RELEASE],
   },
 
   "app:run": {
@@ -84,7 +90,7 @@ module.exports = {
   // bundle 이 비활성이라 설치본 없이 target/release/webgba.exe 만 만든다.
   build: {
     detail: "tauri build — 실행 파일 만들기",
-    run: [`node ${BUNDLE}/build-fresh.cjs`, "tauri build"],
+    run: [`node ${BUNDLE}/build-fresh.cjs`, RELEASE],
   },
 
   /* ─────────────── 폴더 열기 ─────────────── */
