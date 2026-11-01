@@ -230,7 +230,7 @@ export const DEFAULT_PREFS = {
   theme: "dark",
   pad: "on",
   dirInput: "stick",
-  vibrate: true,
+  vibrate: false,
   muted: false,
   volume: 0.8,
   gameSpeed: 1,

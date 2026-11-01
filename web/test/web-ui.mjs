@@ -1011,9 +1011,10 @@ async function seedLibrary(page) {
   await page.evaluate(async () => {
     const s = window.webgba.store;
     const png = async (w, h, paint) => {
-      const c = new OffscreenCanvas(w, h);
+      const c = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(w, h) : Object.assign(document.createElement("canvas"), { width: w, height: h });
       paint(c.getContext("2d"));
-      return new Uint8Array(await (await c.convertToBlob({ type: "image/png" })).arrayBuffer());
+      const blob = c.convertToBlob ? await c.convertToBlob({ type: "image/png" }) : await new Promise((done) => c.toBlob(done, "image/png"));
+      return new Uint8Array(await blob.arrayBuffer());
     };
     const front = await png(108, 88, (g) => {
       g.fillStyle = "#04060d";
@@ -1154,19 +1155,35 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     await measure(page, `${key}|library`, [".sheet__head", ".lib__name", ".lib__meta", ".lib__btns .btn", ".lib__shelfHead .btn", ".lib__count"]);
     if (LIB_SHOTS[`${key}|library`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|library`]) });
 
-    // 꺼내기·넣기(움직임 줄이기 = 바로)
+    // 꺼내기·넣기·바꾸기(움직임 줄이기 = 바로): 위 꺼낸 칸·아래 책장 상자가 1px 도 안 움직임
     const keys = await page.$$eval(".lib__case .spine[data-key]", (nodes) => nodes.map((node) => node.dataset.key));
     const first = await page.getAttribute(".lib__card", "data-key");
-    await page.click(`.spine[data-key="${keys[2]}"]`);
+    const frame = () => page.evaluate(() => [".lib__card", ".lib__shelf", ".lib__scroll"].map((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }).flat());
+    const moved = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+    const base = await frame();
+    let drift = 0;
+    await page.$eval(`.spine[data-key="${keys[2]}"]`, (n) => n.click());
     await page.waitForTimeout(200);
-    const pulled = await page.evaluate((k) => ({ card: document.querySelector(".lib__card").dataset.key, out: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), pressed: document.querySelector(`.spine[data-key="${k}"]`).getAttribute("aria-pressed") }), keys[2]);
-    ok(`${key}|library 옆면 누르면 꺼냄(이전 것은 제자리) · 빈칸 하나`, first === keys[0] && pulled.card === keys[2] && pulled.out.join() === keys[2] && pulled.pressed === "true", JSON.stringify({ first, pulled }));
+    drift = Math.max(drift, moved(base, await frame()));
+    const pulled = await page.evaluate((k) => {
+      const art = document.querySelector(`.spine[data-key="${k}"] .spine__art`);
+      return { card: document.querySelector(".lib__card").dataset.key, out: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), pressed: document.querySelector(`.spine[data-key="${k}"]`).getAttribute("aria-pressed"), op: +getComputedStyle(art).opacity, hidden: [...art.querySelectorAll("*")].filter((n) => getComputedStyle(n).visibility === "hidden").length, others: [...document.querySelectorAll(".spine:not(.is-out) .spine__art")].every((n) => getComputedStyle(n).opacity === "1") };
+    }, keys[2]);
+    ok(`${key}|library 옆면 누르면 꺼냄(이전 것은 제자리) · 꺼낸 자리는 같은 옆면 반투명 ${pulled.op}`, first === keys[0] && pulled.card === keys[2] && pulled.out.join() === keys[2] && pulled.pressed === "true" && pulled.op === 0.35 && pulled.hidden === 0 && pulled.others, JSON.stringify({ first, pulled }));
     await measure(page, `${key}|library-pulled`, [".lib__card .pack__label", ".lib__name", ".lib__meta"]);
-    await page.click(`.spine[data-key="${keys[2]}"]`);
+    if (lang === "ko" && view.name === "320x568") await page.screenshot({ path: path.join(SHOTS, "라이브러리_꺼낸자리_반투명_320x568.png") });
+    await page.$eval(`.spine[data-key="${keys[2]}"]`, (n) => n.click());
     await page.waitForTimeout(200);
+    drift = Math.max(drift, moved(base, await frame()));
     const back = await page.evaluate(() => ({ state: document.querySelector(".lib__card").dataset.state, out: document.querySelectorAll(".spine.is-out").length }));
-    ok(`${key}|library 빈칸 누르면 넣음 → 안내`, back.state === "empty" && back.out === 0, JSON.stringify(back));
+    ok(`${key}|library 반투명 자리 누르면 넣음 → 안내`, back.state === "empty" && back.out === 0, JSON.stringify(back));
     await measure(page, `${key}|library-empty`, [".lib__hint"]);
+    for (const k of [keys[5], keys[1], keys[7]]) {
+      await page.$eval(`.spine[data-key="${k}"]`, (n) => n.click());
+      await page.waitForTimeout(150);
+      drift = Math.max(drift, moved(base, await frame()));
+    }
+    ok(`${key}|library 꺼내기·넣기·바꾸기 전후 꺼낸 칸·책장 위치 그대로(최대 ${+drift.toFixed(3)}px)`, drift < 1);
 
     // 정렬: 버튼으로 이름순 ↔ 최근 연 순(기억)
     await page.click('[data-action="sort"]');
@@ -1193,15 +1210,24 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 닫기·이름·지우기 · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
     await measure(page, `${key}|running`, [".lib__btns .btn", ".pack__chip"]);
     if (LIB_SHOTS[`${key}|running`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|running`]) });
+    const runBase = await frame();
+    let runDrift = 0;
+    for (const k of [keys[4], keys[4], "rom:art"]) {
+      await page.$eval(`.spine[data-key="${k}"]`, (n) => n.click());
+      await page.waitForTimeout(150);
+      runDrift = Math.max(runDrift, moved(runBase, await frame()));
+    }
+    ok(`${key}|running 실행 중(버튼 6개) ↔ 다른 롬팩(버튼 4개)·안내로 바꿔도 위치 그대로(최대 ${+runDrift.toFixed(3)}px)`, runDrift < 1);
     await page.evaluate(() => (window.webgba.state.game = null));
     ok(`${key}|library 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
     await context.close();
   }
 }
 
-// 꺼내기·넣기 움직임(움직임 줄이기 끔): transform·opacity 만, --pop-ms 시간, 넣기만 할 때 칸 내용은 움직임 뒤 안내로
-if (LIBRARY) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+/// 꺼내기·넣기·바꾸기 움직임(움직임 줄이기 끔): transform·opacity 만, 책장·꺼낸 칸 상자는 프레임마다 그대로, 앞면은 한 번에 하나만 보임
+async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
+  const key = `${engine} ${view.name}`;
+  const context = await launcher.newContext({ viewport: { width: view.width, height: view.height }, hasTouch: true, deviceScaleFactor: 2, ...(engine === "chromium" ? { isMobile: true } : {}) });
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
     localStorage.setItem("webgba.prefs", JSON.stringify({ lang: "ko" }));
@@ -1217,46 +1243,126 @@ if (LIBRARY) {
   // 첫 누르기는 소리 켜기(오디오 준비, 라이브러리와 무관)가 수백 ms 걸리므로 먼저 한 번 눌러 둔다
   await page.evaluate(() => document.querySelector(".lib__count").click());
   await page.waitForTimeout(800);
-  const out = await page.evaluate(async () => {
-    const card = document.querySelector(".lib__card");
-    const target = [...document.querySelectorAll(".lib__case .spine[data-key]")][3];
-    const art = target.querySelector(".spine__art");
-    const props = new Set();
-    const look = () => {
-      const s = getComputedStyle(art);
-      const m = s.transform === "none" ? new DOMMatrixReadOnly() : new DOMMatrixReadOnly(s.transform);
-      for (const anim of document.getAnimations()) for (const frame of anim.effect?.getKeyframes?.() ?? []) for (const name of Object.keys(frame)) if (!["offset", "easing", "composite", "computedOffset"].includes(name)) props.add(name);
-      const grid = card.querySelector(".lib__grid");
-      const pack = card.querySelector(".lib__pack");
-      return { op: +(+s.opacity).toFixed(3), ty: +m.m42.toFixed(2), out: target.classList.contains("is-out"), card: card.dataset.key, state: card.dataset.state, packOp: pack ? +(+getComputedStyle(pack).opacity).toFixed(3) : -1, gridOp: grid ? +(+getComputedStyle(grid).opacity).toFixed(3) : -1 };
-    };
-    const record = (ms, act) =>
-      new Promise((done) => {
-        const start = performance.now();
-        act();
-        const frames = [{ t: 0, ...look() }];
-        const step = (now) => {
-          frames.push({ t: +(now - start).toFixed(1), ...look() });
-          if (now - start < ms) requestAnimationFrame(step);
-          else done(frames);
-        };
-        requestAnimationFrame(step);
-      });
-    const pull = await record(450, () => target.click());
-    const put = await record(500, () => target.click());
-    return { pull, put, props: [...props], pop: getComputedStyle(document.documentElement).getPropertyValue("--pop-ms").trim(), key: target.dataset.key };
-  });
-  const mid = (frames, field) => frames.filter((f) => f[field] > 0.02 && f[field] < 0.98).length;
-  const lastPull = out.pull[out.pull.length - 1];
-  const outAt = out.pull.find((f) => f.out)?.t ?? -1;
-  ok("라이브러리 움직임: transform·opacity 만", out.props.length > 0 && out.props.every((p) => p === "transform" || p === "opacity"), out.props.join(","));
-  ok(`라이브러리 움직임: 꺼내기 — 옆면이 위로 빠지며 사라지고(중간 ${mid(out.pull, "op")}프레임) 끝나면 빈칸(${outAt}ms, --pop-ms ${out.pop})`, mid(out.pull, "op") >= 2 && out.pull.some((f) => f.ty < -1) && lastPull.out && outAt >= 150 && outAt <= 400);
-  ok(`라이브러리 움직임: 꺼낸 앞면이 올라오며 나타남(중간 ${mid(out.pull, "packOp")}프레임)`, lastPull.card === out.key && mid(out.pull, "packOp") >= 2 && lastPull.packOp === 1);
-  const lastPut = out.put[out.put.length - 1];
-  const openSeen = Math.max(0, ...out.put.filter((f) => f.state === "open" && f.gridOp > 0.02).map((f) => f.t));
-  ok(`라이브러리 움직임: 넣기 — 옆면이 제자리로(끝 불투명도 ${lastPut.op}) · 칸 내용은 움직임 뒤 안내로(마지막으로 보인 ${openSeen}ms)`, !lastPut.out && lastPut.op === 1 && mid(out.put, "gridOp") >= 2 && openSeen >= 100 && lastPut.state === "empty");
-  ok("라이브러리 움직임: 페이지 오류 없음", errors.length === 0, errors.join(" | "));
-  fs.writeFileSync(path.join(SHOTS, "라이브러리_꺼내기_프레임.txt"), ["pull", "put"].map((name) => `${name}: ${out[name].map((f) => `${f.t}ms 옆면 ${f.op}/${f.ty}px${f.out ? " 빈칸" : ""} · 앞면 ${f.packOp} · 칸 ${f.state} ${f.gridOp}`).join(" | ")}`).join("\n"));
+  const keys = await page.$$eval(".lib__case .spine[data-key]", (nodes) => nodes.map((node) => node.dataset.key));
+  const record = (act, ms, pause = -1) =>
+    page.evaluate(
+      ({ act, ms, pause }) =>
+        new Promise((done) => {
+          const props = new Set();
+          const box = (n) => {
+            const r = n.getBoundingClientRect();
+            return [r.left, r.top, r.right, r.bottom].map((v) => +v.toFixed(2));
+          };
+          const op = (n) => +(+getComputedStyle(n).opacity).toFixed(3);
+          const card = document.querySelector(".lib__card");
+          const shelf = document.querySelector(".lib__shelf");
+          const spine = (k) => document.querySelector(`.lib__case .spine[data-key="${k}"] .spine__art`);
+          const look = () => {
+            for (const anim of document.getAnimations()) for (const frame of anim.effect?.getKeyframes?.() ?? []) for (const name of Object.keys(frame)) if (!["offset", "easing", "composite", "computedOffset"].includes(name)) props.add(name);
+            const fronts = [...card.querySelectorAll(".lib__pack")].map((n) => ({ b: box(n.querySelector(".pack")), o: op(n) })).concat([...document.querySelectorAll(".lib__fly > .pack")].map((n) => ({ b: box(n), o: op(n), g: 1 })));
+            const ghostSpines = [...document.querySelectorAll(".lib__fly > .spine__art")].map((n) => ({ b: box(n), o: op(n) }));
+            const text = card.querySelector(".lib__text");
+            return { card: box(card), shelf: box(shelf), fronts, ghostSpines, key: card.dataset.key, state: card.dataset.state, textOp: text ? op(text) : -1, grids: card.querySelectorAll(".lib__grid").length, outs: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), arts: Object.fromEntries(act.map(([k]) => [k, op(spine(k))])) };
+          };
+          const press = (k) => document.querySelector(`.lib__case .spine[data-key="${k}"]`).click();
+          const start = performance.now();
+          const frames = [{ t: 0, ...look() }];
+          for (const [k, at] of act) {
+            if (at) setTimeout(() => press(k), at);
+            else press(k);
+          }
+          frames.push({ t: 0, ...look() });
+          const step = (now) => {
+            const t = now - start;
+            if (pause >= 0 && t >= pause) {
+              for (const anim of document.getAnimations()) anim.pause();
+              done({ frames, props: [...props], paused: true });
+              return;
+            }
+            frames.push({ t: +t.toFixed(1), ...look() });
+            if (t < ms) requestAnimationFrame(step);
+            else done({ frames, props: [...props] });
+          };
+          requestAnimationFrame(step);
+        }),
+      { act, ms, pause },
+    );
+  const flyMs = await page.evaluate(() => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--pop-ms")) || 200) * 1.1));
+  const drift = (frames) => Math.max(0, ...frames.flatMap((f) => [...f.card.map((v, i) => Math.abs(v - frames[0].card[i])), ...f.shelf.map((v, i) => Math.abs(v - frames[0].shelf[i]))]));
+  const hit = (a, b) => a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5;
+  const same = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.6);
+  const clash = (frames) =>
+    frames.filter((f) => {
+      const seen = [];
+      for (const front of f.fronts.filter((x) => x.o > 0.02)) if (!seen.some((b) => same(b, front.b))) seen.push(front.b);
+      return seen.some((a, i) => seen.some((b, j) => j > i && hit(a, b)));
+    }).length;
+  const settledAt = (frames) => frames.find((f, i) => i > 1 && f.fronts.every((x) => !x.g) && !f.ghostSpines.length && frames.slice(i).every((g) => g.key === f.key))?.t ?? -1;
+  const last = (frames) => frames[frames.length - 1];
+  const props = new Set();
+  const lines = [];
+  const note = (name, out) => {
+    out.props.forEach((p) => props.add(p));
+    lines.push(`${name}: ${out.frames.map((f) => `${f.t}ms 칸 ${f.key || "-"}/${f.state} 글 ${f.textOp} · 앞면 ${f.fronts.map((x) => `${x.g ? "날기" : "칸"} ${x.o}@${x.b[0]},${x.b[1]} ${+(x.b[2] - x.b[0]).toFixed(1)}w`).join(" + ") || "-"} · 옆면날기 ${f.ghostSpines.map((x) => x.o).join("/") || "-"} · 책장 ${f.shelf[1]}`).join(" | ")}`);
+  };
+
+  const one = (k, at = 0) => [k, at];
+  // 꺼내기: keys[0] 이 처음 꺼낸 것 → 먼저 넣고, keys[3] 을 꺼냄
+  const putFirst = await record([one(keys[0])], 700);
+  note("put-first", putFirst);
+  const pull = await record([one(keys[3])], 600);
+  note("pull", pull);
+  const pf = last(pull.frames);
+  const firstGhost = pull.frames.find((f) => f.fronts.some((x) => x.g));
+  const endBox = pf.fronts.find((x) => !x.g)?.b ?? [0, 0, 0, 0];
+  const ghostMid = pull.frames.filter((f) => f.fronts.some((x) => x.g && x.o > 0.02 && !same(x.b, endBox))).length;
+  const crossMid = pull.frames.filter((f) => f.ghostSpines.some((x) => x.o > 0.02) && f.fronts.some((x) => x.g && x.o > 0.02)).length;
+  const realFront = pf.fronts.find((x) => !x.g);
+  const firstW = firstGhost ? firstGhost.fronts.find((x) => x.g).b : null;
+  ok(
+    `${key} 꺼내기: 책장 칸 → 꺼낸 칸으로 날며 옆면 → 앞면(중간 ${ghostMid}프레임, 옆면·앞면 함께 ${crossMid}프레임) · 끝 ${settledAt(pull.frames)}ms(${flyMs}ms) · 꺼낸 자리 반투명 ${pf.arts[keys[3]]}`,
+    ghostMid >= 2 && crossMid >= 1 && firstW && firstW[2] - firstW[0] < (realFront.b[2] - realFront.b[0]) / 2 && pf.key === keys[3] && realFront.o === 1 && pf.arts[keys[3]] === 0.35 && pf.outs.join() === keys[3] && settledAt(pull.frames) >= flyMs * 0.8 && settledAt(pull.frames) <= flyMs + 150,
+    JSON.stringify({ firstW, last: pf.fronts }),
+  );
+  if (shots) await page.screenshot({ path: path.join(SHOTS, `라이브러리_꺼낸상태_반투명_${view.name}.png`) });
+  if (engine === "chromium") await measure(page, `${view.name}|ko|library-flown`, [".lib__card .pack__label", ".lib__name", ".lib__meta", ".lib__btns .btn"]);
+
+  // 넣기만: 꺼낸 자리를 다시 누름 → 앞면이 옆면으로 돌아가고 칸은 안내
+  const put = await record([one(keys[3])], 700);
+  note("put", put);
+  const pt = last(put.frames);
+  const backMid = put.frames.filter((f) => f.fronts.some((x) => x.g && x.o > 0.02)).length;
+  ok(`${key} 넣기: 앞면이 책장 칸으로 날며 옆면으로(중간 ${backMid}프레임) · 끝 옆면 불투명도 ${pt.arts[keys[3]]} · 칸은 안내`, backMid >= 2 && pt.arts[keys[3]] === 1 && pt.outs.length === 0 && pt.state === "empty" && pt.ghostSpines.length === 0 && pt.fronts.length === 0, JSON.stringify({ state: pt.state, outs: pt.outs }));
+
+  // 바꾸기: keys[3] 꺼낸 뒤 keys[6] 을 누름 → 넣기 다음 꺼내기
+  await record([one(keys[3])], 500);
+  const swap = await record([one(keys[6])], 900);
+  note("swap", swap);
+  const sw = last(swap.frames);
+  const oldSeen = Math.max(0, ...swap.frames.filter((f) => f.key === keys[3]).map((f) => f.t));
+  const newSeen = Math.min(...swap.frames.filter((f) => f.key === keys[6] && f.t > 0).map((f) => f.t));
+  ok(`${key} 바꾸기: 넣기(옛 칸 ${oldSeen}ms까지) 다음 꺼내기(새 칸 ${newSeen}ms부터) · 끝 ${settledAt(swap.frames)}ms · 꺼낸 자리 하나`, oldSeen >= flyMs * 0.8 && newSeen >= oldSeen && sw.key === keys[6] && sw.outs.join() === keys[6] && sw.arts[keys[6]] === 0.35 && swap.frames.every((f) => f.grids <= 1) && settledAt(swap.frames) <= flyMs * 2 + 200);
+
+  // 빠르게 연달아 누르기: 날고 있는 중에 다른 칸 → 그 자리에서 정리하고 새로
+  const rapid = await record([one(keys[8]), one(keys[9], 80)], 900);
+  note("rapid", rapid);
+  const rp = last(rapid.frames);
+  ok(`${key} 빠르게 두 칸: 마지막에 누른 칸만 꺼냄 · 날기 그림 남지 않음`, rp.key === keys[9] && rp.outs.join() === keys[9] && rp.fronts.length === 1 && rp.ghostSpines.length === 0, JSON.stringify({ key: rp.key, outs: rp.outs }));
+
+  const all = [putFirst, pull, put, swap, rapid].flatMap((out) => out.frames);
+  ok(`${key} 움직이는 동안 책장·꺼낸 칸 상자 그대로(최대 ${drift(all)}px, ${all.length}프레임)`, drift(all) < 1);
+  ok(`${key} 움직이는 동안 앞면 겹침 0(${clash(all)}프레임) · 칸 내용 한 벌`, clash(all) === 0 && all.every((f) => f.grids <= 1));
+  ok(`${key} transform·opacity 만`, props.size > 0 && [...props].every((p) => p === "transform" || p === "opacity"), [...props].join(","));
+
+  if (shots) {
+    await record([one(keys[9])], 600);
+    const paused = await record([one(keys[12])], 1000, flyMs * 0.5);
+    await page.screenshot({ path: path.join(SHOTS, `라이브러리_꺼내기_중간프레임_${view.name}.png`) });
+    ok(`${key} 중간 프레임 캡처(멈춘 때 ${last(paused.frames).t}ms)`, paused.paused === true);
+    await page.evaluate(() => document.getAnimations().forEach((anim) => anim.play()));
+  }
+  ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+  fs.writeFileSync(path.join(SHOTS, `라이브러리_움직임_프레임_${engine}_${view.name}.txt`), lines.join("\n"));
   await context.close();
 }
 
@@ -1338,6 +1444,21 @@ async function netChecks() {
 }
 
 if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0") await netChecks();
+
+const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
+if (LIBRARY && WK_VIEW) {
+  for (const view of LIB_VIEWS) await libraryMotion("chromium", browser, view, { shots: view.name === "390x844" });
+  let wk = null;
+  try {
+    wk = await webkit.launch({ headless: true });
+  } catch (error) {
+    console.log(`WebKit 없음 — WebKit 라이브러리 움직임 시험 건너뜀 (${error.message.split("\n")[0]})`);
+  }
+  if (wk) {
+    await libraryMotion("webkit", wk, WK_VIEW);
+    await wk.close();
+  }
+}
 
 if (MOTION) {
   await motionChecks("chromium", browser);
