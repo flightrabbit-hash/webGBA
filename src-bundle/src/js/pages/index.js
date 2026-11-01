@@ -68,6 +68,9 @@ const RECENT_MAX = 10;
 const LICENSE_LINE = "webGBA — MIT License, © 2026 flightrabbit";
 
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
+// 키 설정 창(과 앱 전체 키 저장)에는 C·D 칸도 둔다 — 설명서가 C·D 를 정의하지 않은 게임·게임 없음에서도 미리 지정할 수 있게(기본 빈 상태,
+// 사용자 2026-11-01). 설명서가 C·D 를 정의한 게임은 그 게임의 버튼 목록(keyLayout)을 쓰므로 이 칸은 안 보인다. GBA 게임은 C·D 가 버튼이 아니라 눌러도 입력 비트로 안 간다.
+const SETTINGS_KEY_ORDER = [...KEY_ORDER, "C", "D"];
 
 const state = {
   info: null,
@@ -156,7 +159,7 @@ async function savePrefs(patch) {
 function keysFromPrefs() {
   const saved = state.prefs.keys ?? {};
   const keys = {};
-  for (const name of KEY_ORDER) keys[name] = Array.isArray(saved[name]) ? saved[name].slice(0, 2) : [...DEFAULT_KEYS[name]];
+  for (const name of SETTINGS_KEY_ORDER) keys[name] = Array.isArray(saved[name]) ? saved[name].slice(0, 2) : [...DEFAULT_KEYS[name]];
   return keys;
 }
 
@@ -363,7 +366,7 @@ function frameKey(event) {
 
 // ② 자체 JS(runtime script): 격리 틀에서 돈다. 세이브는 다른 게임처럼 연 파일 옆 <이름>.sav, 퀵슬롯은 빌드 저장 칸.
 async function openScript(path, wgba, info, label) {
-  const build = await core.webInspect(path, state.prefs.webRom || null);
+  const build = await core.webInspect(path, state.prefs.webRom || null, allowsNet(wgba));
   const { save, name } = await openSave(path);
   const input = resolveInput(wgba.manifest);
   state.screen = screenOf(wgba.manifest);
@@ -547,6 +550,9 @@ async function resolveWebRom(build, ask) {
   return picked;
 }
 
+// 설명서에 multiplayer 가 있는 게임만 그 빌드 틀에서 WebRTC·DNS 미리 찾기를 쓸 수 있다(결정 102-3). 그 외(.wasm·폴더 빌드·옛 .wgba)는 막힘.
+const allowsNet = (wgba) => Boolean(wgba?.manifest?.multiplayer);
+
 async function openWasm(path, { preferPage = false } = {}) {
   const bytes = await core.fileReadBytes(path);
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: baseOf(path) }));
@@ -563,7 +569,7 @@ async function openWasm(path, { preferPage = false } = {}) {
   const info = wgba ? gameInfo(wgba) : null;
   const label = info ? titleLine(info, i18n.lang()) : "";
   if (wgba?.manifest.runtime === "script") return openScript(path, wgba, info, label);
-  const build = await core.webInspect(path, state.prefs.webRom || null);
+  const build = await core.webInspect(path, state.prefs.webRom || null, allowsNet(wgba));
   if (build.movedFrom) {
     const builds = { ...(state.prefs.webBuilds ?? {}) };
     if (builds[build.movedFrom] && !builds[build.key]) {
@@ -1605,7 +1611,7 @@ settings.setup({
   setTheme,
   setLang,
   keyName,
-  keyOrder: KEY_ORDER,
+  keyOrder: SETTINGS_KEY_ORDER,
   defaultKeys: DEFAULT_KEYS,
   onClose: () => {
     syncControls();

@@ -28,7 +28,7 @@ export const core = {
   storeSlots: (id) => invoke("store_slots", { id }),
   assocStatus: () => invoke("assoc_status"),
   assocSet: (link) => invoke("assoc_set", { link }),
-  webInspect: (path, romName = null) => invoke("web_inspect", { path, romName }),
+  webInspect: (path, romName = null, allowNet = false) => invoke("web_inspect", { path, romName, allowNet }),
   webSetRom: (key, rom) => invoke("web_set_rom", { key, rom }),
   log: (level, text) => invoke("log_write", { level, text }).catch(() => {}),
 };

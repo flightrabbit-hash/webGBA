@@ -50,6 +50,9 @@ struct Mount {
     rom: Option<PathBuf>,
     /// wasm 안에 묶인 롬. 있으면 `rom` 대신 이것을 준다.
     embedded: Option<embed::Embedded>,
+    /// 설명서에 `multiplayer` 가 있는 게임만 true(결정 102-3). 이 빌드 틀에서 WebRTC·DNS 미리 찾기를 쓸 수 있는지.
+    /// false 면 응답 HTML 에 차단 스크립트를 넣고, CSP `frame-src 'none'` 와 `X-DNS-Prefetch-Control: off` 를 건다.
+    allow_net: bool,
 }
 
 static MOUNTS: Mutex<Option<HashMap<String, Mount>>> = Mutex::new(None);
@@ -110,7 +113,8 @@ fn adopt_wasm_states(dir: &Path, base: &str, save_id: &str) -> Option<String> {
 }
 
 /// .wgba·.wasm 경로 → 빌드 정보. 출처를 등록해 둔다. `rom_name` 은 설정 "웹 빌드 롬 파일 이름"(비우면 None).
-pub fn inspect(path: &str, rom_name: Option<&str>) -> Result<Build> {
+/// `allow_net` = 설명서에 `multiplayer` 가 있는 게임(화면 JS 가 정함). 그 외에는 이 빌드 틀에서 WebRTC·DNS 미리 찾기를 막는다.
+pub fn inspect(path: &str, rom_name: Option<&str>, allow_net: bool) -> Result<Build> {
     let wasm = std::fs::canonicalize(path).map_err(|e| Error::File(format!("{path}: {e}")))?;
     let dir = wasm.parent().ok_or_else(|| Error::File(crate::i18n::tr("rs.noFolderOf")))?.to_path_buf();
     let base = wasm.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "build".into());
@@ -129,7 +133,7 @@ pub fn inspect(path: &str, rom_name: Option<&str>) -> Result<Build> {
     with_mounts(|mounts| {
         let keep = mounts.get(&key).and_then(|m| m.rom.clone());
         let rom = if rom_embedded { None } else { keep.or_else(|| rom_guess.clone()) };
-        mounts.insert(key.clone(), Mount { dir: dir.clone(), save, rom, embedded });
+        mounts.insert(key.clone(), Mount { dir: dir.clone(), save, rom, embedded, allow_net });
     });
 
     Ok(Build {
@@ -188,18 +192,47 @@ pub fn frame_may_go(uri: &str) -> bool {
 ///     → 다른 빌드 출처(다른 키)와 외부 망은 모두 막힘
 ///   - 양식 보내기는 'self' 만, `<base>` 는 'self' 만, 플러그인 없음
 ///   - 이 페이지를 끼워 넣을 수 있는 곳은 앱 본 창과 자기 자신뿐
-fn csp() -> &'static str {
-    static CSP: OnceLock<String> = OnceLock::new();
-    CSP.get_or_init(|| {
+///   - `allow_net` 이 아니면(멀티플레이 설명서 없음) `frame-src 'none'` — 깨끗한 WebRTC 를 다른 출처(blob·data·http) 자식 틀에서
+///     다시 얻는 길을 막는다(②의 runner 가 쓰는 길과 같음). 멀티플레이 게임만 `frame-src 'self' data: blob:`.
+fn csp(allow_net: bool) -> &'static str {
+    static OPEN: OnceLock<String> = OnceLock::new();
+    static TAMED: OnceLock<String> = OnceLock::new();
+    let make = |frame_src: &str| {
         let app = ui::page_url("").origin().ascii_serialization();
         let local = "'self' data: blob:";
         format!(
             "default-src {local}; script-src {local} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src {local} 'unsafe-inline'; \
-             connect-src {local}; img-src {local}; media-src {local}; font-src {local}; worker-src {local}; frame-src {local}; \
+             connect-src {local}; img-src {local}; media-src {local}; font-src {local}; worker-src {local}; frame-src {frame_src}; \
              manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' {app}"
         )
-    })
+    };
+    if allow_net {
+        OPEN.get_or_init(|| make("'self' data: blob:")).as_str()
+    } else {
+        TAMED.get_or_init(|| make("'none'")).as_str()
+    }
 }
+
+/// 멀티플레이 설명서가 없는 게임 틀의 HTML 맨 앞에 넣는 스크립트(결정 102-3). 게임 JS 보다 먼저 돈다.
+///   - WebRTC(`RTCPeerConnection`·`webkitRTCPeerConnection`·`mozRTCPeerConnection`·`RTCDataChannel`)를 지우고 다시 못 넣게 undefined 로 고정.
+///   - 같은 출처 자식 틀(src 없음·about:blank·srcdoc)로 깨끗한 것을 얻는 길: 틀을 넣는 함수와 contentWindow·window[i] 접근 때 자식에서도 지움.
+///     다른 출처 자식 틀(blob·data·http)은 CSP `frame-src 'none'` 이 막는다.
+///   - DNS 미리 찾기·미리 연결 힌트(`<link rel=dns-prefetch|preconnect|prefetch|prerender>`)를 넣는 즉시 떼고, 넣으려는 것도 막는다.
+/// 본 창(앱 화면)에는 넣지 않는다 — 이후 멀티플레이에서 webGBA 가 WebRTC 를 쓴다.
+const TAME_NET_TAG: &[u8] = br##"<script>(function(){"use strict";var W=window;
+var names=["RTCPeerConnection","webkitRTCPeerConnection","mozRTCPeerConnection","RTCDataChannel"];
+function strip(w){if(!w)return;for(var i=0;i<names.length;i++){try{delete w[names[i]];}catch(e){}try{Object.defineProperty(w,names[i],{value:undefined,writable:false,configurable:false});}catch(e){}}}
+strip(W);
+function scan(node){try{if(!node)return;if(node.tagName==="IFRAME"){strip(node.contentWindow);}if(node.querySelectorAll){var f=node.querySelectorAll("iframe");for(var i=0;i<f.length;i++)strip(f[i].contentWindow);}}catch(e){}}
+function stripFrames(){try{for(var i=0;i<W.length;i++){try{strip(W[i]);}catch(e){}}}catch(e){}}
+try{var ip=HTMLIFrameElement.prototype;["contentWindow","contentDocument"].forEach(function(key){var d=Object.getOwnPropertyDescriptor(ip,key);if(!d||!d.get)return;var g=d.get;Object.defineProperty(ip,key,{configurable:true,enumerable:d.enumerable,get:function(){var v;try{v=g.call(this);}catch(e){return null;}try{strip(key==="contentDocument"?(v&&v.defaultView):v);}catch(e){}return v;}});});}catch(e){}
+["appendChild","insertBefore","replaceChild"].forEach(function(name){var proto=Node.prototype,orig=proto[name];if(typeof orig!=="function")return;proto[name]=function(){var r=orig.apply(this,arguments);try{scan(arguments[0]);stripFrames();}catch(e){}return r;};});
+["append","prepend","before","after","replaceWith"].forEach(function(name){[Element.prototype,Document.prototype,DocumentFragment.prototype].forEach(function(proto){if(!proto||typeof proto[name]!=="function")return;var orig=proto[name];proto[name]=function(){var r=orig.apply(this,arguments);try{for(var i=0;i<arguments.length;i++)scan(arguments[i]);stripFrames();}catch(e){}return r;};});});
+var hint=/\b(dns-prefetch|preconnect|prefetch|prerender)\b/i;
+function sweep(root){try{var ls=(root&&root.querySelectorAll)?root.querySelectorAll("link[rel]"):[];for(var i=0;i<ls.length;i++){if(hint.test(ls[i].rel||""))ls[i].remove();}}catch(e){}}
+try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType!==1)continue;if(n.tagName==="LINK"&&hint.test(n.rel||"")){n.remove();}else{sweep(n);}if(n.tagName==="IFRAME"||((n.querySelectorAll)&&n.querySelector("iframe")))scan(n);}}}).observe(document,{childList:true,subtree:true});}catch(e){}
+document.addEventListener("DOMContentLoaded",function(){sweep(document);stripFrames();},{once:true});
+})();</script>"##;
 
 /// 이 빌드 자신의 페이지가 보낸 요청인지. 브라우저는 POST·PUT 에 늘 `Origin` 을 붙이고 페이지가 바꿀 수 없다.
 /// 다른 빌드의 틀이 `fetch("http://game.<남의 키>.localhost/save", { method: "POST", mode: "no-cors" })` 로 보내면
@@ -269,9 +302,10 @@ fn resolve(dir: &Path, rel: &str) -> Option<PathBuf> {
     out.is_file().then_some(out)
 }
 
-fn inject_bridge(mut html: Vec<u8>) -> Vec<u8> {
+/// `<head …>`(없으면 `<html …>`) 바로 뒤 자리. 둘 다 없으면 맨 앞.
+fn head_at(html: &[u8]) -> usize {
     let lower: Vec<u8> = html.iter().map(|b| b.to_ascii_lowercase()).collect();
-    let at = lower
+    lower
         .windows(5)
         .position(|w| w == b"<head")
         .and_then(|start| lower[start..].iter().position(|b| *b == b'>').map(|end| start + end + 1))
@@ -281,19 +315,44 @@ fn inject_bridge(mut html: Vec<u8>) -> Vec<u8> {
                 .position(|w| w == b"<html")
                 .and_then(|start| lower[start..].iter().position(|b| *b == b'>').map(|end| start + end + 1))
         })
-        .unwrap_or(0);
-    html.splice(at..at, BRIDGE_TAG.iter().copied());
+        .unwrap_or(0)
+}
+
+/// `<head>` 맨 앞에 여러 태그를 적은 순서대로 넣는다.
+fn inject_head(mut html: Vec<u8>, tags: &[&[u8]]) -> Vec<u8> {
+    let at = head_at(&html);
+    let mut blob: Vec<u8> = Vec::new();
+    for tag in tags {
+        blob.extend_from_slice(tag);
+    }
+    html.splice(at..at, blob);
     html
 }
 
-/// `game` 스킴 응답. 큰 파일(웹 빌드 wasm 수십 MB)을 읽으므로 별도 Thread 에서 부른다. 모든 응답에 CSP 를 붙인다.
+/// 폴더 빌드의 HTML: 다리 스크립트(와 멀티플레이 아닌 빌드면 WebRTC·DNS 차단 스크립트)를 넣는다. 차단 스크립트가 다리보다 먼저.
+fn inject_bridge(html: Vec<u8>, allow_net: bool) -> Vec<u8> {
+    if allow_net {
+        inject_head(html, &[BRIDGE_TAG])
+    } else {
+        inject_head(html, &[TAME_NET_TAG, BRIDGE_TAG])
+    }
+}
+
+/// `game` 스킴 응답. 큰 파일(웹 빌드 wasm 수십 MB)을 읽으므로 별도 Thread 에서 부른다. 모든 응답에 CSP 를 붙이고,
+/// 멀티플레이 설명서가 없는 빌드면 `X-DNS-Prefetch-Control: off` 도 붙인다(결정 102-3). allow_net 은 그 빌드의 Mount 값.
 pub fn serve<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let mut response = route(app, request);
-    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp()));
+    let key = request.uri().host().unwrap_or_default().to_ascii_lowercase().split('.').next().unwrap_or_default().to_string();
+    let allow_net = with_mounts(|mounts| mounts.get(&key).map(|m| m.allow_net)).unwrap_or(false);
+    let mut response = route(app, request, allow_net);
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp(allow_net)));
+    if !allow_net {
+        headers.insert("x-dns-prefetch-control", HeaderValue::from_static("off"));
+    }
     response
 }
 
-fn route<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+fn route<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>, allow_net: bool) -> Response<Vec<u8>> {
     let host = request.uri().host().unwrap_or_default().to_ascii_lowercase();
     let key = host.split('.').next().unwrap_or_default().to_string();
     let Some(mount) = with_mounts(|mounts| mounts.get(&key).cloned()) else {
@@ -307,6 +366,8 @@ fn route<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<
             return ui::error(StatusCode::NOT_FOUND, &crate::i18n::tr("rs.notFound"));
         };
         return match app.asset_resolver().get(asset_path.to_string()) {
+            // 페이지 없는 빌드용 호스트 틀(wasm-host.html)에는 다리가 이미 있으니, 멀티플레이 아니면 차단 스크립트만 넣는다.
+            Some(asset) if !allow_net && asset.mime_type.starts_with("text/html") => ui::ok(inject_head(asset.bytes.to_vec(), &[TAME_NET_TAG]), &asset.mime_type),
             Some(asset) => ui::ok(asset.bytes, &asset.mime_type),
             None => ui::error(StatusCode::NOT_FOUND, &crate::i18n::tr("rs.notFound")),
         };
@@ -320,7 +381,7 @@ fn route<R: Runtime>(app: &AppHandle<R>, request: Request<Vec<u8>>) -> Response<
         return match std::fs::read(&file) {
             Ok(body) => {
                 let kind = if rel.ends_with(".wasm") { "application/wasm" } else { ui::content_type(&file) };
-                let body = if kind.starts_with("text/html") { inject_bridge(body) } else { body };
+                let body = if kind.starts_with("text/html") { inject_bridge(body, allow_net) } else { body };
                 ui::ok(body, kind)
             }
             Err(e) => ui::error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -374,17 +435,43 @@ mod tests {
 
     #[test]
     fn bridge_goes_right_after_head() {
-        let out = inject_bridge(b"<!doctype html><HTML lang=ko><Head><title>t</title>".to_vec());
+        let out = inject_bridge(b"<!doctype html><HTML lang=ko><Head><title>t</title>".to_vec(), true);
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("<Head><script src=\"/__webgba__/bridge.js\"></script><title>"));
     }
 
     #[test]
     fn bridge_without_head_goes_after_html_or_first() {
-        let out = String::from_utf8(inject_bridge(b"<html><body>x".to_vec())).unwrap();
+        let out = String::from_utf8(inject_bridge(b"<html><body>x".to_vec(), true)).unwrap();
         assert!(out.starts_with("<html><script"));
-        let bare = String::from_utf8(inject_bridge(b"<canvas>".to_vec())).unwrap();
+        let bare = String::from_utf8(inject_bridge(b"<canvas>".to_vec(), true)).unwrap();
         assert!(bare.starts_with("<script"));
+    }
+
+    #[test]
+    fn tame_net_goes_before_bridge_only_when_not_allowed() {
+        // 멀티플레이 아님: 차단 스크립트가 다리보다 먼저
+        let tamed = String::from_utf8(inject_bridge(b"<head></head>".to_vec(), false)).unwrap();
+        let rtc = tamed.find("RTCPeerConnection").expect("차단 스크립트");
+        let bridge = tamed.find("/__webgba__/bridge.js").expect("다리");
+        assert!(rtc < bridge, "차단 스크립트가 먼저");
+        assert!(tamed.contains("dns-prefetch"));
+        // 멀티플레이: 다리만, 차단 스크립트 없음
+        let open = String::from_utf8(inject_bridge(b"<head></head>".to_vec(), true)).unwrap();
+        assert!(!open.contains("RTCPeerConnection"));
+        assert!(open.contains("/__webgba__/bridge.js"));
+    }
+
+    #[test]
+    fn csp_frame_src_follows_allow_net() {
+        assert!(csp(false).contains("frame-src 'none'"), "멀티플레이 아니면 자식 틀 없음");
+        assert!(csp(true).contains("frame-src 'self' data: blob:"), "멀티플레이면 자식 틀 허용");
+        // 어느 쪽이든 외부 출처는 막는다
+        for policy in [csp(false), csp(true)] {
+            assert!(policy.contains("connect-src 'self' data: blob:"));
+            assert!(policy.contains("object-src 'none'"));
+            assert!(HeaderValue::from_str(policy).is_ok());
+        }
     }
 
     #[test]
@@ -456,7 +543,7 @@ mod tests {
 
     #[test]
     fn csp_keeps_everything_on_self() {
-        let policy = csp();
+        let policy = csp(true);
         for directive in ["default-src", "connect-src", "img-src", "media-src", "font-src", "worker-src", "frame-src", "script-src", "style-src"] {
             let part = policy.split(';').map(str::trim).find(|p| p.starts_with(&format!("{directive} "))).unwrap_or_else(|| panic!("{directive} 없음"));
             let sources: Vec<&str> = part.split_whitespace().skip(1).collect();

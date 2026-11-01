@@ -4,7 +4,7 @@
 // cart.color(없으면 테마 색)로 그린다. 규격 6장: 다른 k·규격 밖 자리·망가진 그림은 "없음"으로 보고 오류 창 없음.
 // 화면에서는 격자 1칸 = UNIT(2) CSS px 이상의 정수 배율이고 canvas 는 image-rendering: pixelated — 흐리게·줄여 그리지 않는다
 // (k 가 UNIT 보다 크면 그 게임은 1 그림 픽셀 = 1 CSS px 로 키운다).
-import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS } from "./core/wgba-format.js";
+import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS, contrastInk, rompackColor } from "./core/wgba-format.js";
 
 export const UNIT = 2;
 export const FRONT = CART_PARTS.front.unit;
@@ -147,9 +147,10 @@ function defaultSpine(color) {
     paint(1, y, t.hi);
     paint(W - 2, y, t.lo);
   }
-  const [ax, ay, aw, ah] = CART_DEFAULT_TEXT_AREA;
-  for (let y = ay; y < ay + ah; y++) for (let x = ax; x < ax + aw; x++) paint(x, y, PAPER);
-  for (let y = ay; y < ay + ah; y++) paint(ax, y, PAPER_HI);
+  // 이름 자리는 몸통 색을 그대로 둬 책장에서 롬팩 색이 드러나게 한다(결정 102-8). 왼쪽 1칸만 밝은 테를 남긴다.
+  // 글자(main.js)는 model.spineInk 로 이 몸통 색과 대비가 큰 검정·흰색을 쓴다.
+  const [ax, ay, , ah] = CART_DEFAULT_TEXT_AREA;
+  for (let y = ay; y < ay + ah; y++) paint(ax, y, t.hi);
   for (const y of [39, 41]) for (let x = 3; x <= 8; x++) paint(x, y, t.lo);
   return g;
 }
@@ -163,7 +164,8 @@ const ints = (list, n) => Array.isArray(list) && list.length === n && list.every
  */
 export function cartModel(rom) {
   const cart = rom?.gameId && rom.cart && typeof rom.cart === "object" ? rom.cart : {};
-  const color = typeof cart.color === "string" && rgbOf(cart.color) ? cart.color : null;
+  // 설명서 cart.color 가 있으면 그 색, 없으면(그림 없는 롬팩 등) 이름 해시로 고정 색(결정 102-8).
+  const color = typeof cart.color === "string" && rgbOf(cart.color) ? cart.color : rompackColor(rom?.name ?? "");
   const has = Object.fromEntries(Object.keys(CART_PARTS).map((part) => [part, Number.isInteger(cart[part]?.scale) ? cart[part].scale : 0]));
   const k = has.front || has.label || has.spine || 1;
   const parts = Object.keys(CART_PARTS).filter((part) => has[part] === k);
@@ -178,7 +180,9 @@ export function cartModel(rom) {
     const area = cart.spine?.textArea;
     if (ints(area, 4) && area[2] > 0 && area[3] > 0 && area[0] + area[2] <= SPINE[0] * k && area[1] + area[3] <= SPINE[1] * k) textArea = [...area];
   }
-  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea };
+  // 옆면 이름 글자 색: 옆면 그림이 있으면 지금처럼 어두운 잉크, 없으면(기본 옆면 = 몸통 색) 대비로 검정·흰색 자동(결정 102-8).
+  const spineInk = parts.includes("spine") ? LABEL_INK : contrastInk(color);
+  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk };
 }
 
 const imageCache = new Map();
