@@ -50,6 +50,23 @@ export function prepareApp(exe, dir, { link = false } = {}) {
   return path.join(dir, "webgba.exe");
 }
 
+/** 시험 폴더 <dir>/웹버전 에 웹 빌드 폴더의 파일을, <dir>/<TEST_ROM> 에 롬을 하드 링크로 놓는다(사본 없음, 원본은 읽기만).
+ *  세이브(.sav)는 시험 폴더에 새로 생겨 포트 빌드 폴더를 건드리지 않는다. 다른 드라이브면 링크가 실패한다. */
+export function linkWebBuild(webDir, rom, dir) {
+  const out = path.join(dir, "웹버전");
+  fs.mkdirSync(out, { recursive: true });
+  const put = (from, to) => {
+    if (fs.existsSync(to)) fs.unlinkSync(to);
+    fs.linkSync(from, to);
+  };
+  for (const name of fs.readdirSync(webDir)) {
+    const from = path.join(webDir, name);
+    if (fs.statSync(from).isFile() && !/\.sav$/i.test(name)) put(from, path.join(out, name));
+  }
+  if (rom) put(rom, path.join(dir, TEST_ROM));
+  return out;
+}
+
 export function launch(exe, port, args = []) {
   const child = spawn(exe, args, { env: { ...process.env, WEBGBA_DEBUG_PORT: String(port) }, detached: true, stdio: "ignore" });
   child.unref();

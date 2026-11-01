@@ -12,7 +12,7 @@ import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
 import { makeZip } from "../../tools/test/zip-make.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
+const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
 
 const args = process.argv.slice(2);

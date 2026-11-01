@@ -4,6 +4,7 @@ import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, suppo
 import { bootScript } from "./core/script-host.js";
 import { resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText } from "./app/net-window.js";
+import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
 import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
@@ -234,9 +235,10 @@ const netKit = {
   qrSize: 220,
   make: (tag, className, text) => make(tag, className, text),
   button: ({ label, kind = "", onClick, disabled = false, action = "" }) => button({ label, kind, onClick, disabled, action }),
-  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), join: t("net.join") })[code] ?? code,
+  signal: new Signal({ base: new URL(API_PATH, location.origin).href }),
+  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo") })[code] ?? code,
   action: ({ id, primary = false, onClick }) => {
-    const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave") }[id] ?? id;
+    const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back") }[id] ?? id;
     return button({ label, kind: primary ? "primary" : id === "leave" ? "danger" : "", onClick, action: `net-${id}` });
   },
   textArea: ({ value = "", readOnly = false, rows = 3, label = "", placeholder = "", action = "", onInput }) => {
@@ -254,16 +256,21 @@ const netKit = {
     if (onInput) area.addEventListener("input", () => onInput(area.value));
     return area;
   },
-  textInput: ({ value = "", maxLength = 16, label = "", action = "", onInput }) => {
-    const input = make("input", "dialog__input net-nick");
+  textInput: ({ value = "", maxLength = 16, label = "", action = "", numeric = false, onInput, onEnter }) => {
+    const input = make("input", numeric ? "dialog__input net-room-in" : "dialog__input net-nick");
     input.type = "text";
     input.value = value;
     input.maxLength = maxLength;
     input.autocomplete = "off";
     input.spellcheck = false;
+    if (numeric) {
+      input.inputMode = "numeric";
+      input.pattern = "[0-9]*";
+    }
     input.setAttribute("aria-label", label);
     if (action) input.dataset.action = action;
     if (onInput) input.addEventListener("input", () => onInput(input.value));
+    if (onEnter) input.addEventListener("keydown", (event) => event.key === "Enter" && onEnter());
     return input;
   },
   field: ({ label, control }) => field(label, "", control),
@@ -272,6 +279,14 @@ const netKit = {
     const main = make("div", "item__main");
     main.append(make("span", "item__name", name), make("span", "item__meta", meta));
     li.append(make("span", "net-slot", tag), main);
+    return li;
+  },
+  nearRow: ({ name, meta, dim = false, button: action = null }) => {
+    const li = make("li", `item net-near__row${dim ? " is-dim" : ""}`);
+    const main = make("div", "item__main");
+    main.append(make("span", "item__name", name), make("span", "item__meta", meta));
+    li.append(main);
+    if (action) li.append(action);
     return li;
   },
   line: (...nodes) => {
@@ -300,7 +315,7 @@ const netKit = {
     if (state.sheet === "net") closeSheet({ force: true });
   },
   nick: () => netNick(),
-  setNick: (value) => savePrefs({ netNick: String(value).slice(0, 16) }),
+  setNick: (value) => savePrefs({ netNick: [...String(value)].slice(0, 12).join("") }),
 };
 
 const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
@@ -842,7 +857,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = ".net-slot, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
+const INK_SINGLE = ".net-slot, .net-room-code, .net-offline__label, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";

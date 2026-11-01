@@ -46,7 +46,7 @@ const server = http.createServer((req, res) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
-const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
+const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
 const browser = await chromium.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 } });
@@ -95,9 +95,10 @@ try {
   await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
 
   await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
-  const layer = await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-make]'))"), 8000);
+  const layer = await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-offline]'))"), 8000);
   check("exe: Web_NetWanted → 아비터 대화상자로 연결 창", layer);
   await app.screenshot(path.join(shots, "exe_창_고르기.png"));
+  await app.evaluate("document.querySelector('[data-action=net-offline]').click()");
   await app.evaluate("document.querySelector('[data-action=net-make]').click()");
   const offer = await waitFor(() => app.evaluate("document.querySelector('[data-action=net-offer]')?.value ?? ''"), 10000);
   check("exe: 방 만들기 → 연결 코드", offer.length > 80, `${offer.length}자`);
@@ -109,6 +110,7 @@ try {
     setTimeout(() => p.keyUp("KeyZ"), 150);
   });
   await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await page.click('[data-action="net-offline"]');
   await page.click('[data-action="net-join"]');
   await page.fill('[data-action="net-offer-in"]', offer);
   await page.click('[data-action="net-offer-in-go"]');

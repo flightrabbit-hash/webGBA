@@ -14,7 +14,7 @@ const dist = path.join(here, "..", "dist");
 const args = process.argv.slice(2);
 const opt = {};
 for (let i = 0; i < args.length; i++) opt[args[i].replace(/^--/, "")] = args[++i];
-const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
+const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
 const BROWSERS = { chrome: "C:/Program Files/Google/Chrome/Application/chrome.exe", edge: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" };
 const which = opt.browser ?? "chrome";
@@ -119,6 +119,9 @@ async function waitFor(fn, ms = 15000, step = 100) {
 
 const value = (p, action) => p.page.evaluate((a) => document.querySelector(`[data-action="${a}"]`)?.value ?? "", action);
 const sheet = (p) => p.page.evaluate(() => window.webgba.state.sheet);
+const offline = async (p) => {
+  if (await p.page.$('[data-action="net-offline"]')) await p.page.click('[data-action="net-offline"]');
+};
 const errorText = (p) => p.page.evaluate(() => {
   const node = document.querySelector("#sheetBody .net-error");
   return node && !node.hidden ? node.textContent : "";
@@ -134,6 +137,7 @@ async function hostOpen(host, { snap = "" } = {}) {
   await press(host, "KeyZ");
   await host.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
   if (snap) await shot(host, snap);
+  await offline(host);
   await host.page.click('[data-action="net-make"]');
   const offer = await waitFor(() => value(host, "net-offer"), 10000);
   return offer;
@@ -167,6 +171,7 @@ async function joinOne(host, guest, { snap = false, paste = false } = {}) {
     await press(guest, "KeyZ");
     await guest.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
   }
+  await offline(guest);
   await guest.page.click('[data-action="net-join"]');
   await putCode(guest, 'net-offer-in', offer, paste);
   await guest.page.click('[data-action="net-offer-in-go"]');
@@ -219,6 +224,7 @@ try {
   await shot(H, "창_고르기");
   const paused = await H.page.evaluate(() => window.webgba.player.paused);
   ok("연결 창이 열려 있어도 게임은 멈추지 않음(세션 유지)", paused === false);
+  await offline(H);
   await H.page.click('[data-action="net-make"]');
   await waitFor(() => value(H, "net-offer"), 10000);
   const pb = await pasteButtons(H, "net-answer");
@@ -297,6 +303,7 @@ try {
   const offerNow = await waitFor(() => value(H, "net-offer"), 10000);
   await press(variant, "KeyZ");
   await variant.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await offline(variant);
   await variant.page.click('[data-action="net-join"]');
   await variant.page.fill('[data-action="net-offer-in"]', offerNow);
   await variant.page.click('[data-action="net-offer-in-go"]');
@@ -331,6 +338,7 @@ try {
   await open(C1, "webapi", "net-demo.wgba");
   await press(C1, "KeyZ");
   await C1.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await offline(C1);
   await C1.page.click('[data-action="net-join"]');
   const fallback = async (setup) => {
     await C1.page.evaluate(setup);
@@ -355,6 +363,7 @@ try {
   await open(M1, "webapi", "net-demo.wgba");
   await press(M1, "KeyZ");
   await M1.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await offline(M1);
   await M1.page.click('[data-action="net-join"]');
   await M1.page.evaluate(() => Object.defineProperty(navigator.clipboard, "readText", { configurable: true, value: () => Promise.reject(new DOMException("denied", "NotAllowedError")) }));
   await M1.page.click('[data-action="net-offer-in-paste"]');
@@ -362,9 +371,10 @@ try {
   const touchHint = await M1.page.evaluate(() => ({ hint: document.querySelector("#sheetBody .net-paste-hint")?.textContent ?? "", focus: document.activeElement?.dataset?.action ?? "" }));
   ok("터치 기기 권한 거부 → 입력 칸 초점 + '길게 눌러' 안내", /길게 눌러/.test(touchHint.hint) && touchHint.focus === "net-offer-in", JSON.stringify(touchHint));
   await M1.context.close();
+  await C1.page.bringToFront();
   await C1.page.click('[data-action="net-cancel"]');
   const cancel = await waitFor(async () => ((await game(C1)).closed ? game(C1) : null), 5000);
-  ok("창에서 취소 → CLOSED(CANCEL) · 게임이 요청을 거둠 → 단추 숨김", cancel?.closed === 1 && (await C1.page.evaluate(() => document.getElementById("btnNet").hidden)), `이유 ${cancel?.closed}`);
+  ok("창에서 취소 → CLOSED(CANCEL) · 게임이 요청을 거둠 → 단추 숨김", cancel?.closed === 1 && (await waitFor(() => C1.page.evaluate(() => document.getElementById("btnNet").hidden), 3000)), `이유 ${cancel?.closed}`);
   await C1.context.close();
 
   // ── ② 자체 JS 두 명 ──
@@ -381,6 +391,7 @@ try {
   await S1.page.evaluate(() => window.webgba.player.keyUp("KeyZ"));
   await S1.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
   ok("② webgba.net.want() → 연결 창", (await sheet(S1)) === "net");
+  await offline(S1);
   await S1.page.click('[data-action="net-make"]');
   await waitFor(() => value(S1, "net-offer"), 10000);
   const sj = await joinOne(S1, S2);

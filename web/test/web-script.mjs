@@ -1,7 +1,8 @@
 // 웹 webGBA .wgba ② 자체 JS 게임(runtime script) 시험 — 격리 틀(출처 없는 sandbox iframe + 엄격 CSP + MessagePort)과 실행.
 // 크롬·웹킷 둘 다, 새 브라우저 프로필(시험 전용). 이 시험이 띄우는 서버가 web/dist 를 내주고 새는 요청을 센다(/__leak·업그레이드·UDP STUN).
 //   PLAYWRIGHT_DIR=<크롬용 playwright-core 폴더> WEBKIT_PLAYWRIGHT_DIR=<웹킷(설치된 빌드)과 맞는 playwright-core 폴더> \
-//     node web/test/web-script.mjs --module <예제 module 폴더> --emscripten <예제 emscripten 폴더> --screen <160x144 ① .wgba> [--only chromium|webkit]
+//     node web/test/web-script.mjs [--module <예제 module 폴더> --emscripten <예제 emscripten 폴더>] [--screen <160x144 ① .wgba>] [--only chromium|webkit]
+//   --module 이 없으면 저장소 docs/wgba/examples/net-script 로 격리 틀 규칙만 본다(S4 전용 항목 건너뜀).
 // 예제 폴더: module = game.js·code.wasm·manifest.json, emscripten = manifest.json + out/game.js·game.wasm·game.data.
 // 시험이 그 자리에서 묶는 것: 그대로 / x-probe(밖으로 나가 보기) / x-probe.selfNav(틀이 스스로 다른 문서로) 변형.
 import fs from "node:fs";
@@ -66,20 +67,99 @@ async function pack(name, args) {
   fs.writeFileSync(file, (await packWgba(args)).bytes);
   return file;
 }
-const mod = opt.module;
+const REPO = !opt.module;
+const mod = opt.module ?? path.join(here, "..", "..", "docs", "wgba", "examples", "net-script");
 const modManifest = readJson(path.join(mod, "manifest.json"));
-const modArgs = (extra = {}) => ({ wasm: fs.readFileSync(path.join(mod, "code.wasm")), js: fs.readFileSync(path.join(mod, "game.js")), manifest: { ...modManifest, ...extra } });
+const modWasm = fs.existsSync(path.join(mod, "code.wasm")) ? path.join(mod, "code.wasm") : path.join(mod, "game.wasm");
+const modArgs = (extra = {}) => ({ wasm: fs.readFileSync(modWasm), js: fs.readFileSync(path.join(mod, "game.js")), manifest: { ...modManifest, ...extra } });
 const files = {
   module: await pack("s4-module.wgba", modArgs()),
   probe: await pack("s4-probe.wgba", modArgs({ id: "io.example.s4.probe", "x-probe": { url: LEAK, ws: `ws://127.0.0.1:${server.address().port}/__leak-ws`, stun: `stun:127.0.0.1:${STUN_PORT}` } })),
   nav: await pack("s4-nav.wgba", modArgs({ id: "io.example.s4.nav", "x-probe": { selfNav: true } })),
-  emscripten: await (async () => {
-    const em = opt.emscripten;
-    const out = path.join(em, "out");
-    return pack("s4-emscripten.wgba", { wasm: fs.readFileSync(path.join(out, "game.wasm")), js: fs.readFileSync(path.join(out, "game.js")), manifest: readJson(path.join(em, "manifest.json")), data: [{ name: "game", bytes: fs.readFileSync(path.join(out, "game.data")) }] });
-  })(),
+  emscripten: opt.emscripten
+    ? await (async () => {
+        const em = opt.emscripten;
+        const out = path.join(em, "out");
+        return pack("s4-emscripten.wgba", { wasm: fs.readFileSync(path.join(out, "game.wasm")), js: fs.readFileSync(path.join(out, "game.js")), manifest: readJson(path.join(em, "manifest.json")), data: [{ name: "game", bytes: fs.readFileSync(path.join(out, "game.data")) }] });
+      })()
+    : "",
   screen: opt.screen,
 };
+
+const FRAME_PROBE = `async ({ leak, ws, stun }) => {
+  const out = {};
+  const tryIt = async (key, fn) => {
+    try {
+      const value = await Promise.race([fn(), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 2500))]);
+      out[key] = "열림 " + String(value).slice(0, 40);
+    } catch (e) {
+      out[key] = "막힘 " + (e && e.name ? e.name : String(e));
+    }
+  };
+  await tryIt("fetch", () => fetch(leak + "?fetch").then((r) => r.status));
+  await tryIt("xhr", () => new Promise((ok, no) => { const x = new XMLHttpRequest(); x.open("GET", leak + "?xhr"); x.onload = () => ok(x.status); x.onerror = () => no(new Error("NetworkError")); x.send(); }));
+  await tryIt("webSocket", () => new Promise((ok, no) => { const w = new WebSocket(ws); w.onopen = () => ok("open"); w.onerror = () => no(new Error("WebSocketError")); }));
+  await tryIt("eventSource", () => new Promise((ok, no) => { const s = new EventSource(leak + "?es"); s.onopen = () => ok("open"); s.onerror = () => { s.close(); no(new Error("EventSourceError")); }; }));
+  await tryIt("image", () => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok("load"); i.onerror = () => no(new Error("ImageError")); i.src = leak + "?img"; }));
+  await tryIt("beacon", () => { if (!navigator.sendBeacon(leak + "?beacon", "x")) throw new Error("refused"); return "queued"; });
+  await tryIt("webRTC", () => { const pc = new RTCPeerConnection({ iceServers: [{ urls: stun }] }); pc.createDataChannel("x"); return pc.createOffer().then((o) => pc.setLocalDescription(o)).then(() => "made"); });
+  await tryIt("indexedDB", () => new Promise((ok, no) => { const r = indexedDB.open("probe"); r.onsuccess = () => ok("open"); r.onerror = () => no(r.error || new Error("IDBError")); }));
+  await tryIt("cookie", () => { document.cookie = "probe=1"; if (!document.cookie.includes("probe=1")) throw new Error("NoCookie"); return document.cookie; });
+  await tryIt("parentDom", () => parent.document.title);
+  await tryIt("topDom", () => top.document.title);
+  await tryIt("popup", () => { const w = window.open(leak + "?popup"); if (!w) throw new Error("NoPopup"); return "opened"; });
+  await tryIt("tauriHere", () => { if (!window.__TAURI__ && !window.__TAURI_INTERNALS__) throw new Error("NoTauri"); return "tauri"; });
+  out.origin = String(self.origin);
+  return out;
+}`;
+
+async function runRepo(name, browserType, launchOptions) {
+  who = name;
+  let browser;
+  try {
+    browser = await browserType.launch(launchOptions);
+  } catch (error) {
+    ok("브라우저 띄우기", false, error.message.split("\n")[0]);
+    return;
+  }
+  try {
+    const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+      if (window === window.top) localStorage.setItem("webgba.installHint", "1");
+    });
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(BASE);
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser", { timeout: 10000 }), page.click("#startOpen")]);
+    await chooser.setFiles(files.module);
+    await page.waitForFunction(() => !window.webgba.state.opening && document.body.dataset.view === "game" && window.webgba.player.running, null, { timeout: 30000 });
+    await sleep(800);
+    const frame = await page.evaluate(() => {
+      const f = document.querySelector("#screen .script-frame");
+      return f ? { sandbox: f.getAttribute("sandbox"), csp: /Content-Security-Policy[^>]+connect-src blob: data:/.test(f.srcdoc), runtime: document.body.dataset.runtime } : null;
+    });
+    ok("저장소 예제(net-script) 틀: sandbox=allow-scripts 만 · CSP meta(connect-src blob: data:)", frame?.sandbox === "allow-scripts" && frame.csp && frame.runtime === "script", JSON.stringify(frame));
+    const inner = page.frames().find((f) => f !== page.mainFrame());
+    hits.length = 0;
+    const probe = inner ? await inner.evaluate(`(${FRAME_PROBE})(${JSON.stringify({ leak: LEAK, ws: `ws://127.0.0.1:${server.address().port}/__leak-ws`, stun: `stun:127.0.0.1:${STUN_PORT}` })})`) : {};
+    await sleep(2500);
+    const blocked = ["fetch", "xhr", "webSocket", "eventSource", "image", "webRTC", "indexedDB", "cookie", "parentDom", "topDom", "popup", "tauriHere"];
+    const open = blocked.filter((k) => !String(probe[k] ?? "").startsWith("막힘"));
+    ok("막힘: 네트워크·저장소·위 창·팝업·WebRTC·Tauri(시험이 틀 안에서 시도)", inner && open.length === 0, open.length ? open.map((k) => `${k}=${probe[k]}`).join(", ") : blocked.map((k) => `${k}:${String(probe[k]).replace("막힘 ", "")}`).join(" "));
+    ok("서버가 받은 것 없음(fetch·XHR·WS·이미지·beacon·팝업·STUN)", hits.length === 0, hits.join(" | ") || "0건");
+    ok("틀 출처 null", probe.origin === "null", String(probe.origin));
+    ok("S4 전용 항목(그리기 측정·키·세이브·퀵슬롯·emscripten)", true, "건너뜀 — S4 예제 없음(저장소 예제로 대체)");
+    const unexpected = pageErrors.filter((m) => !/web-inspector:\/\/|blob:null\//.test(m));
+    ok("페이지 오류 없음", unexpected.length === 0, unexpected.slice(0, 3).join(" | "));
+  } catch (error) {
+    ok("시험 도중 오류", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" "));
+  } finally {
+    await browser.close();
+  }
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const median = (list) => {
@@ -339,12 +419,12 @@ async function run(name, browserType, launchOptions) {
 const wanted = opt.only ? [opt.only] : ["chromium", "webkit"];
 try {
   if (wanted.includes("chromium")) {
-    const { chromium } = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"))("playwright-core");
-    await run("chromium", chromium, { executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+    const { chromium } = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url)("playwright-core");
+    await (REPO ? runRepo : run)("chromium", chromium, { executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
   }
   if (wanted.includes("webkit")) {
-    const { webkit } = createRequire(path.join(process.env.WEBKIT_PLAYWRIGHT_DIR ?? process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"))("playwright-core");
-    await run("webkit", webkit, { headless: true });
+    const { webkit } = createRequire(process.env.WEBKIT_PLAYWRIGHT_DIR ?? process.env.PLAYWRIGHT_DIR ? path.join(process.env.WEBKIT_PLAYWRIGHT_DIR ?? process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url)("playwright-core");
+    await (REPO ? runRepo : run)("webkit", webkit, { headless: true });
   }
 } finally {
   server.close();

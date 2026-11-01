@@ -7,7 +7,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { decodePng } from "./png.mjs";
 
-const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
+const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium, webkit } = require("playwright-core");
 
 const [URL_BASE, SHOTS, ...rest] = process.argv.slice(2);
@@ -1505,9 +1505,65 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
   await context.close();
 }
 
-// UI_NET_WGBA=<멀티플레이 예제 .wgba> 이면 멀티플레이 연결 창(고르기·방장 코드·QR·참가 코드 넣기)을 세 화면 크기 × 세 언어로 잰다(UI_NET_ONLY=1 이면 그것만).
+// UI_NET_WGBA=<멀티플레이 예제 .wgba> 이면 멀티플레이 연결 창(근처 방 첫 화면·방 코드·코드로 들어가기·인터넷 없이 연결의 방장 코드·QR·참가 코드 넣기)을
+// 세 화면 크기 × 세 언어로 잰다(UI_NET_ONLY=1 이면 그것만). 방 코드 화면은 <주소> 가 tools/test/mp-local.mjs 처럼 /api/v1/mp 를 내줄 때만.
+// 같은 줄 맞춤: 상단 기능 버튼(멀티플레이 켜짐·배지 표시 포함)과 연결 창 버튼 줄의 위·아래 위치 차이 0.
+async function lineUp(page, key, scope, selector) {
+  const info = await page.evaluate(([scope, selector]) => {
+    const out = [];
+    for (const row of document.querySelectorAll(scope)) {
+      const items = [...row.querySelectorAll(selector)].filter((n) => n.offsetParent !== null && getComputedStyle(n).visibility !== "hidden").map((n) => {
+        const r = n.getBoundingClientRect();
+        return { id: n.id || n.dataset.action || n.className, top: r.top, bottom: r.bottom };
+      });
+      if (items.length > 1) out.push(items);
+    }
+    return out;
+  }, [scope, selector]);
+  for (const items of info) {
+    const tops = items.map((i) => i.top);
+    const bottoms = items.map((i) => i.bottom);
+    const dt = +(Math.max(...tops) - Math.min(...tops)).toFixed(2);
+    const db = +(Math.max(...bottoms) - Math.min(...bottoms)).toFixed(2);
+    ok(`${key} 같은 줄 위·아래 차이 0(${items.map((i) => i.id).join(",")})`, dt === 0 && db === 0, `위 ${dt} · 아래 ${db}`);
+  }
+  return info;
+}
+
+async function barLineUp(page, key) {
+  const read = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null && getComputedStyle(n).visibility !== "hidden" && !n.closest(".bar__group--files")).map((n) => {
+        const r = n.getBoundingClientRect();
+        const c = n.querySelector("canvas")?.getBoundingClientRect() ?? r;
+        return { id: n.id, top: r.top, bottom: r.bottom, ctop: c.top, cbottom: c.bottom, h: r.height };
+      }),
+    );
+  const spread = (list, a) => +(Math.max(...list.map((i) => i[a])) - Math.min(...list.map((i) => i[a]))).toFixed(2);
+  const before = await read();
+  const net = before.find((i) => i.id === "btnNet");
+  ok(`${key} 상단 버튼 줄 위·아래 차이 0(멀티플레이 켜짐)`, net && spread(before, "top") === 0 && spread(before, "bottom") === 0 && spread(before, "ctop") === 0 && spread(before, "cbottom") === 0, `${before.map((i) => i.id).join(",")} 위 ${spread(before, "top")} 아래 ${spread(before, "bottom")} 그림 ${spread(before, "ctop")}/${spread(before, "cbottom")}`);
+  await page.evaluate(() => {
+    const badge = document.querySelector("#btnNet .tool__badge");
+    if (badge) {
+      badge.textContent = "2/4";
+      badge.hidden = false;
+    }
+  });
+  const after = await read();
+  const net2 = after.find((i) => i.id === "btnNet");
+  ok(`${key} 배지 표시해도 버튼 상자 그대로·줄 맞춤 유지`, net2 && net && net2.top === net.top && net2.h === net.h && spread(after, "top") === 0 && spread(after, "bottom") === 0, `${net?.top}/${net2?.top} 높이 ${net?.h}/${net2?.h}`);
+}
+
 async function netChecks() {
   const bytes = fs.readFileSync(process.env.UI_NET_WGBA).toString("base64");
+  const openNet = async (page) => {
+    await page.evaluate(() => {
+      window.webgba.player.keyDown("KeyZ");
+      setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
+    });
+    await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  };
   for (const view of [...VIEWS, ...(VIEW_FILTER && !VIEW_FILTER.has("320x568") ? [] : [{ name: "320x568", viewport: { width: 320, height: 568 } }])]) {
     for (const lang of LANGS) {
       const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
@@ -1527,22 +1583,55 @@ async function netChecks() {
         await window.webgba.openFiles([new File([data], "net-demo.wgba")]);
       }, bytes);
       await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
-      await page.evaluate(() => {
-        window.webgba.player.keyDown("KeyZ");
-        setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
-      });
-      await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
-      await page.waitForTimeout(500);
+      await openNet(page);
+      await page.waitForFunction(() => !document.querySelector(".net-near-box")?.textContent.includes("…"), null, { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(400);
       const base = `${view.name}|${lang}`;
-      const parts = [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"];
-      await measure(page, `${base}|net-choose`, parts);
+      await measure(page, `${base}|net-choose`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field", ".net-offline__label"]);
+      await page.evaluate(() => {
+        const win = window.webgba.net.win;
+        win.stopNear();
+        win.near = { state: "ok", compat: "same", rooms: [{ room: "123456", nick: "Player 4821", c: "same", p: "party", k: 1, m: 4 }, { room: "654321", nick: "Player 7730", c: "other", p: "party", k: 1, m: 2 }] };
+        win.paintNear();
+      });
+      await page.waitForTimeout(400);
+      await measure(page, `${base}|net-near`, [".net-near__row"]);
+      await rows(page, `${base}|net-near`, ".net-near__row");
+      await lineUp(page, `${base}|net-near`, ".net-near__row", ":scope > button");
       await fits(page, `${base}|net-choose`, ".sheet__panel");
-      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_고르기.png`) });
+      await lineUp(page, `${base}|net-choose`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button, :scope > input");
+      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_첫화면.png`) });
+      await page.click('[data-action="net-room-make"]');
+      const room = await page.waitForFunction(() => /^\d{6}$/.test(document.querySelector(".net-room-code")?.textContent ?? "") || Boolean(document.querySelector('[data-action="net-offer"]')?.value), null, { timeout: 10000 }).then(() => page.evaluate(() => document.querySelector(".net-room-code")?.textContent ?? ""));
+      await page.waitForTimeout(400);
+      if (room) {
+        await measure(page, `${base}|net-room`, [".sheet__head", ".net-room-code", ".net-member", ".net-actions"]);
+        await rows(page, `${base}|net-room`, ".net-member");
+        await fits(page, `${base}|net-room`, ".sheet__panel");
+        await lineUp(page, `${base}|net-room`, "#sheetBody .net-actions", ":scope > button");
+        if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_방코드.png`) });
+      } else ok(`${base}|net-room 서버 없음 → 연결 코드 화면으로 자동 안내`, Boolean(await page.$('[data-action="net-offer"]')));
+      await barLineUp(page, `${base}|bar`);
+      await page.click('[data-action="net-cancel"]');
+      await page.waitForTimeout(400);
+      await openNet(page);
+      await page.click('[data-action="net-room-join"]');
+      await page.waitForTimeout(300);
+      await measure(page, `${base}|net-code`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await fits(page, `${base}|net-code`, ".sheet__panel");
+      await lineUp(page, `${base}|net-code`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button, :scope > input");
+      await page.click('[data-action="net-back"]');
+      await page.waitForTimeout(300);
+      await page.click('[data-action="net-offline"]');
+      await page.waitForTimeout(300);
+      await measure(page, `${base}|net-lan`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await fits(page, `${base}|net-lan`, ".sheet__panel");
       await page.click('[data-action="net-make"]');
       await page.waitForFunction(() => document.querySelector('[data-action="net-offer"]')?.value, null, { timeout: 10000 });
       await page.waitForTimeout(500);
       await measure(page, `${base}|net-host`, [".sheet__head", ".net-member", ".net-line", ".net-actions"]);
       await rows(page, `${base}|net-host`, ".net-member");
+      await lineUp(page, `${base}|net-host`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button");
       await page.click('[data-action="net-offer-qr"]');
       await page.waitForTimeout(400);
       const qr = await page.evaluate(() => {
@@ -1563,19 +1652,22 @@ async function netChecks() {
         return { overlap, wide: deep.filter((r) => r.right > b.right + 0.5 || r.left < b.left - 0.5).length, hScroll: body.scrollWidth > body.clientWidth + 1, top: Math.round((kids[0].top - head.bottom) * 10) / 10 };
       });
       ok(`${base}|net-qr 겹침·가로 넘침 없음, 제목 위 여백 16`, lay.overlap === 0 && lay.wide === 0 && !lay.hScroll && lay.top === 16, JSON.stringify(lay));
-      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_방장코드_QR.png`) });
       await page.click('[data-action="net-cancel"]');
       await page.waitForTimeout(400);
-      await page.evaluate(() => {
-        window.webgba.player.keyDown("KeyZ");
-        setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
-      });
-      await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+      await openNet(page);
+      await page.click('[data-action="net-offline"]');
       await page.click('[data-action="net-join"]');
       await page.waitForTimeout(400);
       await measure(page, `${base}|net-join`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
       await fits(page, `${base}|net-join`, ".sheet__panel");
-      if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_참가.png`) });
+      await lineUp(page, `${base}|net-join`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button");
+      const overlapAll = await page.evaluate(() => {
+        const kids = [...document.getElementById("sheetBody").children].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
+        let overlap = 0;
+        for (let i = 1; i < kids.length; i++) if (kids[i].top < kids[i - 1].bottom - 0.5) overlap++;
+        return overlap;
+      });
+      ok(`${base}|net-join 겹침 없음`, overlapAll === 0, String(overlapAll));
       ok(`${base}|net 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
       await context.close();
     }

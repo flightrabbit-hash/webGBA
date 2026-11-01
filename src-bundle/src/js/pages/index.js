@@ -8,6 +8,7 @@ import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText } from "../app/net-window.js";
+import { APP_API, Signal } from "../core/net/signal.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
 import * as i18n from "../shell/i18n.js";
@@ -154,9 +155,10 @@ const netKit = {
     if (onClick) b.addEventListener("click", onClick);
     return b;
   },
-  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", join: "JOIN" })[code] ?? code.toUpperCase(),
+  signal: new Signal({ base: APP_API }),
+  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN" })[code] ?? code.toUpperCase(),
   action: ({ id, primary = false, onClick }) => {
-    const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE" }[id] ?? id.toUpperCase());
+    const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK" }[id] ?? id.toUpperCase());
     b.type = "button";
     b.dataset.action = `net-${id}`;
     b.addEventListener("click", onClick);
@@ -175,15 +177,17 @@ const netKit = {
     if (onInput) area.addEventListener("input", () => onInput(area.value));
     return area;
   },
-  textInput: ({ value = "", maxLength = 16, label = "", action = "", onInput }) => {
-    const input = node("input", "cfg__input net-nick");
+  textInput: ({ value = "", maxLength = 16, label = "", action = "", numeric = false, onInput, onEnter }) => {
+    const input = node("input", numeric ? "cfg__input net-room-in" : "cfg__input net-nick");
     input.type = "text";
     input.value = value;
     input.maxLength = maxLength;
     input.spellcheck = false;
+    if (numeric) input.inputMode = "numeric";
     input.setAttribute("aria-label", label);
     if (action) input.dataset.action = action;
     if (onInput) input.addEventListener("input", () => onInput(input.value));
+    if (onEnter) input.addEventListener("keydown", (event) => event.key === "Enter" && onEnter());
     return input;
   },
   field: ({ label, control }) => {
@@ -196,6 +200,14 @@ const netKit = {
     const text = node("span", "net-member__text");
     text.append(node("span", "net-member__name", name), node("span", "net-member__meta", meta));
     li.append(node("span", "net-slot", tag), text);
+    return li;
+  },
+  nearRow: ({ name, meta, dim = false, button = null }) => {
+    const li = node("li", `net-near__row${dim ? " is-dim" : ""}`);
+    const text = node("span", "net-member__text");
+    text.append(node("span", "net-member__name", name), node("span", "net-member__meta", meta));
+    li.append(text);
+    if (button) li.append(button);
     return li;
   },
   line: (...nodes) => {
@@ -227,7 +239,7 @@ const netKit = {
   done: () => closeNetLayer(),
   nick: () => netNick(),
   setNick: (value) => {
-    state.prefs.netNick = String(value).slice(0, 16);
+    state.prefs.netNick = [...String(value)].slice(0, 12).join("");
     savePrefs({ netNick: state.prefs.netNick });
   },
 };
@@ -1816,7 +1828,7 @@ async function boot() {
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);

@@ -1,6 +1,8 @@
 // exe 보안 시험(S0, 2026-10-31 결정 101-3). 실제 앱을 CDP 로 다룬다. 마우스를 움직이지 않는다.
-//   node tools/test/app-security.mjs <exe> <작업 폴더>
+//   node tools/test/app-security.mjs <exe> <작업 폴더> [--web <포트 웹 빌드 폴더> --rom <롬>]
 // 작업 폴더: 웹버전\<빌드>.wasm + index.html·app.js·<빌드>.js(포트 웹버전 폴더, 원래 페이지로 엶) · 그 위 폴더에 롬 하나.
+// --web·--rom(또는 환경 변수 WEBGBA_TEST_WEB·WEBGBA_TEST_ROM_PATH)을 주면 작업 폴더에 하드 링크로 놓는다(사본 없음, 세이브는 작업 폴더에).
+// 짝 찾기 서버(MP2): 본 창은 https://webgba.vercel.app 요청이 CSP 에 막히지 않고, 게임 틀은 막힌다.
 // 앱 폴더 <작업>\app_security(레지스트리 안 건드림). 결과 <작업>\app_security_result.json
 // 확인:
 //   - 틀(iframe)에 sandbox, 웹 빌드 응답에 CSP 머리
@@ -9,13 +11,18 @@
 //   - 본 창도 앱 화면 밖으로 가지 않음
 import fs from "fs";
 import path from "path";
-import { attach, connect, guardOthers, launch, prepareApp, runningIn, sleep, TEST_BUILD } from "./cdp.mjs";
+import { attach, connect, guardOthers, launch, linkWebBuild, prepareApp, runningIn, sleep, TEST_BUILD } from "./cdp.mjs";
 
-const [exe, work] = process.argv.slice(2);
+const [exe, work, ...rest] = process.argv.slice(2);
 if (!exe || !work) {
-  console.error("사용법: node tools/test/app-security.mjs <exe> <작업 폴더>");
+  console.error("사용법: node tools/test/app-security.mjs <exe> <작업 폴더> [--web <포트 웹 빌드 폴더> --rom <롬>]");
   process.exit(2);
 }
+const argOf = (name) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : "");
+const webSrc = argOf("--web") || process.env.WEBGBA_TEST_WEB || "";
+const romSrc = argOf("--rom") || process.env.WEBGBA_TEST_ROM_PATH || "";
+if (webSrc) linkWebBuild(webSrc, romSrc, work);
+const SERVER = "https://webgba.vercel.app/api/v1/mp/near";
 
 const PORT = 9341;
 const T = "window.__WEBGBA_TEST__";
@@ -81,6 +88,9 @@ try {
     );
     check("틀 안에서 다른 빌드 출처 요청도 막힘(CSP)", /^blocked/.test(other), other);
 
+    const signal = await inner.evaluate(`fetch(${JSON.stringify(SERVER)}, { cache: "no-store" }).then((r) => "sent " + r.status, (e) => "blocked " + e.name)`);
+    check("틀 안에서 짝 찾기 서버 요청은 막힘(CSP)", /^blocked/.test(signal), signal);
+
     await inner.evaluate(`(() => { try { top.location.href = ${JSON.stringify(OUTSIDE)}; } catch (e) {} return true; })()`).catch(() => {});
     await sleep(1500);
     check("틀이 위 창을 옮기지 못함", (await app.evaluate("location.origin")) === "http://ui.localhost", await app.evaluate("location.href"));
@@ -125,6 +135,8 @@ try {
   // 설명서에 멀티플레이가 있는 게임의 통신도 이 창에서 webgba.net 으로 이어진다. 게임 틀에서만 WebRTC 를 지운 것과 대비.
   const mainRtc = await app.evaluate("typeof RTCPeerConnection");
   check("본 창은 WebRTC 유지(멀티플레이 호스트는 이 창)", mainRtc === "function", mainRtc);
+  const mainSignal = await app.evaluate(`fetch(${JSON.stringify(SERVER)}, { cache: "no-store", credentials: "omit" }).then((r) => "sent " + r.status + " " + (r.headers.get("access-control-allow-origin") ?? ""), (e) => "blocked " + e.name)`);
+  check("본 창은 짝 찾기 서버 요청 가능(서버 CORS 가 앱 화면 출처 허용)", /^sent 200 http:\/\/ui\.localhost/.test(mainSignal), mainSignal);
 
   const fresh = fs.readFileSync(save);
   await app.evaluate(`fetch(${JSON.stringify(`${origin}/save`)}, { method: "POST", mode: "no-cors", body: new Uint8Array(131072) }).then(() => true, () => true)`);

@@ -25,7 +25,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   if (request.mode === "navigate" && !/\.[a-z0-9]+$/i.test(url.pathname.replace(/\/index\.html$/, "/"))) {
     event.respondWith(
       (async () => {
