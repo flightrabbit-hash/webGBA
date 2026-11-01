@@ -3,6 +3,7 @@ import { bootHost, inspectModule, readEmbeddedRom, readRomPayload, SCREEN_H, SCR
 import { compileCode, gameInfo, problemText, readWgba, screenOf, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
 import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
+import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
 import { resolveInput } from "../core/wgba-format.js";
@@ -274,6 +275,11 @@ function loadRomBytes(path) {
   return core.romRead(path);
 }
 
+async function readZip(path) {
+  if ((await core.fileStat(path)).size > ZIP_MAX) throw new WgbpError("zipTooBig");
+  return zipFile(await core.fileReadBytes(path));
+}
+
 function hostLog(level, line) {
   if (level === "error") core.log("WARN", `[코어] ${line}`);
 }
@@ -431,9 +437,11 @@ const patchNeed = (manifest) =>
 function patchError(error, { file, rom = "", manifest = null }) {
   if (!(error instanceof WgbpError)) return reason(error);
   const p = error.params ?? {};
+  const romName = rom ? baseOf(rom) : "";
   return t(`patch.err.${error.code}`, {
     name: baseOf(file),
-    rom: rom ? baseOf(rom) : "",
+    rom: romName && p.entry ? t("patch.inZip", { zip: romName, entry: p.entry }) : romName,
+    method: p.method ?? "",
     need: patchNeed(manifest),
     why: p.why ? t(`patch.why.${p.why}`) : "",
     version: p.version ?? "?",
@@ -490,7 +498,7 @@ async function makeFromPatch(path, { patchRom = "" } = {}) {
   loader.set("check", 0);
   let made;
   try {
-    const romBytes = await loadRomBytes(rom);
+    const romBytes = extOf(rom) === "zip" ? await readZip(rom) : await loadRomBytes(rom);
     let shown = "";
     made = await runPatchJob(bytes, romBytes, (stage, fraction) => {
       loader.set(stage, fraction);
@@ -523,7 +531,7 @@ async function makeFromPatch(path, { patchRom = "" } = {}) {
     throw error;
   }
   loader.set("write", 1);
-  core.log("INFO", `패치로 만듦 ${path} + ${rom} → ${target} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"}, ${Math.round(performance.now() - started)}ms)`);
+  core.log("INFO", `패치로 만듦 ${path} + ${rom}${made.entry ? ` (${made.entry})` : ""} → ${target} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"}, ${Math.round(performance.now() - started)}ms)`);
   return { path: target, loader, note: t("status.patchMade", { name: baseOf(target), base: made.base.name }) };
 }
 

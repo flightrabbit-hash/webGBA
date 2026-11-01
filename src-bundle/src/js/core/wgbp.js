@@ -272,6 +272,23 @@ export async function findBase(patch, rom) {
   throw new WgbpError("romOther", { ...info, sha1 });
 }
 
+async function findBaseIn(patch, rom) {
+  if (!Array.isArray(rom)) return { ...(await findBase(patch, rom)), entry: "" };
+  let first = null;
+  for (const choice of rom) {
+    try {
+      return { ...(await findBase(patch, await choice.read())), entry: choice.name };
+    } catch (error) {
+      if (!(error instanceof WgbpError)) throw error;
+      if (!first) {
+        error.params = { ...error.params, entry: choice.name };
+        first = error;
+      }
+    }
+  }
+  throw first ?? new WgbpError("zipNoRom");
+}
+
 export function decodeRefill(table) {
   const ranges = [];
   const pos = { i: 0 };
@@ -324,7 +341,7 @@ export async function buildGame(patch, rom, { onStep = async () => {}, onProgres
   const { manifest } = patch;
   await onStep("check");
   onProgress("check", 0);
-  const found = await findBase(patch, rom);
+  const found = await findBaseIn(patch, rom);
   onProgress("check", 1);
   let bytes = found.bytes;
   let sha1 = found.base.sha1;
@@ -361,5 +378,5 @@ export async function buildGame(patch, rom, { onStep = async () => {}, onProgres
   onProgress("pack", 0);
   const wgba = await packWgba(wasm, bytes, { level: manifest.pack?.level ?? PACK_LEVEL, onProgress: (value) => onProgress("pack", value) });
   const wgbaSha1 = await sha1Hex(wgba);
-  return { wgba, base: found.base, sha1: wgbaSha1, same: wgbaSha1 === manifest.wgba.sha1 };
+  return { wgba, base: found.base, entry: found.entry, sha1: wgbaSha1, same: wgbaSha1 === manifest.wgba.sha1 };
 }

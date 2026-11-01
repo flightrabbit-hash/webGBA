@@ -10,7 +10,7 @@ import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
 import { DIR_MODES, DIRS, VirtualPad } from "./pad.js";
-import { extractRom, ZipError } from "./zip.js";
+import { extractRom, ZIP_MAX, zipFile, ZipError } from "./core/zip.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
 import { BUILD } from "./build-info.js";
@@ -1234,26 +1234,26 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
   return { meta: saved.record, note, wgba };
 }
 
-function zipText(error) {
-  if (!(error instanceof ZipError)) return reason(error);
-  if (error.code === "noRom") return t("rs.zipNoRom");
-  if (error.code === "tooBig") return t("rs.zipTooBig");
-  return t("rs.zipRead", { 0: error.message });
-}
-
-function unzip(bytes) {
+function unzip(bytes, name) {
   try {
     return extractRom(bytes);
   } catch (error) {
-    throw new Error(zipText(error));
+    if (!(error instanceof ZipError)) throw error;
+    throw new Error(t(`patch.err.${error.code}`, { rom: name, method: error.params.method ?? "" }));
   }
 }
 
 async function readPicked(file) {
   let name = file.name;
   let bytes = new Uint8Array(await file.arrayBuffer());
-  if (extOf(name) === "zip") ({ name, bytes } = unzip(bytes));
+  if (extOf(name) === "zip") ({ name, bytes } = unzip(bytes, name));
   return { name, bytes };
+}
+
+async function readPatchRom(file) {
+  if (extOf(file.name) !== "zip") return new Uint8Array(await file.arrayBuffer());
+  if (file.size > ZIP_MAX) throw new ZipError("zipTooBig");
+  return zipFile(new Uint8Array(await file.arrayBuffer()));
 }
 
 async function coreModule() {
@@ -1424,7 +1424,8 @@ function patchError(error, { file, rom = "", manifest = null }) {
   const p = error.params ?? {};
   return t(`patch.err.${error.code}`, {
     name: file,
-    rom,
+    rom: rom && p.entry ? t("patch.inZip", { zip: rom, entry: p.entry }) : rom,
+    method: p.method ?? "",
     need: patchNeed(manifest),
     why: p.why ? t(`patch.why.${p.why}`) : "",
     version: p.version ?? "?",
@@ -1490,13 +1491,11 @@ async function makeFromPatch(fileName, bytes, romFile) {
   const loader = openLoader({ title: t("loader.title", { name: chosen.name }), stages: ["check", "patch", "verify", "pack", "store", "open"] });
   state.loader = loader;
   let made;
-  let rom;
   try {
     loader.set("check", 0);
-    rom = await readPicked(file);
-    made = await runPatchJob(bytes, rom.bytes, (stage, fraction) => loader.set(stage, fraction));
+    made = await runPatchJob(bytes, await readPatchRom(file), (stage, fraction) => loader.set(stage, fraction));
   } catch (error) {
-    const text = patchError(error, { file: fileName, rom: rom?.name ?? file.name, manifest });
+    const text = patchError(error, { file: fileName, rom: file.name, manifest });
     logLine("WARN", `패치로 만들지 못했습니다 ${fileName} + ${file.name}: ${reason(error)}`);
     await loader.fail(text);
     state.loader = null;
@@ -1528,7 +1527,7 @@ async function makeFromPatch(fileName, bytes, romFile) {
     return { meta: kept.meta, bytes: stored, loader, wgba: undefined, note: kept.note };
   }
   loader.set("store", 1);
-  logLine("INFO", `패치로 만듦 ${fileName} + ${file.name} → ${chosen.name} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"})`);
+  logLine("INFO", `패치로 만듦 ${fileName} + ${file.name}${made.entry ? ` (${made.entry})` : ""} → ${chosen.name} (${made.base.name}, ${made.wgba.length}바이트, SHA-1 ${made.sha1}${made.same ? "" : ", 기준 SHA-1 과 다름"})`);
   return { meta: kept.meta, bytes: made.wgba, loader, wgba: kept.wgba, note: join(t("status.patchMade", { name: chosen.name, base: made.base.name }), kept.note) };
 }
 
@@ -1597,7 +1596,7 @@ function openFile(file, patchRom = null) {
     await paint();
     let bytes = new Uint8Array(await file.arrayBuffer());
     if (ext === "zip") {
-      ({ name, bytes } = unzip(bytes));
+      ({ name, bytes } = unzip(bytes, name));
       ext = extOf(name);
     }
     if (ext === "wgbp") {

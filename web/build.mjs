@@ -16,7 +16,7 @@ const app = path.join(root, "src-bundle", "src");
 const coreDir = path.join(root, "src-bundle", "bin", "core");
 const out = path.resolve(process.argv[2] ?? path.join(web, "dist"));
 
-const SHARED = ["app/player.js", "app/patch-loader.js", "core/web-host.js", "core/wgbp.js", "core/wgba-format.js", "core/wgba-read.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js"];
+const SHARED = ["app/player.js", "app/patch-loader.js", "core/web-host.js", "core/wgbp.js", "core/zip.js", "core/wgba-format.js", "core/wgba-read.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js"];
 const APP_ICONS = ["folder-open", "device-floppy", "player-pause", "player-play", "player-track-next", "settings", "arrows-maximize", "x", "refresh", "trash", "keyboard", "info-circle", "copy", "history", "plus", "arrow-back-up"];
 const LANGS = ["ko", "en", "ja"];
 const LICENSES = ["mgba-LICENSE.txt", "blip_buf-LICENSE.txt", "inih-LICENSE.txt", "pako-LICENSE.txt"];

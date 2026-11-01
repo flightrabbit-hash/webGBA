@@ -4,11 +4,14 @@
 // (Windows 고르기 창은 손으로만). 인자 열기 → 안내 창 CANCEL, 바탕 롬 1 로 만들기(.wgba SHA-1 = manifest), 다시 열면 그대로,
 // 다른 .wgba 가 있으면 덮어쓰기 확인(OK) 뒤 바탕 롬 2 로 다시, 받으면 안 되는 롬은 세 언어 안내·파일 안 생김, 롬과 같이 끌어
 // 놓기(openDropped), 만든 .wgba 를 바로 열어 게임이 돎, 옆 .sav 를 읽음, 같은 폴더 목록의 .wgbp 줄. 앱 폴더 <작업>\app_wgbp.
+// 롬 대신 .zip: 하위 폴더 안 .gba 하나·여럿 중 맞는 하나(롬을 직접 고른 것과 같은 바이트)·.wgbp 와 같이 끌어 놓기, .gba 없음(세 언어)·
+// 맞는 것 없음(첫 .gba 의 이유)·손상·이름만 .zip·256MB 넘는 .zip 은 '롬 확인' 단계 안내. ZIP 은 <작업>\zips 에 시험이 만든다.
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { connect, guardOthers, launch, prepareApp, runningIn, sleep } from "./cdp.mjs";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
+import { makeZip } from "./zip-make.mjs";
 
 const [exe, work, patchPath, rom1, rom2, wrongRom, savePath] = process.argv.slice(2);
 if (!exe || !work || !patchPath || !rom1 || !rom2 || !wrongRom) {
@@ -112,6 +115,7 @@ try {
   said = await statusOf(app);
   const outSha = fs.existsSync(outFile) ? sha1(fs.readFileSync(outFile)) : "";
   check("바탕 롬 1: 옆에 .wgba 를 만듦(SHA-1 = manifest)", made && outSha === manifest.wgba.sha1, `${outSha.slice(0, 12)} · ${tookMs}ms`);
+  const directBytes = fs.existsSync(outFile) ? fs.readFileSync(outFile) : Buffer.alloc(0);
   check("바탕 롬 1: 만든 .wgba 를 내장 롬으로 바로 엶", (await app.evaluate(`${T}.state.game?.name ?? ''`)) === `${stem}.wgba` && (await app.evaluate(`${T}.state.game?.romEmbedded === true`)), said);
   check("바탕 롬 1: 상태 줄 '만들었습니다'·'내장 롬'·경로 없음", /만들었습니다/.test(said) && /내장 롬/.test(said) && noPath(said), said);
   check("코어가 받은 롬 = 결과 롬", (await hostRomSha(app)) === manifest.rom.sha1, manifest.rom.sha1.slice(0, 12));
@@ -158,6 +162,72 @@ try {
   const dropped = await app.evaluate(`${T}.openDropped(${JSON.stringify([patchFile, rom2])}).then(() => ${T}.state.game?.name ?? '')`);
   check("롬과 같이 끌어 놓기: 고르지 않고 만들어 엶", dropped === `${stem}.wgba` && sha1(fs.readFileSync(outFile)) === manifest.wgba.sha1, await statusOf(app));
   await close(app);
+
+  const zips = path.join(work, "zips");
+  fs.rmSync(zips, { recursive: true, force: true });
+  fs.mkdirSync(zips, { recursive: true });
+  const zipAt = (name, files) => {
+    const file = path.join(zips, name);
+    fs.writeFileSync(file, makeZip(files));
+    return file;
+  };
+  const base1 = fs.readFileSync(rom1);
+  const zipOne = zipAt("one.zip", [{ name: "롬/게임/파이어레드.gba", data: base1 }]);
+  const zipMany = zipAt("many.zip", [{ name: "a 패치됨.gba", data: fs.readFileSync(wrongRom) }, { name: "readme.txt", data: Buffer.from("hi") }, { name: "b 원래.gba", data: fs.readFileSync(rom2) }]);
+  const zipNone = zipAt("none.zip", [{ name: "readme.txt", data: Buffer.from("hi") }]);
+  const zipWrong = zipAt("wrong.zip", [{ name: "x/패치됨.gba", data: fs.readFileSync(wrongRom) }]);
+  const zipBroken = path.join(zips, "broken.zip");
+  fs.writeFileSync(zipBroken, fs.readFileSync(zipOne).subarray(0, 300000));
+  const zipFake = path.join(zips, "fake.zip");
+  fs.copyFileSync(rom1, zipFake);
+  const zipHuge = path.join(zips, "huge.zip");
+  fs.closeSync(fs.openSync(zipHuge, "w"));
+  fs.truncateSync(zipHuge, 0x10000000 + 1);
+
+  async function zipMade(name, options, entry) {
+    fs.rmSync(outFile, { force: true });
+    const ok = await open(app, patchFile, options);
+    const bytes = fs.existsSync(outFile) ? fs.readFileSync(outFile) : Buffer.alloc(0);
+    said = await statusOf(app);
+    await sleep(300);
+    const logDir = path.join(appDir, "bin", "log");
+    const logged = fs.existsSync(logDir) && fs.readdirSync(logDir).some((n) => fs.readFileSync(path.join(logDir, n), "utf8").includes(`(${entry}) →`));
+    check(name, ok === true && bytes.length > 0 && bytes.equals(directBytes) && logged && /만들었습니다/.test(said) && noPath(said), `롬 직접과 바이트 ${bytes.equals(directBytes) ? "같음" : "다름"} · 기록의 ZIP 안 이름 ${logged ? entry : "없음"} · ${said}`);
+    await close(app);
+  }
+  async function zipFails(name, zip, pattern, lang = "ko") {
+    fs.rmSync(outFile, { force: true });
+    if (lang !== "ko") {
+      await app.evaluate(`${T}.setLang(${JSON.stringify(lang)})`);
+      await sleep(300);
+    }
+    const pendingZip = open(app, patchFile, { patchRom: zip });
+    const shown = await waitFor(() => app.evaluate("Boolean(document.querySelector('.loader[data-state=\"fail\"]'))"), 20000);
+    const text = shown ? await app.evaluate("(() => { const l = document.querySelector('.loader[data-state=\"fail\"]'); return l.querySelector('.loader__error').textContent + ' @' + (l.querySelector('.loader__step[data-state=\"fail\"]')?.dataset.stage ?? ''); })()") : "";
+    await app.evaluate("document.querySelector('.loader[data-state=\"fail\"] .loader__actions button')?.click()");
+    const ok = await Promise.race([pendingZip, sleep(20000).then(() => "멈춤")]);
+    said = await statusOf(app);
+    check(name, shown && !ok && pattern.test(text) && text.endsWith("@check") && pattern.test(said) && !fs.existsSync(outFile) && noPath(said), text.slice(0, 160));
+    if (lang !== "ko") {
+      await app.evaluate(`${T}.setLang("ko")`);
+      await sleep(300);
+    }
+  }
+  await zipMade("ZIP: 하위 폴더 안 .gba 하나로 만듦(롬을 직접 고른 .wgba 와 바이트 같음)", { patchRom: zipOne }, "파이어레드.gba");
+  await zipMade("ZIP: 여럿 중 맞는 하나로 만듦(패치된 롬 뒤의 바탕 롬 2)", { patchRom: zipMany }, "b 원래.gba");
+  fs.rmSync(outFile, { force: true });
+  const droppedZip = await app.evaluate(`${T}.openDropped(${JSON.stringify([zipOne, patchFile])}).then(() => ${T}.state.game?.name ?? '')`);
+  check("ZIP: .wgbp 와 같이 끌어 놓기", droppedZip === `${stem}.wgba` && fs.readFileSync(outFile).equals(directBytes), await statusOf(app));
+  await close(app);
+  await zipFails("ZIP: .gba 없음(ko)", zipNone, /none\.zip 안에 GBA 롬\(\.gba\)이 없습니다/);
+  await zipFails("ZIP: .gba 없음(en)", zipNone, /There is no GBA ROM \(\.gba\) in none\.zip/, "en");
+  await zipFails("ZIP: .gba 없음(ja)", zipNone, /none\.zip の中に GBA ROM\(\.gba\)がありません/, "ja");
+  await zipFails("ZIP: 맞는 것 없음 → 첫 .gba 의 이유(ZIP 안 이름과 함께)", zipWrong, /wrong\.zip 안의 패치됨\.gba 은\(는\) 이미 이 패치를 적용한 롬/);
+  await zipFails("ZIP: 손상(뒤가 잘림)", zipBroken, /broken\.zip 이\(가\) 손상되어 풀 수 없습니다/);
+  await zipFails("ZIP: 이름만 .zip(속은 롬)", zipFake, /fake\.zip 이\(가\) 손상되어 풀 수 없습니다/);
+  await zipFails("ZIP: 256MB 넘는 .zip 은 읽기 전에 거절", zipHuge, /huge\.zip 이\(가\) 너무 큽니다/);
+  fs.rmSync(zips, { recursive: true, force: true });
+  fs.writeFileSync(outFile, directBytes);
 
   if (savePath) {
     fs.copyFileSync(savePath, outSave);
