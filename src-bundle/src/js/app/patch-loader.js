@@ -1,4 +1,5 @@
 import { buildGame, readPatch, WgbpError } from "../core/wgbp.js";
+import { romChoices } from "../core/zip.js";
 import { t } from "../shell/i18n.js";
 
 const WEIGHTS = { check: 8, patch: 40, verify: 12, pack: 30, write: 6, store: 6, open: 4 };
@@ -132,7 +133,7 @@ export function openLoader({ title, stages, buttonClass = "btn btn--primary" }) 
 async function runInline(patchBytes, romBytes, onProgress) {
   const yieldFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
   let last = 0;
-  return buildGame(readPatch(patchBytes), romBytes, {
+  return buildGame(readPatch(patchBytes), romChoices(romBytes), {
     onStep: yieldFrame,
     onProgress: (stage, fraction) => {
       const now = performance.now();
@@ -159,7 +160,7 @@ export function runPatchJob(patchBytes, romBytes, onProgress = () => {}) {
       if (message.type === "progress") onProgress(message.stage, message.fraction);
       else if (message.type === "done") {
         worker.terminate();
-        resolve({ wgba: message.wgba, sha1: message.sha1, base: message.base, same: message.same });
+        resolve({ wgba: message.wgba, sha1: message.sha1, base: message.base, entry: message.entry, same: message.same });
       } else if (message.type === "error") {
         worker.terminate();
         reject(message.wgbp ? new WgbpError(message.code, message.params) : new Error(message.message));

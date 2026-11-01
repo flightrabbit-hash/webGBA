@@ -2,11 +2,14 @@
 //   PLAYWRIGHT_DIR=<playwright-core 가 설치된 폴더> node web/test/web-app.mjs <주소> <캡처 폴더> \
 //     --gba <롬.gba> --wgba <게임.wgba> --wgbp <패치.wgbp> --base <바탕 롬…> --sav <세이브.sav> [--chrome <chrome.exe>] [--only 이름,…]
 // 시험 파일은 브라우저에서 고르기만 한다(서버로 보내지 않음). 사용자 폴더 파일은 읽기만 하고, scratch 사본을 쓰는 것을 권한다.
+// patchzip: 롬 대신 .zip(시험이 <캡처 폴더>\_zip 에 만들고 지움) — 여럿 중 맞는 하나로 만든 결과 SHA-1 = 롬을 직접 고른 결과, .gba 없음 안내.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
+import { makeZip } from "../../tools/test/zip-make.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(process.env.PLAYWRIGHT_DIR ?? process.cwd(), "noop.js"));
@@ -504,6 +507,59 @@ async function testPatch() {
   if (results.length > 1) ok("세 롬 모두 같은 결과 SHA-1", results.every((value) => value && value === results[0]), results.map((v) => String(v).slice(0, 8)).join(","));
 }
 
+async function testPatchZip() {
+  if (!opt.wgbp || !opt.base.length) return;
+  const want = readPatch(new Uint8Array(fs.readFileSync(opt.wgbp))).manifest.wgba.sha1;
+  const dir = path.join(SHOTS, "_zip");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const base = fs.readFileSync(opt.base[0]);
+  const edited = Buffer.from(base);
+  edited[0x100000] ^= 0xff;
+  const zipMany = path.join(dir, "roms.zip");
+  fs.writeFileSync(zipMany, makeZip([{ name: "a 고친.gba", data: edited }, { name: "readme.txt", data: Buffer.from("hi") }, { name: "롬/FireRed.gba", data: base }]));
+  const zipNone = path.join(dir, "none.zip");
+  fs.writeFileSync(zipNone, makeZip([{ name: "readme.txt", data: Buffer.from("hi") }]));
+  const start = async (page, rom, name) => {
+    await chooseFiles(page, "#startOpen", [opt.wgbp]);
+    await page.waitForSelector('#dialog:not([hidden]) [data-action="pick-rom"]');
+    await chooseFiles(page, '[data-action="pick-rom"]', [rom]);
+    await page.waitForSelector("#dialog:not([hidden]) .dialog__input");
+    await page.fill(".dialog__input", name);
+    await page.click('[data-action="name-ok"]');
+  };
+  try {
+    {
+      const { context, page } = await newPage();
+      await start(page, zipMany, "ZIP 시험");
+      await waitGame(page, 180000);
+      const made = await page.evaluate(async () => {
+        const rom = (await window.webgba.store.list("rom")).find((r) => r.name === "ZIP 시험");
+        const bytes = rom ? await window.webgba.store.bytes(rom.key) : null;
+        const sum = bytes ? new Uint8Array(await crypto.subtle.digest("SHA-1", bytes)) : [];
+        return { sha1: Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join(""), stored: rom?.sha1 ?? "", game: window.webgba.state.game?.name ?? "" };
+      });
+      ok("ZIP: 여럿 중 맞는 하나(하위 폴더)로 만듦 — 결과 SHA-1 = 롬을 직접 고른 결과", made.sha1 === want && made.stored === want && made.game === "ZIP 시험", `${made.sha1.slice(0, 12)} · ${made.game}`);
+      ok("ZIP: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));
+      await context.close();
+    }
+    {
+      const { context, page } = await newPage();
+      await start(page, zipNone, "ZIP 없음");
+      const failed = await page.waitForSelector('.loader[data-state="fail"]', { timeout: 30000 }).then(() => true, () => false);
+      const text = failed ? await page.textContent(".loader__error") : "";
+      const stage = failed ? await page.getAttribute('.loader__step[data-state="fail"]', "data-stage") : "";
+      ok("ZIP: .gba 없음 → '롬 확인' 단계에서 안내", failed && /none\.zip 안에 GBA 롬\(\.gba\)이 없습니다/.test(text) && stage === "check", `${text} @${stage}`);
+      await page.click(".loader .loader__actions button");
+      const roms = await page.evaluate(async () => (await window.webgba.store.list("rom")).length);
+      ok("ZIP: .gba 없음 → 보관하지 않음·페이지 오류 없음", roms === 0 && page.errors.length === 0, `${roms} · ${page.errors.join(" | ")}`);
+      await context.close();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testUpdateNotice() {
   const dist = opt.dist;
   if (!dist) return;
@@ -688,7 +744,7 @@ async function testKeymap() {
   }
 }
 
-const tests = { head: testHeadAndInstall, pad: testPad, gba: testGba, port: testPortSaveOffline, patch: testPatch, update: testUpdateNotice, lang: testLang, keymap: testKeymap };
+const tests = { head: testHeadAndInstall, pad: testPad, gba: testGba, port: testPortSaveOffline, patch: testPatch, patchzip: testPatchZip, update: testUpdateNotice, lang: testLang, keymap: testKeymap };
 for (const [name, run] of Object.entries(tests)) {
   if (!want(name)) continue;
   try {
