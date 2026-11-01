@@ -666,12 +666,14 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 ### 7. Multiplayer
 
-> Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi by **exchanging connection codes (or QR) twice** (room codes and a nearby-room list come in a later version). It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
+> Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi with **a 6-digit room code or the nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
 
 #### 7.1 Overview
 
-webGBA connects devices on the same Wi-Fi (same router). The connection is direct between devices (WebRTC data channels), and game data never passes through a server. By default devices on other networks are not connected.
+webGBA connects devices on the same Wi-Fi (same router). The connection is direct between devices (WebRTC data channels), and game data never passes through any server. By default devices on other networks are not connected.
+
+The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used only while finding a room. It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (one Offer and one Answer, local address candidates only) for at most 2 minutes 30 seconds, after which they are deleted automatically. IP addresses are not stored. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
 
 The game only says "I need a link partner now" and handles the bytes it sends and receives. Creating and joining rooms, finding nearby devices, connecting and handling drop-outs are done by webGBA. ② game JS cannot use the network directly (chapter 8), so it always goes this way.
 
