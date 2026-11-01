@@ -1073,6 +1073,19 @@ body[data-layout="landscape"] .key--start {
   margin-bottom: 0;
 }
 
+.sheet[data-sheet="settings"] .group:not(:last-child) {
+  margin-bottom: var(--gap-2);
+}
+
+.sheet[data-sheet="settings"] .group + .group {
+  padding-top: var(--gap-2);
+  border-top: var(--px) solid var(--line-strong);
+}
+
+.sheet[data-sheet="settings"] .group:not(:last-child) > .field:last-child {
+  border-bottom: 0;
+}
+
 .group__title {
   margin: 0 0 var(--gap-2);
   overflow: hidden;

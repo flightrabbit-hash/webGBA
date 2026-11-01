@@ -59,6 +59,8 @@
   "web.vibrate": "Button vibration",
   "web.vibrate.note": "A short vibration when a game button is pressed (not the D-pad or stick)",
   "web.vibrate.unsupported": "This device doesn't support vibration",
+  "web.vibrateDir": "Direction vibration",
+  "web.vibrateDir.note": "A short vibration when the stick or D-pad direction changes",
   "web.wakeLock": "Keep the screen on",
   "web.wakeLock.note": "Stops the screen from turning off while you play",
   "web.pauseWhenHidden": "Pause when hidden",

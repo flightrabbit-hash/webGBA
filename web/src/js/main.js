@@ -228,6 +228,7 @@ const pad = new VirtualPad({
   root: el.pad,
   diagonal: () => player.dpadMode !== "latest",
   vibrate: () => (state.prefs.vibrate ? HAPTIC : ""),
+  vibrateDir: () => (state.prefs.vibrateDir ? HAPTIC : ""),
   onChange: (name, down) => (down ? player.keyDown(padCode(name)) : player.keyUp(padCode(name))),
   onVisual: (name, down) => skin.key(name, down),
   onStick: (x, y, active) => skin.stick(x, y, active),
@@ -2779,7 +2780,7 @@ function renderSettings() {
   const themeId = theme.known(p.theme) ? p.theme : "dark";
   const children = [
     group(
-      t("cfg.group.screen"),
+      "",
       selectField(t("cfg.lang.title"), "", i18n.LANGS.map((item) => ({ value: item.id, label: item.label })), i18n.lang(), (id) => setLang(id)),
       selectField(t("cfg.tab.theme"), "", theme.MODES.map((mode) => ({ value: mode.id, label: t(`theme.mode.${mode.id}`) })), themeId, (mode) => {
         savePrefs({ theme: mode });
@@ -2802,6 +2803,7 @@ function renderSettings() {
         },
       ),
       switchField(t("web.vibrate"), t(HAPTIC ? "web.vibrate.note" : "web.vibrate.unsupported"), p.vibrate, (on) => savePrefs({ vibrate: on }), { disabled: !HAPTIC }),
+      switchField(t("web.vibrateDir"), t(HAPTIC ? "web.vibrateDir.note" : "web.vibrate.unsupported"), p.vibrateDir, (on) => savePrefs({ vibrateDir: on }), { disabled: !HAPTIC }),
       "wakeLock" in navigator
         ? switchField(t("web.wakeLock"), t("web.wakeLock.note"), p.wakeLock, (on) => {
             savePrefs({ wakeLock: on });
@@ -2810,7 +2812,7 @@ function renderSettings() {
         : null,
     ),
     group(
-      t("cfg.group.sound"),
+      "",
       switchField(t("cfg.muted"), "", p.muted, (on) => {
         savePrefs({ muted: on });
         applyPlayerPrefs();
@@ -2825,7 +2827,7 @@ function renderSettings() {
       }),
     ),
     group(
-      t("cfg.group.game"),
+      "",
       selectField(t("web.speed"), t("web.speed.note"), SPEEDS.map((value) => ({ value, label: speedText(value) })), SPEEDS.includes(p.gameSpeed) ? p.gameSpeed : 1, (value) => setSpeed(Number(value))),
       selectField(
         t("web.autoSave"),

@@ -333,6 +333,17 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
     await rows(page, `${base}|settings`, ".sheet__body .group:first-child .field");
     await measure(page, `${base}|settings`, [".sheet__head", ".field"]);
     await snap(page, `${base}|settings`);
+    // 묶음 제목 없음(설정 시트) · "버튼 진동" 바로 아래 "방향 진동" — 그 줄을 가운데로 굴려 줄·잉크 세로 가운데를 다시 잰다
+    const words = await (await fetch(new URL(`/i18n/${lang}.json`, URL_BASE))).json();
+    const vib = await page.evaluate(([button, dir]) => {
+      const rows = [...document.querySelectorAll("#sheetBody .field")];
+      const at = rows.findIndex((n) => n.querySelector(".switch")?.getAttribute("aria-label") === dir);
+      rows[at]?.scrollIntoView({ block: "center" });
+      return { titles: document.querySelectorAll("#sheetBody .group__title").length, next: at > 0 && rows[at - 1].querySelector(".switch")?.getAttribute("aria-label") === button };
+    }, [words["web.vibrate"], words["web.vibrateDir"]]);
+    ok(`${base}|settings 묶음 제목 0 · "${words["web.vibrate"]}" 바로 아래 "${words["web.vibrateDir"]}"`, vib.titles === 0 && vib.next, JSON.stringify(vib));
+    await page.waitForTimeout(150);
+    await measure(page, `${base}|settings·진동`, [".field"]);
     await page.click("#sheetClose");
     await page.waitForTimeout(200);
 

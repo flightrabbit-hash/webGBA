@@ -59,6 +59,8 @@
   "web.vibrate": "버튼 진동",
   "web.vibrate.note": "게임 버튼을 누르면 짧게 진동합니다(십자 패드·스틱 제외)",
   "web.vibrate.unsupported": "이 기기는 진동을 지원하지 않습니다",
+  "web.vibrateDir": "방향 진동",
+  "web.vibrateDir.note": "스틱·십자 패드의 방향이 바뀌면 짧게 진동합니다",
   "web.wakeLock": "화면 꺼짐 막기",
   "web.wakeLock.note": "게임하는 동안 화면이 저절로 꺼지지 않게 합니다",
   "web.pauseWhenHidden": "화면이 가려지면 일시정지",
