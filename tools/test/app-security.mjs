@@ -135,8 +135,8 @@ try {
   // 설명서에 멀티플레이가 있는 게임의 통신도 이 창에서 webgba.net 으로 이어진다. 게임 틀에서만 WebRTC 를 지운 것과 대비.
   const mainRtc = await app.evaluate("typeof RTCPeerConnection");
   check("본 창은 WebRTC 유지(멀티플레이 호스트는 이 창)", mainRtc === "function", mainRtc);
-  const mainSignal = await app.evaluate(`fetch(${JSON.stringify(SERVER)}, { cache: "no-store", credentials: "omit" }).then((r) => "sent " + r.status + " " + (r.headers.get("access-control-allow-origin") ?? ""), (e) => "blocked " + e.name)`);
-  check("본 창은 짝 찾기 서버 요청 가능(서버 CORS 가 앱 화면 출처 허용)", /^sent 200 http:\/\/ui\.localhost/.test(mainSignal), mainSignal);
+  const mainSignal = await app.evaluate(`fetch(${JSON.stringify(SERVER)}, { cache: "no-store", credentials: "omit" }).then((r) => "sent " + r.status, (e) => "blocked " + e.name)`);
+  check("본 창은 짝 찾기 서버 요청 가능(다른 출처 응답을 읽음 = 서버 CORS 가 앱 화면 출처 허용)", mainSignal === "sent 200", mainSignal);
 
   const fresh = fs.readFileSync(save);
   await app.evaluate(`fetch(${JSON.stringify(`${origin}/save`)}, { method: "POST", mode: "no-cors", body: new Uint8Array(131072) }).then(() => true, () => true)`);

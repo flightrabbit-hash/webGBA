@@ -136,19 +136,22 @@ try {
   const closedG = await waitFor(async () => (await G1.page.evaluate(() => window.webgba.state.sheet)) === "", 5000);
   ok("손님 창은 연결 뒤 저절로 닫힘", Boolean(closedG));
 
+  for (const name of REMOTE ? ["G2"] : ["G2", "G3"]) {
+    const G = await peer(name, { nick: `손님 ${name}` });
+    await open(G);
+    await want(G);
+    await G.page.click('[data-action="net-room-join"]');
+    await G.page.fill('[data-action="net-code-in"]', code);
+    if (name === "G2") await shot(G, "코드로_들어가기_390x844.png");
+    const c1 = await calls(G);
+    const h1 = await calls(H);
+    const t1 = Date.now();
+    await G.page.click('[data-action="net-code-go"]');
+    const joined = await waitFor(async () => (await game(G))?.open === 1, 25000, 200);
+    ok(`방 코드로 ${name} 연결(${Date.now() - t1}ms · API 방장 ${(await calls(H)) - h1}·손님 ${(await calls(G)) - c1}회)`, joined, JSON.stringify(await game(G)));
+  }
+
   if (!REMOTE) {
-    // ── 코드로 2명 더(4명) ──
-    for (const name of ["G2", "G3"]) {
-      const G = await peer(name, { nick: `손님 ${name}` });
-      await open(G);
-      await want(G);
-      await G.page.click('[data-action="net-room-join"]');
-      await G.page.fill('[data-action="net-code-in"]', code);
-      if (name === "G2") await shot(G, "코드로_들어가기_390x844.png");
-      await G.page.click('[data-action="net-code-go"]');
-      const joined = await waitFor(async () => (await game(G))?.open === 1, 25000, 200);
-      ok(`방 코드로 ${name} 연결`, joined, JSON.stringify(await game(G)));
-    }
     const four = await waitFor(async () => (await game(H))?.count === 4, 8000);
     ok("4명 연결(방장 기준)", Boolean(four));
     const shown = await H.page.evaluate(() => document.querySelector(".net-room-code"));
