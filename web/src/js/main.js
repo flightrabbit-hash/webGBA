@@ -2085,11 +2085,13 @@ function spineArt(rom, look) {
     Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, color: model.spineInk ?? cartArt.LABEL_INK });
     const text = make("span", "spine__text");
     Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
-    for (const line of spineLines(spineName(rom), w, h, SPINE_PAD * model.unit)) {
+    const lines = spineLines(spineName(rom), w, h, SPINE_PAD * model.unit);
+    for (const line of lines) {
       const node = make("span", "spine__line", line.text);
       Object.assign(node.style, { left: `${line.left}px`, top: `${line.top}px` });
       text.append(node);
     }
+    if (lines[0]?.shift) text.style.transform = `translateX(${w}px) rotate(90deg) translateY(${lines[0].shift}px)`;
     name.append(text);
     art.append(name);
   }
@@ -2142,9 +2144,16 @@ function spineLines(raw, w, h, pad) {
   const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line)));
   const top = Math.min(...inks.map((ink, i) => i * SPINE_LINE + ink.top));
   const bottom = Math.max(...inks.map((ink, i) => i * SPINE_LINE + ink.bottom));
-  const base = Math.floor((w - (bottom - top)) / 2) - top;
   const lift = baselineOffset(style, SPINE_LINE);
-  return lines.map((text, i) => ({ text, top: Math.round(base + i * SPINE_LINE - lift), left: pad + Math.floor((length - widthOf(text)) / 2) }));
+  const left = (text) => pad + Math.floor((length - widthOf(text)) / 2);
+  if (lines.length === 1) {
+    const base = Math.floor((w - (bottom - top)) / 2) - top;
+    return [{ text: lines[0], top: Math.round(base - lift), left: left(lines[0]) }];
+  }
+  const device = Math.max(1, window.devicePixelRatio || 1);
+  const exact = (w - (bottom - top)) / 2 - top - lift;
+  const shift = Math.round(exact * device) / device - Math.round(exact);
+  return lines.map((text, i) => ({ text, top: Math.round(exact) + i * SPINE_LINE, left: left(text), shift }));
 }
 
 async function loadRoms() {

@@ -29,6 +29,7 @@ const GAME_ID = "com.flightrabbit.rapid";
 const NEW_WGBA = await readWgba(new Uint8Array(fs.readFileSync(opt.new)));
 const ROM_SHA1 = NEW_WGBA.romSha1;
 const GAME_NAME = typeof NEW_WGBA.manifest.name === "string" ? NEW_WGBA.manifest.name : NEW_WGBA.manifest.name?.en ?? "";
+const SHORT_NAME = typeof NEW_WGBA.manifest.shortName === "string" ? NEW_WGBA.manifest.shortName : NEW_WGBA.manifest.shortName?.en ?? "";
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
@@ -144,8 +145,8 @@ try {
   await page.click("#btnLibrary");
   await page.waitForSelector('.lib__card[data-state="open"] .lib__name');
   const libLine = `${await page.textContent(".lib__card .lib__name")} ${await page.textContent(".lib__card .lib__meta")}`;
-  const spineText = await page.textContent(`.spine[data-key="rom:${oldGame.id}"] .spine__name`).catch(() => "");
-  ok("라이브러리: 꺼낸 롬팩 = 이름·버전(<이름> v1.2.0), 옆면 = 짧은 이름(Rapid)", libLine.includes(`${GAME_NAME} v1.2.0`) && spineText === "Rapid", `${libLine} · ${spineText}`);
+  const spineText = await page.$$eval(`.spine[data-key="rom:${oldGame.id}"] .spine__line`, (lines) => lines.map((l) => l.textContent).join(" ")).catch(() => "");
+  ok(`라이브러리: 꺼낸 롬팩 = 이름·버전(<이름> v1.2.0), 옆면 = 짧은 이름(${SHORT_NAME}, 줄을 공백으로 이어 비교)`, libLine.includes(`${GAME_NAME} v1.2.0`) && spineText === SHORT_NAME, `${libLine} · ${spineText}`);
   await page.screenshot({ path: path.join(SHOTS, "라이브러리_이름버전.png") });
   await page.click("#sheetClose");
 
