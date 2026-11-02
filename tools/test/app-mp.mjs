@@ -97,7 +97,7 @@ function inkRows(image, x0, x1, y0, y1) {
 
 // the name's ink centred in its row and the button as tall as the row. Gaps from the row's exact edges: the dialog sits on a
 // half CSS pixel when its height is odd and the glyphs snap to whole device pixels, so ≤ 2 device pixels apart (a 1 CSS px miss
-// is 3 at 1.5x). The button's own caps sit 1 CSS px low in every exe .btn (font: 600 12px/1) - reported in `text`, not judged here.
+// is 3 at 1.5x). The button's own caps are judged the same way (`text`, ≤ 2 device pixels).
 async function entryInks() {
   const rows = await app.evaluate(ROWS);
   const dpr = await app.evaluate("devicePixelRatio");
@@ -108,7 +108,7 @@ async function entryInks() {
     const d = (v) => Math.round(v * dpr);
     const label = gaps(inkRows(image, d(r.label.left), d(r.label.right), d(r.row.top), d(r.row.bottom)), r.row.top * dpr, r.row.bottom * dpr);
     const text = gaps(inkRows(image, d(r.button.left) + inset, d(r.button.right) - inset, d(r.button.top) + inset, d(r.button.bottom) - inset), r.button.top * dpr, r.button.bottom * dpr);
-    const ok = Boolean(label) && Math.abs(label.top - label.bottom) <= 2 && r.button.top === r.row.top && r.button.bottom === r.row.bottom;
+    const ok = Boolean(label) && Math.abs(label.top - label.bottom) <= 2 && Boolean(text) && Math.abs(text.top - text.bottom) <= 2 && r.button.top === r.row.top && r.button.bottom === r.row.bottom;
     return { name: r.name, label: label && `${label.top}/${label.bottom}`, text: text && `${text.top}/${text.bottom}`, ok };
   });
 }

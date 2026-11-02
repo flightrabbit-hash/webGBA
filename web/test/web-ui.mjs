@@ -64,7 +64,8 @@ const ok = (name, pass, detail = "") => {
   if (!pass) console.log(`실패 ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
-const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+// UI_BROWSER=webkit 이면 주 화면 시험을 WebKit(아이폰 사파리 엔진)으로. 엣지는 --chrome <msedge.exe>.
+const browser = process.env.UI_BROWSER === "webkit" ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: CHROME, headless: true });
 
 // 픽셀 버튼·팝업(2026-11-01): 둥근 모서리·흐린 그림자·filter 없음, 색은 토큰(:root 의 기본 테마 토큰 정의 밖 HEX 0)
 {
@@ -2023,6 +2024,41 @@ async function patternShot(page) {
   return shoot(page);
 }
 
+// 퀵슬롯 사진 칸 = 게임 화면 비율(설명서 screen·display.aspect, GB 10:9), 사진은 칸 전체에 그대로(좌우 잘림 없음), 칸 폭·열 수는 화면 크기 규칙 그대로.
+// 1번 칸에 저장한 뒤 퀵슬롯 창을 열어 재고 닫는다. shot = 캡처 파일 이름(없으면 찍지 않음).
+async function quickShotCheck(page, key, ratio, label, shot = "") {
+  const saved = await page.evaluate(() => window.webgba.player.saveState(1));
+  await page.evaluate(() => window.webgba.openSheet("quick"));
+  await page.waitForFunction(() => document.querySelector('.slots .slot[data-slot="1"] .slot__img')?.complete, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const info = await page.evaluate(() => {
+    const shot = document.querySelector('.slots .slot[data-slot="1"] .slot__shot');
+    const img = shot?.querySelector(".slot__img");
+    const empty = document.querySelector('.slots .slot[data-slot="2"] .slot__shot');
+    if (!shot || !img || !empty) return null;
+    const box = (n) => n.getBoundingClientRect();
+    const s = box(shot);
+    const i = box(img);
+    const e = box(empty);
+    const columns = getComputedStyle(document.querySelector(".slots")).gridTemplateColumns.split(" ").length;
+    const panel = box(document.querySelector(".sheet__panel"));
+    return { shot: [s.width, s.height].map((v) => +v.toFixed(2)), img: [i.width, i.height].map((v) => +v.toFixed(2)), empty: [e.width, e.height].map((v) => +v.toFixed(2)), natural: [img.naturalWidth, img.naturalHeight], fit: getComputedStyle(img).objectFit, columns, inside: panel.top >= -0.5 && panel.bottom <= (window.visualViewport?.height ?? innerHeight) + 0.5 };
+  });
+  const pass =
+    saved &&
+    info &&
+    Math.abs(info.shot[0] / info.shot[1] - ratio) < 0.02 &&
+    Math.abs(info.empty[0] / info.empty[1] - ratio) < 0.02 &&
+    info.img.every((v, i) => Math.abs(v - info.shot[i]) <= 0.5) &&
+    info.fit === "fill" &&
+    info.inside;
+  ok(`${key}: 퀵슬롯 사진 칸 ${label}(빈 칸 포함)·사진 = 칸 전체(잘림 없음)·창 화면 안`, pass, JSON.stringify(info));
+  if (shot) await page.screenshot({ path: path.join(SHOTS, shot) });
+  await page.evaluate(() => document.getElementById("sheetClose").click());
+  await page.waitForTimeout(300);
+  return info;
+}
+
 async function aspectChecks() {
   const kovFile = process.env.UI_ASPECT_KOV;
   const files = {
@@ -2031,7 +2067,8 @@ async function aspectChecks() {
   };
   if (kovFile) {
     files["kov-43.wgba"] = await repackWgba(kovFile, (m) => ({ ...m, display: { aspect: "4:3" } }));
-    files["kov.wgba"] = fs.readFileSync(kovFile);
+    // 원본 설명서에 display 가 있어도(삼국전기 1.2.1 = 4:3) 2:1 은 display 를 뺀 사본(448×224 그대로)으로 잰다
+    files["kov-21.wgba"] = await repackWgba(kovFile, ({ display, ...m }) => m);
   }
   if (process.env.UI_ASPECT_RAPID) files["rapid.wgba"] = fs.readFileSync(process.env.UI_ASPECT_RAPID);
   if (process.env.UI_ASPECT_GBA) files["game.gba"] = fs.readFileSync(process.env.UI_ASPECT_GBA);
@@ -2056,7 +2093,7 @@ async function aspectChecks() {
     }
     if (kovFile) {
       const { context, page } = await aspectPage(view, files);
-      for (const [name, ratio, label] of [["kov-43.wgba", 4 / 3, "4:3"], ["kov.wgba", 2, "2:1"]]) {
+      for (const [name, ratio, label] of [["kov-43.wgba", 4 / 3, "4:3"], ["kov-21.wgba", 2, "2:1"]]) {
         await openAspectGame(page, name);
         const info = await screenInfo(page);
         const pads = view.mobile ? overlaps((await padBoxes(page)).boxes, view.viewport) : { hits: [], outside: [] };
@@ -2069,8 +2106,15 @@ async function aspectChecks() {
           await page.waitForTimeout(1500);
           await page.screenshot({ path: path.join(SHOTS, ASPECT_SHOTS[view.name]) });
         }
+        await quickShotCheck(page, `${key}: ${name}`, ratio, label, view.name === "390x844" ? `퀵슬롯_${label.replace(":", "대")}_390x844.png` : "");
       }
       ok(`${key}: 페이지 오류 0`, page.errors.length === 0, page.errors.join(" / "));
+      await context.close();
+    }
+    if (files["game.gba"] && view.name === "390x844") {
+      const { context, page } = await aspectPage(view, files);
+      await openAspectGame(page, "game.gba");
+      await quickShotCheck(page, `${key}: game.gba`, 3 / 2, "3:2");
       await context.close();
     }
   }
@@ -2201,6 +2245,7 @@ async function gbChecks() {
     const sameBox = info.canvas.every((v, i) => Math.abs(v - info.screen[i]) <= 0.5);
     ok(`${key}: 화면 칸 10:9(${info.sw}x${info.sh})·캔버스 = 화면 칸·비율 유지·버퍼 ${info.buffer.join("x")}`, Math.abs(info.sw / info.sh - 10 / 9) < 0.012 && sameBox && info.fit === "contain" && !info.stretch && info.buffer.join("x") === "160x144", JSON.stringify(info));
     ok(`${key}: 화면 칸 세로 가운데(위 ${info.gapTop} · 아래 ${info.gapBottom})`, Math.abs(info.gapTop - info.gapBottom) <= 0.5, JSON.stringify(info));
+    await quickShotCheck(page, key, 10 / 9, "10:9", view.name === "390x844" ? "퀵슬롯_10대9_390x844.png" : "");
     if (view.mobile) {
       const shoulders = await page.evaluate(() => ["L", "R"].map((k) => { const n = document.querySelector(`#pad [data-key="${k}"]`); return { off: n?.hasAttribute("data-off"), shown: Boolean(n && n.offsetParent && n.getBoundingClientRect().width > 0) }; }));
       const pads = overlaps((await padBoxes(page)).boxes, view.viewport);

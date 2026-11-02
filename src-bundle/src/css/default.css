@@ -1034,7 +1034,7 @@ html.is-rail-collapsed .sidepanel {
   justify-content: center;
   min-width: var(--btn-min-w);
   height: var(--btn-h-md);
-  padding: 0 14px;
+  padding: 0 14px 2px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
@@ -1410,7 +1410,7 @@ input[type="radio"] {
   flex: none;
   min-width: 0;
   height: var(--btn-h-xs);
-  padding: 0 10px;
+  padding: 0 10px 2px;
   font-size: 11px;
 }
 
@@ -1679,14 +1679,14 @@ input[type="radio"] {
   gap: 6px;
   min-width: 0;
   height: var(--btn-h-xs);
-  padding: 0 10px;
+  padding: 0 10px 2px;
   font-size: 11px;
 }
 
 .cfg__dice .icon {
   width: var(--glyph-2xs);
   height: var(--glyph-2xs);
-  margin: 0;
+  margin: 2px 0 0;
 }
 
 .cfg__mode {
@@ -2454,6 +2454,7 @@ label.cfg__swatch-row {
 .mpb__rejoinActions .btn {
   flex: 1 1 0;
   min-width: 0;
+  padding-bottom: 0;
 }
 
 .mpb__foot {

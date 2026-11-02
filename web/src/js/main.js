@@ -1017,7 +1017,7 @@ const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-slot, .net-room-code,.net-offline_
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
-const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color]";
+const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color], .cfg-nick";
 
 function iconInkRows(name) {
   const cache = (state.iconInk ??= new Map());
@@ -1061,7 +1061,7 @@ function fitRows(root = document, known = null) {
     if (!content) continue;
     const pad = parseFloat(style.getPropertyValue("--row-pad")) || 0;
     const edge = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
-    sizes.push([node, Math.max(2, Math.round(content / 2) * 2) + pad * 2 + edge]);
+    sizes.push([node, Math.max(2, Math.round(Math.round(content * 64) / 128) * 2) + pad * 2 + edge]);
   }
   for (const [node, height] of sizes) node.style.height = `${height}px`;
   return nodes.filter((node) => node.style.height !== before.get(node));
@@ -3003,6 +3003,8 @@ function slotCard(slot, info, latest) {
   card.dataset.slot = String(slot);
   card.setAttribute("aria-label", info ? `${slotLabel(slot)} · ${fmtTime(info.saved)}` : `${slotLabel(slot)} · ${t("web.quick.empty")}`);
   const shot = make("span", `slot__shot${info?.thumb ? "" : " is-empty"}`);
+  const [aw, ah] = state.screen?.aspect ?? [3, 2];
+  shot.style.aspectRatio = `${aw} / ${ah}`;
   if (info?.thumb) {
     const url = URL.createObjectURL(new Blob([info.thumb], { type: "image/png" }));
     state.quick.urls.push(url);

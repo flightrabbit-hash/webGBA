@@ -167,36 +167,39 @@ try {
   check(`포트: 롬 옆 ${TEST_ROM_SAV} 는 가져오지 않음(옆 ${TEST_BUILD}.sav 가 없어 빈 세이브)`, /세이브 없이 시작합니다/.test(said) && !/불러왔습니다/.test(said), said);
   await close(app);
 
-  // 5. 박스 30 (512KB 세이브)
+  // 5. 박스 30 (512KB 세이브) — <작업>\pc30\ 시험 파일(128KB 세이브·박스 30 빌드)이 있을 때만
   const pc30 = path.join(work, "pc30", `${TEST_BUILD}.wasm`);
   const pcSave = path.join(work, "pc30", `${TEST_BUILD}.sav`);
-  for (const file of [pcSave, `${pcSave}.bak`]) fs.rmSync(file, { force: true });
-  fs.copyFileSync(path.join(work, "pc30", "old128.sav"), pcSave);
-  const PLAY = `(() => { const t = ${T}; const host = t.player.host; const ex = host.ex; t.player.setPaused(true);
-    let f = 0; const run = (n, k = 0) => { for (let i = 0; i < n; i++, f++) if (!host.runFrame(k)) throw new Error(host.halted); };
-    const quest = () => new Uint32Array(ex.memory.buffer)[(ex.Web_DebugFollower() >> 2) + 12];
-    for (; f < 1900;) run(1, (f === 1200 || f === 1700) ? 8 : 0);
-    for (let w = 0; w < 1500 && !ex.Web_DebugInOverworld(); w++) run(1, w < 120 ? (w % 40 < 2 ? 1 : 0) : 0);
-    for (let w = 0; w < 3000 && !(ex.Web_DebugInOverworld() && quest() !== 2); w++) run(1, w % 60 < 2 ? 2 : 0);
-    for (let w = 0; !ex.Web_DebugInOverworld() && w < 3000; w++) run(1, w % 20 < 2 ? 2 : 0);
-    run(60); return true; })()`;
-  await open(app, pc30);
-  await app.evaluate(PLAY);
-  const lead = await app.evaluate(`${T}.player.host.ex.Web_DebugPartySpecies(0)`);
-  await app.evaluate(`(() => { const ex = ${T}.player.host.ex; ex.Web_DebugPcBoxPut(29, 0, 0); return ex.Web_DebugSave(); })()`);
-  await app.evaluate(`(async () => { const p = ${T}.player; p.host.takeSaveDirty(); p.savePending = true; await p.flushSave(); })()`);
-  const big = fs.statSync(pcSave).size;
-  check("박스30: 저장하면 옆 128KB 파일을 그대로 512KB 로 덮어씀(.sav.bak 없음)", big === 0x80000 && !fs.existsSync(`${pcSave}.bak`), `${big}바이트`);
-  await close(app);
-  await open(app, pc30);
-  await app.evaluate(PLAY);
-  const kept = await app.evaluate(`${T}.player.host.ex.Web_DebugBoxSpecies(29, 0)`);
-  check("박스30: 다시 켜도 박스 30 #1 이 남음", kept === lead && kept !== 0, `${kept}(${lead})`);
-  await close(app);
-  await open(app, path.join(work, "wasm_only", `${TEST_BUILD}.wasm`));
-  const oldCap = await app.evaluate(`${T}.player.host.saveCapacity`);
-  check("박스30: 지금 배포본(128KB 판)은 그대로 128KB", oldCap === 0x20000, `${oldCap}`);
-  await close(app);
+  if (!fs.existsSync(path.join(work, "pc30", "old128.sav"))) console.log("건너뜀 박스30: <작업>\\pc30\\old128.sav 없음");
+  else {
+    for (const file of [pcSave, `${pcSave}.bak`]) fs.rmSync(file, { force: true });
+    fs.copyFileSync(path.join(work, "pc30", "old128.sav"), pcSave);
+    const PLAY = `(() => { const t = ${T}; const host = t.player.host; const ex = host.ex; t.player.setPaused(true);
+      let f = 0; const run = (n, k = 0) => { for (let i = 0; i < n; i++, f++) if (!host.runFrame(k)) throw new Error(host.halted); };
+      const quest = () => new Uint32Array(ex.memory.buffer)[(ex.Web_DebugFollower() >> 2) + 12];
+      for (; f < 1900;) run(1, (f === 1200 || f === 1700) ? 8 : 0);
+      for (let w = 0; w < 1500 && !ex.Web_DebugInOverworld(); w++) run(1, w < 120 ? (w % 40 < 2 ? 1 : 0) : 0);
+      for (let w = 0; w < 3000 && !(ex.Web_DebugInOverworld() && quest() !== 2); w++) run(1, w % 60 < 2 ? 2 : 0);
+      for (let w = 0; !ex.Web_DebugInOverworld() && w < 3000; w++) run(1, w % 20 < 2 ? 2 : 0);
+      run(60); return true; })()`;
+    await open(app, pc30);
+    await app.evaluate(PLAY);
+    const lead = await app.evaluate(`${T}.player.host.ex.Web_DebugPartySpecies(0)`);
+    await app.evaluate(`(() => { const ex = ${T}.player.host.ex; ex.Web_DebugPcBoxPut(29, 0, 0); return ex.Web_DebugSave(); })()`);
+    await app.evaluate(`(async () => { const p = ${T}.player; p.host.takeSaveDirty(); p.savePending = true; await p.flushSave(); })()`);
+    const big = fs.statSync(pcSave).size;
+    check("박스30: 저장하면 옆 128KB 파일을 그대로 512KB 로 덮어씀(.sav.bak 없음)", big === 0x80000 && !fs.existsSync(`${pcSave}.bak`), `${big}바이트`);
+    await close(app);
+    await open(app, pc30);
+    await app.evaluate(PLAY);
+    const kept = await app.evaluate(`${T}.player.host.ex.Web_DebugBoxSpecies(29, 0)`);
+    check("박스30: 다시 켜도 박스 30 #1 이 남음", kept === lead && kept !== 0, `${kept}(${lead})`);
+    await close(app);
+    await open(app, path.join(work, "wasm_only", `${TEST_BUILD}.wasm`));
+    const oldCap = await app.evaluate(`${T}.player.host.saveCapacity`);
+    check("박스30: 지금 배포본(128KB 빌드)은 그대로 128KB", oldCap === 0x20000, `${oldCap}`);
+    await close(app);
+  }
 
   // 6. 즐겨찾기·같은 폴더 목록·도구 막대
   await open(app, path.join(work, "rom", "test.gba"));
