@@ -146,6 +146,56 @@ try {
   const statT = await call("GET", "room", { query: { room: rt.room }, ip: "192.0.2.91" });
   ok(`TTL ${LIMITS.ROOM_TTL}초 지나면 방·근처 목록 저절로 사라짐`, !nearT.body.rooms.some((x) => x.room === rt.room) && joinT.status === 404 && statT.status === 404);
 
+  // ── 다시 들어오기 우편함(rj) ──
+  fake.reset();
+  const rr = (await makeRoom({ body: { m: 3 }, ip: "198.51.100.40" })).body;
+  ok("방 만들기 응답에 다시 들어오기 지원 표시(rj: 1)", rr.rj === 1, JSON.stringify({ rj: rr.rj }));
+  const jg = (await call("POST", "join", { body: { room: rr.room, c: C, p: "trade", n: "손님" }, ip: "198.51.100.41" })).body;
+  ok("들어가기 응답에 다시 들어오기 표(rt)", typeof jg.rt === "string" && /^\d{8}\./.test(jg.rt), Object.keys(jg).join(","));
+  const KEY = "k".repeat(22);
+  const U1 = "u".repeat(11);
+  const U2 = "v".repeat(11);
+  const gAuth = { room: rr.room, x: jg.x, rt: jg.rt, s: 1 };
+  const hAuth = { room: rr.room, x: rr.x, g: rr.g, i: rr.i, t: rr.t };
+  const badT = await call("POST", "rj", { body: { ...gAuth, rt: `${jg.rt.slice(0, 9)}${"A".repeat(22)}`, u: U1, k: "n", o: OFFER, key: KEY }, ip: "198.51.100.41" });
+  const badK = await call("POST", "rj", { body: { ...gAuth, u: U1, k: "n", o: OFFER, key: "x" }, ip: "198.51.100.41" });
+  const badS = await call("POST", "rj", { body: { ...gAuth, s: 0, u: U1, k: "n", o: OFFER, key: KEY }, ip: "198.51.100.41" });
+  ok("우편함: 잘못된 표 403 · 열쇠 형식·자리 0 은 400", badT.status === 403 && badK.status === 400 && badS.status === 400, `${badT.status}/${badK.status}/${badS.status}`);
+  let n0 = fake.stats().total;
+  const post = await call("POST", "rj", { body: { ...gAuth, u: U1, k: "n", o: OFFER, key: KEY }, ip: "198.51.100.41" });
+  const postCmds = fake.stats().total - n0;
+  n0 = fake.stats().total;
+  const empty = await call("GET", "rj", { query: { ...hAuth, s: "2" }, ip: "198.51.100.40" });
+  const box = await call("GET", "rj", { query: { ...hAuth, s: "1,2" }, ip: "198.51.100.40" });
+  const pollCmds = fake.stats().total - n0;
+  ok(`손님 제안 넣기(${postCmds}명령) → 방장 받기(MGET 1명령씩): 자리 1 제안·열쇠 그대로, 빈 자리는 없음`, post.status === 200 && empty.body.offers.length === 0 && box.body.offers.length === 1 && box.body.offers[0].s === 1 && box.body.offers[0].u === U1 && box.body.offers[0].key === KEY && box.body.offers[0].o === OFFER && pollCmds === 2, `${postCmds}/${pollCmds}`);
+  const badH = await call("GET", "rj", { query: { ...hAuth, t: rr.t.replace(/.$/, rr.t.endsWith("A") ? "B" : "A"), s: "1" }, ip: "198.51.100.40" });
+  ok("방장 받기: 방장 토큰이 다르면 403", badH.status === 403, String(badH.status));
+  n0 = fake.stats().total;
+  const ans = await call("POST", "rj", { body: { ...hAuth, s: 1, u: U1, a: ANSWER }, ip: "198.51.100.40" });
+  const ansCmds = fake.stats().total - n0;
+  n0 = fake.stats().total;
+  const mine = await call("GET", "rj", { query: { ...gAuth, u: U1 }, ip: "198.51.100.41" });
+  const otherU = await call("GET", "rj", { query: { ...gAuth, u: U2 }, ip: "198.51.100.41" });
+  const gPollCmds = (fake.stats().total - n0) / 2;
+  ok(`방장 답(${ansCmds}명령) → 손님 받기(${gPollCmds}명령): 같은 시도 번호(u)만 답 · 방 살아 있음(live)`, ans.status === 200 && mine.body.a === ANSWER && mine.body.live === true && otherU.body.a === null && otherU.body.live === true, JSON.stringify({ a: Boolean(mine.body.a), o: otherU.body.a }));
+  await call("POST", "rj", { body: { ...hAuth, s: 1, u: U2, n: 1 }, ip: "198.51.100.40" });
+  const need = await call("GET", "rj", { query: { ...gAuth, u: U2 }, ip: "198.51.100.41" });
+  await call("POST", "rj", { body: { ...hAuth, s: 1, u: U1 }, ip: "198.51.100.40" });
+  const refused = await call("GET", "rj", { query: { ...gAuth, u: U1 }, ip: "198.51.100.41" });
+  ok("방장 답 종류: 새 연결 필요(n)·거부(no)", need.body.n === 1 && !need.body.a && refused.body.no === 1, JSON.stringify({ n: need.body.n, no: refused.body.no }));
+  const bye = await call("POST", "rj", { body: { ...gAuth, u: U2, k: "b", key: KEY }, ip: "198.51.100.41" });
+  const byeBox = await call("GET", "rj", { query: { ...hAuth, s: "1" }, ip: "198.51.100.40" });
+  ok("혼자 이어 하기 알림(k: b, 연결 정보 없음)", bye.status === 200 && byeBox.body.offers[0]?.k === "b" && !byeBox.body.offers[0]?.o, JSON.stringify(byeBox.body.offers[0]));
+  const rjTtl = fake.dump().filter(([k]) => /^[jk]:/.test(k)).every(([, , ttl]) => ttl > 0 && ttl <= LIMITS.ANSWER_TTL);
+  ok(`우편함 열쇠 만료 ${LIMITS.ANSWER_TTL}초`, rjTtl);
+  n0 = fake.stats().total;
+  const keep = await call("POST", "room", { body: { ...hAuth, c: C, p: "trade", m: 3, n: "방장", o: OFFER, q: 2, k: 3 }, ip: "198.51.100.40" });
+  ok(`방 살려 두기(가득 찬 방) 1회 ${fake.stats().total - n0}명령`, keep.status === 200, String(fake.stats().total - n0));
+  await call("POST", "room", { body: { ...hAuth, close: 1 }, ip: "198.51.100.40" });
+  const gone = await call("GET", "rj", { query: { ...gAuth, u: U1 }, ip: "198.51.100.41" });
+  ok("방장이 방을 닫으면 손님 받기 live: false(다시 들어오기 끝)", gone.status === 200 && gone.body.live === false, JSON.stringify(gone.body));
+
   // ── 저장소 한도·장애 ──
   fake.fail("quota");
   const q1 = await makeRoom({ ip: "192.0.2.92" });

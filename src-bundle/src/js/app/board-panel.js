@@ -17,7 +17,7 @@ const chip = (tone, text, extra = "") => {
 };
 
 export class BoardPanel {
-  constructor({ root, head = [], roomLine = false, bar = (meter, ratio) => (meter.firstChild.style.width = `${(ratio * 100).toFixed(2)}%`), widths = { bar: 22, number: 30, rank: 26, status: 12 }, textWidth = () => 40, showMs = () => true, footHint = null }) {
+  constructor({ root, head = [], roomLine = false, bar = (meter, ratio) => (meter.firstChild.style.width = `${(ratio * 100).toFixed(2)}%`), widths = { bar: 22, number: 30, rank: 26, status: 12 }, textWidth = () => 40, showMs = () => true, footHint = null, rejoinButtons = null }) {
     this.root = root;
     this.bar = bar;
     this.widths = widths;
@@ -41,7 +41,15 @@ export class BoardPanel {
       this.footNode.append(this.footMark, this.footLegend);
     } else this.footNode.append(this.footText, this.footMark, this.footLegend);
     if (footHint) this.footNode.append(...footHint);
-    this.panel.append(...[this.headNode, this.capNode, this.list, this.footNode].filter(Boolean));
+    if (rejoinButtons) {
+      this.rejoinNode = make("div", "mpb__rejoin");
+      this.rejoinText = make("span", "mpb__text mpb__rejoinText");
+      const actions = make("div", "mpb__rejoinActions");
+      actions.append(...rejoinButtons);
+      this.rejoinNode.append(this.rejoinText, actions);
+      this.rejoinNode.hidden = true;
+    }
+    this.panel.append(...[this.headNode, this.capNode, this.rejoinNode, this.list, this.footNode].filter(Boolean));
     root.replaceChildren(this.panel);
   }
 
@@ -59,7 +67,8 @@ export class BoardPanel {
     if (view.ai) parts.push(t("board.ai", { n: view.ai }));
     const foot = parts.join(" · ");
     const showMs = this.showMs();
-    const sig = JSON.stringify([lang(), title, view, foot, showMs]);
+    const rejoin = this.rejoinNode && snap.rejoining ? t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying") : "";
+    const sig = JSON.stringify([lang(), title, view, foot, showMs, rejoin]);
     if (sig === this.sig) return null;
     this.sig = sig;
     const changed = [];
@@ -68,6 +77,10 @@ export class BoardPanel {
       node.textContent = text;
       changed.push(node);
     };
+    if (this.rejoinNode) {
+      this.rejoinNode.hidden = !rejoin;
+      if (rejoin) put(this.rejoinText, rejoin);
+    }
     put(this.title, title);
     put(this.caption.firstChild, view.caption);
     this.caption.hidden = !view.caption;
@@ -177,6 +190,8 @@ export class BoardPanel {
   connNodes(conn, showMs) {
     if (!conn) return [];
     if (conn.kind === "stall") return [chip("warn", t("board.stall"))];
+    if (conn.kind === "hold") return [chip("warn", t("board.hold"))];
+    if (conn.kind === "rejoin") return [chip("warn", t("board.rejoining"))];
     if (conn.kind === "joining") return [chip("dim", t("board.joining"))];
     if (conn.kind === "lost") return [chip("bad", t("board.lost"))];
     if (conn.kind === "left") return [chip("dim", t("board.left"))];

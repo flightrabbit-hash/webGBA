@@ -219,10 +219,12 @@ const player = new WebPlayer({
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) toast(text, noticeLevel(info));
+    if (info.kind === "rejoining" && state.sheet !== "net" && !boardState.open) openNet();
   },
   onNetBoard: () => queueBoard(),
   netNick: () => netNick(),
   netEnabled: () => state.prefs.netOn !== false,
+  netWan: () => state.prefs.netWan === true,
   hiddenClock: !window.matchMedia("(pointer: coarse)").matches,
 });
 
@@ -241,7 +243,7 @@ const netKit = {
   make: (tag, className, text) => make(tag, className, text),
   button: ({ label, kind = "", onClick, disabled = false, action = "" }) => button({ label, kind, onClick, disabled, action }),
   signal: new Signal({ base: new URL(API_PATH, location.origin).href }),
-  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo") })[code] ?? code,
+  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo"), rejoin: t("net.rejoinNow"), solo: t("net.solo") })[code] ?? code,
   action: ({ id, primary = false, onClick }) => {
     const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back") }[id] ?? id;
     return button({ label, kind: primary ? "primary" : id === "leave" ? "danger" : "", onClick, action: `net-${id}` });
@@ -370,9 +372,13 @@ const boardPanel = new BoardPanel({
     return ctx.measureText(text).width;
   },
   showMs: () => document.body.dataset.layout !== "landscape",
+  rejoinButtons: [
+    (state.boardRejoin = button({ label: t("net.rejoinNow"), kind: "primary", action: "board-rejoin", onClick: () => player.net.rejoinNow() })),
+    (state.boardSolo = button({ label: t("net.solo"), kind: "danger", action: "board-solo", onClick: () => player.net.solo() })),
+  ],
 });
 
-const boardWanted = () => player.net.connected && (player.net.reached || player.net.session?.role === "join");
+const boardWanted =() => player.net.connected && (player.net.reached || player.net.session?.role === "join");
 
 function boardLayout() {
   const landscape = document.body.dataset.layout === "landscape";
@@ -400,6 +406,10 @@ function renderBoard() {
     return;
   }
   const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
+  for (const [node, key] of [[state.boardRejoin, "net.rejoinNow"], [state.boardSolo, "net.solo"]]) {
+    const label = node.querySelector(".btn__label");
+    if (label.textContent !== t(key)) label.textContent = t(key);
+  }
   const changed = boardPanel.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
   if (changed?.nodes.length) centerBoardNodes(changed.nodes);
 }
@@ -798,7 +808,7 @@ function syncControls() {
   const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
   if (netBadge.textContent !== netText) netBadge.textContent = netText;
   if (netBadge.hidden !== !netText) netBadge.hidden = !netText;
-  const netTone = player.net.connected && player.net.session.memberList().some((m) => m.stalled) ? "warn" : "";
+  const netTone = player.net.connected && (player.net.session.rejoining || player.net.session.memberList().some((m) => m.stalled || m.held)) ? "warn" : "";
   if ((netBadge.dataset.tone ?? "") !== netTone) {
     if (netTone) netBadge.dataset.tone = netTone;
     else delete netBadge.dataset.tone;
@@ -3438,6 +3448,7 @@ function renderSettings() {
         player.net.syncEnabled();
         syncControls();
       }),
+      switchField(t("cfg.netWan"), t("cfg.netWan.note"), p.netWan === true, (on) => savePrefs({ netWan: on })),
       nickSetting(),
     ),
     group(

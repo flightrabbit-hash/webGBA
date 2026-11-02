@@ -668,12 +668,13 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 > Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi with **a 6-digit room code or the nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
+> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10).
 
 #### 7.1 Overview
 
-webGBA connects devices on the same Wi-Fi (same router). The connection is direct between devices (WebRTC data channels), and game data never passes through any server. By default devices on other networks are not connected.
+webGBA connects devices on the same Wi-Fi (same router). The connection is direct between devices (WebRTC data channels), and game data never passes through any server (except a TURN server the game names, 7.11 — the content stays encrypted). By default devices on other networks are not connected. With "Also connect over the internet (experimental)" on, the room code also connects devices on other networks (7.11).
 
-The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used only while finding a room. It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (one Offer and one Answer, local address candidates only) for at most 2 minutes 30 seconds, after which they are deleted automatically. IP addresses are not stored. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
+The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used while finding a room (for games with rejoin, until the session ends). It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (Offer and Answer), deleted automatically at most 2 minutes 30 seconds after the last update. Connection details carry only local address candidates by default; a device with "Also connect over the internet" on also puts its public IP (public address candidates) in them. The server does not store the IP address of the requesting device. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
 
 The game only says "I need a link partner now" and handles the bytes it sends and receives. Creating and joining rooms, finding nearby devices, connecting and handling drop-outs are done by webGBA. ② game JS cannot use the network directly (chapter 8), so it always goes this way.
 
@@ -698,6 +699,8 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 | `compat` | string | no | `"exact"` | Who you can play with. `"exact"` = same `id` + same build id (3.4) (files that differ only in manifest or cartridge art can connect). Any other string = games with the same `id` and the same string (e.g. several versions with the same link rules) |
 | `sync` | `"messages"` \| `"inputs"` | no | `"messages"` | `"inputs"` = the host lines up everyone's keys every frame (7.6, optional feature) |
 | `inputDelay` | integer | no | `3` | With `sync: "inputs"`, how many frames later keys take effect (1–10) |
+| `rejoin` | boolean | no | `false` | `true` = rejoin (7.10). A dropped guest's seat is kept until the session ends and the same device can come back to it |
+| `iceServers` | array | no | none (webGBA default STUN) | The game's own connection servers (STUN/TURN, 7.11). Used only when the user turned on "Also connect over the internet" |
 
 ```json
 "multiplayer": {
@@ -721,14 +724,14 @@ The game counts as supporting multiplayer only when all seven exist: `Web_NetWan
 
 | Function | Shape | Called | Meaning |
 |---|---|---|---|
-| `Web_NetHost` | `(u32 protocol, u32 flags)` | Once after `Web_Init` | The host supports multiplayer protocol `protocol`. `flags` bit 0 = ordered broadcast available, bit 1 = `sync: "inputs"` available. **Not called means the host has no link** → the game should hide menus like "Play with friends". Optional |
+| `Web_NetHost` | `(u32 protocol, u32 flags)` | Once after `Web_Init` | The host supports multiplayer protocol `protocol`. `flags` bit 0 = ordered broadcast available, bit 1 = `sync: "inputs"` available, bit 2 = rejoin (7.10) available (set only for games with manifest `rejoin: true`). **Not called means the host has no link** → the game should hide menus like "Play with friends". Optional |
 | `Web_NetWanted` | `() → u32` | Every frame after `Web_RunFrame` | 0 = no link needed. Non-zero = a request (7.3.1) |
 | `Web_NetEvent` | `(u32 kind, u32 a, u32 b)` | When something happens, between frames | Event (7.3.3) |
 | `Web_NetOut` | `() → ptr` | Every frame after `Web_RunFrame` | Where the records to send are (7.3.2) |
 | `Web_NetOutLen` | `() → u32` | Same | Byte length of the records to send (0 = none) |
 | `Web_NetOutClear` | `()` | After reading all records | Empties the send area |
 | `Web_NetInBuffer` | `(u32 len) → ptr` | For each received message, before `Web_RunFrame` | Where to write `len` bytes. **0 = no room right now** → the host keeps the message and retries next frame (order preserved) |
-| `Web_NetIn` | `(u32 from, u32 len)` | After writing the bytes there | Confirms receipt. `from` = sender seat |
+| `Web_NetIn` | `(u32 from, u32 len)` | After writing the bytes there | Confirms receipt. `from` = sender seat. Bit 8 (`0x100`) set = a state bundle (7.10, `rejoin` games only) |
 | `Web_NetBoard` | `() → ptr` | Once after the session opens | Optional. Where the 400-byte player status table is (7.9.2). Read only when the manifest has `multiplayer.board` |
 | `Web_NetCompat` | `() → ptr` | Once before a session | Optional. A NUL-terminated ASCII compatibility key of up to 64 characters (e.g. a build hash). If present it is appended to the manifest `compat` and compared too |
 
@@ -763,7 +766,7 @@ Records follow one another from `Web_NetOut()` for `Web_NetOutLen()` bytes. Each
 |---|---|
 | 0–1 | Content length `n` (u16, 1–16384) |
 | 2 | Destination: 0–7 = that seat only, `0xFE` = **TO_ORDERED** (everyone including me, same order for all), `0xFF` = **TO_ALL** (everyone except me) |
-| 3 | 0 (reserved) |
+| 3 | 0 = message. `rejoin` games only: 1 = state bundle part (more follows), 2 = last state bundle part (7.10). Other values drop the record |
 | 4~ | `n` content bytes; the next record starts at a 4-byte boundary |
 
 - Keeping one frame's sends at 65536 bytes or less is recommended. Records queued while there is no session are dropped by the host.
@@ -780,8 +783,11 @@ Records follow one another from `Web_NetOut()` for `Web_NetOutLen()` bytes. Each
 | 4 | `CLOSED` | reason | 0 | Session over. Later sends are dropped |
 | 5 | `STALL` | seat | 0 | Nothing heard from that player for over 1 second, or that device left the app briefly |
 | 6 | `RESUME` | seat | 0 | Back again |
+| 7 | `HOLD` | seat | current count | `rejoin` games only (7.10). The seat's connection dropped and the seat is kept. On the dropped device itself `a` = its own seat |
+| 8 | `BACK` | seat | current count | `rejoin` games only. A kept seat is connected again (always after `HOLD`) |
+| 9 | `REJOINED` | own seat | current count | `rejoin` games only. Sent to the returning device instead of `OPEN` |
 
-Reasons: 1 `CANCEL` (the user cancelled in the multiplayer dialog) · 2 `TIMEOUT` (no connection in time / did not come back after a drop) · 3 `INCOMPATIBLE` (different game, compatibility key or protocol) · 4 `LOST` (connection dropped) · 5 `FULL` (room full) · 6 `LEFT` (left normally) · 7 `HOST_LEFT` (the room host left, the room is gone) · 8 `NO_NETWORK` (no Wi-Fi, or this device cannot use the link feature)
+Reasons: 1 `CANCEL` (the user cancelled in the multiplayer dialog) · 2 `TIMEOUT` (no connection in time / did not come back after a drop) · 3 `INCOMPATIBLE` (different game, compatibility key or protocol) · 4 `LOST` (connection dropped) · 5 `FULL` (room full) · 6 `LEFT` (left normally) · 7 `HOST_LEFT` (the room host left, the room is gone) · 8 `NO_NETWORK` (no Wi-Fi, or this device cannot use the link feature) · 9 `SOLO` (`rejoin` games only: the dropped device's user chose "Play alone")
 
 What the game must do: on `CLOSED(CANCEL)`, treat it like a cancel inside the game and set `Web_NetWanted` to 0. A `STALL` may be brief, so do not drop at once — follow the game's own timeout. When the room host leaves (`HOST_LEFT`) the session ends (protocol 1 has no host migration).
 
@@ -795,12 +801,14 @@ Use the `webgba.net` object the isolated frame provides (between frame and host 
 | `webgba.net.unwant()` | Same as ① returning 0 (link finished) |
 | `webgba.net.send(to, bytes)` | `to` = seat 0–7 · `"ordered"` · `"all"`, up to 16384 bytes |
 | `webgba.net.board(table)` | Player status table (7.9.3). `null` = no table |
+| `webgba.net.sendState(to, bytes)` | State bundle (7.10, `rejoin` games only). `to` = seat 0–7, 1–262144 bytes |
 
 | Host → game | Meaning |
 |---|---|
-| `webgba.net.host` | `{ protocol, ordered, inputs }` — the ① `Web_NetHost` |
+| `webgba.net.host` | `{ protocol, ordered, inputs, rejoin }` — the ① `Web_NetHost` (`rejoin` = bit 2) |
 | `webgba.net.onevent = (kind, a, b) => …` | Same numbers as 7.3.3 |
 | `webgba.net.onrecv = (from, bytes) => …` | A received message (in order) |
+| `webgba.net.onstate = (from, bytes) => …` | A received state bundle (7.10). In order with that sender's messages |
 
 On hosts that do not know multiplayer, `webgba.net` itself is `null`.
 
@@ -813,6 +821,8 @@ On hosts that do not know multiplayer, `webgba.net` itself is `null`.
 | Sends per frame (recommended) | 65536 bytes |
 | Receive order | Per sender; `TO_ORDERED` is the same order for everyone |
 | Latency (same Wi-Fi) | Usually 2–20 ms round trip (1–2 frames) |
+| One state bundle (7.10) | 262144 bytes (the host splits it into 16384-byte pieces and joins them again) |
+| Game connection servers (7.11) | 4 addresses in total, `stun:`, `turn:`, `turns:` only |
 
 #### 7.6 Optional feature: input sync (`sync: "inputs"`)
 
@@ -846,7 +856,7 @@ Host:  ① give the host code (111 characters · QR) to the other player → ②
 Guest: ① enter the host code and press Next → ② give the answer code (· QR) to the host
 ```
 
-- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair is not host/host after connecting, the link is dropped.
+- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair is not host/host after connecting, the link is dropped. This is the default; a device with "Also connect over the internet" on follows 7.11.
 - A code is for one person, once. For 3 or more players the host makes a new host code per player (used codes and answer codes for another invite are refused).
 - Requests with a fixed role (create only, join only) start on that screen.
 - When the minimum player count is reached, it shows "Connected" and closes after 1 second. Any further confirmation (e.g. "Press A to start") happens inside the game.
@@ -972,6 +982,57 @@ webgba.net.board(null); // no table
 - `scope: "self"` rows travel as 48 bytes through the room host to everyone (at most 4 times a second per device).
 - The nickname of someone who left is kept until the session ends. If the game keeps using that seat number, the row shows that nickname with a "Left" (or "Lost") label.
 - Examples: `net-webapi` (① `Web_NetBoard`, `scope: "all"`, one AI row) and `net-script` (② `webgba.net.board`, `scope: "self"`, sorted).
+
+#### 7.10 Rejoin (`rejoin: true`, protocol 1 extension)
+
+A guest whose connection dropped can come back to the same seat until the session ends. It works only when the game writes `multiplayer.rejoin: true` in its manifest; other games keep the earlier handling of 7.3.3 (`LEAVE(LOST)`). Host support = ① `Web_NetHost` `flags` bit 2 / ② `webgba.net.host.rejoin`.
+
+- Only for sessions made with a room code (matchmaking server). Sessions made with connection codes or QR (connect without internet) keep the earlier handling.
+- When a guest drops (no reply for 15 seconds, or the channel closed) the host keeps the seat (`HOLD`, the count stays, new players cannot take it) and the status menu shows "Disconnected · waiting". The dropped device gets `HOLD` (its own seat); webGBA shows a "Reconnecting…" dialog and retries the same room automatically (right away when the network comes back). The user can press "Rejoin" (retry now) or "Play alone" (`CLOSED(SOLO)`; the host and others get `LEAVE(LEFT)`).
+- On return the host and others get `BACK`, the returning device gets `REJOINED` instead of `OPEN`. Messages sent while it was away are not delivered, so the host game sends a **state bundle** to the returning seat. After `REJOINED` come the events (`JOIN`, `LEAVE`, `HOLD`, `BACK`) for other seats that changed meanwhile.
+- A short drop (including an address change after reconnecting to the same Wi-Fi) is repaired on the same connection with an ICE restart. The game then only sees `STALL` → `RESUME` and no message is lost.
+- A host drop is repaired only within 15 seconds. Beyond that the session ends: host `CLOSED(LOST)`, guests `CLOSED(HOST_LEFT)` (when the room closes or the host does not answer for 30 seconds).
+- When the host ends the session the room closes and a device trying to come back gets `CLOSED(HOST_LEFT)`.
+
+State bundle (1–262144 bytes, to one seat):
+
+- ① send: send record byte 3 = `1` (part, more follows) / `2` (last part). One part is up to 16384 bytes; parts for the same target may span frames. ① receive: when the whole bundle has arrived, `Web_NetInBuffer(len)` (len = bundle size) → `Web_NetIn(from | 0x100, len)`. Returning 0 retries next frame and later messages wait too, so keep receive space for your largest bundle.
+- ② `webgba.net.sendState(to, bytes)` / `webgba.net.onstate`.
+- A bundle arrives in send order among that sender's messages. `TO_ORDERED` messages the host relayed between relinking and sending the bundle arrive before the bundle and are already inside it. Put the number of ordered messages the game applied into the bundle, and on the returning device apply only higher numbers.
+- Bundles to a kept or empty seat, and bundles over 262144 bytes, are dropped.
+
+Matchmaking server use: the host of a rejoin session refreshes even a full room every 120 seconds to keep it during the session (3 commands) and checks the server mailbox only while a seat is dropped (every 2 seconds for a minute, then every 10). The dropped device and the host exchange connection details once through the mailbox (`/api/v1/mp/rj`). The host refuses a seat key (given in WELCOME) that does not match.
+
+#### 7.11 Internet connection and game connection servers (`iceServers`, protocol 1 extension)
+
+When the user turns on Settings › Multiplayer **Also connect over the internet (experimental)** (off by default, web and PC), the room code also connects devices elsewhere. It can fail on networks that block direct links between devices, such as mobile data, office or school networks (STUN only, no TURN).
+
+- A device with it on gathers public address candidates (srflx, global IPv6) through connection servers (default = two public STUN servers, `stun.l.google.com:19302` and `stun.cloudflare.com:3478`) and puts them and an "internet on" mark into its connection details (host code, answer code, room Offer/Answer). The other device can see this device's public IP.
+- When only one side has it on, public candidates are exchanged **only when both have it on**.
+  - Host on, guest off: the guest drops the host's public candidates and answers with local ones only (the guest's public IP is not sent). Same Wi-Fi connects, elsewhere fails; the guest is told to turn the setting on too.
+  - Host off, guest on: the host code has no mark, so the guest adds no public candidates. Same Wi-Fi only; the guest is told the other device has it off.
+  - Both on and failing: "Could not connect over the internet. Mobile data, office or school networks may not connect."
+- A device with it on also accepts non host/host pairs (srflx, relay). A device with it off accepts host/host only, as before.
+- Off = the earlier behavior (local candidates only, no STUN request). The nearby-room list still only shows the same router (same public IP).
+
+`multiplayer.iceServers` — the game names its own STUN/TURN servers. Used only when the user turned the internet connection on; when given, **only the game's list** is used instead of webGBA's default STUN. Games without it use the default STUN. webGBA runs no TURN server of its own.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `urls` | string \| string array | `stun:`, `turn:`, `turns:` addresses (`host[:port][?transport=udp\|tcp]`, up to 256 characters). Up to 4 addresses over all entries |
+| `username`, `credential` | string (up to 512) | Fixed TURN credentials. **Anyone can take them out of the file and use your TURN** — prefer `credentialUrl` (`wgba.mjs check` warns) |
+| `credentialUrl` | `https://` address (up to 512) | TURN entries only. The host requests it only when connecting with `GET` (no cookies or referrer, redirects refused, 5 s and 8 KB limit). Response `{ "username": "…", "credential": "…", "ttl": seconds }` (ttl optional). Server addresses always come from the manifest (the response cannot change them). Must allow webGBA origins with CORS (`https://webgba.vercel.app`, PC `http://ui.localhost`) |
+
+```json
+"iceServers": [
+  { "urls": "stun:stun.example.com:3478" },
+  { "urls": ["turn:turn.example.com:3478?transport=udp", "turns:turn.example.com:5349"], "credentialUrl": "https://example.com/api/turn-credential" }
+]
+```
+
+- Malformed entries are not used (logged). If a `credentialUrl` request fails (timeout, bad response, HTTP error) only that entry is left out and the dialog says so.
+- The dialog shows "This game's connection servers: <domain>". A TURN server in the path can see both devices' IPs but not the game content (encrypted). There is no separate consent dialog (the internet setting explains it).
+- webGBA (the host) contacts connection servers only while connecting. The game frame (② JS) still cannot use the network directly (chapter 8).
 
 ---
 
@@ -1102,7 +1163,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
 - Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `cart.color`, button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
-- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8
+- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `iceServers` (7.11 format = error, fixed TURN credentials = warning)
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
 - Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 18×46) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
 - Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning

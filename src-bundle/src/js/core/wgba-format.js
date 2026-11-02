@@ -8,6 +8,7 @@
 import { Inflate, deflate } from "../vendor/pako.js";
 import { concat, customSection, leb, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECTION } from "./wgbp.js";
 import { checkBoard } from "./net/board.js";
+import { readIceServers } from "./net/ice.js";
 
 export const SECTION_PREFIX = "webgba.";
 export const TOC_SECTION = "webgba.toc";
@@ -620,6 +621,12 @@ export function checkManifest(m, errors, warnings) {
     }
     for (const n of [mp.players?.min, mp.players?.max]) if (n !== undefined && (!Number.isInteger(n) || n < 2 || n > 8)) errors.push("multiplayer 인원은 2~8");
     if (mp.board !== undefined) checkBoard(mp.board, errors, warnings);
+    if (mp.rejoin !== undefined && typeof mp.rejoin !== "boolean") errors.push(`multiplayer.rejoin 은 true·false: ${mp.rejoin}`);
+    if (mp.iceServers !== undefined) {
+      const ice = readIceServers(mp.iceServers);
+      for (const e of ice.errors) errors.push(`multiplayer.${e}`);
+      for (const w of ice.warnings) warnings.push(`multiplayer.${w}`);
+    }
   }
   if (m.runtime === "script" && !["module", "emscripten"].includes(m.entry?.style)) errors.push(`entry.style 이 module·emscripten 이 아닙니다: ${m.entry?.style}`);
   // 규격 1 의 JS 조각 이름은 늘 "js"(묶기 도구·읽기 모두) — 다른 값은 무시된다

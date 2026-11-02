@@ -231,6 +231,8 @@ function sortValue(raw, col) {
 
 export function connOf(member, { me, hostRow }) {
   if (!member) return { kind: "lost" };
+  if (member.held) return { kind: "hold" };
+  if (member.rejoining) return { kind: "rejoin" };
   if (member.stalled) return { kind: "stall" };
   if (hostRow) return { kind: "ok" };
   if (!Number.isFinite(member.rtt)) return { kind: me ? "ok" : "joining" };

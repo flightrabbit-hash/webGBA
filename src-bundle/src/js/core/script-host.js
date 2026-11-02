@@ -7,6 +7,8 @@
 import { codeWasm } from "./wgba-format.js";
 import { readRomPayload } from "./web-host.js";
 
+const STATE_BYTES = 262144;
+
 export const RUNNER_CSP_PARTS = Object.freeze([
   "default-src 'none'",
   "script-src {hash} blob: 'wasm-unsafe-eval'",
@@ -144,6 +146,10 @@ export class ScriptHost {
       const to = data.to === "ordered" || data.to === "all" ? data.to : Number.isInteger(data.to) && data.to >= 0 && data.to < 8 ? data.to : null;
       if (to === null || !(data.data instanceof ArrayBuffer) || !data.data.byteLength || data.data.byteLength > 16384) return;
       this.onNet?.({ op, to, data: data.data });
+    } else if (op === "state") {
+      const to = Number.isInteger(data.to) && data.to >= 0 && data.to < 8 ? data.to : null;
+      if (to === null || !(data.data instanceof ArrayBuffer) || !data.data.byteLength || data.data.byteLength > STATE_BYTES) return;
+      this.onNet?.({ op, to, data: data.data });
     }
   }
 
@@ -247,7 +253,7 @@ export class ScriptHost {
         paused: this.paused,
         speed: this.speed,
         text: { tap: this.text.tap ?? "" },
-        net: this.manifest.multiplayer ? { protocol: 1, ordered: true, inputs: false } : null,
+        net: this.manifest.multiplayer ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
       },
       transfer,
     );

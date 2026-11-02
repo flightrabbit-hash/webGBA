@@ -12,12 +12,16 @@ import { attach, guardOthers, launch, prepareApp, sleep } from "./cdp.mjs";
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { decodePng } from "../../web/test/png.mjs";
 
+//   [--api <짝 찾기 서버 주소>] = exe 의 서버 주소를 시험 중에만 바꿈(예: tools/test/mp-local.mjs 의 http://127.0.0.1:8791/api/v1/mp/).
+//   [--only base,wan,rejoin] — wan = exe 에서 인터넷 연결 켬 → STUN 공인 후보, rejoin = exe 손님 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함).
 const [exe, work, example, ...rest] = process.argv.slice(2);
 if (!exe || !work || !example) {
-  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>]");
+  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>] [--api <주소>] [--only base,wan,rejoin]");
   process.exit(2);
 }
 const WEB = rest.includes("--web") ? rest[rest.indexOf("--web") + 1] : "https://webgba.vercel.app/";
+const API = rest.includes("--api") ? rest[rest.indexOf("--api") + 1] : "";
+const ONLY = new Set((rest.includes("--only") ? rest[rest.indexOf("--only") + 1] : "base,wan,rejoin").split(","));
 const PORT = 9352;
 const appDir = path.join(work, "app_mp");
 const shots = path.join(work, "captures");
@@ -113,6 +117,27 @@ try {
   launch(appExe, PORT, [gameFile]);
   app = await attach(PORT);
   check("exe 가 net 예제(.wgba) 실행", await waitFor(() => app.evaluate(`${T}.player.running === true`), 20000));
+  if (API) await app.evaluate(`${T}.netWin.signal.base = ${JSON.stringify(API)}`);
+  if (ONLY.has("base")) await baseFlow();
+  if (ONLY.has("wan")) await wanFlow();
+  if (ONLY.has("rejoin")) await rejoinFlow();
+} catch (error) {
+  check("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" | "));
+} finally {
+  if (app) {
+    try {
+      await app.evaluate(`${T}.shutdown()`);
+    } catch {}
+    app.close();
+  }
+  await browser.close().catch(() => {});
+}
+fs.writeFileSync(path.join(work, "app_mp_result.json"), JSON.stringify(results, null, 1));
+const failed = results.filter((r) => !r.ok);
+console.log(`\nexe 멀티플레이: ${results.length - failed.length}/${results.length} 통과`);
+process.exit(failed.length ? 1 : 0);
+
+async function baseFlow() {
   await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
   const layer = await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-room-make]'))"), 8000);
   check("exe: 연결 창 첫 화면(방 만들기·코드로 들어가기·근처 방·인터넷 없이 연결)", layer && (await app.evaluate("Boolean(document.querySelector('[data-action=net-room-join]') && document.querySelector('[data-action=net-offline]') && document.querySelector('.net-near-box'))")));
@@ -167,18 +192,141 @@ try {
   check("exe: 레일 버튼 좌·우 위치·크기 같음(멀티플레이 켜짐 포함)", rail.some((b) => b.id === "btn-net" && b.on === "true") && spread(rail, "left") === 0 && spread(rail, "right") === 0 && spread(rail, "w") === 0 && spread(rail, "h") === 0, JSON.stringify(rail.map((b) => `${b.id}:${b.left}-${b.right}${b.on === "true" ? "(켜짐)" : ""}`)));
   await app.evaluate(`${T}.player.net.leave()`);
   check("exe 방장 나감 → 웹 손님 CLOSED(HOST_LEFT)", await waitFor(async () => ((await webGame())?.closed === 7 ? true : null), 8000));
-} catch (error) {
-  check("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" | "));
-} finally {
-  if (app) {
-    try {
-      await app.evaluate(`${T}.shutdown()`);
-    } catch {}
-    app.close();
-  }
-  await browser.close().catch(() => {});
 }
-fs.writeFileSync(path.join(work, "app_mp_result.json"), JSON.stringify(results, null, 1));
-const failed = results.filter((r) => !r.ok);
-console.log(`\nexe 멀티플레이 MP2: ${results.length - failed.length}/${results.length} 통과`);
-process.exit(failed.length ? 1 : 0);
+
+function appWant() {
+  return app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
+}
+
+function appDialog(action) {
+  return waitFor(() => app.evaluate(`!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=${action}]'))`), 10000);
+}
+
+async function wanFlow() {
+  await app.evaluate(`${T}.state.prefs.netWan = true`);
+  await app.evaluate(`${T}.openPath(${JSON.stringify(gameFile)})`);
+  await waitFor(() => app.evaluate(`${T}.player.running === true && !${T}.player.net.active`), 15000);
+  await appWant();
+  await appDialog("net-room-make");
+  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  const info = await waitFor(() => app.evaluate(`(async () => { const inv = ${T}.netWin.roomHost?.invite; if (!inv?.code) return null; const lan = await import("/js/core/net/lan.js"); const d = lan.decodeCode(inv.code, "offer", { wan: true }); return { public: inv.public, types: d.sdp.split("\\r\\n").filter((l) => l.startsWith("a=candidate")).map((l) => l.split(" ")[7]), flag: d.wan }; })()`), 15000);
+  check("exe 인터넷 연결 켬: WebView2 에서 STUN 막힘 없음(공인 후보 srflx 수집 · 코드에 포함)", info && info.public > 0 && info.types.includes("srflx") && info.flag, JSON.stringify(info));
+  await app.evaluate("document.querySelector('[data-action=net-cancel]')?.click()");
+  await app.evaluate(`${T}.state.prefs.netWan = false`);
+  await sleep(500);
+}
+
+function rtcWrap() {
+  if (window.__rtcWrapped) return;
+  window.__rtcWrapped = true;
+  const Real = window.RTCPeerConnection;
+  window.__netCut = false;
+  const wrapChannel = (dc) => {
+    const send = dc.send.bind(dc);
+    dc.send = (data) => (window.__netCut ? undefined : send(data));
+    let handler = null;
+    Object.defineProperty(dc, "onmessage", { configurable: true, get: () => handler, set: (fn) => (handler = fn) });
+    dc.addEventListener("message", (event) => {
+      if (!window.__netCut && handler) handler.call(dc, event);
+    });
+    return dc;
+  };
+  class Wrapped extends Real {
+    constructor(config) {
+      super(config);
+      let handler = null;
+      Object.defineProperty(this, "ondatachannel", { configurable: true, get: () => handler, set: (fn) => (handler = fn) });
+      this.addEventListener("datachannel", (event) => {
+        wrapChannel(event.channel);
+        handler?.call(this, event);
+      });
+    }
+    createDataChannel(...args) {
+      return wrapChannel(super.createDataChannel(...args));
+    }
+  }
+  window.RTCPeerConnection = Wrapped;
+}
+
+async function appCut(on) {
+  await app.evaluate(`window.__netCut = ${on}`);
+  await app.send("Network.enable");
+  await app.send("Network.emulateNetworkConditions", { offline: on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+}
+
+async function rejoinFlow() {
+  const manifest = readJson(path.join(example, "manifest.json"));
+  manifest.id = "com.example.netrejoin";
+  manifest.multiplayer.rejoin = true;
+  const rjBytes = (await packWgba({ wasm: fs.readFileSync(path.join(example, "game.wasm")), manifest })).bytes;
+  const rjFile = path.join(appDir, "net-rejoin.wgba");
+  fs.writeFileSync(rjFile, rjBytes);
+  const hostCtx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 } });
+  await hostCtx.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    if (window === window.top) {
+      localStorage.setItem("webgba.installHint", "1");
+      localStorage.setItem("webgba.prefs", JSON.stringify({ netNick: "웹 방장", lang: "ko" }));
+    }
+  });
+  const H = await hostCtx.newPage();
+  await H.goto(WEB);
+  await H.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  await H.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    await window.webgba.openFiles([new File([bytes], "net-rejoin.wgba")]);
+  }, Buffer.from(rjBytes).toString("base64"));
+  await H.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+  await H.evaluate(() => {
+    window.webgba.player.keyDown("KeyZ");
+    setTimeout(() => window.webgba.player.keyUp("KeyZ"), 150);
+  });
+  await H.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await H.click('[data-action="net-room-make"]');
+  const code = await waitFor(async () => {
+    const t = await H.evaluate(() => document.querySelector(".net-room-code")?.textContent ?? "");
+    return /^\d{6}$/.test(t) ? t : "";
+  }, 15000);
+  await app.evaluate(`(${rtcWrap.toString()})()`);
+  await app.evaluate(`${T}.openPath(${JSON.stringify(rjFile)})`);
+  await waitFor(() => app.evaluate(`${T}.player.running === true && !${T}.player.net.active`), 15000);
+  await appWant();
+  await appDialog("net-room-join");
+  await app.evaluate("document.querySelector('[data-action=net-room-join]').click()");
+  await appDialog("net-code-in");
+  await app.evaluate(`(() => { const i = document.querySelector('[data-action=net-code-in]'); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); document.querySelector('[data-action=net-code-go]').click(); return true; })()`);
+  const joined = await waitFor(async () => (await app.evaluate(GAME))?.open === 1, 30000, 250);
+  const on = await app.evaluate(`({ on: ${T}.player.net.session?.rejoinable === true, slot: ${T}.player.net.session?.slot })`);
+  check("exe 손님(다시 들어오기 게임) ↔ 웹 방장 방 코드 연결 · 다시 들어오기 켜짐", joined && on.on, JSON.stringify(on));
+  await sleep(1500);
+  const t0 = Date.now();
+  await appCut(true);
+  const rej = await waitFor(() => app.evaluate(`${T}.player.net.snapshot().rejoining`), 22000, 250);
+  const dialog = await appDialog("net-rejoin-now");
+  await sleep(400);
+  const entries = await app.evaluate(ENTRIES);
+  const inks = await entryInks();
+  check(`exe 손님 끊김 ${((Date.now() - t0) / 1000).toFixed(1)}초 → 연결 창 '다시 연결하는 중' · 이름 줄(다시 들어가기 RETRY · 혼자 이어 하기 SOLO)·잉크 세로 가운데`, rej && dialog && entries.map((e) => `${e.label}|${e.button}`).join(",") === `${ko["net.rejoinNow"]}|RETRY,${ko["net.solo"]}|SOLO` && inks.length === 2 && inks.every((i) => i.ok), JSON.stringify({ entries, inks }));
+  await app.screenshot(path.join(shots, "exe_mp_다시연결_창.png"));
+  const rowsR = await app.evaluate(ACTIONS);
+  check("exe 다시 연결 창 버튼 줄 위·아래 차이 0", rowsR.every((g) => g.length < 2 || (spread(g, "top") === 0 && spread(g, "bottom") === 0)), JSON.stringify(rowsR.map((g) => g.map((i) => `${i.a}:${i.top}-${i.bottom}`))));
+  await app.evaluate("document.querySelector('[data-action=net-close]')?.click()");
+  await sleep(300);
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await sleep(700);
+  const panel = await app.evaluate(`(() => { const box = document.querySelector('#mppanel .mpb__rejoin'); const b = [...document.querySelectorAll('#mppanel .mpb__rejoinActions .btn')].map((n) => n.getBoundingClientRect()); const t = document.querySelector('#mppanel .mpb__rejoinText'); const tr = t?.getBoundingClientRect(); return { open: !document.getElementById('mppanel').hidden, shown: Boolean(box && !box.hidden), text: t?.textContent ?? '', clipped: t ? t.scrollWidth > t.clientWidth + 1 : true, tops: b.map((r) => r.top), bottoms: b.map((r) => r.bottom), labels: [...document.querySelectorAll('#mppanel .mpb__rejoinActions .btn')].map((n) => n.textContent) }; })()`);
+  check("exe 상태 패널: 다시 연결 줄(글 잘림 없음 + 두 버튼 위·아래 차이 0)", panel.open && panel.shown && !panel.clipped && panel.tops.length === 2 && panel.tops[0] === panel.tops[1] && panel.bottoms[0] === panel.bottoms[1], JSON.stringify(panel));
+  await app.screenshot(path.join(shots, "exe_mp_다시연결_상태메뉴.png"));
+  const held = await waitFor(() => H.evaluate(() => window.webgba.player.net.snapshot().members.some((m) => m.held)), 5000);
+  check("웹 방장: exe 손님 자리 보관(끊김 · 기다리는 중)", held);
+  await sleep(Math.max(0, 20000 - (Date.now() - t0)));
+  const t1 = Date.now();
+  await appCut(false);
+  const back = await waitFor(async () => {
+    const s = await app.evaluate(`(() => { const s = ${T}.player.net.snapshot(); return { c: s.connected, r: s.rejoining, slot: s.slot }; })()`);
+    return s.c && !s.r && s.slot === on.slot ? s : null;
+  }, 40000, 250);
+  check(`exe 손님 복귀 ${((Date.now() - t1) / 1000).toFixed(1)}초 뒤 같은 자리로 들어옴`, back, JSON.stringify(back));
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await hostCtx.close();
+}

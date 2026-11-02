@@ -1,14 +1,16 @@
-import { CodeError, RTC_CONFIG, decodeCode, encodeCode, selectedPair, waitGathering } from "./lan.js";
+import { CodeError, RTC_CONFIG, decodeCode, encodeCode, rtcConfig, selectedPair, waitGathering } from "./lan.js";
 import { ROW_BYTES } from "./board.js";
 
 export const PROTOCOL = 1;
-export const EV = Object.freeze({ OPEN: 1, JOIN: 2, LEAVE: 3, CLOSED: 4, STALL: 5, RESUME: 6 });
-export const WHY = Object.freeze({ CANCEL: 1, TIMEOUT: 2, INCOMPATIBLE: 3, LOST: 4, FULL: 5, LEFT: 6, HOST_LEFT: 7, NO_NETWORK: 8 });
+export const EV = Object.freeze({ OPEN: 1, JOIN: 2, LEAVE: 3, CLOSED: 4, STALL: 5, RESUME: 6, HOLD: 7, BACK: 8, REJOINED: 9 });
+export const WHY = Object.freeze({ CANCEL: 1, TIMEOUT: 2, INCOMPATIBLE: 3, LOST: 4, FULL: 5, LEFT: 6, HOST_LEFT: 7, NO_NETWORK: 8, SOLO: 9 });
 export const TO_ORDERED = 0xfe;
 export const TO_ALL = 0xff;
 export const MSG_MAX = 16384;
+export const STATE_MAX = 262144;
 export const SLOTS = 8;
 export const NICK_MAX = 16;
+export const LOST_MS = 15000;
 
 const K_HELLO = 1;
 const K_WELCOME = 2;
@@ -20,15 +22,17 @@ const K_BYE = 0x12;
 const K_PING = 0x13;
 const K_PONG = 0x14;
 const K_ROW = 0x15;
+const K_STATE = 0x16;
 
 const HEARTBEAT_MS = 500;
 const STALL_MS = 1500;
-const LOST_MS = 15000;
 const AWAY_MS = 15000;
 const CONNECT_MS = 25000;
 const MEMBERS_MS = 2000;
+const RESTART_MS = 3000;
 const RTT_STEP = 3;
 const CTL_MAX = 8192;
+const STATE_CHUNK = MSG_MAX;
 
 export class SessionError extends Error {
   constructor(code, why = 0) {
@@ -78,10 +82,31 @@ function dataPacket(from, to, seq, payload) {
   return p;
 }
 
+export function statePackets(from, to, bytes) {
+  const out = [];
+  for (let at = 0; at < bytes.length; at += STATE_CHUNK) {
+    const part = bytes.subarray(at, at + STATE_CHUNK);
+    const p = new Uint8Array(8 + part.length);
+    p[0] = K_STATE;
+    p[1] = from;
+    p[2] = to;
+    p[3] = (at === 0 ? 1 : 0) | (at + STATE_CHUNK >= bytes.length ? 2 : 0);
+    new DataView(p.buffer).setUint32(4, bytes.length, true);
+    p.set(part, 8);
+    out.push(p);
+  }
+  return out;
+}
+
+function rejoinKey() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 const validTo = (to) => (Number.isInteger(to) && to >= 0 && to < SLOTS) || to === TO_ORDERED || to === TO_ALL;
 
 export class NetSession {
-  constructor({ role, nick, max = 2, compat = "", purpose = "", sink, log = () => {}, rtc = RTC_CONFIG, makePeer = null, now = () => performance.now() }) {
+  constructor({ role, nick, max = 2, compat = "", purpose = "", sink, log = () => {}, rtc = RTC_CONFIG, ice = null, wan = false, turn = false, rejoinGame = false, makePeer = null, now = () => performance.now() }) {
     this.role = role === "make" ? "make" : "join";
     this.nick = cleanNick(nick, "?");
     this.max = Math.max(2, Math.min(SLOTS, max | 0));
@@ -90,6 +115,15 @@ export class NetSession {
     this.sink = sink;
     this.log = log;
     this.rtc = rtc;
+    this.ice = ice;
+    this.wan = Boolean(wan);
+    this.turn = Boolean(turn);
+    this.peerWan = false;
+    this.rejoinGame = Boolean(rejoinGame);
+    this.helper = null;
+    this.rejoinKey = "";
+    this.rejoining = false;
+    this.rejoinSince = 0;
     this.makePeer = makePeer ?? ((config) => new RTCPeerConnection(config));
     this.now = now;
     this.slot = this.role === "make" ? 0 : -1;
@@ -106,11 +140,25 @@ export class NetSession {
     this.link = null;
     this.lastMembers = "";
     this.membersAt = 0;
-    this.stats = { sent: 0, recv: 0, relayed: 0, dropped: 0 };
+    this.lastBeat = 0;
+    this.stats = { sent: 0, recv: 0, relayed: 0, dropped: 0, restarts: 0, rejoins: 0 };
     this.gone = new Map();
     this.rows = new Map();
+    this.stateIn = new Map();
     this.myRow = null;
     this.timer = setInterval(() => this.beat(), HEARTBEAT_MS);
+  }
+
+  get rejoinable() {
+    return this.rejoinGame && Boolean(this.helper?.rejoin) && (this.host || Boolean(this.rejoinKey));
+  }
+
+  helperCall(kind) {
+    try {
+      this.helper?.trouble?.(kind);
+    } catch (error) {
+      this.log("warn", `다시 연결 도우미 오류(${kind}): ${error?.message ?? error}`);
+    }
   }
 
   rowPacket(from, bytes) {
@@ -160,7 +208,18 @@ export class NetSession {
   memberList() {
     return [...this.members.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([slot, m]) => ({ slot, nick: m.nick, me: slot === this.slot, host: slot === 0, stalled: Boolean(m.stalled), away: Boolean(m.away), rtt: Number.isFinite(m.rtt) ? m.rtt : null }));
+      .map(([slot, m]) => ({ slot, nick: m.nick, me: slot === this.slot, host: slot === 0, stalled: Boolean(m.stalled), away: Boolean(m.away), held: Boolean(m.held), rejoining: slot === this.slot && this.rejoining, rtt: Number.isFinite(m.rtt) ? m.rtt : null }));
+  }
+
+  attention() {
+    if (!this.host) return [];
+    const out = [];
+    for (const [slot, m] of this.members) {
+      if (slot === 0) continue;
+      const pc = this.links.get(slot)?.pc;
+      if (m.held || m.stalled || ["disconnected", "failed"].includes(pc?.connectionState)) out.push(slot);
+    }
+    return out;
   }
 
   emit(kind, a = 0, b = 0) {
@@ -177,9 +236,26 @@ export class NetSession {
     } catch {}
   }
 
-  peer() {
-    const pc = this.makePeer(this.rtc);
-    return pc;
+  async rtcNow() {
+    if (!this.ice) return this.rtc;
+    const got = await this.ice();
+    return rtcConfig(got?.iceServers ?? []);
+  }
+
+  async peer() {
+    return this.makePeer(await this.rtcNow());
+  }
+
+  async refreshIce(pc) {
+    if (!this.ice || typeof pc.setConfiguration !== "function") return;
+    try {
+      const next = await this.rtcNow();
+      pc.setConfiguration({ ...pc.getConfiguration(), iceServers: next.iceServers });
+    } catch {}
+  }
+
+  gathering(pc, fresh = false) {
+    return waitGathering(pc, { wan: this.wan, turn: this.turn, fresh });
   }
 
   start() {
@@ -193,34 +269,36 @@ export class NetSession {
 
   async invite() {
     if (!this.host || this.closed) throw new SessionError("closed");
-    const waiting = [...this.invites.values()].filter((l) => l.state !== "dead").length;
+    const waiting = [...this.invites.values()].filter((l) => l.state !== "dead" && !l.rejoin).length;
     if (this.count + waiting >= this.max) throw new SessionError("full", WHY.FULL);
-    const pc = this.peer();
-    const dc = pc.createDataChannel("webgba-net", { ordered: true });
-    dc.binaryType = "arraybuffer";
-    const link = { id: ++this.inviteSeq, pc, dc, slot: -1, ready: false, state: "invite", created: this.now(), lastSeen: this.now(), pair: null };
+    const link = { id: ++this.inviteSeq, pc: null, dc: null, slot: -1, ready: false, state: "invite", created: this.now(), lastSeen: this.now(), pair: null };
     this.invites.set(link.id, link);
-    dc.onmessage = (event) => this.onHostMessage(link, new Uint8Array(event.data));
-    dc.onopen = () => {
-      link.lastSeen = this.now();
-      link.pair = selectedPair(pc).catch(() => null);
-    };
-    dc.onclose = () => this.onHostClose(link);
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed") this.failInvite(link, "failed");
-    };
     try {
-      await pc.setLocalDescription(await pc.createOffer());
-      await waitGathering(pc);
+      const pc = await this.peer();
+      link.pc = pc;
       if (this.closed || link.state === "dead") throw new SessionError("closed");
-      const code = encodeCode(pc.localDescription.sdp);
+      const dc = pc.createDataChannel("webgba-net", { ordered: true });
+      link.dc = dc;
+      dc.binaryType = "arraybuffer";
+      dc.onmessage = (event) => this.onHostMessage(link, new Uint8Array(event.data));
+      dc.onopen = () => {
+        link.lastSeen = this.now();
+        link.pair = selectedPair(pc).catch(() => null);
+      };
+      dc.onclose = () => this.onHostClose(link);
+      pc.onconnectionstatechange = () => this.onHostState(link);
+      await pc.setLocalDescription(await pc.createOffer());
+      await this.gathering(pc);
+      if (this.closed || link.state === "dead") throw new SessionError("closed");
+      const code = encodeCode(pc.localDescription.sdp, "", { wan: this.wan });
       if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
       link.code = code.code;
       link.ufrag = code.ufrag;
-      this.log("info", `초대 ${link.id}: 후보 ${code.kept}개(버림 ${code.dropped}) · 코드 ${code.code.length}자`);
-      return { id: link.id, code: code.code };
+      this.log("info", `초대 ${link.id}: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · 코드 ${code.code.length}자`);
+      return { id: link.id, code: code.code, public: code.public };
     } catch (error) {
       this.killLink(link);
+      link.state = "dead";
       this.invites.delete(link.id);
       throw error instanceof SessionError || error instanceof CodeError ? error : new SessionError("rtc", WHY.NO_NETWORK);
     }
@@ -229,16 +307,17 @@ export class NetSession {
   async accept(id, text) {
     const link = this.invites.get(id);
     if (!link || link.state !== "invite") throw new SessionError("used");
-    const desc = decodeCode(text, "answer");
-    if (!desc.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+    const desc = decodeCode(text, "answer", { wan: this.wan });
+    if (!desc.kept) throw new SessionError(desc.skipped ? "wanOff" : "noLan", WHY.NO_NETWORK);
     if (this.used.has(desc.ufrag)) throw new SessionError("used");
     if (desc.ref && desc.ref !== link.ufrag) throw new SessionError("mismatch");
     this.used.add(desc.ufrag);
     link.state = "connecting";
+    link.peerWan = desc.wan;
     const done = new Promise((resolve, reject) => {
       link.resolve = resolve;
       link.reject = reject;
-      link.timer = setTimeout(() => this.failInvite(link, "timeout"), CONNECT_MS);
+      link.timer = setTimeout(() => this.failInvite(link, this.failCode(desc), WHY.NO_NETWORK), CONNECT_MS);
     });
     try {
       await link.pc.setRemoteDescription({ type: "answer", sdp: desc.sdp });
@@ -246,6 +325,12 @@ export class NetSession {
       this.failInvite(link, "bad");
     }
     return done;
+  }
+
+  failCode(desc) {
+    if (!this.wan && (desc.wan || desc.skipped)) return "wanOff";
+    if (this.wan && !desc.wan) return "peerLan";
+    return this.wan ? "wanFailed" : "timeout";
   }
 
   cancelInvite(id) {
@@ -277,15 +362,29 @@ export class NetSession {
     else shut();
   }
 
+  retire(link) {
+    if (!link) return;
+    link.state = "dead";
+    link.ready = false;
+    clearTimeout(link.timer);
+    if (link.dc) link.dc.onclose = link.dc.onmessage = link.dc.onopen = null;
+    if (link.pc) link.pc.onconnectionstatechange = link.pc.ondatachannel = null;
+    this.killLink(link);
+  }
+
   freeSlot() {
     for (let s = 1; s < this.max; s++) if (!this.members.has(s)) return s;
     return -1;
   }
 
+  pairOk(pair) {
+    return !pair || pair.host || this.wan;
+  }
+
   async onHostMessage(link, b) {
     if (this.closed || !b.length) return;
     link.lastSeen = this.now();
-    const member = link.slot >= 0 ? this.members.get(link.slot) : null;
+    const member = link.slot >= 0 && this.links.get(link.slot) === link ? this.members.get(link.slot) : null;
     if (member) member.lastSeen = link.lastSeen;
     const kind = b[0];
     if (kind === K_HELLO) {
@@ -293,13 +392,18 @@ export class NetSession {
       const hello = readCtl(b);
       const pair = await (link.pair ?? selectedPair(link.pc).catch(() => null));
       if (this.closed || link.state !== "connecting") return;
-      if (pair && !pair.host) {
+      if (!this.pairOk(pair)) {
         this.log("warn", `초대 ${link.id}: 고른 후보 쌍이 host/host 가 아님(${pair.local}/${pair.remote}) — 끊음`);
         this.reject(link, WHY.NO_NETWORK, "notLan");
         return;
       }
       if (!hello || hello.p !== PROTOCOL || hello.compat !== this.compat || hello.purpose !== this.purpose) {
         this.reject(link, WHY.INCOMPATIBLE, "incompatible");
+        return;
+      }
+      if (hello.rj) return this.reattach(link, hello, pair);
+      if (link.rejoin) {
+        this.reject(link, WHY.LOST, "rejoin");
         return;
       }
       const slot = this.freeSlot();
@@ -313,10 +417,11 @@ export class NetSession {
       link.slot = slot;
       this.invites.delete(link.id);
       this.links.set(slot, link);
-      this.members.set(slot, { nick: cleanNick(hello.nick, `${slot + 1}P`), lastSeen: this.now(), rtt: pair?.rttMs ?? null });
+      const key = this.rejoinGame && this.helper?.rejoin ? rejoinKey() : "";
+      this.members.set(slot, { nick: cleanNick(hello.nick, `${slot + 1}P`), lastSeen: this.now(), rtt: pair?.rttMs ?? null, key });
       this.log("info", `자리 ${slot} 들어옴 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
       this.gone.delete(slot);
-      this.sendTo(link, ctl(K_WELCOME, { slot, max: this.max, members: this.wireMembers() }));
+      this.sendTo(link, ctl(K_WELCOME, key ? { slot, max: this.max, members: this.wireMembers(), rk: key } : { slot, max: this.max, members: this.wireMembers() }));
       for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
       this.broadcastMembers(null, slot);
       this.emit(EV.JOIN, slot, this.count);
@@ -324,30 +429,69 @@ export class NetSession {
       this.changed();
       return;
     }
-    if (!link.ready) return;
+    if (!link.ready || !member) return;
     if (kind === K_DATA) {
       if (b.length < 8 || b.length - 8 > MSG_MAX) return;
       this.stats.recv++;
       this.route(link.slot, b[2], b.subarray(8));
       return;
     }
-    if (kind === K_PONG && b.length >= 5 && member) {
+    if (kind === K_STATE) {
+      if (b.length < 9 || b.length - 8 > STATE_CHUNK) return;
+      const to = b[2];
+      if (to === 0) this.takeState(link.slot, b);
+      else if (to < SLOTS && to !== link.slot) {
+        const l = this.links.get(to);
+        if (l?.ready) {
+          const p = b.slice();
+          p[1] = link.slot;
+          if (this.sendTo(l, p)) this.stats.relayed++;
+        }
+      }
+      return;
+    }
+    if (kind === K_PONG && b.length >= 5) {
       const sent = new DataView(b.buffer, b.byteOffset + 1, 4).getUint32(0, true);
       const rtt = Math.max(0, ((this.now() >>> 0) - sent) >>> 0);
       if (rtt < 60000) member.rtt = rtt;
       return;
     }
-    if (kind === K_PAUSE && member) {
+    if (kind === K_PAUSE) {
       this.setAwayOf(link.slot, b[1] === 1);
       return;
     }
-    if (kind === K_ROW && member) {
+    if (kind === K_ROW) {
       if (!this.takeRow(link.slot, b)) return;
       const packet = this.rowPacket(link.slot, b.length === 4 ? null : b.subarray(4));
       for (const l of this.links.values()) if (l.ready && l.slot !== link.slot) this.sendTo(l, packet);
       return;
     }
     if (kind === K_BYE) this.drop(link.slot, WHY.LEFT);
+  }
+
+  reattach(link, hello, pair) {
+    const slot = hello.rj?.s;
+    const m = Number.isInteger(slot) ? this.members.get(slot) : null;
+    if (!this.rejoinable || slot < 1 || slot >= SLOTS || !m?.key || hello.rj.k !== m.key) {
+      this.log("warn", `다시 들어오기 거부(자리 ${slot})`);
+      this.reject(link, WHY.LOST, "rejoin");
+      return;
+    }
+    if (!m.held) this.hold(slot);
+    clearTimeout(link.timer);
+    link.state = "joined";
+    link.ready = true;
+    link.slot = slot;
+    this.invites.delete(link.id);
+    this.links.set(slot, link);
+    Object.assign(m, { held: false, stalled: false, away: false, awaySince: 0, lastSeen: this.now(), rtt: pair?.rttMs ?? null, nick: cleanNick(hello.nick, m.nick) });
+    this.stats.rejoins++;
+    this.log("info", `자리 ${slot} 다시 들어옴 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
+    this.sendTo(link, ctl(K_WELCOME, { slot, max: this.max, members: this.wireMembers(), rk: m.key, back: 1 }));
+    for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
+    this.broadcastMembers(null, slot);
+    this.emit(EV.BACK, slot, this.count);
+    this.changed();
   }
 
   reject(link, why, code) {
@@ -360,9 +504,119 @@ export class NetSession {
     this.changed();
   }
 
+  onHostState(link) {
+    const st = link.pc?.connectionState;
+    if (link.state !== "joined") {
+      if (st === "failed") this.failInvite(link, link.peerWan !== undefined ? this.failCode({ wan: link.peerWan, skipped: 0 }) : "failed", WHY.NO_NETWORK);
+      return;
+    }
+    if (this.links.get(link.slot) === link && this.rejoinable && (st === "disconnected" || st === "failed")) this.helperCall("watch");
+  }
+
   onHostClose(link) {
-    if (link.state === "joined") this.drop(link.slot, WHY.LOST);
-    else this.failInvite(link, "failed");
+    if (link.state === "joined") {
+      if (this.links.get(link.slot) === link) this.lose(link.slot);
+    } else this.failInvite(link, "failed");
+  }
+
+  hostOffline() {
+    if (globalThis.navigator?.onLine === false) return true;
+    const live = [...this.links.values()].some((l) => l.ready && this.now() - (this.members.get(l.slot)?.lastSeen ?? 0) < STALL_MS);
+    return !live && Boolean(this.helper?.offline?.());
+  }
+
+  lose(slot) {
+    if (!this.rejoinable) return this.drop(slot, WHY.LOST);
+    if (this.hostOffline()) {
+      this.log("warn", "방장 기기의 네트워크가 끊겨 세션을 끝냄");
+      return this.close(WHY.LOST);
+    }
+    this.hold(slot);
+  }
+
+  hold(slot) {
+    const m = this.members.get(slot);
+    if (!this.host || !m || m.held || slot === 0) return;
+    const link = this.links.get(slot);
+    if (link) {
+      this.links.delete(slot);
+      this.retire(link);
+    }
+    this.stateIn.delete(slot);
+    Object.assign(m, { held: true, stalled: false, away: false, heldAt: this.now(), rtt: null });
+    this.log("info", `자리 ${slot} 끊김 — 돌아올 때까지 보관`);
+    this.emit(EV.HOLD, slot, this.count);
+    this.broadcastMembers();
+    this.helperCall("watch");
+    this.changed();
+  }
+
+  release(slot) {
+    const m = this.members.get(slot);
+    if (!this.host || !m?.held) return;
+    this.members.delete(slot);
+    this.gone.set(slot, { nick: m.nick, left: true });
+    if (this.rows.delete(slot)) for (const l of this.links.values()) l.ready && this.sendTo(l, this.rowPacket(slot, null));
+    this.log("info", `자리 ${slot} 혼자 이어 하기로 나감`);
+    this.emit(EV.LEAVE, slot, WHY.LEFT);
+    this.broadcastMembers({ slot, why: WHY.LEFT });
+    this.changed();
+  }
+
+  async answerRestart(slot, text) {
+    const link = this.links.get(slot);
+    const pc = link?.pc;
+    if (!this.host || this.closed || !link?.ready || !pc || pc.connectionState === "closed") throw new SessionError("gone");
+    const desc = decodeCode(text, "offer", { wan: this.wan });
+    if (!desc.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+    if (pc.signalingState !== "stable") await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
+    await this.refreshIce(pc);
+    await pc.setRemoteDescription({ type: "offer", sdp: desc.sdp });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await this.gathering(pc, true);
+    if (this.links.get(slot) !== link) throw new SessionError("gone");
+    const code = encodeCode(pc.localDescription.sdp, desc.ufrag, { wan: this.wan && desc.wan });
+    this.stats.restarts++;
+    this.log("info", `자리 ${slot} ICE 재시작 답 · 후보 ${code.kept}개`);
+    return code.code;
+  }
+
+  async acceptRejoin(text) {
+    if (!this.host || this.closed || !this.rejoinable) throw new SessionError("closed");
+    const desc = decodeCode(text, "offer", { wan: this.wan });
+    if (!desc.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+    const link = { id: ++this.inviteSeq, pc: null, dc: null, slot: -1, ready: false, state: "connecting", created: this.now(), lastSeen: this.now(), pair: null, rejoin: true };
+    this.invites.set(link.id, link);
+    link.timer = setTimeout(() => this.failInvite(link, "timeout"), CONNECT_MS);
+    try {
+      const pc = await this.peer();
+      link.pc = pc;
+      if (this.closed || link.state === "dead") throw new SessionError("closed");
+      pc.ondatachannel = (event) => {
+        const dc = event.channel;
+        link.dc = dc;
+        dc.binaryType = "arraybuffer";
+        dc.onmessage = (ev) => this.onHostMessage(link, new Uint8Array(ev.data));
+        dc.onclose = () => this.onHostClose(link);
+        const opened = () => {
+          link.lastSeen = this.now();
+          link.pair = selectedPair(pc).catch(() => null);
+        };
+        if (dc.readyState === "open") opened();
+        else dc.onopen = opened;
+      };
+      pc.onconnectionstatechange = () => this.onHostState(link);
+      await pc.setRemoteDescription({ type: "offer", sdp: desc.sdp });
+      await pc.setLocalDescription(await pc.createAnswer());
+      await this.gathering(pc);
+      if (this.closed || link.state === "dead") throw new SessionError("closed");
+      const code = encodeCode(pc.localDescription.sdp, desc.ufrag, { wan: this.wan && desc.wan });
+      if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+      return code.code;
+    } catch (error) {
+      this.failInvite(link, "failed");
+      throw error instanceof SessionError || error instanceof CodeError ? error : new SessionError("rtc", WHY.NO_NETWORK);
+    }
   }
 
   sendTo(link, bytes) {
@@ -377,7 +631,7 @@ export class NetSession {
   }
 
   wireMembers() {
-    return [...this.members.entries()].sort((a, b) => a[0] - b[0]).map(([slot, m]) => ({ slot, nick: m.nick, rtt: Number.isFinite(m.rtt) ? Math.round(m.rtt) : null, st: m.stalled ? 1 : 0 }));
+    return [...this.members.entries()].sort((a, b) => a[0] - b[0]).map(([slot, m]) => ({ slot, nick: m.nick, rtt: Number.isFinite(m.rtt) ? Math.round(m.rtt) : null, st: m.held ? 2 : m.stalled ? 1 : 0 }));
   }
 
   broadcastMembers(left = null, except = -1) {
@@ -407,12 +661,54 @@ export class NetSession {
     }
   }
 
-  deliver(from, payload) {
+  deliver(from, payload, state = false) {
     try {
-      this.sink.deliver(from, payload.slice());
+      this.sink.deliver(from, state ? payload : payload.slice(), state);
     } catch (error) {
       this.log("warn", `받은 것 전달 실패: ${error?.message ?? error}`);
     }
+  }
+
+  takeState(from, b) {
+    const flags = b[3];
+    const total = new DataView(b.buffer, b.byteOffset + 4, 4).getUint32(0, true);
+    const chunk = b.subarray(8);
+    let cur = this.stateIn.get(from);
+    if (flags & 1) {
+      if (!total || total > STATE_MAX) {
+        this.stateIn.delete(from);
+        return;
+      }
+      cur = { buf: new Uint8Array(total), at: 0 };
+      this.stateIn.set(from, cur);
+    }
+    if (!cur || cur.at + chunk.length > cur.buf.length || cur.buf.length !== total) {
+      this.stateIn.delete(from);
+      return;
+    }
+    cur.buf.set(chunk, cur.at);
+    cur.at += chunk.length;
+    if (!(flags & 2)) return;
+    this.stateIn.delete(from);
+    if (cur.at === cur.buf.length) {
+      this.stats.recv++;
+      this.deliver(from, cur.buf, true);
+    }
+  }
+
+  sendState(to, bytes) {
+    if (!this.open || (!this.host && (this.rejoining || !this.link?.ready))) return false;
+    if (!Number.isInteger(to) || to < 0 || to >= SLOTS || to === this.slot) return false;
+    if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > STATE_MAX) {
+      this.stats.dropped++;
+      return false;
+    }
+    const packets = statePackets(this.slot, to, bytes);
+    const link = this.host ? this.links.get(to) : this.link;
+    if (!link?.ready) return false;
+    this.stats.sent++;
+    for (const p of packets) if (!this.sendTo(link, p)) return false;
+    return true;
   }
 
   drop(slot, why) {
@@ -424,6 +720,7 @@ export class NetSession {
     const nick = this.members.get(slot)?.nick;
     if (nick) this.gone.set(slot, { nick, left: why === WHY.LEFT });
     this.members.delete(slot);
+    this.stateIn.delete(slot);
     if (this.rows.delete(slot)) for (const l of this.links.values()) l.ready && this.sendTo(l, this.rowPacket(slot, null));
     if (why !== WHY.LEFT) this.killLink(link);
     else this.killLink(link, 100);
@@ -437,40 +734,38 @@ export class NetSession {
   async answer(text) {
     if (this.host || this.closed) throw new SessionError("closed");
     if (this.link) throw new SessionError("busy");
-    const desc = decodeCode(text, "offer");
-    if (!desc.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
-    const pc = this.peer();
-    const link = { pc, dc: null, slot: 0, ready: false, state: "connecting", lastSeen: this.now(), pair: null };
+    const desc = decodeCode(text, "offer", { wan: this.wan });
+    if (!desc.kept) throw new SessionError(desc.skipped ? "wanOff" : "noLan", WHY.NO_NETWORK);
+    this.peerWan = desc.wan;
+    const link = { pc: null, dc: null, slot: 0, ready: false, state: "connecting", lastSeen: this.now(), pair: null };
     this.link = link;
-    pc.ondatachannel = (event) => {
-      const dc = event.channel;
-      link.dc = dc;
-      dc.binaryType = "arraybuffer";
-      const hello = () => {
-        link.pair = selectedPair(pc).catch(() => null);
-        this.sendTo(link, ctl(K_HELLO, { p: PROTOCOL, compat: this.compat, purpose: this.purpose, nick: this.nick }));
-      };
-      if (dc.readyState === "open") hello();
-      else dc.onopen = hello;
-      dc.onmessage = (ev) => this.onGuestMessage(link, new Uint8Array(ev.data));
-      dc.onclose = () => this.close(WHY.LOST);
-    };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed" && !this.closed) {
-        this.log("warn", "연결 실패(ICE·DTLS)");
-        this.close(this.opened ? WHY.LOST : WHY.NO_NETWORK);
-      }
-    };
     try {
+      const pc = await this.peer();
+      link.pc = pc;
+      if (this.closed || this.link !== link) throw new SessionError("closed");
+      pc.ondatachannel = (event) => {
+        const dc = event.channel;
+        link.dc = dc;
+        dc.binaryType = "arraybuffer";
+        const hello = () => {
+          link.pair = selectedPair(pc).catch(() => null);
+          this.sendTo(link, ctl(K_HELLO, { p: PROTOCOL, compat: this.compat, purpose: this.purpose, nick: this.nick }));
+        };
+        if (dc.readyState === "open") hello();
+        else dc.onopen = hello;
+        dc.onmessage = (ev) => this.onGuestMessage(link, new Uint8Array(ev.data));
+        dc.onclose = () => this.linkDown(link, WHY.LOST);
+      };
+      pc.onconnectionstatechange = () => this.onGuestState(link, desc);
       await pc.setRemoteDescription({ type: "offer", sdp: desc.sdp });
       await pc.setLocalDescription(await pc.createAnswer());
-      await waitGathering(pc);
+      await this.gathering(pc);
       if (this.closed) throw new SessionError("closed");
-      const code = encodeCode(pc.localDescription.sdp, desc.ufrag);
+      const code = encodeCode(pc.localDescription.sdp, desc.ufrag, { wan: this.wan && desc.wan });
       if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
-      this.log("info", `답 코드: 후보 ${code.kept}개(버림 ${code.dropped}) · ${code.code.length}자`);
+      this.log("info", `답 코드: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · ${code.code.length}자`);
       this.changed();
-      return { code: code.code };
+      return { code: code.code, peerWan: desc.wan, skipped: desc.skipped };
     } catch (error) {
       this.killLink(link);
       this.link = null;
@@ -478,11 +773,129 @@ export class NetSession {
     }
   }
 
+  onGuestState(link, desc = null) {
+    if (this.link !== link || this.closed) return;
+    const st = link.pc.connectionState;
+    if (!link.ready) {
+      if (st !== "failed") return;
+      if (link.rejoin) return this.linkDown(link, WHY.LOST);
+      this.log("warn", "연결 실패(ICE·DTLS)");
+      this.failHint = desc ? this.failCode(desc) : "";
+      this.close(this.opened ? WHY.LOST : WHY.NO_NETWORK);
+      return;
+    }
+    if (st !== "failed" && st !== "disconnected") return;
+    if (this.rejoinable) this.helperCall("restart");
+    else if (st === "failed") {
+      this.log("warn", "연결 실패(ICE·DTLS)");
+      this.close(WHY.LOST);
+    }
+  }
+
+  linkDown(link, why) {
+    if (this.closed || this.link !== link) return;
+    if (link.rejoin && !link.ready) {
+      this.link = null;
+      this.retire(link);
+      this.changed();
+      return;
+    }
+    if (!this.opened || !this.rejoinable) return this.close(why);
+    this.enterRejoin(link);
+  }
+
+  enterRejoin(link) {
+    if (this.rejoining || this.closed) return;
+    this.rejoining = true;
+    this.rejoinSince = this.now();
+    this.retire(link);
+    this.link = null;
+    this.stateIn.clear();
+    const h = this.members.get(0);
+    if (h) h.stalled = true;
+    this.log("info", "연결이 끊김 — 같은 자리로 다시 들어가기를 시도");
+    this.emit(EV.HOLD, this.slot, this.count);
+    this.helperCall("lost");
+    this.changed();
+  }
+
+  async restartOffer() {
+    const link = this.link;
+    const pc = link?.pc;
+    if (this.host || this.closed || this.rejoining || !link?.ready || !pc) throw new SessionError("closed");
+    if (pc.signalingState !== "stable") await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
+    await this.refreshIce(pc);
+    await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
+    await this.gathering(pc, true);
+    if (this.link !== link) throw new SessionError("closed");
+    const code = encodeCode(pc.localDescription.sdp, "", { wan: this.wan && this.peerWan });
+    if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+    this.stats.restarts++;
+    return code.code;
+  }
+
+  async restartAnswer(text) {
+    const pc = this.link?.pc;
+    if (!pc || pc.signalingState !== "have-local-offer") throw new SessionError("closed");
+    const desc = decodeCode(text, "answer", { wan: this.wan });
+    await pc.setRemoteDescription({ type: "answer", sdp: desc.sdp });
+  }
+
+  async restartAbort() {
+    const pc = this.link?.pc;
+    if (pc && pc.signalingState === "have-local-offer") await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
+  }
+
+  async rejoinOffer() {
+    if (this.host || this.closed || !this.rejoining) throw new SessionError("closed");
+    if (this.link) {
+      this.retire(this.link);
+      this.link = null;
+    }
+    const link = { pc: null, dc: null, slot: 0, ready: false, state: "connecting", lastSeen: this.now(), pair: null, rejoin: true };
+    this.link = link;
+    try {
+      const pc = await this.peer();
+      link.pc = pc;
+      if (this.closed || this.link !== link) throw new SessionError("closed");
+      const dc = pc.createDataChannel("webgba-net", { ordered: true });
+      link.dc = dc;
+      dc.binaryType = "arraybuffer";
+      dc.onopen = () => {
+        link.pair = selectedPair(pc).catch(() => null);
+        this.sendTo(link, ctl(K_HELLO, { p: PROTOCOL, compat: this.compat, purpose: this.purpose, nick: this.nick, rj: { s: this.slot, k: this.rejoinKey } }));
+      };
+      dc.onmessage = (ev) => this.onGuestMessage(link, new Uint8Array(ev.data));
+      dc.onclose = () => this.linkDown(link, WHY.LOST);
+      pc.onconnectionstatechange = () => this.onGuestState(link);
+      await pc.setLocalDescription(await pc.createOffer());
+      await this.gathering(pc);
+      if (this.link !== link) throw new SessionError("closed");
+      const code = encodeCode(pc.localDescription.sdp, "", { wan: this.wan && this.peerWan });
+      if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+      return code.code;
+    } catch (error) {
+      if (this.link === link) {
+        this.retire(link);
+        this.link = null;
+      }
+      throw error instanceof SessionError || error instanceof CodeError ? error : new SessionError("rtc", WHY.NO_NETWORK);
+    }
+  }
+
+  async rejoinAnswer(text) {
+    const link = this.link;
+    if (!link?.rejoin || link.ready || !link.pc) throw new SessionError("closed");
+    const desc = decodeCode(text, "answer", { wan: this.wan });
+    if (!desc.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
+    await link.pc.setRemoteDescription({ type: "answer", sdp: desc.sdp });
+  }
+
   async onGuestMessage(link, b) {
-    if (this.closed || !b.length) return;
+    if (this.closed || !b.length || this.link !== link) return;
     link.lastSeen = this.now();
     const hostMember = this.members.get(0);
-    if (hostMember) hostMember.lastSeen = link.lastSeen;
+    if (hostMember && link.ready) hostMember.lastSeen = link.lastSeen;
     const kind = b[0];
     if (kind === K_PING) {
       if (b.length >= 5) this.sendTo(link, Uint8Array.of(K_PONG, b[1], b[2], b[3], b[4]));
@@ -493,13 +906,15 @@ export class NetSession {
       const w = readCtl(b);
       if (!w || !Number.isInteger(w.slot) || w.slot < 1 || w.slot >= SLOTS || !Array.isArray(w.members)) return this.close(WHY.LOST);
       const pair = await (link.pair ?? selectedPair(link.pc).catch(() => null));
-      if (this.closed) return;
-      if (pair && !pair.host) {
+      if (this.closed || this.link !== link) return;
+      if (!this.pairOk(pair)) {
         this.log("warn", `고른 후보 쌍이 host/host 가 아님(${pair.local}/${pair.remote}) — 끊음`);
         return this.close(WHY.NO_NETWORK);
       }
+      if (link.rejoin) return this.rejoined(link, w, pair);
       this.slot = w.slot;
       this.max = Math.max(2, Math.min(SLOTS, w.max | 0 || this.max));
+      this.rejoinKey = typeof w.rk === "string" && /^[A-Za-z0-9_-]{16,32}$/.test(w.rk) ? w.rk : "";
       link.ready = true;
       link.state = "joined";
       this.applyMembers(w.members, null, true);
@@ -512,7 +927,7 @@ export class NetSession {
     }
     if (kind === K_REJECT) {
       const r = readCtl(b);
-      const why = [WHY.INCOMPATIBLE, WHY.FULL, WHY.NO_NETWORK].includes(r?.why) ? r.why : WHY.INCOMPATIBLE;
+      const why = [WHY.INCOMPATIBLE, WHY.FULL, WHY.NO_NETWORK, WHY.LOST].includes(r?.why) ? r.why : WHY.INCOMPATIBLE;
       return this.close(why);
     }
     if (!link.ready) return;
@@ -529,6 +944,11 @@ export class NetSession {
       this.deliver(from, b.subarray(8));
       return;
     }
+    if (kind === K_STATE) {
+      if (b.length < 9 || b.length - 8 > STATE_CHUNK || b[1] >= SLOTS || b[2] !== this.slot) return;
+      this.takeState(b[1], b);
+      return;
+    }
     if (kind === K_PAUSE) {
       this.setAwayOf(0, b[1] === 1);
       return;
@@ -538,6 +958,31 @@ export class NetSession {
       return;
     }
     if (kind === K_BYE) this.close(WHY.HOST_LEFT);
+  }
+
+  rejoined(link, w, pair) {
+    if (w.slot !== this.slot || w.back !== 1) {
+      this.log("warn", `다시 들어오기 응답이 맞지 않음(자리 ${w.slot})`);
+      return this.close(WHY.LOST);
+    }
+    link.ready = true;
+    link.state = "joined";
+    this.rejoining = false;
+    this.stats.rejoins++;
+    const h = this.members.get(0);
+    const hostStalled = Boolean(h?.stalled);
+    if (h) {
+      h.lastSeen = this.now();
+      h.stalled = false;
+      h.away = false;
+    }
+    this.log("info", `자리 ${this.slot} 로 다시 들어감 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
+    this.emit(EV.REJOINED, this.slot, w.members.length);
+    if (hostStalled) this.emit(EV.RESUME, 0, 0);
+    this.applyMembers(w.members, null, false);
+    if (this.myRow) this.setRow(this.myRow);
+    this.helperCall("back");
+    this.changed();
   }
 
   applyMembers(list, left, first) {
@@ -565,8 +1010,14 @@ export class NetSession {
       entry.nick = cleanNick(item.nick, `${slot + 1}P`);
       entry.rtt = Number.isFinite(item.rtt) ? item.rtt : null;
       if (slot !== 0 && slot !== this.slot) {
+        const held = item.st === 2;
         const stalled = item.st === 1;
-        if (!first && old && Boolean(old.stalled) !== stalled) this.emit(stalled ? EV.STALL : EV.RESUME, slot, 0);
+        if (!first && old) {
+          if (!old.held && held) this.emit(EV.HOLD, slot, now.size);
+          else if (old.held && !held) this.emit(EV.BACK, slot, now.size);
+          else if (!held && Boolean(old.stalled) !== stalled) this.emit(stalled ? EV.STALL : EV.RESUME, slot, 0);
+        }
+        entry.held = held;
         entry.stalled = stalled;
       }
       if (!old) {
@@ -590,7 +1041,7 @@ export class NetSession {
       return true;
     }
     if (to === this.slot) return false;
-    return this.sendTo(this.link, dataPacket(this.slot, to, 0, bytes));
+    return this.sendTo(this.link?.ready ? this.link : null, dataPacket(this.slot, to, 0, bytes));
   }
 
   setAway(on) {
@@ -612,12 +1063,14 @@ export class NetSession {
   }
 
   checkStall(slot, m, now) {
+    if (m.held) return;
     const silent = now - (m.lastSeen ?? now) > STALL_MS;
     const stall = Boolean(m.away) || silent;
     if (stall !== Boolean(m.stalled)) {
       m.stalled = stall;
       this.emit(stall ? EV.STALL : EV.RESUME, slot, 0);
       if (this.host) this.broadcastMembers();
+      if (stall && this.host && this.rejoinable) this.helperCall("watch");
       this.changed();
     }
   }
@@ -625,7 +1078,14 @@ export class NetSession {
   beat() {
     if (this.closed) return;
     const now = this.now();
+    const gap = this.lastBeat ? now - this.lastBeat : 0;
+    this.lastBeat = now;
     if (this.host) {
+      if (this.rejoinable && gap > LOST_MS && this.links.size) {
+        this.log("warn", `방장 기기가 ${Math.round(gap / 1000)}초 멈춰 있었음 — 세션을 끝냄`);
+        this.close(WHY.LOST);
+        return;
+      }
       const ping = new Uint8Array(5);
       ping[0] = K_PING;
       new DataView(ping.buffer).setUint32(1, now >>> 0, true);
@@ -635,7 +1095,8 @@ export class NetSession {
         const m = this.members.get(slot);
         if (!m) continue;
         if (now - m.lastSeen > LOST_MS || (m.away && now - m.awaySince > AWAY_MS)) {
-          this.drop(slot, WHY.LOST);
+          this.lose(slot);
+          if (this.closed) return;
           continue;
         }
         this.checkStall(slot, m, now);
@@ -651,14 +1112,17 @@ export class NetSession {
       }
       return;
     }
+    if (this.rejoining) return;
     const m = this.members.get(0);
     const link = this.link;
     if (!m || !link?.ready) return;
     if (now - m.lastSeen > LOST_MS || (m.away && now - m.awaySince > AWAY_MS)) {
-      this.close(WHY.LOST);
+      if (m.away || !this.rejoinable) this.close(WHY.LOST);
+      else this.enterRejoin(link);
       return;
     }
     this.checkStall(0, m, now);
+    if (this.rejoinable && now - m.lastSeen > RESTART_MS && !m.away) this.helperCall("restart");
   }
 
   close(why = WHY.LEFT) {
@@ -675,7 +1139,9 @@ export class NetSession {
       if (l.state !== "joined") l.reject?.(new SessionError("closed", why));
     }
     this.invites.clear();
+    this.rejoining = false;
     this.emit(EV.CLOSED, why, 0);
+    this.helperCall("closed");
     this.changed();
   }
 }

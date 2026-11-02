@@ -2,7 +2,7 @@ import { CodeError, cleanCode } from "../core/net/lan.js";
 import { SessionError } from "../core/net/session.js";
 import { CONNECTED_CLOSE_MS, WHY } from "../core/net/net-host.js";
 import { drawQr } from "../core/net/qr.js";
-import { JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomHost, SignalError, serverDown, signalCompat, signalPurpose } from "../core/net/signal.js";
+import { JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, serverDown, signalCompat, signalPurpose } from "../core/net/signal.js";
 import { pickText } from "../core/wgba-read.js";
 import { lang, t } from "../shell/i18n.js";
 
@@ -58,6 +58,8 @@ export function whyText(why) {
       return t("net.why.hostLeft");
     case WHY.NO_NETWORK:
       return t("net.why.noNetwork");
+    case WHY.SOLO:
+      return t("net.why.solo");
     default:
       return t("net.why.unknown");
   }
@@ -68,10 +70,26 @@ export function noticeText(info) {
   if (info.kind === "leave") return t("net.notice.leave", { nick: info.nick, why: whyText(info.why) });
   if (info.kind === "open") return t("net.notice.open", { slot: info.slot + 1 });
   if (info.kind === "closed") return info.why === WHY.LEFT ? t("net.notice.ended") : t("net.notice.closed", { why: whyText(info.why) });
+  if (info.kind === "hold") return t("net.notice.hold", { nick: info.nick });
+  if (info.kind === "back") return t("net.notice.back", { nick: info.nick });
+  if (info.kind === "rejoining") return t("net.notice.rejoining");
+  if (info.kind === "rejoined") return t("net.notice.rejoined", { slot: info.slot + 1 });
   return "";
 }
 
-export const noticeLevel = (info) => (info.kind === "closed" && info.why !== WHY.LEFT) || (info.kind === "leave" && info.why !== WHY.LEFT) ? "warn" : "info";
+export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" ? "warn" : "info";
+
+const HINTS = { wanOff: "net.err.wanOff", peerLan: "net.err.peerLan", wanFailed: "net.err.wanFailed" };
+
+export function hintText(code) {
+  return HINTS[code] ? t(HINTS[code]) : "";
+}
+
+export function hintOf(wan, peerWan, skipped = 0) {
+  if (!wan && (peerWan || skipped)) return "wanOff";
+  if (wan && !peerWan) return "peerLan";
+  return wan ? "wanFailed" : "";
+}
 
 export function errorText(error, field) {
   if (error instanceof CodeError) {
@@ -81,6 +99,7 @@ export function errorText(error, field) {
     return t("net.err.bad");
   }
   if (error instanceof SessionError) {
+    if (HINTS[error.code]) return hintText(error.code);
     if (error.code === "used") return t("net.err.used");
     if (error.code === "mismatch") return t("net.err.mismatch");
     if (error.code === "noLan" || error.code === "rtc" || error.code === "notLan") return t("net.err.noLan");
@@ -137,6 +156,8 @@ export class NetWindow {
     this.joinTimer = 0;
     this.joinSeq = 0;
     this.joinedRoom = "";
+    this.roomGuest = null;
+    this.joinHint = "";
   }
 
   show(request) {
@@ -149,7 +170,8 @@ export class NetWindow {
     this.errorHelp = false;
     this.offerLan = false;
     if (snap.active) {
-      if (snap.role === "make") {
+      if (snap.rejoining) this.go("rejoin");
+      else if (snap.role === "make") {
         this.roomHost?.setActive(true);
         this.go(this.roomHost ? "room" : "host");
       } else this.go(snap.connected ? "joined" : this.joinInfo ? "wait" : "join2");
@@ -225,7 +247,10 @@ export class NetWindow {
       this.roomHost = null;
     } else if (this.roomHost && snap.count < snap.max) this.roomHost.resume();
     if (!snap.active && this.joinInfo && !this.busy) this.clearJoin();
-    if (!snap.active) this.joinedRoom = "";
+    if (!snap.active) {
+      this.joinedRoom = "";
+      this.roomGuest = null;
+    }
     if (!this.open) return;
     if (!snap.request && !snap.active) {
       this.close();
@@ -236,14 +261,23 @@ export class NetWindow {
       this.go("ended");
       return;
     }
+    if (snap.active && snap.rejoining && this.screen !== "rejoin") {
+      this.go("rejoin");
+      return;
+    }
+    if (this.screen === "rejoin" && snap.connected && !snap.rejoining) {
+      this.go("back");
+      return;
+    }
     if ((this.screen === "join2" || this.screen === "wait") && snap.connected) {
       this.clearJoin();
       this.go("joined");
       return;
     }
     if ((this.screen === "join2" || this.screen === "wait") && !snap.active && snap.failed) {
-      this.error = whyText(snap.failed.why);
-      this.errorHelp = true;
+      const hint = hintText(snap.failed.hint);
+      this.error = hint || whyText(snap.failed.why);
+      this.errorHelp = !hint;
       this.offerText = "";
       const back = this.screen === "wait" ? "choose" : "join1";
       this.clearJoin();
@@ -274,6 +308,23 @@ export class NetWindow {
     }
     if (r.help) r.help.hidden = !this.errorHelp;
     if (r.offline) r.offline.hidden = !this.offerLan;
+    if (r.rejoinState) r.rejoinState.textContent = this.rejoinText(snap);
+  }
+
+  rejoinText(snap) {
+    return t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying");
+  }
+
+  iceNodes(snap) {
+    const out = [];
+    if (snap.iceHosts?.length) out.push(this.kit.note(t("net.iceHosts", { hosts: snap.iceHosts.join(", ") })));
+    if (snap.iceFailed) out.push(this.kit.note(t("net.iceFailed")));
+    return out;
+  }
+
+  goSolo() {
+    this.net.solo();
+    this.close();
   }
 
   memberRows(snap) {
@@ -281,8 +332,8 @@ export class NetWindow {
       const tags = [];
       if (m.me) tags.push(t("net.me"));
       if (m.host) tags.push(t("net.hostTag"));
-      tags.push(m.stalled ? t("net.state.stall") : t("net.state.ok"));
-      if (!m.host && Number.isFinite(m.rtt)) tags.push(t("net.rtt", { ms: Math.round(m.rtt) }));
+      tags.push(m.held ? t("net.state.hold") : m.rejoining ? t("net.state.rejoining") : m.stalled ? t("net.state.stall") : t("net.state.ok"));
+      if (!m.host && !m.held && !m.rejoining && Number.isFinite(m.rtt)) tags.push(t("net.rtt", { ms: Math.round(m.rtt) }));
       return this.kit.row({ tag: `${m.slot + 1}P`, name: m.nick, meta: tags.join(" · "), current: m.me });
     });
   }
@@ -563,7 +614,7 @@ export class NetWindow {
       const items = [];
       if (this.request?.role !== "join") items.push({ text: t("net.make"), button: k.button({ label: k.label("make"), kind: "primary", action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy }) });
       items.push({ text: t("net.codeJoin"), button: k.button({ label: k.label("codeJoin"), action: "net-room-join", onClick: () => this.toCode(), disabled: this.busy }) });
-      body = [k.note(t("net.lead")), this.nickField(), ...this.choices(items), k.group(t("net.near"), near), this.offlineLine(), ...this.errorNodes()];
+      body = [k.note(t(snap.wan ? "net.leadWan" : "net.lead")), ...this.iceNodes(snap), this.nickField(), ...this.choices(items), k.group(t("net.near"), near), this.offlineLine(), ...this.errorNodes()];
       actions = [cancel];
     } else if (this.screen === "lan") {
       body = [];
@@ -597,9 +648,10 @@ export class NetWindow {
       if (snap.count < snap.max) {
         const box = k.make("div", "net-room");
         this.refs.roomBox = box;
-        box.append(this.roomCodeNode(this.roomHost?.room ?? ""), k.note(this.roomHost?.room ? t("net.roomHint") : t("net.roomMaking")));
+        box.append(this.roomCodeNode(this.roomHost?.room ?? ""), k.note(this.roomHost?.room ? t(snap.wan ? "net.roomHintWan" : "net.roomHint") : t("net.roomMaking")));
         body.push(k.group(t("net.roomCode"), box));
       }
+      body.push(...this.iceNodes(snap));
       body.push(k.group(t("net.room"), count, members), ...this.errorNodes());
       if (snap.reached) actions = [k.action({ id: "leave", onClick: () => (this.net.leave(), this.close()) }), k.action({ id: "done", primary: true, onClick: () => this.close() })];
       else actions = [cancel];
@@ -641,13 +693,31 @@ export class NetWindow {
       const wait = k.note(t("net.join.waiting"));
       body = [k.step(t("net.join.step2")), ...this.codeBox(this.guestCode, { action: "net-answer-out" }), wait, ...this.errorNodes()];
       actions = [cancel];
-    } else if (this.screen === "joined") {
+    } else if (this.screen === "joined" || this.screen === "back") {
       const members = k.make("ul", "net-members");
       members.append(...this.memberRows(snap));
       this.refs.members = members;
-      body = [k.note(t("net.joined", { slot: snap.slot + 1 })), members];
+      body = [k.note(t(this.screen === "back" ? "net.rejoined" : "net.joined", { slot: snap.slot + 1 })), members];
       actions = [k.action({ id: "done", primary: true, onClick: () => this.close() })];
       this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
+    } else if (this.screen === "rejoin") {
+      const state = k.note(this.rejoinText(snap));
+      state.classList.add("net-rejoin-state");
+      this.refs.rejoinState = state;
+      const members = k.make("ul", "net-members");
+      members.append(...this.memberRows(snap));
+      this.refs.members = members;
+      body = [
+        k.note(t("net.rejoin.lead")),
+        state,
+        ...this.choices([
+          { text: t("net.rejoinNow"), button: k.button({ label: k.label("rejoin"), kind: "primary", action: "net-rejoin-now", onClick: () => this.net.rejoinNow() }) },
+          { text: t("net.solo"), button: k.button({ label: k.label("solo"), kind: "danger", action: "net-solo", onClick: () => this.goSolo() }) },
+        ]),
+        k.note(t("net.rejoin.note")),
+        k.group(t("net.room"), members),
+      ];
+      actions = [k.action({ id: "close", onClick: () => this.close() })];
     } else if (this.screen === "ended") {
       const why = this.endedWhy;
       this.error = whyText(why);
@@ -756,9 +826,11 @@ export class NetWindow {
       }
       if (seq !== this.joinSeq) return;
       session = await this.net.open("join");
-      const { code } = await session.answer(got.o);
+      const made = await session.answer(got.o);
       if (seq !== this.joinSeq) throw new SessionError("closed");
-      await this.signal.answer({ x: got.x, q: got.q, t: got.t, d: code });
+      await this.signal.answer({ x: got.x, q: got.q, t: got.t, d: made.code });
+      this.joinHint = hintOf(session.wan, made.peerWan, made.skipped);
+      if (got.rt && session.rejoinGame) this.roomGuest = new RoomGuest({ signal: this.signal, session, room, x: got.x, rt: got.rt, log: this.net.log ?? (() => {}) });
       this.joinInfo = got;
       this.joinedRoom = room;
       this.busy = false;
@@ -769,8 +841,9 @@ export class NetWindow {
         this.clearJoin();
         this.net.discard();
         if (this.open && this.screen === "wait") {
-          this.error = t("net.err.failed");
-          this.errorHelp = true;
+          const hint = hintText(this.joinHint);
+          this.error = hint || t("net.err.failed");
+          this.errorHelp = !hint;
           this.go("choose");
         }
       }, JOIN_WAIT_MS);

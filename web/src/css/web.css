@@ -3172,6 +3172,50 @@ body[data-layout="landscape"] .mpb__head .tool--small {
   height: 28px;
 }
 
+.mpb__rejoin {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--gap-1);
+  padding: var(--gap-2) var(--gap-3);
+  border-bottom: var(--px) solid var(--line);
+}
+
+.mpb__rejoin[hidden] {
+  display: none;
+}
+
+.mpb__rejoinText {
+  height: 22px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.mpb__rejoinActions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+
+.mpb__rejoinActions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+body[data-layout="landscape"] .mpb__rejoin {
+  padding: var(--gap-1) var(--gap-2);
+}
+
+body[data-layout="landscape"] .mpb__rejoinText {
+  height: 20px;
+  line-height: 20px;
+}
+
+body[data-layout="landscape"] .mpb__rejoinActions .btn {
+  min-height: 30px;
+}
+
 .mpb__rows {
   flex: 1 1 auto;
   min-height: 0;

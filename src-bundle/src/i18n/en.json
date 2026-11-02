@@ -631,5 +631,33 @@
 
   "cfg.netNick.default": "Default nickname",
 
-  "net.reachedNote": "Connected · {n}/{max} — closing this window"
+  "net.reachedNote": "Connected · {n}/{max} — closing this window",
+
+  "cfg.netWan": "Also connect over the internet (experimental)",
+  "cfg.netWan.note": "Connect with friends elsewhere by room code. It may fail on mobile data or office and school networks. When on, your public IP is shared with the other player",
+  "net.leadWan": "Connects devices on the same Wi-Fi, or a friend somewhere else with the room code.",
+  "net.roomHintWan": "Enter this code in 'Join with code' on your friend's device. Friends somewhere else can join too.",
+  "net.iceHosts": "This game's connection servers: {hosts}",
+  "net.iceFailed": "Could not get access details from this game's connection server. You may not reach friends somewhere else.",
+  "net.err.wanOff": "The other device has 'Also connect over the internet' on, but this device has it off, so only the same Wi-Fi works. If you are somewhere else, turn it on in Settings › Multiplayer.",
+  "net.err.peerLan": "The other device has 'Also connect over the internet' off, so only the same Wi-Fi works. Turn it on in the other device's settings too.",
+  "net.err.wanFailed": "Could not connect over the internet. Mobile data, office or school networks may not connect.",
+  "net.why.solo": "Switched to playing alone",
+  "net.notice.hold": "{nick} disconnected · waiting",
+  "net.notice.back": "{nick} is back",
+  "net.notice.rejoining": "Connection lost · reconnecting…",
+  "net.notice.rejoined": "Back in the room · {slot}P",
+  "net.state.hold": "Disconnected · waiting",
+  "net.state.rejoining": "Reconnecting…",
+  "net.rejoinNow": "Rejoin",
+  "net.solo": "Play alone",
+  "net.rejoin.lead": "The connection was lost. Rejoining the same seat automatically.",
+  "net.rejoin.trying": "Reconnecting…",
+  "net.rejoin.wait": "Waiting for the host…",
+  "net.rejoin.offline": "Waiting for the internet…",
+  "net.rejoin.server": "Server unreachable · retrying…",
+  "net.rejoin.note": "'Play alone' leaves the friend game and continues alone. You cannot rejoin this room.",
+  "net.rejoined": "Rejoined · {slot}P",
+  "board.hold": "Away · waiting",
+  "board.rejoining": "Reconnecting…"
 }

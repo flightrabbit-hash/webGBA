@@ -631,5 +631,33 @@
 
   "cfg.netNick.default": "既定のニックネーム",
 
-  "net.reachedNote": "接続済み · {n}/{max} — まもなく閉じます"
+  "net.reachedNote": "接続済み · {n}/{max} — まもなく閉じます",
+
+  "cfg.netWan": "インターネットでも接続（実験）",
+  "cfg.netWan.note": "ルームコードで離れた場所の友だちとも接続します。モバイルデータ・会社・学校のネットワークなどでは失敗することがあります。オンにすると相手の端末にこの端末のグローバルIPが見えます",
+  "net.leadWan": "同じWi-Fiの端末、またはルームコードで離れた場所の友だちと接続します。",
+  "net.roomHintWan": "友だちの端末の「コードで入る」にこのコードを入れてください。離れた場所の友だちも入れます。",
+  "net.iceHosts": "このゲームの接続サーバー: {hosts}",
+  "net.iceFailed": "このゲームの接続サーバーから接続情報を受け取れませんでした。離れた場所の友だちとはつながらないことがあります。",
+  "net.err.wanOff": "相手は「インターネットでも接続（実験）」をオンにしていますが、この端末はオフのため同じWi-Fiでしか接続できません。離れた場所にいる場合は 設定 › マルチプレイ でオンにしてください。",
+  "net.err.peerLan": "相手の端末は「インターネットでも接続（実験）」がオフのため同じWi-Fiでしか接続できません。相手の端末の設定でもオンにしてください。",
+  "net.err.wanFailed": "インターネットで接続できませんでした。モバイルデータ・会社・学校のネットワークなどはつながらないことがあります。",
+  "net.why.solo": "ひとりで続けるに切り替えました",
+  "net.notice.hold": "{nick} さんの接続が切れました · 待機中",
+  "net.notice.back": "{nick} さんが戻りました",
+  "net.notice.rejoining": "接続が切れました · 再接続中…",
+  "net.notice.rejoined": "ルームに戻りました · {slot}P",
+  "net.state.hold": "切断 · 待機中",
+  "net.state.rejoining": "再接続中…",
+  "net.rejoinNow": "もう一度入る",
+  "net.solo": "ひとりで続ける",
+  "net.rejoin.lead": "接続が切れました。同じ席に自動で戻ります。",
+  "net.rejoin.trying": "再接続中…",
+  "net.rejoin.wait": "ホストの応答を待っています…",
+  "net.rejoin.offline": "インターネット接続を待っています…",
+  "net.rejoin.server": "サーバーに接続できませんでした。再試行中…",
+  "net.rejoin.note": "「ひとりで続ける」を押すとなかまのゲームから抜けてひとりで続けます。このルームには戻れません。",
+  "net.rejoined": "戻りました · {slot}P",
+  "board.hold": "切断 · 待機中",
+  "board.rejoining": "再接続中…"
 }

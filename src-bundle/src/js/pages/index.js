@@ -119,10 +119,12 @@ const player = new Player({
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) status(text, noticeLevel(info));
+    if (info.kind === "rejoining" && !netLayer && !mp.open) openNet();
   },
   onNetBoard: () => queueMp(),
   netNick: () => netNick(),
   netEnabled: () => state.prefs.netOn !== false,
+  netWan: () => state.prefs.netWan === true,
   hiddenClock: true,
 });
 
@@ -139,6 +141,7 @@ function netNick() {
 function netStatus() {
   const s = player.net.session;
   if (!s || s.closed) return "";
+  if (s.rejoining) return t("net.state.rejoining");
   if (!s.open) return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
   const ms = s.memberList().filter((m) => !m.host && Number.isFinite(m.rtt)).map((m) => m.rtt);
   const n = s.max > 1 ? `${s.count}/${s.max}` : s.count;
@@ -165,7 +168,7 @@ const netKit = {
     return b;
   },
   signal: new Signal({ base: APP_API }),
-  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN" })[code] ?? code.toUpperCase(),
+  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN", rejoin: "RETRY", solo: "SOLO" })[code] ?? code.toUpperCase(),
   action: ({ id, primary = false, onClick }) => {
     const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK" }[id] ?? id.toUpperCase());
     b.type = "button";
@@ -277,6 +280,15 @@ function mpButton(icon, key, action, onClick) {
   return b;
 }
 
+function mpText(key, className, action, onClick) {
+  const b = node("button", className, t(key));
+  b.type = "button";
+  b.dataset.action = action;
+  b.dataset.i18n = key;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
 const mpTabKey = node("span", "mpb__key");
 mpTabKey.append(node("span", "mpb__tagtext", "Tab"));
 const mpTabHint = node("span", "mpb__text mpb__hint");
@@ -286,6 +298,7 @@ const mpBoard = new BoardPanel({
   roomLine: true,
   head: [mpButton("world", "board.window", "board-window", () => mpToWindow()), mpButton("x", "win.close", "board-close", () => closeMp())],
   footHint: [mpTabKey, mpTabHint],
+  rejoinButtons: [mpText("net.rejoinNow", "btn btn--go", "board-rejoin", () => player.net.rejoinNow()), mpText("net.solo", "btn btn--danger", "board-solo", () => player.net.solo())],
   textWidth: (text) => {
     const ctx = (mp.ctx ??= document.createElement("canvas").getContext("2d"));
     ctx.font = (mp.font ??= `11px ${getComputedStyle(document.body).fontFamily}`);
@@ -303,6 +316,7 @@ function renderMp() {
     return;
   }
   mpTabHint.textContent = t("board.tabHint");
+  for (const b of el.mpPanel.querySelectorAll(".mpb__rejoinActions [data-i18n]")) if (b.textContent !== t(b.dataset.i18n)) b.textContent = t(b.dataset.i18n);
   const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
   const changed = mpBoard.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
   if (changed?.nodes.length) centerBoardNodes(changed.nodes);
@@ -1372,6 +1386,7 @@ async function settingsSnapshot() {
     dpadMode: player.dpadMode,
     slot: slot(),
     netOn: state.prefs.netOn !== false,
+    netWan: state.prefs.netWan === true,
     netNick: String(state.prefs.netNick ?? ""),
     wgbaLink: state.link.linked,
     webRom: state.prefs.webRom ?? "",
@@ -1395,6 +1410,7 @@ async function applySettings(next) {
     dpadMode: DPAD_MODES.includes(next.dpadMode) ? next.dpadMode : DPAD_DEFAULT,
     slot: next.slot,
     netOn: next.netOn !== false,
+    netWan: next.netWan === true,
     netNick: [...String(next.netNick ?? "").trim()].slice(0, 12).join(""),
     webRom: String(next.webRom ?? "").trim(),
     favorites: next.favorites,

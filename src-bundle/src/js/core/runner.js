@@ -526,10 +526,10 @@
     });
   }
 
-  const net = { host: null, onevent: null, onrecv: null, serial: 0 };
+  const net = { host: null, onevent: null, onrecv: null, onstate: null, serial: 0 };
   function makeNet(info) {
     if (!info || typeof info !== "object") return null;
-    net.host = Object.freeze({ protocol: Number(info.protocol) || 1, ordered: info.ordered !== false, inputs: Boolean(info.inputs) });
+    net.host = Object.freeze({ protocol: Number(info.protocol) || 1, ordered: info.ordered !== false, inputs: Boolean(info.inputs), rejoin: info.rejoin === true });
     const toOf = (to) => (to === "ordered" || to === "all" ? to : Number.isInteger(to) && to >= 0 && to < 8 ? to : null);
     return Object.freeze({
       get host() {
@@ -556,6 +556,19 @@
         const data = view.slice().buffer;
         send({ type: "net", op: "send", to: target, data }, [data]);
       },
+      sendState: (to, bytes) => {
+        if (!Number.isInteger(to) || to < 0 || to >= 8) throw new Error(`webgba.net.sendState: 받는 곳은 자리 0~7: ${to}`);
+        const view = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : null;
+        if (!view || !view.length || view.length > 262144) throw new Error("webgba.net.sendState: 바이트는 1~262144");
+        const data = view.slice().buffer;
+        send({ type: "net", op: "state", to, data }, [data]);
+      },
+      get onstate() {
+        return net.onstate;
+      },
+      set onstate(fn) {
+        net.onstate = typeof fn === "function" ? fn : null;
+      },
       get onevent() {
         return net.onevent;
       },
@@ -572,9 +585,10 @@
   }
   function onNet(data) {
     try {
-      if (data.op === "hello" && net.host) net.host = Object.freeze({ protocol: Number(data.protocol) || 1, ordered: data.ordered !== false, inputs: Boolean(data.inputs) });
+      if (data.op === "hello" && net.host) net.host = Object.freeze({ protocol: Number(data.protocol) || 1, ordered: data.ordered !== false, inputs: Boolean(data.inputs), rejoin: data.rejoin === true });
       else if (data.op === "event" && net.onevent) net.onevent(data.kind | 0, data.a >>> 0, data.b >>> 0);
       else if (data.op === "recv" && net.onrecv && data.data instanceof ArrayBuffer) net.onrecv(data.from | 0, new Uint8Array(data.data));
+      else if (data.op === "state" && net.onstate && data.data instanceof ArrayBuffer) net.onstate(data.from | 0, new Uint8Array(data.data));
     } catch (error) {
       report("error", error);
     }

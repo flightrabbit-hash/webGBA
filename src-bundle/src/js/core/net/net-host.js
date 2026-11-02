@@ -1,10 +1,14 @@
-import { EV, MSG_MAX, NetSession, PROTOCOL, SLOTS, TO_ALL, TO_ORDERED, WHY } from "./session.js";
+import { EV, MSG_MAX, NetSession, PROTOCOL, SLOTS, STATE_MAX, TO_ALL, TO_ORDERED, WHY } from "./session.js";
 import { BOARD_MIN_MS, BOARD_POLL_FRAMES, boardConfig, boardSerial, decodeRow, encodeRow, readBoard, sameBoard, scriptBoard } from "./board.js";
+import { IcePlan } from "./ice.js";
 
-export { EV, WHY, TO_ALL, TO_ORDERED, PROTOCOL, MSG_MAX };
+export { EV, WHY, TO_ALL, TO_ORDERED, PROTOCOL, MSG_MAX, STATE_MAX };
+
+export const FROM_STATE = 0x100;
 
 export const WEBAPI_NET = Object.freeze(["Web_NetWanted", "Web_NetEvent", "Web_NetOut", "Web_NetOutLen", "Web_NetOutClear", "Web_NetInBuffer", "Web_NetIn"]);
 export const HOST_FLAGS = 1;
+export const HOST_REJOIN = 4;
 export const WINDOW_MS = 180000;
 export const CONNECTED_CLOSE_MS = 1000;
 
@@ -39,7 +43,7 @@ export function netConfig(manifest) {
     return { index: index + 1, id: typeof p?.id === "string" && p.id ? p.id : `p${index + 1}`, name: p?.name ?? null, min, max };
   });
   const compat = typeof mp?.compat === "string" && mp.compat ? mp.compat : "exact";
-  return { off: "", purposes, compat, min: pmin, max: pmax, sync: mp?.sync === "inputs" ? "inputs" : "messages" };
+  return { off: "", purposes, compat, min: pmin, max: pmax, sync: mp?.sync === "inputs" ? "inputs" : "messages", rejoin: mp?.rejoin === true, iceServers: mp?.iceServers };
 }
 
 export async function compatKey({ id = "", compat = "exact", build = "", game = "" }) {
@@ -69,8 +73,8 @@ export class WebApiNetGame {
     return Boolean(this.host?.ex) && !this.host.halted;
   }
 
-  hello() {
-    if (this.ex.Web_NetHost) this.call(() => this.ex.Web_NetHost(PROTOCOL, HOST_FLAGS));
+  hello(rejoin = false) {
+    if (this.ex.Web_NetHost) this.call(() => this.ex.Web_NetHost(PROTOCOL, HOST_FLAGS | (rejoin ? HOST_REJOIN : 0)));
   }
 
   gameCompat() {
@@ -112,7 +116,7 @@ export class WebApiNetGame {
       for (let p = at, end = at + len; p + 4 <= end; ) {
         const n = m[p] | (m[p + 1] << 8);
         if (!n || n > MSG_MAX || p + 4 + n > end) break;
-        out.push({ to: m[p + 2], bytes: m.slice(p + 4, p + 4 + n) });
+        out.push({ to: m[p + 2], part: m[p + 3], bytes: m.slice(p + 4, p + 4 + n) });
         p += 4 + ((n + 3) & ~3);
       }
     }
@@ -120,9 +124,9 @@ export class WebApiNetGame {
     return out;
   }
 
-  deliver(from, bytes) {
+  deliver(from, bytes, state = false) {
     if (this.inbox.length >= INBOX_MAX || this.inboxBytes + bytes.length > INBOX_BYTES) return false;
-    this.inbox.push([from, bytes]);
+    this.inbox.push([state ? from | FROM_STATE : from, bytes]);
     this.inboxBytes += bytes.length;
     return true;
   }
@@ -157,8 +161,8 @@ export class ScriptNetGame {
     return Boolean(this.host?.port) && !this.host.halted;
   }
 
-  hello() {
-    this.host.netPost({ op: "hello", protocol: PROTOCOL, ordered: true, inputs: false });
+  hello(rejoin = false) {
+    this.host.netPost({ op: "hello", protocol: PROTOCOL, ordered: true, inputs: false, rejoin });
   }
 
   gameCompat() {
@@ -169,9 +173,9 @@ export class ScriptNetGame {
     this.host.netPost({ op: "event", kind, a: a >>> 0, b: b >>> 0 });
   }
 
-  deliver(from, bytes) {
+  deliver(from, bytes, state = false) {
     const data = bytes.buffer.byteLength === bytes.length && bytes.byteOffset === 0 ? bytes.buffer : bytes.slice().buffer;
-    this.host.netPost({ op: "recv", from, data }, [data]);
+    this.host.netPost({ op: state ? "state" : "recv", from, data }, [data]);
     return true;
   }
 
@@ -179,7 +183,7 @@ export class ScriptNetGame {
 }
 
 export class NetHost {
-  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, onBoard = () => {}, makePeer = null, nick = () => "", enabled = () => true } = {}) {
+  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, onBoard = () => {}, makePeer = null, nick = () => "", enabled = () => true, wan = () => false, fetchImpl = null } = {}) {
     this.log = log;
     this.onWant = onWant;
     this.onChange = onChange;
@@ -188,6 +192,11 @@ export class NetHost {
     this.makePeer = makePeer;
     this.nick = nick;
     this.enabled = enabled;
+    this.wan = wan;
+    this.fetchImpl = fetchImpl;
+    this.icePlan = null;
+    this.iceFailed = 0;
+    this.stateOut = new Map();
     this.boardCfg = null;
     this.watching = false;
     this.resetBoard();
@@ -243,8 +252,9 @@ export class NetHost {
     this.manifest = manifest;
     this.build = build;
     this.boardCfg = boardConfig(manifest);
+    this.icePlan = new IcePlan({ manifestList: config.iceServers, fetchImpl: this.fetchImpl ?? ((...a) => globalThis.fetch(...a)), log: this.log });
     if (game.script) host.onNet = (message) => this.fromScript(message);
-    game.hello();
+    game.hello(config.rejoin);
     this.compat = compatKey({ id: manifest?.id ?? "", compat: config.compat, build, game: game.gameCompat() });
     this.changed();
     return true;
@@ -271,6 +281,9 @@ export class NetHost {
     this.ended = null;
     this.failed = null;
     this.boardCfg = null;
+    this.icePlan = null;
+    this.iceFailed = 0;
+    this.stateOut.clear();
     this.resetBoard();
     if (this.requestOpen) {
       this.requestOpen = false;
@@ -390,7 +403,60 @@ export class NetHost {
       members: s ? s.memberList() : [],
       ended: this.ended,
       failed: this.failed,
+      rejoinable: Boolean(s?.rejoinable),
+      rejoining: Boolean(s && !s.closed && s.rejoining),
+      rejoinState: s && !s.closed && s.rejoining ? s.helper?.state ?? "" : "",
+      wan: Boolean(this.wan()),
+      iceHosts: this.wan() && this.icePlan?.custom ? this.icePlan.hosts : [],
+      iceFailed: this.iceFailed,
     };
+  }
+
+  async iceList() {
+    const got = await this.icePlan.list(true);
+    if (got.failed !== this.iceFailed) {
+      this.iceFailed = got.failed;
+      this.changed();
+    }
+    return got;
+  }
+
+  solo() {
+    const s = this.session;
+    if (!s || s.closed || !s.rejoining) return false;
+    s.close(WHY.SOLO);
+    return true;
+  }
+
+  rejoinNow() {
+    const s = this.session;
+    if (!s || s.closed || !s.rejoining) return false;
+    s.helperCall("now");
+    return true;
+  }
+
+  statePart(m) {
+    if (!this.config?.rejoin || m.to >= SLOTS || (m.part !== 1 && m.part !== 2)) return;
+    const list = this.stateOut.get(m.to) ?? [];
+    list.push(m.bytes);
+    const size = list.reduce((n, b) => n + b.length, 0);
+    if (size > STATE_MAX) {
+      this.stateOut.delete(m.to);
+      this.log("warn", `상태 묶음이 ${STATE_MAX}바이트를 넘어 버림(자리 ${m.to})`);
+      return;
+    }
+    if (m.part === 1) {
+      this.stateOut.set(m.to, list);
+      return;
+    }
+    this.stateOut.delete(m.to);
+    const all = new Uint8Array(size);
+    let at = 0;
+    for (const b of list) {
+      all.set(b, at);
+      at += b.length;
+    }
+    if (!this.session?.sendState(m.to, all)) this.log("warn", `상태 묶음 보내기 실패(자리 ${m.to})`);
   }
 
   discard() {
@@ -410,7 +476,7 @@ export class NetHost {
     const game = this.game;
     if (!game || game.script) return;
     const out = game.drain();
-    if (out.length && this.active) for (const m of out) this.session.send(m.to, m.bytes);
+    if (out.length && this.active) for (const m of out) m.part ? this.statePart(m) : this.session.send(m.to, m.bytes);
     const wanted = game.wanted();
     if (wanted !== this.lastWanted) {
       this.lastWanted = wanted;
@@ -450,6 +516,9 @@ export class NetHost {
       const to = message.to === "ordered" ? TO_ORDERED : message.to === "all" ? TO_ALL : message.to;
       if (!(message.data instanceof ArrayBuffer)) return;
       this.session.send(to, new Uint8Array(message.data));
+    } else if (message.op === "state") {
+      if (!this.active || !this.config?.rejoin || !(message.data instanceof ArrayBuffer)) return;
+      if (!this.session.sendState(message.to, new Uint8Array(message.data))) this.log("warn", `상태 묶음 보내기 실패(자리 ${message.to})`);
     }
   }
 
@@ -514,7 +583,7 @@ export class NetHost {
         if (this.session !== session) return;
         if (kind === EV.CLOSED && session.role === "join" && !session.opened && [WHY.NO_NETWORK, WHY.LOST, WHY.TIMEOUT].includes(a)) {
           this.session = null;
-          this.failed = { why: a, at: Date.now() };
+          this.failed = { why: a, at: Date.now(), hint: session.failHint ?? "" };
           this.log("warn", `참가 연결 실패(이유 ${a}) — 창에서 다시 시도`);
           this.changed();
           return;
@@ -538,11 +607,14 @@ export class NetHost {
         else if (kind === EV.LEAVE) this.notice({ kind: "leave", slot: a, nick: session.lastNick?.get(a) ?? `${a + 1}P`, why: b });
         else if (kind === EV.CLOSED) this.notice({ kind: "closed", why: a });
         else if (kind === EV.OPEN && session.role === "join") this.notice({ kind: "open", slot: a, count: b });
+        else if (kind === EV.HOLD) this.notice(a === session.slot ? { kind: "rejoining" } : { kind: "hold", slot: a, nick: nickOf(a) });
+        else if (kind === EV.BACK) this.notice({ kind: "back", slot: a, nick: nickOf(a) });
+        else if (kind === EV.REJOINED) this.notice({ kind: "rejoined", slot: a });
         this.changed();
       },
-      deliver: (from, bytes) => {
+      deliver: (from, bytes, state = false) => {
         if (this.session !== session || !this.game) return;
-        if (!this.game.deliver(from, bytes)) {
+        if (!this.game.deliver(from, bytes, state)) {
           this.log("warn", "받은 메시지가 너무 많이 쌓여 연결을 끊음");
           session.close(WHY.LOST);
         }
@@ -566,6 +638,7 @@ export class NetHost {
     if (!this.request || !this.game) throw new Error("no request");
     if (this.session && !this.session.closed) return this.session;
     const compat = await this.compat;
+    const wan = Boolean(this.wan());
     const session = new NetSession({
       role,
       nick: this.nick(),
@@ -574,8 +647,13 @@ export class NetHost {
       purpose: this.request.purpose.id,
       log: this.log,
       makePeer: this.makePeer,
+      wan,
+      turn: wan && Boolean(this.icePlan?.turn),
+      ice: wan && this.icePlan ? () => this.iceList() : null,
+      rejoinGame: Boolean(this.config?.rejoin),
     });
     this.session = session;
+    this.stateOut.clear();
     this.ended = null;
     this.failed = null;
     if (!this.game.script) this.resetBoard();
@@ -597,7 +675,7 @@ export class NetHost {
     this.lastWanted = 0;
     this.dismissed = -1;
     this.game.clear();
-    if (!this.game.script) this.game.hello();
+    if (!this.game.script) this.game.hello(Boolean(this.config?.rejoin));
   }
 
   setAway(on) {

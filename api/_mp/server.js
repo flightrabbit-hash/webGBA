@@ -54,6 +54,7 @@ const RE = {
   nonce: /^[A-Za-z0-9_-]{11}$/,
   group: /^[A-Za-z0-9_-]{16}$/,
   token: /^(\d{8})\.([A-Za-z0-9_-]{22})$/,
+  rejoinKey: /^[A-Za-z0-9_-]{16,32}$/,
 };
 
 const int = (v, low, high) => {
@@ -168,7 +169,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
         }
         await db.run([["SET", `r:${room}`, JSON.stringify(rec), "XX", "EX", LIMITS.ROOM_TTL]]);
       }
-      return { room, x, g, i: rec.i, q: 1, t: await token("h", room, x, g, rec.i) };
+      return { room, x, g, i: rec.i, q: 1, t: await token("h", room, x, g, rec.i), rj: 1 };
     }
     throw new HttpError(503, "busy");
   }
@@ -252,7 +253,76 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       if (last) throw new HttpError(409, "full");
       return { wait: true, q: rec.q };
     }
-    return { o: rec.o, q: rec.q, x: rec.x, t: await token("g", rec.x, rec.q), hn: rec.n, k: rec.k, m: rec.m };
+    return { o: rec.o, q: rec.q, x: rec.x, t: await token("g", rec.x, rec.q), rt: await token("j", rec.x), hn: rec.n, k: rec.k, m: rec.m };
+  }
+
+  const slotOf = (v) => int(v, 1, LIMITS.PLAYERS_MAX - 1);
+  const mailKey = (x, s) => `j:${x}:${s}`;
+  const replyKey = (x, s) => `k:${x}:${s}`;
+
+  async function guestBody(body) {
+    const x = String(body.x ?? "");
+    const s = slotOf(body.s);
+    const u = String(body.u ?? "");
+    need(RE.nonce.test(x) && s !== null && RE.nonce.test(u));
+    if (!(await verify(body.rt, "j", x))) throw new HttpError(403, "token");
+    return { x, s, u };
+  }
+
+  async function rejoinPost(request, body) {
+    if (body.t !== undefined) {
+      const { x } = await hostBody(body);
+      const s = slotOf(body.s);
+      const u = String(body.u ?? "");
+      need(s !== null && RE.nonce.test(u));
+      const reply = { u };
+      if (body.a !== undefined) reply.a = code(body.a);
+      else if (body.n) reply.n = 1;
+      else reply.no = 1;
+      const pre = await limitWrite(await groupOf(request));
+      await db.run([...pre, ["SET", replyKey(x, s), JSON.stringify(reply), "EX", LIMITS.ANSWER_TTL]]);
+      return { ok: true };
+    }
+    const { x, s, u } = await guestBody(body);
+    const k = String(body.k ?? "");
+    const key = String(body.key ?? "");
+    need(["r", "n", "b"].includes(k) && RE.rejoinKey.test(key));
+    const mail = { u, k, key };
+    if (k !== "b") mail.o = code(body.o);
+    const pre = await limitWrite(await groupOf(request));
+    await db.run([...pre, ["SET", mailKey(x, s), JSON.stringify(mail), "EX", LIMITS.ANSWER_TTL]]);
+    return { ok: true };
+  }
+
+  async function rejoinPoll(request, query) {
+    if (query.t !== undefined) {
+      const { x } = await hostBody(query);
+      const slots = [...new Set(String(query.s ?? "").split(",").map(slotOf))];
+      need(slots.length >= 1 && slots.length <= LIMITS.PLAYERS_MAX - 1 && slots.every((s) => s !== null));
+      limitRead(await groupOf(request));
+      const [values] = await db.run([["MGET", ...slots.map((s) => mailKey(x, s))]]);
+      const offers = [];
+      (values ?? []).forEach((v, i) => {
+        if (!v) return;
+        try {
+          const m = JSON.parse(v);
+          if (m && RE.nonce.test(m.u ?? "")) offers.push({ s: slots[i], u: m.u, k: m.k, key: m.key, o: m.o });
+        } catch {}
+      });
+      return { offers };
+    }
+    const { x, s, u } = await guestBody(query);
+    const room = String(query.room ?? "");
+    need(RE.room.test(room));
+    limitRead(await groupOf(request));
+    const [[v, r]] = await db.run([["MGET", replyKey(x, s), `r:${room}`]]);
+    const rec = readRoom(r);
+    let reply = null;
+    try {
+      reply = v ? JSON.parse(v) : null;
+    } catch {}
+    const mine = reply && reply.u === u;
+    return { live: Boolean(rec && rec.x === x), a: mine && reply.a ? reply.a : null, n: mine && reply.n ? 1 : 0, no: mine && reply.no ? 1 : 0 };
   }
 
   async function answer(request, body) {
@@ -332,6 +402,8 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       else if (request.method === "POST" && op === "msg") out = await answer(request, await readBody(request));
       else if (request.method === "GET" && op === "msg") out = await poll(request, query);
       else if (request.method === "GET" && op === "room") out = await status(request, query);
+      else if (request.method === "POST" && op === "rj") out = await rejoinPost(request, await readBody(request));
+      else if (request.method === "GET" && op === "rj") out = await rejoinPoll(request, query);
       else throw new HttpError(404, "op");
       return reply(200, out, origin);
     } catch (error) {

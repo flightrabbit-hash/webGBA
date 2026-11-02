@@ -631,5 +631,33 @@
 
   "cfg.netNick.default": "기본 닉네임",
 
-  "net.reachedNote": "연결됨 · {n}/{max} — 잠시 후 창을 닫습니다"
+  "net.reachedNote": "연결됨 · {n}/{max} — 잠시 후 창을 닫습니다",
+
+  "cfg.netWan": "인터넷으로도 연결(실험)",
+  "cfg.netWan.note": "방 코드로 다른 곳에 있는 친구와도 연결합니다. 휴대폰 데이터·회사·학교 망 등에서는 실패할 수 있습니다. 켜면 상대 기기에 이 기기의 공인 IP가 보입니다",
+  "net.leadWan": "같은 와이파이의 기기, 또는 방 코드로 다른 곳에 있는 친구와 연결합니다.",
+  "net.roomHintWan": "친구 기기의 '코드로 들어가기'에 이 코드를 넣어주세요. 다른 곳에 있는 친구도 들어올 수 있습니다.",
+  "net.iceHosts": "이 게임의 연결 서버: {hosts}",
+  "net.iceFailed": "이 게임의 연결 서버에서 접속 정보를 받지 못했습니다. 다른 곳의 친구와는 연결되지 않을 수 있습니다.",
+  "net.err.wanOff": "상대는 '인터넷으로도 연결(실험)'을 켰지만 이 기기는 꺼져 있어 같은 와이파이에서만 연결됩니다. 다른 곳에 있다면 설정 › 멀티플레이에서 켜주세요.",
+  "net.err.peerLan": "상대 기기는 '인터넷으로도 연결(실험)'이 꺼져 있어 같은 와이파이에서만 연결됩니다. 상대 기기 설정에서도 켜주세요.",
+  "net.err.wanFailed": "인터넷으로 연결하지 못했습니다. 휴대폰 데이터·회사·학교 망 등은 연결되지 않을 수 있습니다.",
+  "net.why.solo": "혼자 이어 하기로 바꿨습니다",
+  "net.notice.hold": "{nick} 님 연결 끊김 · 기다리는 중",
+  "net.notice.back": "{nick} 님이 다시 들어왔습니다",
+  "net.notice.rejoining": "연결이 끊겨 다시 연결하는 중…",
+  "net.notice.rejoined": "방에 다시 들어왔습니다 · {slot}P",
+  "net.state.hold": "끊김 · 기다리는 중",
+  "net.state.rejoining": "다시 연결하는 중…",
+  "net.rejoinNow": "다시 들어가기",
+  "net.solo": "혼자 이어 하기",
+  "net.rejoin.lead": "연결이 끊겼습니다. 같은 자리로 자동으로 다시 들어갑니다.",
+  "net.rejoin.trying": "다시 연결하는 중…",
+  "net.rejoin.wait": "방장의 응답을 기다리는 중…",
+  "net.rejoin.offline": "인터넷 연결을 기다리는 중…",
+  "net.rejoin.server": "서버에 연결하지 못했습니다. 다시 시도하는 중…",
+  "net.rejoin.note": "'혼자 이어 하기'를 누르면 친구 게임에서 나와 혼자 계속합니다. 이 방에는 다시 들어갈 수 없습니다.",
+  "net.rejoined": "다시 들어왔습니다 · {slot}P",
+  "board.hold": "끊김 · 기다리는 중",
+  "board.rejoining": "다시 연결하는 중…"
 }

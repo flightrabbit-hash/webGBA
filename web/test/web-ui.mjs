@@ -1700,15 +1700,15 @@ const BOARD_ROWS = [
   { slot: null, nameLabel: 1, values: [0, 4, 8, 1], dim: true },
 ];
 
-async function boardSession(page, { plain }) {
+async function boardSession(page, { plain, rejoin = false }) {
   await page.evaluate(
-    async ({ plain, fixture, rows }) => {
+    async ({ plain, rejoin, fixture, rows }) => {
       const { boardConfig, scriptBoard } = await import("/js/core/net/board.js");
       const net = window.webgba.player.net;
       const members = plain
         ? [{ slot: 0, nick: "플레이어 7730", rtt: null }, { slot: 1, nick: "플라이", rtt: 9 }, { slot: 2, nick: "플레이어 5102", rtt: null }]
-        : [{ slot: 0, nick: "플레이어 7730", rtt: null }, { slot: 1, nick: "플라이", rtt: 12 }, { slot: 2, nick: "플레이어 4821", rtt: 38, stalled: true }, { slot: 3, nick: "달빛토끼", rtt: 160 }];
-      net.session = { closed: false, open: true, opened: true, role: "join", host: false, slot: 1, max: plain ? 4 : 8, get count() { return members.length; }, gone: new Map(), rows: new Map(), memberList: () => members.map((m) => ({ ...m, me: m.slot === 1, host: m.slot === 0, stalled: Boolean(m.stalled), away: false })), setAway() {}, close() {}, setRow() {} };
+        : [{ slot: 0, nick: "플레이어 7730", rtt: null }, { slot: 1, nick: "플라이", rtt: 12, rejoining: rejoin }, { slot: 2, nick: "플레이어 4821", rtt: 38, stalled: true }, { slot: 3, nick: "달빛토끼", rtt: rejoin ? 160 : null, held: !rejoin }];
+      net.session = { closed: false, open: true, opened: true, role: "join", host: false, slot: 1, rejoining: rejoin, rejoinable: true, helper: { state: "offline" }, max: plain ? 4 : 8, get count() { return members.length; }, gone: new Map(), rows: new Map(), memberList: () => members.map((m) => ({ ...m, me: m.slot === 1, host: m.slot === 0, stalled: Boolean(m.stalled), held: Boolean(m.held), rejoining: Boolean(m.rejoining), away: false })), setAway() {}, close() {}, setRow() {} };
       net.request = { serial: 9, purpose: net.config.purposes[0], min: 2, max: plain ? 4 : 8, role: "any" };
       net.boardCfg = plain ? null : boardConfig({ multiplayer: { board: fixture } });
       net.boardPtr = 0;
@@ -1716,17 +1716,19 @@ async function boardSession(page, { plain }) {
       window.webgba.net.win.joinedRoom = "482153";
       net.changed();
     },
-    { plain, fixture: BOARD_FIXTURE, rows: BOARD_ROWS },
+    { plain, rejoin, fixture: BOARD_FIXTURE, rows: BOARD_ROWS },
   );
 }
 
 async function boardChecks() {
   const bytes = fs.readFileSync(process.env.UI_NET_WGBA).toString("base64");
   const views = [{ name: "390x844", viewport: { width: 390, height: 844 } }, { name: "844x390", viewport: { width: 844, height: 390 } }, { name: "320x568", viewport: { width: 320, height: 568 } }].filter((v) => !VIEW_FILTER || VIEW_FILTER.has(v.name));
-  const shots = { "390x844|ko|game": "웹_세로_390x844_상태메뉴.png", "844x390|ko|game": "웹_가로_844x390_상태메뉴.png", "320x568|ko|plain": "웹_세로_320x568_게임값없음.png" };
+  const shots = { "390x844|ko|game": "웹_세로_390x844_상태메뉴.png", "844x390|ko|game": "웹_가로_844x390_상태메뉴.png", "320x568|ko|plain": "웹_세로_320x568_게임값없음.png", "390x844|ko|rejoin": "웹_세로_390x844_다시연결.png", "844x390|ko|rejoin": "웹_가로_844x390_다시연결.png" };
   for (const view of views) {
     for (const lang of LANGS) {
-      for (const plain of [false, true]) {
+      for (const mode of ["game", "plain", "rejoin"]) {
+        const plain = mode === "plain";
+        const rejoin = mode === "rejoin";
         const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
         await context.addInitScript((lang) => {
           Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
@@ -1744,9 +1746,9 @@ async function boardChecks() {
           await window.webgba.openFiles([new File([data], "net-demo.wgba")]);
         }, bytes);
         await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
-        const key = `${view.name}|${lang}|${plain ? "plain" : "game"}`;
+        const key = `${view.name}|${lang}|${mode}`;
         const toolsBefore = await page.evaluate(() => [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).length);
-        await boardSession(page, { plain });
+        await boardSession(page, { plain, rejoin });
         await page.waitForTimeout(200);
         await page.click("#btnNet");
         await page.waitForFunction(() => window.webgba.net.board.state.open, null, { timeout: 5000 });
@@ -1773,7 +1775,10 @@ async function boardChecks() {
         ok(`${key} 상태 메뉴 자리: ${info.landscape ? "좌측 316px" : "게임 화면 아래(게임 화면 가리지 않음)"}`, info.landscape ? Math.abs(info.panel.width - 316) < 1 : info.panel.top >= info.screenBottom - 0.5, `${JSON.stringify(info.panel)} 화면 아래 ${info.screenBottom}`);
         ok(`${key} 상단 버튼 수 그대로·빨리 감기 자리에 멀티플레이`, info.tools === toolsBefore && info.fast === "none", `${toolsBefore} → ${info.tools} · 빨리 감기 ${info.fast}`);
         ok(`${key} 상태 메뉴 겹침 없음·잘린 글 없음(이름·제목 제외)`, info.overlap === 0 && info.clipped.length === 0, `겹침 ${info.overlap} · 잘림 ${info.clipped.join(",")}`);
-        await measure(page, `${key}|board`, [".mpb__head", ".mpb__seat", ".mpb__l1", ".mpb__l2", ".mpb__tag", ".mpb__foot"]);
+        const held = await page.evaluate(() => ({ chips: [...window.webgba.net.board.root.querySelectorAll(".mpb__tag--warn")].map((n) => n.textContent), bar: !window.webgba.net.board.root.querySelector(".mpb__rejoin")?.hidden }));
+        if (!plain) ok(`${key} 상태 메뉴 ${rejoin ? "내 줄 '다시 연결하는 중…' · 다시 연결 줄(글 + 버튼 둘)" : "끊긴 자리 줄 꼬리표('끊김 · 기다리는 중')"} · ${rejoin ? "" : "다시 연결 줄 없음"}`, rejoin ? held.bar && held.chips.length >= 2 : !held.bar && held.chips.length >= 2, JSON.stringify(held));
+        await measure(page, `${key}|board`, [".mpb__head", ".mpb__seat", ".mpb__l1", ".mpb__l2", ".mpb__tag", ".mpb__foot", ...(rejoin ? [".mpb__rejoinText", ".mpb__rejoinActions .btn"] : [])]);
+        if (rejoin) await lineUp(page, `${key}|board`, ".mpb__rejoinActions", ":scope > button");
         await rows(page, `${key}|board`, ".mpb__row");
         // 항목 위·아래 여백: 줄 칸(1줄·2줄)이 항목 위·아래에서 같은 거리, 모든 항목 같은 짜임. 칸 안 글자·꼬리표·막대는 위 measure 가 잉크 가운데를 잰다
         // (꼬리표 외곽선이 바탕색과 비슷한 줄이 있어 항목 전체 잉크로 항목끼리 비교하지 않음).
@@ -1804,7 +1809,7 @@ async function boardChecks() {
             return { placeholder: input.placeholder, max: input.maxLength, switches: row.querySelectorAll(".switch").length, fits: ctx.measureText(input.placeholder).width <= room + 0.5 };
           });
           await page.waitForTimeout(300);
-          ok(`${key} 설정: 멀티플레이 켜기 칸 + 닉네임 칸(빈칸 = 플레이어 1234, 12자, 안내 글 잘림 없음)`, nick && /1234/.test(nick.placeholder) && nick.max === 12 && nick.switches === 1 && nick.fits, JSON.stringify(nick));
+          ok(`${key} 설정: 멀티플레이 켜기·인터넷으로도 연결 칸 + 닉네임 칸(빈칸 = 플레이어 1234, 12자, 안내 글 잘림 없음)`, nick && /1234/.test(nick.placeholder) && nick.max === 12 && nick.switches === 2 && nick.fits, JSON.stringify(nick));
           await page.evaluate(() => {
             const group = document.querySelector('[data-action="cfg-net-nick"]').closest(".group");
             group.dataset.uiNet = "1";

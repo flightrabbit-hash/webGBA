@@ -2371,6 +2371,37 @@ label.cfg__swatch-row {
   border-bottom: 1px solid var(--line);
 }
 
+.mpb__rejoin {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mpb__rejoin[hidden] {
+  display: none;
+}
+
+.mpb__rejoinText {
+  height: 18px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mpb__rejoinActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mpb__rejoinActions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .mpb__foot {
   border-top: 1px solid var(--line);
 }
