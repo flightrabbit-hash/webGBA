@@ -636,6 +636,9 @@
   "cfg.netNick.default": "Default nickname",
 
   "net.reachedNote": "Connected · {n}/{max} — closing this window",
+  "net.anytimeNote": "The room stays open after you close this window. You will be told when someone joins.",
+  "net.buttonWait": "Multiplayer · waiting for players",
+  "net.statusWait": "Waiting for players · {n}",
 
   "cfg.netWan": "Also connect over the internet (experimental)",
   "cfg.netWan.note": "Connect with friends elsewhere by room code. It may fail on mobile data or office and school networks. When on, your public IP is shared with the other player",

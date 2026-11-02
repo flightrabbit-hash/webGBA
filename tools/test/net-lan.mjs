@@ -1,7 +1,8 @@
-// 멀티플레이 부품 시험(브라우저 없이): 망 안 후보 거르기·연결 코드(인터넷 후보 포함)·Web_NetWanted 값·설명서 multiplayer 읽기·호환 키·QR 크기·게임별 연결 서버·상태 묶음 조각.
+// 멀티플레이 부품 시험(브라우저 없이): 망 안 후보 거르기·연결 코드(인터넷 후보 포함)·Web_NetWanted 값·설명서 multiplayer 읽기·호환 키·QR 크기·게임별 연결 서버·상태 묶음 조각·중간 참가 게임(join).
 //   node tools/test/net-lan.mjs
 import { cleanCode, decodeCode, encodeCode, isLanAddress } from "../../src-bundle/src/js/core/net/lan.js";
-import { compatKey, netConfig, packWanted, unpackWanted } from "../../src-bundle/src/js/core/net/net-host.js";
+import { compatKey, NetHost, netConfig, packWanted, unpackWanted } from "../../src-bundle/src/js/core/net/net-host.js";
+import { checkManifest } from "../../src-bundle/src/js/core/wgba-format.js";
 import { cleanNick, NetSession, STATE_MAX, statePackets } from "../../src-bundle/src/js/core/net/session.js";
 import { fetchCredential, iceHosts, IcePlan, readIceServers } from "../../src-bundle/src/js/core/net/ice.js";
 import { qrMatrix } from "../../src-bundle/src/js/core/net/qr.js";
@@ -56,6 +57,27 @@ const cfg = netConfig({ multiplayer: { protocol: 1, players: { min: 2, max: 8 },
 ok("설명서 multiplayer 읽기(용도·인원)", cfg.purposes.length === 2 && cfg.purposes[0].max === 2 && cfg.purposes[1].max === 8 && cfg.compat === "exact");
 ok("규약 번호가 더 크면 멀티플레이 끔", netConfig({ multiplayer: { protocol: 2 } }).off === "protocol");
 ok("설명서 없는 ① 게임 = 기본 용도 하나·2명", netConfig(null).purposes.length === 1 && netConfig(null).max === 2);
+
+// ── 중간 참가 게임(join: "anytime") ──
+const joinErrors = (join) => {
+  const errors = [];
+  checkManifest({ multiplayer: { protocol: 1, join } }, errors, []);
+  return errors.filter((e) => e.includes("multiplayer.join")).length;
+};
+ok("설명서 multiplayer.join: \"anytime\" 통과 · 다른 값 오류 · 빼면 기본", netConfig({ multiplayer: { protocol: 1, join: "anytime" } }).anytime && !netConfig({ multiplayer: { protocol: 1 } }).anytime && joinErrors("anytime") === 0 && joinErrors("always") === 1 && joinErrors(true) === 1);
+const fakeHost = (wanted) => ({ ex: { Web_NetWanted: () => wanted, Web_NetEvent() {}, Web_NetOut: () => 0, Web_NetOutLen: () => 0, Web_NetOutClear() {}, Web_NetInBuffer: () => 0, Web_NetIn() {} }, u8: new Uint8Array(64), text: () => "", halted: false });
+const wantRun = (join) => {
+  const opened = [];
+  const net = new NetHost({ onWant: (r) => opened.push(r) });
+  net.attach(fakeHost(packWanted({ purpose: 1, min: 2, max: 4, serial: 1 })), { manifest: { multiplayer: { protocol: 1, players: { min: 2, max: 4 }, ...(join ? { join } : {}) } } });
+  net.afterFrame();
+  const got = { request: Boolean(net.request), opened: opened.length, timer: Boolean(net.windowTimer), anytime: net.snapshot().anytime };
+  net.detach();
+  return got;
+};
+const plain = wantRun();
+const anytime = wantRun("anytime");
+ok("요청: 기본 게임 = 창 자동 열림·3분 시간 초과 걸림 / 중간 참가 게임 = 요청만 기억(창 자동 열림·시간 초과 없음)", plain.request && plain.opened === 1 && plain.timer && anytime.request && anytime.opened === 0 && !anytime.timer && anytime.anytime, JSON.stringify({ plain, anytime }));
 const k1 = await compatKey({ id: "a.b", compat: "exact", build: "x1", game: "" });
 const k2 = await compatKey({ id: "a.b", compat: "exact", build: "x2", game: "" });
 const k3 = await compatKey({ id: "a.b", compat: "proto-1", build: "x1", game: "" });

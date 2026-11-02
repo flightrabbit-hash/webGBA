@@ -43,7 +43,7 @@ export function netConfig(manifest) {
     return { index: index + 1, id: typeof p?.id === "string" && p.id ? p.id : `p${index + 1}`, name: p?.name ?? null, min, max };
   });
   const compat = typeof mp?.compat === "string" && mp.compat ? mp.compat : "exact";
-  return { off: "", purposes, compat, min: pmin, max: pmax, sync: mp?.sync === "inputs" ? "inputs" : "messages", rejoin: mp?.rejoin === true, iceServers: mp?.iceServers };
+  return { off: "", purposes, compat, min: pmin, max: pmax, sync: mp?.sync === "inputs" ? "inputs" : "messages", rejoin: mp?.rejoin === true, anytime: mp?.join === "anytime", iceServers: mp?.iceServers };
 }
 
 export async function compatKey({ id = "", compat = "exact", build = "", game = "" }) {
@@ -234,6 +234,14 @@ export class NetHost {
     return Boolean(this.request && this.session?.open && this.session.count >= this.request.min);
   }
 
+  get anytime() {
+    return Boolean(this.config?.anytime);
+  }
+
+  get waiting() {
+    return Boolean(this.session?.open && this.session.role === "make" && !this.reached);
+  }
+
   attach(host, { manifest = null, build = "" } = {}) {
     this.detach();
     if (!this.enabled()) return false;
@@ -396,6 +404,8 @@ export class NetHost {
       active: this.active,
       connected: this.connected,
       reached: this.reached,
+      anytime: this.anytime,
+      waiting: this.waiting,
       role: s ? s.role : "",
       slot: s ? s.slot : -1,
       count: s ? s.count : 0,
@@ -547,7 +557,11 @@ export class NetHost {
       this.changed();
       return;
     }
-    this.log("info", `멀티플레이 요청 ${next.serial}: ${next.purpose.id} ${next.min}~${next.max}명 · ${next.role}`);
+    this.log("info", `멀티플레이 요청 ${next.serial}: ${next.purpose.id} ${next.min}~${next.max}명 · ${next.role}${this.anytime ? " · 중간 참가" : ""}`);
+    if (this.anytime) {
+      this.changed();
+      return;
+    }
     this.windowTimer = setTimeout(() => this.timeout(), WINDOW_MS);
     if (this.dismissed !== next.serial) {
       this.requestOpen = true;

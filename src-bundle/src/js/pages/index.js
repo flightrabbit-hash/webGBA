@@ -58,6 +58,7 @@ const el = {
   btnStateSave: $("btn-state-save"),
   btnStateLoad: $("btn-state-load"),
   btnNet: $("btn-net"),
+  btnNetDot: $("btn-net-dot"),
   mpPanel: $("mppanel"),
   btnMute: $("btn-mute"),
   btnMuteIcon: $("btn-mute-icon"),
@@ -146,6 +147,7 @@ function netStatus() {
   if (!s.open) return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
   const ms = s.memberList().filter((m) => !m.host && Number.isFinite(m.rtt)).map((m) => m.rtt);
   const n = s.max > 1 ? `${s.count}/${s.max}` : s.count;
+  if (player.net.waiting) return t("net.statusWait", { n });
   return ms.length ? t("board.summary", { n, ms: Math.round(Math.max(...ms)) }) : t("board.summaryHost", { n });
 }
 
@@ -570,7 +572,8 @@ function syncControls() {
   const netOn = hosted && Boolean(player.net.request || player.net.active);
   el.btnNet.hidden = !netOn;
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
-  const netLabel = mpWanted() ? "board.open" : "net.button";
+  el.btnNetDot.hidden = !player.net.waiting;
+  const netLabel = mpWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) {
     el.btnNet.dataset.i18nTitle = netLabel;
     el.btnNet.title = t(netLabel);

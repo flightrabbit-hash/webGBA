@@ -636,6 +636,9 @@
   "cfg.netNick.default": "기본 닉네임",
 
   "net.reachedNote": "연결됨 · {n}/{max} — 잠시 후 창을 닫습니다",
+  "net.anytimeNote": "창을 닫아도 방은 계속 열려 있습니다. 손님이 들어오면 알려 드립니다.",
+  "net.buttonWait": "멀티플레이 · 손님을 기다리는 중",
+  "net.statusWait": "손님을 기다리는 중 · 사람 {n}",
 
   "cfg.netWan": "인터넷 연결(실험)",
   "cfg.netWan.note": "방 코드로 다른 네트워크의 친구와도 연결합니다. 휴대폰 데이터·회사·학교 네트워크에서는 실패할 수 있습니다. 켜면 상대 기기에 이 기기의 공인 IP가 표시됩니다",

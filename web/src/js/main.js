@@ -817,12 +817,12 @@ function syncControls() {
   const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
   if (netBadge.textContent !== netText) netBadge.textContent = netText;
   if (netBadge.hidden !== !netText) netBadge.hidden = !netText;
-  const netTone = player.net.connected && (player.net.session.rejoining || player.net.session.memberList().some((m) => m.stalled || m.held)) ? "warn" : "";
+  const netTone = player.net.connected && (player.net.session.rejoining || player.net.session.memberList().some((m) => m.stalled || m.held)) ? "warn" : player.net.waiting ? "wait" : "";
   if ((netBadge.dataset.tone ?? "") !== netTone) {
     if (netTone) netBadge.dataset.tone = netTone;
     else delete netBadge.dataset.tone;
   }
-  const netLabel = boardWanted() ? "board.open" : "net.button";
+  const netLabel = boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();

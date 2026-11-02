@@ -3078,6 +3078,11 @@ textarea {
   color: var(--px-warn-ink);
 }
 
+.tool__badge[data-tone="wait"] {
+  background: var(--px-off);
+  color: var(--px-off-ink);
+}
+
 .tool__badge[data-tone="bad"] {
   background: var(--px-dng);
   color: var(--px-dng-ink);

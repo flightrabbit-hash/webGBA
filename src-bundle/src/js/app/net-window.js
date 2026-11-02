@@ -207,7 +207,12 @@ export class NetWindow {
     this.screen = "";
     this.refs = {};
     const snap = this.net.snapshot();
-    if (cancel) {
+    if (cancel && snap.anytime) {
+      if (!(snap.active && snap.role === "make")) {
+        this.joinSeq++;
+        this.net.discard();
+      }
+    } else if (cancel) {
       if (!snap.reached || snap.role !== "make") {
         this.dropRoom();
         this.joinSeq++;
@@ -222,7 +227,7 @@ export class NetWindow {
 
   requestClose() {
     const snap = this.net.snapshot();
-    const keep = snap.active && (snap.reached || snap.role === "join");
+    const keep = snap.active && (snap.reached || snap.role === "join" || snap.anytime);
     if (this.screen === "ended" || keep) this.close();
     else this.close({ cancel: true });
   }
@@ -645,6 +650,7 @@ export class NetWindow {
       members.append(...this.memberRows(snap));
       this.refs.members = members;
       body = snap.reached && !this.stay ? [k.note(t("net.reachedNote", { n: snap.count, max: snap.max }))] : [];
+      if (snap.anytime && !snap.reached) body.push(k.note(t("net.anytimeNote")));
       if (snap.count < snap.max) {
         const box = k.make("div", "net-room");
         this.refs.roomBox = box;
@@ -653,8 +659,7 @@ export class NetWindow {
       }
       body.push(...this.iceNodes(snap));
       body.push(k.group(t("net.room"), count, members), ...this.errorNodes());
-      if (snap.reached) actions = [k.action({ id: "leave", onClick: () => (this.net.leave(), this.close()) }), k.action({ id: "done", primary: true, onClick: () => this.close() })];
-      else actions = [cancel];
+      actions = this.hostActions(snap, cancel);
     } else if (this.screen === "wait") {
       body = [k.note(t("net.joinWait", { nick: this.joinInfo?.hn ?? "" })), ...this.errorNodes()];
       actions = [cancel];
@@ -667,6 +672,7 @@ export class NetWindow {
       this.refs.members = members;
       body = this.fallback ? [k.note(t("net.fallback"))] : [];
       if (snap.reached && !this.stay) body.push(k.note(t("net.reachedNote", { n: snap.count, max: snap.max })));
+      if (snap.anytime && !snap.reached) body.push(k.note(t("net.anytimeNote")));
       body.push(k.group(t("net.room"), count, members));
       if (snap.count < snap.max) {
         const box = k.make("div", "net-invite");
@@ -682,9 +688,7 @@ export class NetWindow {
         body.push(k.group(t(snap.count > 1 ? "net.inviteMore" : "net.invite"), box));
       }
       body.push(...this.errorNodes());
-      if (snap.reached) {
-        actions = [k.action({ id: "leave", onClick: () => (this.net.leave(), this.close()) }), k.action({ id: "done", primary: true, onClick: () => this.close() })];
-      } else actions = [cancel];
+      actions = this.hostActions(snap, cancel);
       if (!this.invite && snap.count < snap.max) this.makeInvite();
     } else if (this.screen === "join1") {
       body = [this.nickField(), k.step(t("net.join.step1")), ...this.pasteField({ field: "offer", action: "net-offer-in", value: this.offerText, onInput: (v) => (this.offerText = v), onGo: () => this.joinWithOffer() }), ...this.errorNodes()];
@@ -726,6 +730,13 @@ export class NetWindow {
       actions = [k.action({ id: "close", primary: true, onClick: () => this.close() })];
     }
     k.mount(body, actions);
+  }
+
+  hostActions(snap, cancel) {
+    const k = this.kit;
+    if (!snap.reached && !snap.anytime) return [cancel];
+    const leave = k.action({ id: "leave", onClick: () => (this.net.leave(), this.close()) });
+    return [leave, k.action({ id: snap.reached ? "done" : "close", primary: true, onClick: () => this.close() })];
   }
 
   toCode() {

@@ -42,7 +42,9 @@ const ONLY_CHOICE = process.env.UI_CHOICE_ONLY === "1";
 const ONLY_ASPECT = process.env.UI_ASPECT_ONLY === "1";
 // UI_GB_ONLY=1 이면 GB·GBC 시험만(아래 "GB·GBC" 절, UI_GB_DIR = 직접 만든 테스트 롬 폴더 — 저장소 밖, 경로 조회만)
 const ONLY_GB = process.env.UI_GB_ONLY === "1";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB;
+// UI_ANYTIME_ONLY=1 이면 중간 참가 게임(join: "anytime") 연결 창·상단 버튼 시험만(UI_NET_WGBA 를 메모리에서 다시 묶음, <주소> 는 /api/v1/mp 를 내주는 로컬 서버)
+const ONLY_ANYTIME = process.env.UI_ANYTIME_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -1831,8 +1833,67 @@ async function boardChecks() {
   }
 }
 
-if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD) await netChecks();
+if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD && !ONLY_ANYTIME) await netChecks();
+if (process.env.UI_NET_WGBA && (ONLY_ANYTIME || (process.env.UI_NET !== "0" && !ONLY_BOARD))) await anytimeChecks();
 if (process.env.UI_NET_WGBA && (ONLY_BOARD || process.env.UI_BOARD === "1")) await boardChecks();
+
+// 중간 참가 게임: 방장 혼자 방 코드 화면(안내 문구·방 나가기·닫기 버튼 줄)과 창을 닫은 뒤 상단 버튼(회색 배지 1/4) — 잉크 세로 가운데·같은 줄 위·아래 차이 0
+async function anytimeChecks() {
+  const bytes = (await repackWgba(process.env.UI_NET_WGBA, (m) => ({ ...m, id: `${m.id}.anytime`, multiplayer: { ...m.multiplayer, join: "anytime" } }))).toString("base64");
+  for (const view of [...VIEWS, ...(VIEW_FILTER && !VIEW_FILTER.has("320x568") ? [] : [{ name: "320x568", viewport: { width: 320, height: 568 } }])]) {
+    for (const lang of LANGS) {
+      const key = `${view.name}|${lang}|anytime`;
+      const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
+      await context.addInitScript((lang) => {
+        Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+        if (window !== window.top) return;
+        localStorage.setItem("webgba.installHint", "1");
+        localStorage.setItem("webgba.prefs", JSON.stringify({ lang, netNo: "1234" }));
+      }, lang);
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(URL_BASE);
+      await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+      await page.evaluate(async (b64) => {
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        await window.webgba.openFiles([new File([data], "net-anytime.wgba")]);
+      }, bytes);
+      await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+      await page.evaluate(() => {
+        window.webgba.player.keyDown("KeyZ");
+        setTimeout(() => window.webgba.player.keyUp("KeyZ"), 120);
+      });
+      await page.waitForTimeout(1200);
+      ok(`${key} 요청해도 창 자동 열림 없음`, (await page.evaluate(() => window.webgba.state.sheet)) === "" && (await page.evaluate(() => !document.getElementById("btnNet").hidden)));
+      await page.click("#btnNet");
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-action="net-room-make"]')), null, { timeout: 8000 });
+      await page.click('[data-action="net-room-make"]');
+      const room = await page.waitForFunction(() => /^\d{6}$/.test(document.querySelector(".net-room-code")?.textContent ?? ""), null, { timeout: 10000 }).then(() => true, () => false);
+      await page.waitForTimeout(400);
+      if (room) {
+        await measure(page, `${key}|net-room`, [".sheet__head", ".net-room-code", ".net-member", ".net-actions"]);
+        await rows(page, `${key}|net-room`, ".net-member");
+        await fits(page, `${key}|net-room`, ".sheet__panel");
+        const acts = await lineUp(page, `${key}|net-room`, "#sheetBody .net-actions", ":scope > button");
+        ok(`${key}|net-room 하단 버튼 = 방 나가기·닫기`, acts[0]?.map((i) => i.id).join() === "net-leave,net-close", JSON.stringify(acts));
+        if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `중간참가_${view.name}_방코드.png`) });
+        await page.click('[data-action="net-close"]');
+        await page.waitForTimeout(500);
+        const badge = await page.evaluate(() => {
+          const b = document.querySelector("#btnNet .tool__badge");
+          return { sheet: window.webgba.state.sheet, text: b?.textContent ?? "", tone: b?.dataset.tone ?? "", hidden: b?.hidden, active: window.webgba.player.net.active };
+        });
+        ok(`${key} 창 닫기 → 방 유지 · 회색 배지 1/4`, badge.sheet === "" && badge.active && badge.text === "1/4" && badge.tone === "wait" && !badge.hidden, JSON.stringify(badge));
+        await measure(page, `${key}|bar`, ["#btnNet .tool__badge"]);
+        await barLineUp(page, `${key}|bar`);
+        if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `중간참가_${view.name}_기다리는중.png`) });
+      } else ok(`${key} 방 만들기(서버 필요)`, false, "방 코드를 받지 못함 — <주소> 가 /api/v1/mp 를 내주는지 확인");
+      ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+      await context.close();
+    }
+  }
+}
 
 // ── 표시 비율 display.aspect(결정 143)·방향 입력 기본값 input.dpad(결정 145) ──
 // UI_ASPECT_KOV=<448×224 아케이드 .wgba(경로 조회만, 메모리에서 display.aspect "4:3" 을 더해 다시 묶음 — 파일로 쓰지 않음)>

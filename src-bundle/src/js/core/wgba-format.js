@@ -644,6 +644,7 @@ export function checkManifest(m, errors, warnings) {
     for (const n of [mp.players?.min, mp.players?.max]) if (n !== undefined && (!Number.isInteger(n) || n < 2 || n > 8)) errors.push("multiplayer 인원은 2~8");
     if (mp.board !== undefined) checkBoard(mp.board, errors, warnings);
     if (mp.rejoin !== undefined && typeof mp.rejoin !== "boolean") errors.push(`multiplayer.rejoin 은 true·false: ${mp.rejoin}`);
+    if (mp.join !== undefined && mp.join !== "anytime") errors.push(`multiplayer.join 은 "anytime" 만 됩니다(빼면 기본 동작): ${JSON.stringify(mp.join)}`);
     if (mp.iceServers !== undefined) {
       const ice = readIceServers(mp.iceServers);
       for (const e of ice.errors) errors.push(`multiplayer.${e}`);

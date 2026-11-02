@@ -676,7 +676,7 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 > Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi with **a 6-digit room code or the nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
-> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10).
+> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and the host can keep a room open alone (7.12).
 
 #### 7.1 Overview
 
@@ -708,6 +708,7 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 | `sync` | `"messages"` \| `"inputs"` | no | `"messages"` | `"inputs"` = the host lines up everyone's keys every frame (7.6, optional feature) |
 | `inputDelay` | integer | no | `3` | With `sync: "inputs"`, how many frames later keys take effect (1–10) |
 | `rejoin` | boolean | no | `false` | `true` = rejoin (7.10). A dropped guest's seat is kept until the session ends and the same device can come back to it |
+| `join` | `"anytime"` | no | none (7.7 behavior) | `"anytime"` = drop-in game (7.12). The dialog does not open by itself when the game asks, there is no timeout, and the host can close the dialog alone (1 player) while the room stays open |
 | `iceServers` | array | no | none (webGBA default STUN) | The game's own connection servers (STUN/TURN, 7.11). Used only when the user turned on "Also connect over the internet" |
 
 ```json
@@ -852,6 +853,7 @@ The host opens the multiplayer dialog **once** when all of these hold:
 It does not open:
 - Again for **the same request** after the user closed (cancelled) it. Instead a "Multiplayer" button above the screen stays lit while the request lasts, so it can be reopened.
 - When the game asks for nothing — then there is neither dialog nor button (the user never opens it first).
+- For `join: "anytime"` games (7.12) when the game asks. The user opens it with the "Multiplayer" button above the screen.
 
 ```text
 ┌ Multiplayer · Trade (2 players) ──────────┐
@@ -869,7 +871,7 @@ Guest: ① enter the host code and press Next → ② give the answer code (· Q
 - Requests with a fixed role (create only, join only) start on that screen.
 - When the minimum player count is reached, it shows "Connected" and closes after 1 second. Any further confirmation (e.g. "Press A to start") happens inside the game.
 - Until the maximum is reached, the room host keeps a small indicator ("2/4 · waiting"); more players arrive as `JOIN`.
-- Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly.
+- Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly. `join: "anytime"` games differ (7.12).
 - Help when connecting fails: "Check that you are on the same Wi-Fi, that it is not a guest or public Wi-Fi, and that VPN is off."
 
 During a session the host keeps to: fast-forward and speed changes off (1×), loading states and reset blocked, opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others (not when only the tab is hidden on a PC: frames keep running), `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
@@ -1042,6 +1044,17 @@ When the user turns on Settings › Multiplayer **Also connect over the internet
 - The dialog shows "This game's connection servers: <domain>". A TURN server in the path can see both devices' IPs but not the game content (encrypted). There is no separate consent dialog (the internet setting explains it).
 - webGBA (the host) contacts connection servers only while connecting. The game frame (② JS) still cannot use the network directly (chapter 8).
 
+#### 7.12 Drop-in games (`join: "anytime"`, protocol 1 extension)
+
+For games played alone that let others join at any time (e.g. joining an arcade game in progress). Such a game keeps its request (`Web_NetWanted` non-zero / `webgba.net.want()`) from the start, so with the default behavior (7.7) the dialog opens right away, `TIMEOUT` arrives after 3 minutes, and the host cannot close the dialog until the first guest arrives. With `multiplayer.join: "anytime"` in the manifest it works as below. Other games keep 7.7.
+
+- **No automatic dialog**: while the game asks, only the "Multiplayer" button above the screen (the toolbar button on PC) is shown. The user opens the dialog with it to host a room, enter a code or use nearby rooms.
+- **No timeout**: the request lasts until the game withdraws it (0 / `unwant()`); no `CLOSED(TIMEOUT)` while waiting.
+- **Minimum of 1**: the host can close the dialog alone (1 player) and the room stays open (dialog buttons = Leave room · Close). The host's button shows a waiting state (web = grey player badge `1/4`, PC = a dot on the button corner and "Waiting for players" in the status bar), and when someone joins there is a notice (web = toast, PC = status bar) and `JOIN`. Pressing the button again opens the room code screen.
+- Closing or cancelling the dialog does not send `CLOSED(CANCEL)` to the game (only a join attempt in progress is dropped). To close the room use "Leave room" → `CLOSED(LEFT)`.
+- The guest's way in, `rejoin` (7.10), internet connections (7.11) and the status menu (7.9) are unchanged.
+- Matchmaking server: while the room is open the host checks for a guest's answer every 3 seconds (5 after a minute, 1 command) and refreshes the room every 100 seconds (3–4 commands) — about 850 commands for a room kept open for an hour.
+
 ---
 
 ### 8. Security rules
@@ -1171,7 +1184,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
 - Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `input.dpad`, `cart.color`, `display` is an object and `display.aspect` is `"integer:integer"` (W·H 1–1024, ratio 1:4–4:1), button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
-- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `iceServers` (7.11 format = error, fixed TURN credentials = warning)
+- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `join` (`"anytime"` only), `iceServers` (7.11 format = error, fixed TURN credentials = warning)
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
 - Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 18×46) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
 - Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning

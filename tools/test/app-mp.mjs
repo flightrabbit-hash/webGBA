@@ -13,15 +13,18 @@ import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { decodePng } from "../../web/test/png.mjs";
 
 //   [--api <짝 찾기 서버 주소>] = exe 의 서버 주소를 시험 중에만 바꿈(예: tools/test/mp-local.mjs 의 http://127.0.0.1:8791/api/v1/mp/).
-//   [--only base,wan,rejoin] — wan = exe 에서 인터넷 연결 켬 → STUN 공인 후보, rejoin = exe 손님 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함).
+//   [--only base,wan,rejoin,anytime] — wan = exe 에서 인터넷 연결 켬 → STUN 공인 후보, rejoin = exe 손님 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함),
+//   anytime = 중간 참가 게임(join: "anytime"): 창 자동 열림 없음 → 레일 버튼으로 방 만들기 → 혼자 창 닫기 → 레일 점·상태 줄 "기다리는 중" → 웹 손님 참가 알림.
+//   [--capture <폴더>] = anytime 캡처를 그 폴더에도.
 const [exe, work, example, ...rest] = process.argv.slice(2);
 if (!exe || !work || !example) {
-  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>] [--api <주소>] [--only base,wan,rejoin]");
+  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>] [--api <주소>] [--only base,wan,rejoin,anytime] [--capture <폴더>]");
   process.exit(2);
 }
 const WEB = rest.includes("--web") ? rest[rest.indexOf("--web") + 1] : "https://webgba.vercel.app/";
 const API = rest.includes("--api") ? rest[rest.indexOf("--api") + 1] : "";
-const ONLY = new Set((rest.includes("--only") ? rest[rest.indexOf("--only") + 1] : "base,wan,rejoin").split(","));
+const ONLY = new Set((rest.includes("--only") ? rest[rest.indexOf("--only") + 1] : "base,wan,rejoin,anytime").split(","));
+const CAPTURE = rest.includes("--capture") ? rest[rest.indexOf("--capture") + 1] : "";
 const PORT = 9352;
 const appDir = path.join(work, "app_mp");
 const shots = path.join(work, "captures");
@@ -121,6 +124,7 @@ try {
   if (ONLY.has("base")) await baseFlow();
   if (ONLY.has("wan")) await wanFlow();
   if (ONLY.has("rejoin")) await rejoinFlow();
+  if (ONLY.has("anytime")) await anytimeFlow();
 } catch (error) {
   check("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" | "));
 } finally {
@@ -329,4 +333,70 @@ async function rejoinFlow() {
   check(`exe 손님 복귀 ${((Date.now() - t1) / 1000).toFixed(1)}초 뒤 같은 자리로 들어옴`, back, JSON.stringify(back));
   await app.evaluate("document.getElementById('btn-net').click()");
   await hostCtx.close();
+}
+
+async function anytimeFlow() {
+  const manifest = readJson(path.join(example, "manifest.json"));
+  manifest.id = "com.example.netanytime";
+  manifest.multiplayer.join = "anytime";
+  const atBytes = (await packWgba({ wasm: fs.readFileSync(path.join(example, "game.wasm")), manifest })).bytes;
+  const atFile = path.join(appDir, "net-anytime.wgba");
+  fs.writeFileSync(atFile, atBytes);
+  await app.evaluate(`${T}.openPath(${JSON.stringify(atFile)})`);
+  await waitFor(() => app.evaluate(`${T}.player.running === true && !${T}.player.net.active && ${T}.state.game?.name === "net-anytime.wgba"`), 15000);
+  await appWant();
+  await sleep(1500);
+  const quiet = await app.evaluate(`({ layer: !document.getElementById('layer').hidden, btn: !document.getElementById('btn-net').hidden, request: Boolean(${T}.player.net.request), timer: Boolean(${T}.player.net.windowTimer) })`);
+  check("exe 중간 참가 게임: 요청해도 연결 창 자동 열림 없음 · 시간 초과 타이머 없음 · 레일 멀티플레이 버튼 표시", !quiet.layer && quiet.btn && quiet.request && !quiet.timer, JSON.stringify(quiet));
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await appDialog("net-room-make");
+  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
+  await sleep(300);
+  const acts = await app.evaluate("[...document.querySelectorAll('#dialog-actions > button')].map((n) => { const r = n.getBoundingClientRect(); return { a: n.dataset.action, t: n.textContent, top: r.top, bottom: r.bottom }; })");
+  const note = await app.evaluate("[...document.querySelectorAll('#dialog-body .net-note')].map((n) => n.textContent).join(' | ')");
+  check("exe 방장 혼자 방 코드 화면: 하단 LEAVE·CLOSE(위·아래 차이 0) · 방 유지 안내", /^\d{6}$/.test(code ?? "") && acts.map((b) => `${b.a}:${b.t}`).join() === "net-leave:LEAVE,net-close:CLOSE" && spread(acts, "top") === 0 && spread(acts, "bottom") === 0 && note.includes(ko["net.anytimeNote"]), JSON.stringify({ code, acts }));
+  await app.evaluate("document.querySelector('[data-action=net-close]').click()");
+  await sleep(1200);
+  const wait = await app.evaluate(`({ layer: !document.getElementById('layer').hidden, active: ${T}.player.net.active, waiting: ${T}.player.net.waiting, dot: !document.getElementById('btn-net-dot').hidden, title: document.getElementById('btn-net').title, status: document.getElementById('status-right')?.textContent ?? '' })`);
+  const rail = await app.evaluate(RAIL);
+  const dot = await app.evaluate("(() => { const b = document.getElementById('btn-net').getBoundingClientRect(); const d = document.getElementById('btn-net-dot').getBoundingClientRect(); return { inside: d.left >= b.left && d.right <= b.right && d.top >= b.top && d.bottom <= b.bottom, w: d.width, h: d.height }; })()");
+  check("exe 방장 혼자 창 닫기 → 방 유지 · 레일 버튼 점(기다리는 중)·제목·상태 줄", !wait.layer && wait.active && wait.waiting && wait.dot && dot.inside && wait.title === ko["net.buttonWait"] && wait.status.includes(ko["net.statusWait"].split(" · ")[0]), JSON.stringify({ wait, dot }));
+  check("exe 기다리는 중 레일 버튼 좌·우 위치·크기 같음", spread(rail, "left") === 0 && spread(rail, "right") === 0 && spread(rail, "w") === 0 && spread(rail, "h") === 0, JSON.stringify(rail.map((b) => `${b.id}:${b.left}-${b.right}`)));
+  await app.screenshot(path.join(shots, "exe_mp_중간참가_기다리는중.png"));
+  if (CAPTURE) await app.screenshot(path.join(CAPTURE, "exe_기다리는중_레일버튼.png"));
+
+  const guestCtx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 } });
+  await guestCtx.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    if (window === window.top) {
+      localStorage.setItem("webgba.installHint", "1");
+      localStorage.setItem("webgba.prefs", JSON.stringify({ netNick: "웹 손님", lang: "ko" }));
+    }
+  });
+  const G = await guestCtx.newPage();
+  await G.goto(WEB);
+  await G.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  await G.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    await window.webgba.openFiles([new File([bytes], "net-anytime.wgba")]);
+  }, Buffer.from(atBytes).toString("base64"));
+  await G.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+  await G.evaluate(() => {
+    window.webgba.player.keyDown("KeyZ");
+    setTimeout(() => window.webgba.player.keyUp("KeyZ"), 150);
+  });
+  await sleep(800);
+  await G.click("#btnNet");
+  await G.waitForSelector('[data-action="net-room-join"]', { timeout: 8000 });
+  await G.click('[data-action="net-room-join"]');
+  await G.fill('[data-action="net-code-in"]', code);
+  await G.click('[data-action="net-code-go"]');
+  const joined = await waitFor(async () => (await G.evaluate(() => window.webgba.player.host?.ex?.Net_Open?.()) === 1) && (await app.evaluate(GAME))?.count === 2, 30000, 200);
+  const after = await app.evaluate(`({ status: document.getElementById('status').textContent, dot: !document.getElementById('btn-net-dot').hidden, layer: !document.getElementById('layer').hidden })`);
+  check("exe 방장: 웹 손님이 방 코드로 들어옴 → 상태 줄 참가 알림 · 점 사라짐 · 창 닫힌 채", joined && /들어왔습니다/.test(after.status) && !after.dot && !after.layer, JSON.stringify(after));
+  await app.screenshot(path.join(shots, "exe_mp_중간참가_손님참가.png"));
+  await app.evaluate(`${T}.player.net.leave()`);
+  check("exe 방장 나감 → 웹 손님 CLOSED(HOST_LEFT)", await waitFor(async () => ((await G.evaluate(() => window.webgba.player.host?.ex?.Net_Closed?.())) === 7 ? true : null), 8000));
+  await guestCtx.close();
 }
