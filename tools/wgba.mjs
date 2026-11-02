@@ -144,6 +144,7 @@ async function info(file) {
     if (me) {
       m = JSON.parse(new TextDecoder().decode(unpackChunk(await r.readAt(me.start, me.end - me.start), me)));
       console.log(`설명서  id ${m.id} · 버전 ${m.version} · 이름 ${label(m, "name")}${m.shortName ? ` · 짧은 이름 ${label(m, "shortName")}` : ""} · ${m.runtime}`);
+      console.log(`화면    ${m.screen?.width ?? 240}x${m.screen?.height ?? 160} · 표시 비율 ${m.display?.aspect ?? "화면 버퍼 그대로"} · 방향 입력 ${m.input?.dpad ?? "사용자 설정"}`);
       const cart = m.cart ?? {};
       const parts = Object.keys(CART_PARTS).map((p) => (cart[p] ? `${p} ${cart[p].width}x${cart[p].height}` : `${p} 없음`));
       console.log(`롬팩    색 ${cart.color ?? "없음"} · ${parts.join(" · ")}`);

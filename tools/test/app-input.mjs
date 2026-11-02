@@ -3,7 +3,7 @@
 // keymap: <작업>\keymap\ 의 키 매핑 예제(keys-cd·keys-few·keys-roles .wgba, 롬 없음)로 설명서 input → 게임 비트·키 설정 창(그 게임의 버튼만,
 //   게임 id 별 기억)·게임을 닫으면 GBA 키로. gba 와 같이 돌리면 GBA 게임에 게임별 키가 섞이지 않는지도 본다.
 // 작업 폴더: rom\test.gba · port\<빌드>.wgba(웹 빌드 사본) · <롬>(그 빌드의 롬 사본). <빌드>·<롬> 은 WEBGBA_TEST_BUILD·WEBGBA_TEST_ROM(cdp.mjs).
-// port\ 에 가짜 롬 zz_dummy.gba 를 함께 두고 설정 "웹 빌드에 쓸 롬 파일 이름"(webRom)을 <롬> 으로 씨앗에 넣어, 이름으로 위 폴더의 롬을 찾는지도 본다.
+// port\ 에 가짜 롬 zz_dummy.gba 를 함께 두고 설정 "웹 빌드용 롬 파일명"(webRom)을 <롬> 으로 씨앗에 넣어, 이름으로 위 폴더의 롬을 찾는지도 본다.
 // 앱 폴더 <작업>\app_input 을 새로 만든다(.wgba 연결은 건드리지 않음: wgbaLink false). 결과 <작업>\app_input_result.json
 // 게임에 넘어간 키는 host.runFrame 을 감싸 프레임마다 기록하고, 소리는 AudioWorklet 으로 보내는 표본 수를 센다.
 import fs from "fs";
@@ -176,7 +176,7 @@ async function inputTests(label) {
   await up("ArrowLeft");
   await sleep(100);
   check(
-    `${label} K1 기본 "나중에 누른 방향만": ←누른 채 ↑ 누르면 ↑만, ↑를 떼면 ←는 그대로`,
+    `${label} K1 기본 "한 방향만 전달": ←누른 채 ↑ 누르면 ↑만, ↑를 떼면 ←는 그대로`,
     firstMode === "latest" && (firstSaved ?? "latest") === "latest" && tail(upOnly).every((k) => (k & 240) === BIT.UP) && tail(f).every((k) => (k & 240) === BIT.LEFT),
     `${firstMode} · 저장값 ${firstSaved ?? "없음"} · ${fmt(tail(upOnly, 3))} | ${fmt(tail(f, 3))}`,
   );
@@ -226,9 +226,9 @@ async function inputTests(label) {
   const gaps = falling(f, BIT.RIGHT, BIT.RIGHT);
   check(`${label} K5 누른 채 아주 짧게 뗐다 다시 누름 10번이 모두 게임에 새 누름으로`, gaps === 10, `${gaps}/10`);
 
-  const opposite = await setSetting("방향키 동시 누름", 1);
+  const opposite = await setSetting("방향키 동시 입력", 1);
   if (!opposite) {
-    check(`${label} K6 방향키 동시 누름 설정(반대쪽은 나중 것·나중 방향만)`, false, "설정 줄 없음");
+    check(`${label} K6 방향키 동시 입력 설정(대각선 허용·나중 방향만)`, false, "설정 줄 없음");
   } else {
     at = await mark();
     await down("ArrowLeft");
@@ -246,11 +246,11 @@ async function inputTests(label) {
     await up("ArrowLeft");
     await sleep(100);
     check(
-      `${label} K6 "반대쪽은 나중 것": ←누른 채 → 누르면 →만, →를 떼면 ←, ↑는 함께`,
+      `${label} K6 "대각선 허용": ←누른 채 → 누르면 →만, →를 떼면 ←, ↑는 함께`,
       tail(both).every((k) => (k & 48) === BIT.RIGHT) && tail(left).every((k) => (k & 48) === BIT.LEFT) && tail(diag).every((k) => (k & 96) === 96),
       `${fmt(tail(both, 3))} | ${fmt(tail(left, 3))} | ${fmt(tail(diag, 3))}`,
     );
-    await setSetting("방향키 동시 누름", 2);
+    await setSetting("방향키 동시 입력", 2);
     at = await mark();
     await down("ArrowUp");
     await sleep(120);
@@ -263,11 +263,11 @@ async function inputTests(label) {
     await up("ArrowUp");
     await sleep(100);
     check(
-      `${label} K7 "나중에 누른 방향만": ↑누른 채 ← 누르면 ←만(바로 꺾음), ←를 떼면 ↑`,
+      `${label} K7 "한 방향만 전달": ↑누른 채 ← 누르면 ←만(바로 꺾음), ←를 떼면 ↑`,
       tail(latest).every((k) => (k & 240) === BIT.LEFT) && tail(back).every((k) => (k & 240) === BIT.UP),
       `${fmt(tail(latest, 3))} | ${fmt(tail(back, 3))}`,
     );
-    await setSetting("방향키 동시 누름", 0);
+    await setSetting("방향키 동시 입력", 0);
     at = await mark();
     await down("ArrowLeft");
     await down("ArrowRight");
@@ -277,7 +277,7 @@ async function inputTests(label) {
     await up("ArrowLeft");
     await sleep(100);
     const saved = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8")).dpadMode;
-    check(`${label} K8 "모두 넘기기(GBA)": ←+→ 둘 다 넘김, 설정 저장`, tail(f).every((k) => (k & 48) === 48) && saved === "both", `${fmt(tail(f, 3))} · dpadMode ${saved}`);
+    check(`${label} K8 "모든 방향 전달": ←+→ 둘 다 넘김, 설정 저장`, tail(f).every((k) => (k & 48) === 48) && saved === "both", `${fmt(tail(f, 3))} · dpadMode ${saved}`);
     at = await mark();
     await down("ArrowLeft");
     await sleep(120);
@@ -288,8 +288,8 @@ async function inputTests(label) {
     f = await since(at);
     await up("ArrowLeft");
     await sleep(100);
-    check(`${label} K9 "모두 넘기기": 두 방향을 함께 누르고 한쪽만 떼면 다른 쪽은 그대로`, f.some((k) => (k & 96) === 96) && tail(f).every((k) => k & BIT.LEFT && !(k & BIT.UP)), fmt(tail(f, 6)));
-    await setSetting("방향키 동시 누름", 2);
+    check(`${label} K9 "모든 방향 전달": 두 방향을 함께 누르고 한쪽만 떼면 다른 쪽은 그대로`, f.some((k) => (k & 96) === 96) && tail(f).every((k) => k & BIT.LEFT && !(k & BIT.UP)), fmt(tail(f, 6)));
+    await setSetting("방향키 동시 입력", 2);
   }
 
   await app.evaluate("document.getElementById('sidepanel-list').focus(); true");

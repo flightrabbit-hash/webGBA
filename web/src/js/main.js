@@ -8,7 +8,7 @@ import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "./app/player.js";
+import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
@@ -539,7 +539,14 @@ function setInput(input) {
     changed = true;
   }
   player.setLayout(next, keyTable());
+  player.setDpadMode(dpadFor(next, state.prefs));
   if (changed && document.documentElement.dataset.ready) layout();
+}
+
+function setScreen(screen) {
+  state.screen = screen;
+  if (screen?.stretch) document.body.dataset.stretch = "";
+  else delete document.body.dataset.stretch;
 }
 
 /** 시험·개발용: 설명서 input 객체(또는 null)로 바로 setInput — window.webgba.setInput({ preset: "gba", buttons: [...] }). */
@@ -560,7 +567,7 @@ function applyDirInput() {
 
 function applyPlayerPrefs() {
   const p = state.prefs;
-  player.setDpadMode(DPAD_MODES.includes(p.dpadMode) ? p.dpadMode : "latest");
+  player.setDpadMode(dpadFor(state.input, p));
   player.setVolume(Number.isFinite(p.volume) ? p.volume : 0.8);
   player.setMuted(Boolean(p.muted));
   player.gameSpeed = SPEEDS.includes(p.gameSpeed) ? p.gameSpeed : 1;
@@ -666,16 +673,17 @@ function layout() {
   const ring = skin.px(2);
   const edge = (ring * FRAME_ROWS) / dpr;
   const sideEdge = landscape ? edge * 2 : 0;
+  const [aw, ah] = state.screen?.aspect ?? [3, 2];
   let sw;
   let sh;
   if (padOn && !landscape) {
     const barH = el.bar.offsetHeight;
     sw = innerW;
-    sh = Math.floor((sw * 2) / 3);
+    sh = Math.floor((sw * ah) / aw);
     const minPad = Math.min(300, innerH * 0.4);
     if (innerH - barH - sh - edge * 2 < minPad) {
       sh = Math.max(96, Math.floor(innerH - barH - edge * 2 - minPad));
-      sw = Math.floor(sh * 1.5);
+      sw = Math.min(innerW, Math.floor((sh * aw) / ah));
     }
     let padH = innerH - barH - sh - edge * 2;
     art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + face.h + ART.pillH))), 2, 6);
@@ -695,7 +703,7 @@ function layout() {
       art = a;
       if (fit === "compact" && colsPad(art) > padH) {
         sh = Math.max(96, Math.min(sh, Math.floor(innerH - barH - edge * 2 - colsPad(art))));
-        sw = Math.floor(sh * 1.5);
+        sw = Math.min(innerW, Math.floor((sh * aw) / ah));
         padH = innerH - barH - sh - edge * 2;
       }
     }
@@ -714,14 +722,14 @@ function layout() {
     const sideMin = Math.ceil(Math.max(face.w, ART.stick) * art + 16);
     const availW = innerW - sideMin * 2 - sideEdge;
     const availH = innerH - rowH - 8 - edge * 2;
-    sw = Math.floor(Math.max(120, Math.min(availW, availH * 1.5)));
-    sh = Math.floor((sw * 2) / 3);
+    sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
+    sh = Math.floor((sw * ah) / aw);
     root.setProperty("--side", `${Math.floor((innerW - sw) / 2)}px`);
   } else {
     const availW = innerW - 16 - sideEdge;
     const availH = innerH - el.bar.offsetHeight - 16 - edge * 2;
-    sw = Math.floor(Math.max(120, Math.min(availW, availH * 1.5)));
-    sh = Math.floor((sw * 2) / 3);
+    sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
+    sh = Math.floor((sw * ah) / aw);
     root.setProperty("--side", "0px");
   }
   state.art = art;
@@ -1626,6 +1634,7 @@ async function startHosted(host, meta, input = null, net = null) {
   // ② 자체 JS 게임은 격리 틀(#screen 안 iframe)이 화면 — 캔버스는 숨김(web.css)
   if (host.script) document.body.dataset.runtime = "script";
   else delete document.body.dataset.runtime;
+  setScreen(net?.manifest ? screenOf(net.manifest) : null);
   setInput(input);
   syncControls();
   layout();
@@ -1994,8 +2003,11 @@ async function closeGame({ quiet = false } = {}) {
   context.game = "";
   holds.delete("user");
   pad.releaseAll();
+  const reshape = Boolean(state.screen);
+  setScreen(null);
   setInput(null);
   syncControls();
+  if (reshape) layout();
   updateWake();
   if (!quiet) toast(t("status.closed"));
 }
@@ -3435,10 +3447,16 @@ function renderSettings() {
         autoMinutes(),
         (value) => savePrefs({ autoSave: Number(value) }),
       ),
-      selectField(t("cfg.dpadMode"), t("cfg.dpadMode.note"), DPAD_MODES.map((value) => ({ value, label: t(`cfg.dpadMode.${value}`) })), DPAD_MODES.includes(p.dpadMode) ? p.dpadMode : "latest", (value) => {
-        savePrefs({ dpadMode: value });
-        applyPlayerPrefs();
-      }),
+      selectField(
+        t("cfg.dpadMode"),
+        state.input.dpad ? t("cfg.dpadMode.game", { name: state.game?.title || state.game?.name || state.input.gameId, value: t(`cfg.dpadMode.${state.input.dpad}`) }) : t("cfg.dpadMode.note"),
+        DPAD_MODES.map((value) => ({ value, label: t(`cfg.dpadMode.${value}`) })),
+        dpadFor(state.input, p),
+        (value) => {
+          savePrefs(gameDpadPatch(state.input, state.prefs, value) ?? { dpadMode: value });
+          applyPlayerPrefs();
+        },
+      ),
       switchField(t("web.pauseWhenHidden"), t("web.pauseWhenHidden.note"), p.pauseWhenHidden, (on) => savePrefs({ pauseWhenHidden: on })),
     ),
     group(

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { decodePng } from "./png.mjs";
 
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
@@ -37,12 +38,16 @@ const ONLY_BOARD = process.env.UI_BOARD_ONLY === "1";
 // UI_CHOICE_ONLY=1 이면 선택 칸(아래에서 올라오는 옵션 목록) 시험만(UI_CHOICE=0 이면 그것만 뺌): 설정의 선택 칸마다 열기·고르기·닫기·키보드·게임패드·
 // 뒤로 가기·바깥 누르기, 320x568·390x844·844x390 화면 안·잉크 가운데·줄 여백, 6배 느린 CPU 열기 시간, WebKit 한 번.
 const ONLY_CHOICE = process.env.UI_CHOICE_ONLY === "1";
-const EXTRA = !ONLY_NET && !ONLY_BOARD && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
+// UI_ASPECT_ONLY=1 이면 표시 비율·방향 입력 기본값 시험만(아래 "표시 비율" 절, 다른 시험과 함께 돌리려면 UI_ASPECT=1)
+const ONLY_ASPECT = process.env.UI_ASPECT_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT;
+const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
-const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_NET || ONLY_BOARD;
-const MOTION = !ONLY_NET && !ONLY_BOARD && !ONLY_EXTRA && !ONLY_LIBRARY && !ONLY_CHOICE && (ONLY_MOTION || process.env.UI_MOTION !== "0");
-const LIBRARY = !ONLY_NET && !ONLY_BOARD && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_CHOICE && process.env.UI_LIBRARY !== "0"));
-const CHOICE = !ONLY_NET && !ONLY_BOARD && (ONLY_CHOICE || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_LIBRARY && process.env.UI_CHOICE !== "0"));
+const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
+const MOTION = !ONLY_OTHER && !ONLY_EXTRA && !ONLY_LIBRARY && !ONLY_CHOICE && (ONLY_MOTION || process.env.UI_MOTION !== "0");
+const LIBRARY = !ONLY_OTHER && (ONLY_LIBRARY || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_CHOICE && process.env.UI_LIBRARY !== "0"));
+const CHOICE = !ONLY_OTHER && (ONLY_CHOICE || (!ONLY_MOTION && !ONLY_EXTRA && !ONLY_LIBRARY && process.env.UI_CHOICE !== "0"));
+const ASPECT = ONLY_ASPECT || process.env.UI_ASPECT === "1";
 const SHOT_PLAN = { "390x844|ko|bar": "", "844x390|ko|bar": "가로_844x390_기능버튼.png", "390x844|ko|menu": "세로_390x844_햄버거.png", "390x844|ko|settings": "세로_390x844_설정.png", "390x844|ko|info": "세로_390x844_정보_게임_소리.png","844x390|ko|library": "가로_844x390_라이브러리.png", "360x640|ko|rename": "세로_360x640_이름입력.png", "390x844|ja|saves": "세로_390x844_세이브_일본어.png" };
 
 const results = [];
@@ -1809,7 +1814,7 @@ async function boardChecks() {
             return { placeholder: input.placeholder, max: input.maxLength, switches: row.querySelectorAll(".switch").length, fits: ctx.measureText(input.placeholder).width <= room + 0.5 };
           });
           await page.waitForTimeout(300);
-          ok(`${key} 설정: 멀티플레이 켜기·인터넷으로도 연결 칸 + 닉네임 칸(빈칸 = 플레이어 1234, 12자, 안내 글 잘림 없음)`, nick && /1234/.test(nick.placeholder) && nick.max === 12 && nick.switches === 2 && nick.fits, JSON.stringify(nick));
+          ok(`${key} 설정: 멀티플레이 켜기·인터넷 연결 칸 + 닉네임 칸(빈칸 = 플레이어 1234, 12자, 안내 글 잘림 없음)`, nick && /1234/.test(nick.placeholder) && nick.max === 12 && nick.switches === 2 && nick.fits, JSON.stringify(nick));
           await page.evaluate(() => {
             const group = document.querySelector('[data-action="cfg-net-nick"]').closest(".group");
             group.dataset.uiNet = "1";
@@ -1826,6 +1831,255 @@ async function boardChecks() {
 
 if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD) await netChecks();
 if (process.env.UI_NET_WGBA && (ONLY_BOARD || process.env.UI_BOARD === "1")) await boardChecks();
+
+// ── 표시 비율 display.aspect(결정 143)·방향 입력 기본값 input.dpad(결정 145) ──
+// UI_ASPECT_KOV=<448×224 아케이드 .wgba(경로 조회만, 메모리에서 display.aspect "4:3" 을 더해 다시 묶음 — 파일로 쓰지 않음)>
+// UI_ASPECT_RAPID=<240×160 .wgba> · UI_ASPECT_GBA=<.gba> · UI_BASE_URL=<수정 전 빌드>: 첫 화면·두 게임 화면(일시정지 후 같은 무늬)을 수정 전과 픽셀 비교.
+// 화면 칸 = 설명서 비율(4:3·2:1·3:2), 4:3 은 캔버스를 늘려 채움(object-fit fill), 가상 버튼 겹침 0·화면 안, 화면 칸 세로 가운데.
+// input.dpad "both" 게임: 대각선(두 방향 비트) 전달·설정 설명이 게임 전용·게임별로 바꾼 값 저장·새로 고침 뒤 복원, 지정 없는 게임은 전체 설정 그대로.
+const ASPECT_VIEWS = [
+  { name: "320x568", viewport: { width: 320, height: 568 }, dpr: 2, mobile: true },
+  { name: "390x844", viewport: { width: 390, height: 844 }, dpr: 3, mobile: true },
+  { name: "844x390", viewport: { width: 844, height: 390 }, dpr: 3, mobile: true },
+  { name: "1280x800", viewport: { width: 1280, height: 800 }, dpr: 1, mobile: false },
+].filter((view) => !VIEW_FILTER || VIEW_FILTER.has(view.name));
+const ASPECT_SHOTS = { "390x844": "삼국전기_4대3_세로_390x844.png", "844x390": "삼국전기_4대3_가로_844x390.png" };
+
+async function repackWgba(file, patch) {
+  const { codeWasm, packWgba, readTocFrom, unpackChunk } = await import("../../src-bundle/src/js/core/wgba-format.js");
+  const bytes = new Uint8Array(fs.readFileSync(file));
+  const toc = await readTocFrom(bytes);
+  const part = (name) => {
+    const e = toc.entries.find((x) => x.name === name);
+    return e ? { e, stored: bytes.subarray(e.start, e.end) } : null;
+  };
+  const me = part("manifest");
+  const manifest = JSON.parse(new TextDecoder().decode(unpackChunk(me.stored, me.e)));
+  const images = {};
+  for (const [name, chunk] of [["label", "cart.label"], ["front", "cart.front"], ["spine", "cart.spine"]]) {
+    const x = part(chunk);
+    if (x) images[name] = unpackChunk(x.stored, x.e);
+  }
+  const data = toc.entries.filter((e) => e.name.startsWith("data.")).map((e) => ({ name: e.name.slice(5), bytes: unpackChunk(bytes.subarray(e.start, e.end), e) }));
+  const res = await packWgba({ wasm: codeWasm(part("code").stored), manifest: patch(manifest), images, data, romPayloadBytes: part("rom")?.stored ?? null });
+  return Buffer.from(res.bytes);
+}
+
+async function exampleWgba(patch) {
+  const { packWgba } = await import("../../src-bundle/src/js/core/wgba-format.js");
+  const dir = fileURLToPath(new URL("../../docs/wgba/examples/hello-webapi/", import.meta.url));
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+  const res = await packWgba({ wasm: fs.readFileSync(path.join(dir, "game.wasm")), manifest: patch(manifest) });
+  return Buffer.from(res.bytes);
+}
+
+async function aspectPage(view, files, { url = URL_BASE, prefs = null } = {}) {
+  const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: view.dpr, isMobile: view.mobile, hasTouch: view.mobile, reducedMotion: "reduce", serviceWorkers: "block" });
+  await context.addInitScript((prefs) => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    if (window !== window.top) return;
+    localStorage.setItem("webgba.installHint", "1");
+    if (prefs && !sessionStorage.getItem("aspect.seeded")) {
+      localStorage.setItem("webgba.prefs", JSON.stringify(prefs));
+      sessionStorage.setItem("aspect.seeded", "1");
+    }
+  }, prefs);
+  await context.route("**/__aspect/*", (route) => {
+    const name = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop());
+    return files[name] ? route.fulfill({ status: 200, body: files[name], contentType: "application/octet-stream" }) : route.fulfill({ status: 404 });
+  });
+  const page = await context.newPage();
+  page.errors = [];
+  page.on("pageerror", (e) => page.errors.push(e.message));
+  await page.goto(url);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  await page.addStyleTag({ content: "#toast{visibility:hidden !important}" });
+  return { context, page };
+}
+
+async function openAspectGame(page, name) {
+  await page.evaluate(async (name) => {
+    const data = new Uint8Array(await (await fetch(`/__aspect/${encodeURIComponent(name)}`)).arrayBuffer());
+    await window.webgba.openFiles([new File([data], name)]);
+  }, name);
+  await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 30000 });
+  await page.waitForTimeout(500);
+}
+
+const screenInfo = (page) =>
+  page.evaluate(() => {
+    const s = getComputedStyle(document.documentElement);
+    const screen = document.getElementById("screen").getBoundingClientRect();
+    const canvas = document.getElementById("canvas");
+    const c = canvas.getBoundingClientRect();
+    const stage = document.querySelector(".stage").getBoundingClientRect();
+    return {
+      sw: parseFloat(s.getPropertyValue("--sw")),
+      sh: parseFloat(s.getPropertyValue("--sh")),
+      screen: [screen.left, screen.top, screen.width, screen.height],
+      canvas: [c.left, c.top, c.width, c.height],
+      buffer: [canvas.width, canvas.height],
+      fit: getComputedStyle(canvas).objectFit,
+      stretch: document.body.hasAttribute("data-stretch"),
+      gapTop: +(screen.top - stage.top).toFixed(2),
+      gapBottom: +(stage.bottom - screen.bottom).toFixed(2),
+      pad: document.body.dataset.pad,
+    };
+  });
+
+async function patternShot(page) {
+  await page.evaluate(async () => {
+    const p = window.webgba.player;
+    p.setPaused(true);
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = ctx.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++)
+      for (let x = 0; x < canvas.width; x++) {
+        const o = (y * canvas.width + x) * 4;
+        const on = (x + y) % 2 === 0;
+        img.data[o] = on ? 255 : (x * 7) & 255;
+        img.data[o + 1] = on ? 255 : (y * 5) & 255;
+        img.data[o + 2] = ((x ^ y) * 3) & 255;
+        img.data[o + 3] = 255;
+      }
+    ctx.putImageData(img, 0, 0);
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  });
+  return shoot(page);
+}
+
+async function aspectChecks() {
+  const kovFile = process.env.UI_ASPECT_KOV;
+  const files = {
+    "hello-dpad.wgba": await exampleWgba((m) => ({ ...m, id: "com.example.hello.dpad", input: { preset: "gba", dpad: "both" } })),
+    "hello.wgba": await exampleWgba((m) => m),
+  };
+  if (kovFile) {
+    files["kov-43.wgba"] = await repackWgba(kovFile, (m) => ({ ...m, display: { aspect: "4:3" } }));
+    files["kov.wgba"] = fs.readFileSync(kovFile);
+  }
+  if (process.env.UI_ASPECT_RAPID) files["rapid.wgba"] = fs.readFileSync(process.env.UI_ASPECT_RAPID);
+  if (process.env.UI_ASPECT_GBA) files["game.gba"] = fs.readFileSync(process.env.UI_ASPECT_GBA);
+
+  for (const view of ASPECT_VIEWS) {
+    const key = `${view.name} 표시 비율`;
+    // 수정 전 빌드와 픽셀 비교: 첫 화면, 240×160 게임(래피드 .wgba·.gba)을 일시정지 후 같은 무늬로 칠한 화면
+    if (BASE_URL) {
+      for (const name of [null, "rapid.wgba", "game.gba"]) {
+        if (name && !files[name]) continue;
+        const shots = [];
+        for (const url of [BASE_URL, URL_BASE]) {
+          const { context, page } = await aspectPage(view, files, { url });
+          if (name) await openAspectGame(page, name);
+          else await page.waitForTimeout(400);
+          shots.push({ image: name ? await patternShot(page) : await shoot(page), info: await screenInfo(page) });
+          await context.close();
+        }
+        const diff = pixelDiff(shots[0].image, shots[1].image);
+        ok(`${key}: ${name ?? "첫 화면"} 수정 전과 픽셀 같음(화면 칸 ${shots[1].info.sw}x${shots[1].info.sh})`, diff === 0 && shots[0].info.sw === shots[1].info.sw && shots[0].info.sh === shots[1].info.sh, `다른 픽셀 ${diff} · 전 ${shots[0].info.sw}x${shots[0].info.sh} · 후 ${shots[1].info.sw}x${shots[1].info.sh}`);
+      }
+    }
+    if (kovFile) {
+      const { context, page } = await aspectPage(view, files);
+      for (const [name, ratio, label] of [["kov-43.wgba", 4 / 3, "4:3"], ["kov.wgba", 2, "2:1"]]) {
+        await openAspectGame(page, name);
+        const info = await screenInfo(page);
+        const pads = view.mobile ? overlaps((await padBoxes(page)).boxes, view.viewport) : { hits: [], outside: [] };
+        const stretch = label === "4:3";
+        const sameBox = info.canvas.every((v, i) => Math.abs(v - info.screen[i]) <= 0.5);
+        ok(`${key}: ${name} 화면 칸 ${label}(${info.sw}x${info.sh})·캔버스 = 화면 칸·${stretch ? "늘려 채움" : "비율 유지"}·버퍼 ${info.buffer.join("x")}`, Math.abs(info.sw / info.sh - ratio) < 0.01 && sameBox && info.fit === (stretch ? "fill" : "contain") && info.stretch === stretch && info.buffer.join("x") === "448x224", JSON.stringify(info));
+        ok(`${key}: ${name} 가상 버튼·기능 버튼 겹침 0·화면 안`, !pads.hits.length && !pads.outside.length, JSON.stringify(pads));
+        ok(`${key}: ${name} 화면 칸 세로 가운데(위 ${info.gapTop} · 아래 ${info.gapBottom})`, Math.abs(info.gapTop - info.gapBottom) <= 0.5, JSON.stringify(info));
+        if (stretch && ASPECT_SHOTS[view.name]) {
+          await page.waitForTimeout(1500);
+          await page.screenshot({ path: path.join(SHOTS, ASPECT_SHOTS[view.name]) });
+        }
+      }
+      ok(`${key}: 페이지 오류 0`, page.errors.length === 0, page.errors.join(" / "));
+      await context.close();
+    }
+  }
+
+  // 방향 입력 기본값: 전체 설정 "opposite" 인 상태에서 dpad "both" 게임을 열고, 게임 전용 값을 "latest" 로 바꾼 뒤 새로 고침
+  const dirBits = (page) =>
+    page.evaluate(() => {
+      const p = window.webgba.player;
+      p.keyDown("ArrowRight");
+      p.keyDown("ArrowUp");
+      const bits = p.resolveDpad(p.held);
+      p.keyUp("ArrowUp");
+      p.keyUp("ArrowRight");
+      return { mode: p.dpadMode, bits };
+    });
+  const prefsOf = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("webgba.prefs") ?? "{}"));
+  for (const view of ASPECT_VIEWS.filter((v) => v.mobile && v.name !== "844x390")) {
+    const key = `${view.name} 방향 입력`;
+    const { context, page } = await aspectPage(view, files, { prefs: { lang: "ko", dpadMode: "opposite" } });
+    await openAspectGame(page, "hello-dpad.wgba");
+    const first = await dirBits(page);
+    ok(`${key}: dpad both 게임 = 대각선 두 비트(위 + 오른쪽 = 80)`, first.mode === "both" && first.bits === 80, JSON.stringify(first));
+    await page.evaluate(() => window.webgba.openSheet("settings"));
+    await page.waitForTimeout(400);
+    const words = await (await fetch(new URL("/i18n/ko.json", URL_BASE))).json();
+    const row = await page.evaluate((label) => {
+      const field = [...document.querySelectorAll("#sheetBody .field")].find((n) => n.querySelector(".field__label")?.textContent === label);
+      field?.scrollIntoView({ block: "center" });
+      return field ? { note: field.querySelector(".field__note")?.textContent ?? "", value: field.querySelector(".pick")?.dataset.value } : null;
+    }, words["cfg.dpadMode"]);
+    ok(`${key}: 설정 값 = 게임 값 both · 설명 = 게임 전용 안내`, row?.value === "both" && row.note.includes("안녕 wgba") && row.note.includes(words["cfg.dpadMode.both"]), JSON.stringify(row));
+    await fits(page, `${key}|settings`, ".sheet__panel");
+    const pads = await rowPads(page, `${key}|settings·여백`, "#sheetBody .field");
+    padTable.push({ key: `${view.name} 게임 전용 방향 설정`, pads });
+    const cut = await page.evaluate(() =>
+      [...document.querySelectorAll("#sheetBody .field__label, #sheetBody .field__note, #sheetBody .pick__value")]
+        .filter((n) => {
+          const row = n.closest(".field").getBoundingClientRect();
+          const r = n.getBoundingClientRect();
+          return n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1 || r.top < row.top - 0.5 || r.bottom > row.bottom + 0.5;
+        })
+        .map((n) => n.textContent.trim()),
+    );
+    ok(`${key}|settings 이름·설명·선택 값 잘림 0`, cut.length === 0, cut.join(" / "));
+    if (view.name === "390x844") {
+      const body = page.locator("#sheetBody");
+      const total = await body.evaluate((n) => n.scrollHeight);
+      const step = await body.evaluate((n) => n.clientHeight);
+      for (let y = 0, i = 1; y < total && i <= 3; y += step, i++) {
+        await body.evaluate((n, top) => (n.scrollTop = top), y);
+        await page.waitForTimeout(150);
+        await page.screenshot({ path: path.join(SHOTS, `설정_세로_390x844_${i}.png`) });
+      }
+    }
+    await page.evaluate((label) => [...document.querySelectorAll("#sheetBody .field")].find((n) => n.querySelector(".field__label")?.textContent === label).querySelector(".pick").click(), words["cfg.dpadMode"]);
+    await page.waitForSelector('.choice__opt[data-value="latest"]', { state: "visible" });
+    await page.click('.choice__opt[data-value="latest"]');
+    await page.waitForTimeout(300);
+    const saved = await prefsOf(page);
+    const changed = await dirBits(page);
+    ok(`${key}: 게임 전용 값 latest 저장(전체 설정 opposite 그대로)·바로 적용(한 비트)`, saved.gameDpad?.["com.example.hello.dpad"] === "latest" && saved.dpadMode === "opposite" && changed.mode === "latest" && (changed.bits === 64 || changed.bits === 16), JSON.stringify({ gameDpad: saved.gameDpad, dpadMode: saved.dpadMode, changed }));
+    await page.reload();
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+    await openAspectGame(page, "hello-dpad.wgba");
+    const restored = await dirBits(page);
+    ok(`${key}: 새로 고침 후 같은 게임 = 저장한 latest 복원`, restored.mode === "latest", JSON.stringify(restored));
+    await openAspectGame(page, "hello.wgba");
+    const plain = await dirBits(page);
+    ok(`${key}: dpad 지정 없는 게임 = 전체 설정 opposite(위 + 오른쪽 두 비트)`, plain.mode === "opposite" && plain.bits === 80, JSON.stringify(plain));
+    ok(`${key}: 페이지 오류 0`, page.errors.length === 0, page.errors.join(" / "));
+    await context.close();
+  }
+  // 전체 설정이 기본값(latest)인 새 기기: 지정 없는 게임은 기존 동작 그대로(나중에 누른 방향 한 비트)
+  {
+    const { context, page } = await aspectPage(ASPECT_VIEWS.find((v) => v.name === "390x844") ?? ASPECT_VIEWS[0], files, { prefs: { lang: "ko" } });
+    await openAspectGame(page, "hello.wgba");
+    const plain = await dirBits(page);
+    ok("방향 입력: 기본 설정·지정 없는 게임 = latest(나중에 누른 위 한 비트 64)", plain.mode === "latest" && plain.bits === 64, JSON.stringify(plain));
+    await context.close();
+  }
+}
+
+if (ASPECT) await aspectChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

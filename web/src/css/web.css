@@ -389,12 +389,15 @@ body[data-layout="portrait"] .bar > .bar__group:last-child {
   display: block;
   width: 100%;
   height: 100%;
-  /* 설명서 화면이 3:2 가 아니면 화면 칸 안에서 비율을 지켜 맞춤(240×160 은 그대로 꽉 참) */
   object-fit: contain;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   outline: none;
   touch-action: none;
+}
+
+body[data-stretch] #canvas {
+  object-fit: fill;
 }
 
 body[data-view="start"] #canvas,

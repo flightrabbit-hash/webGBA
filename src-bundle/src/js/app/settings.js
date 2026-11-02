@@ -260,7 +260,7 @@ function fieldRow(item) {
 
   const hint = document.createElement("span");
   hint.className = "cfg__hint";
-  hint.textContent = t(`cfg.${item.key}.note`, hooks.vars?.(item.key) ?? {});
+  hint.textContent = hooks.hint?.(item.key) ?? t(`cfg.${item.key}.note`, hooks.vars?.(item.key) ?? {});
   text.append(hint);
 
   row.append(text, control(item, hint));

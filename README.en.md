@@ -97,6 +97,7 @@ node tools/run.cjs   # list all commands
   If it cannot be written (read-only, for example) the status bar says so and it is tried again on the next save or on close. To use another save, File › Import save… (overwrites the `.sav` next to the game with it); to take one out, Export save….
 - **Two directions at once** — Settings › General › Game. Chooses which direction reaches the game when two are held:
   **Last pressed only** (default, you turn as soon as you press) · Opposite: last wins (only ←+→ and ↑+↓) · Pass all (same as a real GBA).
+  A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
@@ -364,6 +365,7 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
 | `build` | string | Build label (commit etc., 64 characters). Text for people only; the build id (3.4) is computed by the host separately |
 | `needs` | string array | Hosts without the feature **do not open** the game: `"pointer"` (unplayable without a mouse), `"net"` (unplayable without multiplayer), `"keyboard"` (needs a real keyboard), `"state"`. An unknown word means "not opened — a newer webGBA is required". The current webGBA has no `net`, so it does not open games with `needs: ["net"]` |
 | `screen` | object | `width`·`height` (1–1024, default 240·160), `scale` `"fit"` (default, fill while keeping the aspect ratio) · `"integer"` (integer scaling preferred — the webGBA user setting comes first: integer scale only when the setting is "Integer scale"; with "Fit to area" the game is fitted even with this value). `fps` is reserved (the current webGBA always runs at GBA speed, about 59.7275 fps). Pixels are always drawn nearest-neighbour |
+| `display` | object | `aspect`: display aspect ratio `"W:H"` (e.g. `"4:3"`, W·H integers 1–1024, ratio between 1:4 and 4:1). The screen buffer (`screen`) is stretched to this ratio (the original monitor ratio, non-square pixels). Without it, the screen buffer's own ratio (square pixels). No pixel interpolation when stretching (nearest-neighbour). With the "Integer scale" setting only the height is an integer multiple; the width follows the display ratio (non-integer). Both the Windows app screen and the web screen box follow this ratio (without it, the screen buffer ratio; GBA games stay 3:2) |
 | `audio` | object | `use` — reserved (the current webGBA ignores it). A ① game makes sound when it has the audio exports |
 | `save` | object | `kind`: `"flash"` (① — the current webGBA ignores `kind` for ① and saves when `Web_GetFlash` exists) · `"storage"` (② default, `webgba.save`) · `"localStorage"` (②, the frame's whole substitute localStorage is the save) · `"files"` (②, emscripten file `files[0]`) · `"none"`. `maxSize` (②, bytes, default 1MB, up to 16MB), `files` (② with `"files"`: array of paths — the current webGBA uses only the first) |
 | `state` | object | `use` — reserved. The current webGBA turns quick slots on for ① when all state exports (4.1.1) exist, and for ② when the game calls both `webgba.state.onSave` and `onLoad` |
@@ -524,6 +526,7 @@ A game lists only **the buttons it uses** in the manifest. Where they go on the 
 | `preset` | `"gba"`: the 10 GBA buttons below as they are (① default). `"none"`: no buttons (② default) |
 | `buttons` | Button array (up to 32 for ①, 24 for ②). With a `preset`, these are appended after the preset (the same `id` replaces the preset button). **If a ① game uses buttons other than the GBA ones, write `"preset": "none"` and list every button** — the ① default is `"gba"`, so leaving it out appends your buttons after the 10 GBA buttons and bits and roles collide (validation error) |
 | `keyboard` | `"mapped"` (default): the game receives only the listed buttons. `"raw"` (② only): real keys are passed through (text-entry games etc.; host keys excluded) |
+| `dpad` | Default handling of directions pressed together: `"latest"` (last pressed only) · `"opposite"` (latest of an opposite pair only, diagonals pass) · `"both"` (all, like a real GBA). For a game that sets it, this is the default and the user can change it per game (Windows app Settings › General › Two directions at once, web Settings — remembered per game id). Without it, the user's global setting (default `"latest"`). Games that need diagonal movement (arcade etc.) should set `"both"` or `"opposite"` |
 
 One button:
 
@@ -601,7 +604,7 @@ Keys the host uses before the game. Do not put them in a game's default keys (`k
 | `F1`–`F9`, `Shift+F1`–`F9` (Windows app) | Load / save quick slots. The Windows app reserves all of `F1`–`F12` |
 | `Ctrl`·`Alt`·`Meta` combinations | App shortcuts |
 
-The `code` a game listens for can be anything (the host translates). How simultaneous opposite directions are handled (latest only / latest of the opposite pair / all) is a user setting applied to the `up`·`down`·`left`·`right` roles.
+The `code` a game listens for can be anything (the host translates). How simultaneous opposite directions are handled (latest only / latest of the opposite pair / all) is a user setting (a game's `input.dpad` sets its default) applied to the `up`·`down`·`left`·`right` roles.
 
 #### 5.6 Example for ②
 
@@ -1161,7 +1164,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - Entries: name rule and no duplicates, in order and inside the file, a `webgba.<name>` section at that position (code matches wasm section boundaries and contains no `webgba.*`), kind matches the name, unpacked size = stored length for method 0, SHA-256 matches, no unknown kind with the required flag, single-instance chunks appear once
 - `webgba.*` sections missing from the TOC → warning
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
-- Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `cart.color`, button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
+- Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `input.dpad`, `cart.color`, `display` is an object and `display.aspect` is `"integer:integer"` (W·H 1–1024, ratio 1:4–4:1), button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
 - Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `iceServers` (7.11 format = error, fixed TURN credentials = warning)
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
@@ -1217,7 +1220,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 
 [Manifest webgba.manifest — UTF-8 JSON, no BOM]
 - Required: "wgba": 1, "id" (lowercase reverse domain, at least one dot, 64 characters or fewer), "version" ("x.y.z"; pre-release "-beta.1" allowed), "name" (string or {"en":…,"ko":…}, 48 characters or fewer), "runtime" ("webapi" or "script").
-- Optional: shortName (16 characters), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
+- Optional: shortName (16 characters), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, display{aspect ("W:H" display ratio, e.g. "4:3" — stretched when it differs from the screen buffer)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad ("latest"·"opposite"·"both" default for directions pressed together)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
 - For runtime "webapi" without a ROM chunk you must write "rom": {"required": false} (otherwise webGBA asks the user to pick a ROM file).
 - Write cart.label/front/spine as {"chunk":"cart.label|cart.front|cart.spine","format":"png|webp","width":…,"height":…} matching the pictures, leave out entries for pictures you do not include, and put labelAt [x,y] (default [3k,5k]) on the front and textArea [x,y,w,h] (the host writes the short name vertically there; no text if absent) on the spine.
 - The current webGBA ignores screen.fps, audio and state.use (it always runs at about 59.7275 fps). It does not open games with "net" in needs.

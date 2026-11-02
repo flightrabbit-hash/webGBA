@@ -1,6 +1,6 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { DPAD_MODES, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
 import { NetHost } from "../core/net/net-host.js";
 import { lang, locale, t } from "../shell/i18n.js";
 
@@ -36,9 +36,23 @@ function sameBytes(a, b) {
 
 export const BUTTONS = ["A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L"];
 
-export const DPAD_MODES = ["both", "opposite", "latest"];
+export { DPAD_MODES };
 
 export const DPAD_DEFAULT = "latest";
+
+export function dpadFor(input, prefs) {
+  if (!input?.dpad) return DPAD_MODES.includes(prefs?.dpadMode) ? prefs.dpadMode : DPAD_DEFAULT;
+  const own = input.gameId ? prefs?.gameDpad?.[input.gameId] : undefined;
+  return DPAD_MODES.includes(own) ? own : input.dpad;
+}
+
+export function gameDpadPatch(input, prefs, mode) {
+  if (!input?.dpad || !input.gameId) return null;
+  const gameDpad = { ...(prefs?.gameDpad ?? {}) };
+  if (mode === input.dpad || !DPAD_MODES.includes(mode)) delete gameDpad[input.gameId];
+  else gameDpad[input.gameId] = mode;
+  return { gameDpad };
+}
 
 /** 설명서가 없는 게임(.gba·옛 .wgba·.wasm)과 preset gba 만 쓰는 게임의 버튼 목록 = GBA 10버튼(비트 = BUTTONS 순서). */
 export const GBA_LAYOUT = Object.freeze(resolveInput(null));

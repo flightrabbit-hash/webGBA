@@ -4,7 +4,7 @@
 //   srcdoc 이라 틀 페이지를 가져올 주소가 없다 — 오프라인(웹 앱 설치)에서도 열리고 exe·웹 서버 설정이 필요 없다.
 //   이야기는 처음 넘긴 MessagePort 하나로만. 틀이 보낸 것은 종류·크기를 확인하고, 코드로 실행하지 않는다.
 // player.js 의 Player 가 이 호스트를 ① 호스트처럼 다룬다(script = true): 입력 비트 → 버튼 키, 세이브·퀵슬롯·일시정지·소리 크기.
-import { codeWasm } from "./wgba-format.js";
+import { codeWasm, parseAspect, ratioOf } from "./wgba-format.js";
 import { readRomPayload } from "./web-host.js";
 
 const STATE_BYTES = 262144;
@@ -56,11 +56,11 @@ const attr = (value) => String(value).replace(/&/g, "&amp;").replace(/"/g, "&quo
 const cssColor = (value) => (/^[#(),.\w\s%-]{1,64}$/.test(String(value)) ? String(value) : "#000");
 
 /** 틀 문서(srcdoc). 배경색만 호스트 화면에 맞춘다(스크립트 해시와 관계없음). */
-export async function runnerDocument({ lang = "en", background = "#000" } = {}) {
+export async function runnerDocument({ lang = "en", background = "#000", stretch = false } = {}) {
   const { text, csp, hash } = await runnerSource();
   const style =
     `html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${cssColor(background)}}` +
-    "canvas{display:block;width:100%;height:100%;object-fit:contain;image-rendering:pixelated;image-rendering:crisp-edges;outline:none;touch-action:none}" +
+    `canvas{display:block;width:100%;height:100%;object-fit:${stretch ? "fill" : "contain"};image-rendering:pixelated;image-rendering:crisp-edges;outline:none;touch-action:none}` +
     "#tap{position:fixed;inset:0;display:grid;place-items:center;margin:0;padding:0;border:0;background:rgba(0,0,0,.45);cursor:pointer}" +
     "#tap[hidden]{display:none}" +
     "#tap::before,#tap::after{content:'';grid-area:1/1}" +
@@ -174,7 +174,9 @@ export class ScriptHost {
     this.stateOn = false;
     this.ready = false;
     this.sentBits = 0;
-    const { html } = await runnerDocument({ lang: this.lang, background: this.background });
+    const own = ratioOf(this.width, this.height);
+    const aspect = parseAspect(this.manifest.display?.aspect) ?? own;
+    const { html } = await runnerDocument({ lang: this.lang, background: this.background, stretch: aspect[0] !== own[0] || aspect[1] !== own[1] });
     const frame = document.createElement("iframe");
     frame.className = "script-frame";
     frame.setAttribute("sandbox", "allow-scripts");

@@ -27,6 +27,12 @@
         "scale": { "enum": ["fit", "integer"], "default": "fit" }
       }
     },
+    "display": {
+      "type": "object",
+      "properties": {
+        "aspect": { "type": "string", "pattern": "^[1-9][0-9]{0,3}:[1-9][0-9]{0,3}$", "description": "W:H, each 1-1024, ratio between 1:4 and 4:1" }
+      }
+    },
     "audio": { "type": "object", "properties": { "use": { "type": "boolean", "default": true } } },
     "save": {
       "type": "object",
@@ -43,6 +49,7 @@
       "properties": {
         "preset": { "enum": ["gba", "none"] },
         "keyboard": { "enum": ["mapped", "raw"], "default": "mapped" },
+        "dpad": { "enum": ["latest", "opposite", "both"] },
         "buttons": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/button" } }
       }
     },

@@ -88,6 +88,25 @@ export function contrastInk(color) {
 }
 export const NEEDS = Object.freeze(["pointer", "net", "keyboard", "state"]);
 export const RUNTIMES = Object.freeze(["webapi", "script"]);
+export const DPAD_MODES = Object.freeze(["both", "opposite", "latest"]);
+export const ASPECT_MAX = 1024;
+export const ASPECT_RATIO_MAX = 4;
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+
+export function ratioOf(width, height) {
+  const g = gcd(width, height);
+  return [width / g, height / g];
+}
+
+export function parseAspect(text) {
+  const m = typeof text === "string" ? /^([1-9]\d{0,3}):([1-9]\d{0,3})$/.exec(text) : null;
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (w > ASPECT_MAX || h > ASPECT_MAX || w > h * ASPECT_RATIO_MAX || h > w * ASPECT_RATIO_MAX) return null;
+  return ratioOf(w, h);
+}
 export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra"]);
 export const GBA_PRESET = Object.freeze([
   { id: "A", role: "a", bit: 0 },
@@ -182,7 +201,7 @@ export function resolveInput(manifest) {
       const b = buttons[i];
       return b.id === p.id && b.role === p.role && b.bit === p.bit && !b.keys && !b.label && b.touch === "auto" && b.pad.join() === ROLE_PAD[p.role].join();
     });
-  return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons };
+  return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons, dpad: DPAD_MODES.includes(input.dpad) ? input.dpad : null };
 }
 
 /** ① 가 쓸 수 있는 가져오기(web-host.js 와 같은 목록 + webgba.v1). */
@@ -590,6 +609,9 @@ export function checkManifest(m, errors, warnings) {
   const s = m.screen ?? {};
   for (const key of ["width", "height"]) if (s[key] !== undefined && (!Number.isInteger(s[key]) || s[key] < 1 || s[key] > 1024)) errors.push(`screen.${key} 는 1~1024 정수`);
   if (s.scale !== undefined && !["fit", "integer"].includes(s.scale)) errors.push(`screen.scale 이 fit·integer 가 아닙니다: ${s.scale}`);
+  if (m.display !== undefined && (!m.display || typeof m.display !== "object" || Array.isArray(m.display))) errors.push("display 는 객체");
+  else if (m.display?.aspect !== undefined && !parseAspect(m.display.aspect)) errors.push(`display.aspect 는 "W:H"(1~${ASPECT_MAX} 정수, 비율 1:${ASPECT_RATIO_MAX}~${ASPECT_RATIO_MAX}:1): ${JSON.stringify(m.display.aspect)}`);
+  if (m.input?.dpad !== undefined && !DPAD_MODES.includes(m.input.dpad)) errors.push(`input.dpad 가 both·opposite·latest 가 아닙니다: ${m.input.dpad}`);
   const save = m.save ?? {};
   if (save.kind !== undefined && !["flash", "storage", "localStorage", "files", "none"].includes(save.kind)) errors.push(`save.kind 가 규칙 밖입니다: ${save.kind}`);
   if (save.maxSize !== undefined && (!Number.isInteger(save.maxSize) || save.maxSize < 1 || save.maxSize > 16 * 1024 * 1024)) errors.push("save.maxSize 는 1~16MB");

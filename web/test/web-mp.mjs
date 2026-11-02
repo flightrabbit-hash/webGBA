@@ -597,13 +597,13 @@ async function wanTests() {
   await S.page.evaluate(() => window.webgba.openSheet("settings"));
   await sleep(500);
   const item = await S.page.evaluate(() => {
-    const label = [...document.querySelectorAll("#sheetBody *")].find((n) => n.childElementCount === 0 && n.textContent === "인터넷으로도 연결(실험)");
+    const label = [...document.querySelectorAll("#sheetBody *")].find((n) => n.childElementCount === 0 && n.textContent === "인터넷 연결(실험)");
     const row = label?.closest(".field, .item, label, li, .row") ?? label?.parentElement;
     row?.scrollIntoView({ block: "center" });
     return { found: Boolean(label), text: row?.textContent ?? "" };
   });
   await sleep(300);
-  ok("설정 › 멀티플레이 '인터넷으로도 연결(실험)'(설명: 방 코드·실패할 수 있는 망·공인 IP)", item.found && /공인 IP/.test(item.text) && /휴대폰 데이터/.test(item.text), item.text.slice(0, 120));
+  ok("설정 › 멀티플레이 '인터넷 연결(실험)'(설명: 방 코드·실패할 수 있는 망·공인 IP)", item.found && /공인 IP/.test(item.text) && /휴대폰 데이터/.test(item.text), item.text.slice(0, 120));
   if (CAPTURE) await S.page.screenshot({ path: path.join(CAPTURE, "설정_인터넷연결_390x844.png") });
   await S.context.close();
 }

@@ -737,7 +737,7 @@ async function testKeymap() {
       `${ta.sent}/${tb.sent}/${tc.sent}/${ts.sent} · 보임 ${shown(r).join(",")}`);
     ok("키 매핑 역할: 키보드 Z·M(extra)·Q(l2)·← → bit 8·20·21·2, 화면 막대도", kz.sent === 256 && km.sent === 1 << 20 && kq.sent === 1 << 21 && kl.sent === 4 && km.lit.join() === "20" && kl.lit.join() === "2",
       `${kz.sent}/${km.sent}/${kq.sent}/${kl.sent} · 막대 ${km.lit}/${kl.lit}`);
-    // 방향 동시 누름(기본 "나중에 누른 방향만")이 role 방향 bit 에 걸림: ← 누른 채 ↑ → ↑(bit 0)만
+    // 방향 동시 누름(기본 "한 방향만 전달")이 role 방향 bit 에 걸림: ← 누른 채 ↑ → ↑(bit 0)만
     await page.keyboard.down("ArrowLeft");
     await page.waitForTimeout(80);
     await page.keyboard.down("ArrowUp");

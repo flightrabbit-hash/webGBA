@@ -5,7 +5,7 @@ import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
-import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, GBA_LAYOUT, layoutKeys, Player } from "../app/player.js";
+import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
 import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
@@ -486,6 +486,7 @@ const keysFor = (input = state.input) => layoutKeys(input, keysFromPrefs(), save
 function applyInput(input) {
   state.input = input ?? GBA_LAYOUT;
   player.setLayout(state.input, keysFor(state.input));
+  player.setDpadMode(dpadFor(state.input, state.prefs));
 }
 
 /** 키 설정 창에 넘길 버튼 목록: 순서·이름·되돌릴 기본 키·안내 글(설명서가 버튼을 정한 게임만). */
@@ -516,16 +517,21 @@ const integerScale = () => state.prefs.scaleMode === "integer";
 // 게임 화면 크기: 설명서 screen(없으면 GBA 240×160). 배율은 사용자 설정이 정한다(결정 102-15) — 설정 "정수 배율"이면
 // 영역에 들어가는 가장 큰 정수 배, 아니면 영역에 맞춤(비율 유지). 설명서 scale "integer" 는 권장일 뿐 설정을 이기지 않는다.
 // ② 틀(iframe)도 같은 크기.
-const screenSize = () => state.screen ?? { width: SCREEN_W, height: SCREEN_H, integer: false };
+const screenSize = () => state.screen ?? { width: SCREEN_W, height: SCREEN_H, integer: false, aspect: [3, 2], stretch: false };
 
 function layoutScreen() {
   const box = el.stage.getBoundingClientRect();
   if (box.width < 1 || box.height < 1) return;
-  const { width: w, height: h } = screenSize();
-  const fit = Math.min(box.width / w, box.height / h);
+  const { width: w, height: h, aspect, stretch } = screenSize();
+  const shown = stretch ? (h * aspect[0]) / aspect[1] : w;
+  const fit = Math.min(box.width / shown, box.height / h);
   const scale = integerScale() && fit >= 1 ? Math.floor(fit) : fit;
-  const width = Math.max(1, Math.floor(w * scale));
-  const height = Math.max(1, Math.round((width * h) / w));
+  let width = Math.max(1, Math.floor(w * scale));
+  let height = Math.max(1, Math.round((width * h) / w));
+  if (stretch) {
+    height = Math.max(1, Math.floor(h * scale));
+    width = Math.max(1, Math.min(Math.floor(box.width), Math.round((height * aspect[0]) / aspect[1])));
+  }
   for (const node of [el.screen, state.scriptFrame]) {
     if (!node) continue;
     node.style.width = `${width}px`;
@@ -980,7 +986,7 @@ async function closeGame({ quiet = false } = {}) {
   state.screen = null;
   state.scriptFrame = null;
   state.autoPaused = false;
-  if (!state.input.gba) applyInput(null);
+  if (!state.input.gba || state.input.dpad) applyInput(null);
   showView("start");
   syncControls();
   renderPanel();
@@ -1429,6 +1435,8 @@ async function applySettings(next) {
     else gameKeys[input.gameId] = own;
     patch.gameKeys = gameKeys;
   }
+  const dpadPatch = gameDpadPatch(input, state.prefs, patch.dpadMode);
+  if (dpadPatch) Object.assign(patch, dpadPatch, { dpadMode: DPAD_MODES.includes(state.prefs.dpadMode) ? state.prefs.dpadMode : DPAD_DEFAULT });
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
   player.net.syncEnabled();
@@ -1450,7 +1458,7 @@ async function applySettings(next) {
   player.setMuted(Boolean(next.muted));
   player.fastScale = next.fastScale;
   player.fastMute = patch.fastMute;
-  player.setDpadMode(patch.dpadMode);
+  player.setDpadMode(dpadFor(state.input, state.prefs));
   syncControls();
   renderPanel();
   if (!el.start.hidden) renderStart();
@@ -1986,6 +1994,7 @@ settings.setup({
   defaultKeys: DEFAULT_KEYS,
   vars: (key) => (key === "netNick" ? { name: (netNick(), defaultNick(state.prefs.netNo)) } : {}),
   placeholder: (key) => (key === "netNick" ? (netNick(), defaultNick(state.prefs.netNo)) : undefined),
+  hint: (key) => (key === "dpadMode" && state.input.dpad ? t("cfg.dpadMode.game", { name: state.game?.label || state.game?.name || state.input.gameId, value: t(`cfg.dpadMode.${state.input.dpad}`) }) : undefined),
   onClose: () => {
     syncControls();
     if (state.game?.kind === "frame") focusFrame();

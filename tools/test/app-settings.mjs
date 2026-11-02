@@ -100,13 +100,13 @@ try {
     rows: document.querySelectorAll('#settings-body .cfg__row').length,
     saveGroup: (() => { const g = [...document.querySelectorAll('#settings-body .cfg__group')].find((n) => n.querySelector('.cfg__title').textContent === '세이브'); return g ? { rows: g.querySelectorAll('.cfg__row').length, note: g.querySelector('.cfg__note')?.textContent ?? '' } : null; })(),
     oldRows: [...document.querySelectorAll('#settings-body .cfg__row')].filter((r) => /종료할 때 세이브 파일|세이브 파일 폴더|세이브 백업/.test(r.textContent)).length,
-    dpad: [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '방향키 동시 누름')?.querySelector('input:checked')?.parentElement?.textContent,
-    webRom: [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '웹 빌드에 쓸 롬 파일 이름')?.querySelector('input')?.value ?? null,
+    dpad: [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '방향키 동시 입력')?.querySelector('input:checked')?.parentElement?.textContent,
+    webRom: [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '웹 빌드용 롬 파일명')?.querySelector('input')?.value ?? null,
     pressed: document.getElementById('btn-settings').getAttribute('aria-pressed'),
   }))()`);
   check("설정 창: 도구 막대 버튼으로 열림, 탭 4개(일반·키·테마·언어)", shape.open && shape.tabs.join() === "일반,키,테마,언어" && shape.pressed === "true", shape.tabs.join(" · "));
   check("설정 창: 일반 탭 6묶음 14줄(화면·소리·게임·세이브·파일·개발)", shape.groups.join() === "화면,소리,게임,세이브,파일,개발" && shape.rows === 14, `${shape.groups.join(" · ")} / ${shape.rows}줄`);
-  check("방향키 동시 누름: 기본 '나중에 누른 방향만'", shape.dpad === "나중에 누른 방향만" && shape.webRom === "", `${shape.dpad} · 롬 이름 칸 '${shape.webRom}'`);
+  check("방향키 동시 입력: 기본 '한 방향만 전달'", shape.dpad === "한 방향만 전달" && shape.webRom === "", `${shape.dpad} · 롬 이름 칸 '${shape.webRom}'`);
   check(
     "세이브 묶음: 항목 없이 '연 파일 바로 옆 <파일 이름>.sav' 안내 한 줄(종료 세이브·세이브 폴더·백업 항목 없음)",
     shape.saveGroup?.rows === 0 && /연 파일 바로 옆 <파일 이름>\.sav/.test(shape.saveGroup?.note ?? "") && shape.oldRows === 0,
@@ -150,7 +150,7 @@ try {
   await setNumber("상태 슬롯", 3);
   await clickIn("빨리 감기 배수", 3);
   await clickIn("화면 맞춤", 1);
-  await clickIn("창이 가려지면 일시정지");
+  await clickIn("창이 가려질 때 일시정지");
   await click("#settings-save");
   await sleep(600);
   const after = prefs();
@@ -268,7 +268,7 @@ try {
   said = await statusText();
   check(`포트: 다시 켜서 열면 옆 ${TEST_BUILD}.sav 를 불러옴`, said.includes(`세이브를 불러왔습니다: ${TEST_BUILD}.sav`), said);
 
-  /* ── 웹 빌드 롬 고르기(설정 "웹 빌드에 쓸 롬 파일 이름") ── */
+  /* ── 웹 빌드 롬 고르기(설정 "웹 빌드용 롬 파일명") ── */
   const sameDir = path.join(work, "same");
   fs.rmSync(sameDir, { recursive: true, force: true });
   fs.mkdirSync(sameDir, { recursive: true });
@@ -283,7 +283,7 @@ try {
   await app.evaluate(`${T}.closeGame()`);
   await sleep(300);
   await openSettings("general");
-  await setNumber("웹 빌드에 쓸 롬 파일 이름", ` ${TEST_ROM} `);
+  await setNumber("웹 빌드용 롬 파일명", ` ${TEST_ROM} `);
   await click("#settings-save");
   await sleep(500);
   await closeSettings();
@@ -298,7 +298,7 @@ try {
     await sleep(300);
   }
   await openSettings("general");
-  await app.evaluate(`(() => { const row = [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '웹 빌드에 쓸 롬 파일 이름'); row.querySelector('button').click(); return true; })()`);
+  await app.evaluate(`(() => { const row = [...document.querySelectorAll('#settings-body .cfg__row')].find((r) => r.querySelector('.cfg__label').firstChild.textContent === '웹 빌드용 롬 파일명'); row.querySelector('button').click(); return true; })()`);
   await click("#settings-save");
   await sleep(500);
   await closeSettings();

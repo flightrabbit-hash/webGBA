@@ -3,7 +3,7 @@
 // code 조각만 컴파일하므로 롬·그림이 wasm 엔진 메모리에 올라가지 않는다. 조각마다 목차의 SHA-256 을 확인한다
 // (롬팩 그림은 망가져도 그 그림만 빼고 연다 — 규격 6장). 문장은 t() 키를 코드에 그대로 적는다(i18n-keys 검사).
 import { t } from "../shell/i18n.js";
-import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND, KIND_NAME, LIMITS, NEEDS, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
+import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND, KIND_NAME, LIMITS, NEEDS, parseAspect, ratioOf, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -104,10 +104,14 @@ export function problemText(problem) {
   return t("wgba.noNeeds", { list: problem.list.map((need) => (need === "net" ? t("wgba.need.net") : need)).join(", ") });
 }
 
-/** 설명서 화면 크기 { width, height, integer } — 없으면 GBA 240×160, scale "integer" 면 정수 배율 권장. */
+/** 설명서 화면 크기 { width, height, integer, aspect, stretch } — 없으면 GBA 240×160, scale "integer" 면 정수 배율 권장. */
 export function screenOf(manifest) {
   const s = manifest?.screen ?? {};
-  return { width: s.width ?? 240, height: s.height ?? 160, integer: s.scale === "integer" };
+  const width = s.width ?? 240;
+  const height = s.height ?? 160;
+  const own = ratioOf(width, height);
+  const aspect = parseAspect(manifest?.display?.aspect) ?? own;
+  return { width, height, integer: s.scale === "integer", aspect, stretch: aspect[0] !== own[0] || aspect[1] !== own[1] };
 }
 
 /** readWgba 의 오류 → 보일 문장. */

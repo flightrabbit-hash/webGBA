@@ -231,6 +231,42 @@ await broken("모르는 종류 + 필수 깃발", async (buf) => {
 ok(compareVersions("1.2.0", "1.10.0") === -1 && compareVersions("1.2.0", "1.2.0-beta.1") === 1 && compareVersions("1.2.0-beta.2", "1.2.0-beta.10") === -1 && compareVersions("2.0.0", "2.0.0") === 0, "유의적 버전 비교");
 ok(updateAction({ version: "1.1.0", build: "x" }, { version: "1.2.0", build: "y" }) === "update" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.2.0", build: "y" }) === "update" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.1.0", build: "y" }) === "older" && updateAction({ version: "1.2.0", build: "x" }, { version: "1.2.0", build: "x" }) === "same", "같은 id: 높은 버전·같은 버전 다른 빌드 = 묻지 않고 바꿈, 낮은 버전 = 경고, 같은 빌드 = 그대로");
 
+// 표시 비율 display.aspect(결정 143)·방향 입력 기본값 input.dpad(결정 145)
+const { parseAspect, resolveInput } = await import("../../src-bundle/src/js/core/wgba-format.js");
+const { screenOf } = await import("../../src-bundle/src/js/core/wgba-read.js");
+{
+  const manifestErrors = async (patch) => (await checkWgba((await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, ...patch } })).bytes)).errors;
+  const good = [];
+  for (const aspect of ["4:3", "3:4", "16:9", "8:7", "1024:768", "4:1", "1:4"]) good.push(...(await manifestErrors({ display: { aspect } })));
+  ok(good.length === 0, "display.aspect 형식 통과: 4:3·3:4·16:9·8:7·1024:768·4:1·1:4", good.join(" / "));
+  const bad = [];
+  for (const aspect of ["4x3", "4:3:1", "0:3", "04:3", "4 : 3", "1025:768", "5:1", "1:5", "-4:3", 4, null, ""]) {
+    const errors = await manifestErrors({ display: { aspect } });
+    if (!errors.some((e) => /display\.aspect/.test(e))) bad.push(JSON.stringify(aspect));
+  }
+  const notObject = await manifestErrors({ display: "4:3" });
+  ok(bad.length === 0 && notObject.some((e) => /display 는 객체/.test(e)), "display.aspect 형식 밖 → 오류(x·세 칸·0·앞자리 0·공백·1024 초과·4:1 넘는 비율·숫자·null·빈 글), display 가 객체 아님 → 오류", bad.join(", "));
+  ok(parseAspect("8:6").join() === "4,3" && parseAspect("448:336").join() === "4,3" && parseAspect("4x3") === null, "parseAspect: 약분(8:6 → 4:3), 형식 밖 null");
+  const gba = screenOf({});
+  const kov = screenOf({ screen: { width: 448, height: 224 } });
+  const kov43 = screenOf({ screen: { width: 448, height: 224 }, display: { aspect: "4:3" } });
+  const same32 = screenOf({ screen: { width: 240, height: 160 }, display: { aspect: "3:2" } });
+  ok(gba.aspect.join() === "3,2" && !gba.stretch && kov.aspect.join() === "2,1" && !kov.stretch && kov43.aspect.join() === "4,3" && kov43.stretch && !same32.stretch, "screenOf: 비율 없음 = 화면 버퍼 비율(240×160 → 3:2, 448×224 → 2:1, 늘리기 없음), 448×224 + 4:3 → 늘리기, 버퍼와 같은 비율 → 늘리기 없음", JSON.stringify({ gba, kov43 }));
+  const dpadErrors = await manifestErrors({ input: { preset: "gba", dpad: "diagonal" } });
+  const dpadGood = await manifestErrors({ input: { preset: "gba", dpad: "both" } });
+  ok(dpadErrors.some((e) => /input\.dpad/.test(e)) && dpadGood.length === 0, "input.dpad: both·opposite·latest 밖 → 오류", dpadErrors.join(" / "));
+  ok(resolveInput({ ...manifestA, input: { preset: "gba", dpad: "both" } }).dpad === "both" && resolveInput({ ...manifestA, input: { preset: "gba", dpad: "both" } }).gba && resolveInput(manifestA).dpad === null && resolveInput(null).dpad === null, "resolveInput: dpad 지정 값(버튼은 GBA 그대로면 gba 유지), 지정 없음·설명서 없음 = null");
+  globalThis.window ??= {};
+  const { dpadFor, gameDpadPatch } = await import("../../src-bundle/src/js/app/player.js");
+  const kovInput = { gameId: "local.kov115", dpad: "both" };
+  const gbaInput = { gameId: "", dpad: null };
+  ok(dpadFor(gbaInput, { dpadMode: "latest" }) === "latest" && dpadFor(gbaInput, { dpadMode: "opposite", gameDpad: { "": "both" } }) === "opposite" && dpadFor(gbaInput, {}) === "latest", "dpadFor: 지정 없는 게임 = 전체 설정(없으면 latest)");
+  ok(dpadFor(kovInput, { dpadMode: "latest" }) === "both" && dpadFor(kovInput, { dpadMode: "latest", gameDpad: { "local.kov115": "opposite" } }) === "opposite" && dpadFor(kovInput, { gameDpad: { "local.kov115": "wrong" } }) === "both", "dpadFor: 지정한 게임 = 게임별 값 → 설명서 값(전체 설정과 무관)");
+  const p1 = gameDpadPatch(kovInput, { gameDpad: { other: "both" } }, "latest");
+  const p2 = gameDpadPatch(kovInput, { gameDpad: { "local.kov115": "latest", other: "both" } }, "both");
+  ok(p1.gameDpad["local.kov115"] === "latest" && p1.gameDpad.other === "both" && !("local.kov115" in p2.gameDpad) && p2.gameDpad.other === "both" && gameDpadPatch(gbaInput, {}, "both") === null, "gameDpadPatch: 설명서 값과 다르면 게임 id 에 기록, 같으면 삭제, 지정 없는 게임 = null(전체 설정)");
+}
+
 // 앱 읽기(wgba-read.js — exe·웹이 .wgba 를 여는 길, S2)
 const { readWgba, compileCode, supportProblem, pickText, gameInfo } = await import("../../src-bundle/src/js/core/wgba-read.js");
 const { bootHost, inspectModule, readRomPayload } = await import("../../src-bundle/src/js/core/web-host.js");
