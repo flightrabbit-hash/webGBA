@@ -642,8 +642,8 @@
 
   "net.reachedNote": "연결됨 · {n}/{max} — 잠시 후 창을 닫습니다",
   "net.anytimeNote": "방을 만들거나 '갱신'을 누르면 2분 30초 동안 참가를 받습니다. 창을 닫아도 유지되며, 유저가 들어오면 알려 드립니다.",
-  "net.buttonWait": "멀티플레이 · 손님을 기다리는 중",
-  "net.statusWait": "손님을 기다리는 중 · 사람 {n}",
+  "net.buttonWait": "멀티플레이 · 유저를 기다리는 중",
+  "net.statusWait": "유저를 기다리는 중 · 사람 {n}",
   "net.renew": "갱신",
   "net.accept.on": "참가 받는 중 · {time} 남음",
   "net.accept.off": "참가 받기 멈춤 · '갱신'을 누르면 2분 30초 동안 다시 받습니다",
