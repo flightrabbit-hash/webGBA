@@ -3,6 +3,7 @@ import { crc32, MAX_ROM, WgbpError } from "./wgbp.js";
 
 export const ZIP_MAX = 0x10000000;
 const ROM_NAME = /\.(gba|agb|bin)$/i;
+const GAME_NAME = /\.(gba|agb|bin|gb|gbc)$/i;
 const BIN_NAME = /\.bin$/i;
 const METHOD_NAMES = { 1: "Shrink", 6: "Implode", 9: "Deflate64", 12: "BZIP2", 14: "LZMA", 93: "Zstandard", 95: "XZ", 96: "JPEG", 97: "WavPack", 98: "PPMd" };
 const LOCAL = 0x04034b50;
@@ -118,8 +119,8 @@ export function zipEntries(bytes) {
 
 const hidden = (name) => name.endsWith("/") || /(^|\/)__MACOSX\//.test(name) || baseName(name).startsWith("._");
 
-export function zipRoms(entries) {
-  const roms = entries.filter((entry) => ROM_NAME.test(entry.name) && !hidden(entry.name));
+export function zipRoms(entries, names = ROM_NAME) {
+  const roms = entries.filter((entry) => names.test(entry.name) && !hidden(entry.name));
   return [...roms.filter((entry) => !BIN_NAME.test(entry.name)), ...roms.filter((entry) => BIN_NAME.test(entry.name))];
 }
 
@@ -165,7 +166,7 @@ export function romChoices(bytes) {
 }
 
 export function extractRom(bytes) {
-  const roms = zipRoms(zipEntries(bytes)).sort((a, b) => b.size - a.size);
+  const roms = zipRoms(zipEntries(bytes), GAME_NAME).sort((a, b) => b.size - a.size);
   if (!roms.length) throw new ZipError("zipNoRom");
   const entry = roms.find((item) => !BIN_NAME.test(item.name)) ?? roms[0];
   return { name: baseName(entry.name), bytes: zipRead(bytes, entry) };

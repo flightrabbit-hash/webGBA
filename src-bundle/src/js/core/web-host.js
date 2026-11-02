@@ -127,8 +127,23 @@ class WebHost {
     this.lines = new Map();
     this.halted = "";
     // 화면 크기(설명서 screen, 없으면 GBA). Web_GetFramebuffer 는 width × height × 4 바이트 RGBA.
+    this.ownScreen = Boolean(options.screen);
     this.width = options.screen?.width ?? SCREEN_W;
     this.height = options.screen?.height ?? SCREEN_H;
+  }
+
+  readScreen() {
+    if (this.ownScreen || !this.ex.Web_GetScreenWidth || !this.ex.Web_GetScreenHeight) return;
+    const width = this.ex.Web_GetScreenWidth() >>> 0;
+    const height = this.ex.Web_GetScreenHeight() >>> 0;
+    if (width > 0 && height > 0 && width <= 1024 && height <= 1024) {
+      this.width = width;
+      this.height = height;
+    }
+  }
+
+  get system() {
+    return this.ex?.Web_GetSystem ? this.ex.Web_GetSystem() | 0 : 0;
   }
 
   get u8() {
@@ -271,7 +286,10 @@ class WebHost {
   }
 
   init() {
-    if (this.ex.Web_Init()) return true;
+    if (this.ex.Web_Init()) {
+      this.readScreen();
+      return true;
+    }
     this.halted = this.reason() || t("host.initFailed");
     return false;
   }

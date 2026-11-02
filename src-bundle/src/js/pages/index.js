@@ -5,7 +5,8 @@ import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
-import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
+import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
+import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
 import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
@@ -65,8 +66,8 @@ const el = {
   winMaxIcon: $("win-max-icon"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "zip", "wgba", "wasm", "wgbp"]);
-const LIST_EXT = new Set(["gba", "wgba", "wasm", "wgbp"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wasm", "wgbp"]);
+const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wasm", "wgbp"]);
 const WASM_EXT = new Set(["wgba", "wasm"]);
 const PATCH_EXT = "wgbp";
 const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
@@ -492,6 +493,10 @@ function applyInput(input) {
 /** 키 설정 창에 넘길 버튼 목록: 순서·이름·되돌릴 기본 키·안내 글(설명서가 버튼을 정한 게임만). */
 function keyLayout(input = state.input) {
   if (input.gba) return null;
+  if (input.system === "gb") {
+    const order = KEY_ORDER.filter((name) => name !== "L" && name !== "R");
+    return { order, labels: {}, defaults: Object.fromEntries(order.map((name) => [name, [...DEFAULT_KEYS[name]]])), note: t("cfg.keys.gb") };
+  }
   const order = [...input.buttons.map((b) => b.id), "FAST"];
   const labels = Object.fromEntries(input.buttons.map((b) => [b.id, buttonLabel(b)]));
   return { order, labels, defaults: layoutKeys(input, DEFAULT_KEYS), note: t("cfg.keys.game", { name: state.game?.label || state.game?.name || input.gameId }) };
@@ -740,8 +745,10 @@ async function openRom(path) {
   const saveId = `gba/${stemOf(path)}`;
   const { save, name } = await openSave(path);
   const { host, hadSave } = await bootHost({ module, rom, save, log: hostLog });
-  await startHosted(host, { path, saveId, kind: "core" });
-  status(join(baseOf(path), saveNote(hadSave, name)));
+  const system = systemKind(host.system, rom);
+  const gb = system.system === "gb";
+  await startHosted(host, { path, saveId, kind: "core", system, input: gb ? GB_LAYOUT : null, screen: gb ? GB_SCREEN : null });
+  status(join(baseOf(path), gb ? t(kindKey(system)) : "", saveNote(hadSave, name)));
   return true;
 }
 
@@ -995,7 +1002,7 @@ async function closeGame({ quiet = false } = {}) {
 
 async function openDialogFile() {
   const start = state.game ? dirOf(state.game.path) : state.prefs.lastDir;
-  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "wgba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
+  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "gb", "gbc", "wgba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
   if (path) await openPath(path);
 }
 
@@ -1300,7 +1307,7 @@ function helpBody() {
   const list = document.createElement("dl");
   list.className = "help";
   // 설명서가 버튼을 정한 게임이면 그 게임의 버튼만(설명서 label)
-  const order = state.input.gba ? KEY_ORDER : [...state.input.buttons.map((b) => b.id), "FAST"];
+  const order = state.input.gba ? KEY_ORDER : state.input.system === "gb" ? KEY_ORDER.filter((name) => name !== "L" && name !== "R") : [...state.input.buttons.map((b) => b.id), "FAST"];
   const nameOf = (id) => {
     const b = state.input.gba ? null : state.input.buttons.find((x) => x.id === id);
     return b ? buttonLabel(b) : t(`key.${id}`);
@@ -1424,6 +1431,7 @@ async function applySettings(next) {
     keys: next.keys,
   };
   const input = state.input;
+  if (input.system === "gb") patch.keys = { ...keysFromPrefs(), ...next.keys };
   if (!input.gba && input.gameId) {
     // 설명서가 버튼을 정한 게임: 버튼 키는 그 게임 id 에만, 빨리 감기(호스트 몫)는 앱 전체. 기본과 같으면 기록하지 않음.
     patch.keys = { ...keysFromPrefs(), FAST: next.keys.FAST ?? [] };

@@ -119,9 +119,9 @@ export function remove(key) {
   });
 }
 
-export function putRom({ id, name, file, type, sha1 = "", added = 0 }, data) {
+export function putRom({ id, name, file, type, color = "", sha1 = "", added = 0 }, data) {
   const now = Date.now();
-  return put({ key: romKey(id), kind: KIND_ROM, id, name, file, type, sha1, added: added || now, opened: now }, data);
+  return put({ key: romKey(id), kind: KIND_ROM, id, name, file, type, ...(color ? { color } : {}), sha1, added: added || now, opened: now }, data);
 }
 
 /**

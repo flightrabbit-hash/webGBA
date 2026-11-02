@@ -1,5 +1,5 @@
 #!/bin/bash
-# mGBA 0.10.1 코어를 wasm 으로 만든다. 도커 emscripten/emsdk:4.0.10 안에서 돈다(tools/core-build.cjs 가 --rm 으로 띄움).
+# mGBA 0.10.1 코어(GBA·GB·GBC)를 wasm 으로 만든다. 도커 emscripten/emsdk:4.0.10 안에서 돈다(tools/core-build.cjs 가 --rm 으로 띄움).
 #   /work = 이 core 폴더. 결과: /work/out/mgba_core.wasm (Web_* 규약, 글루 .js 없이 webGBA 내장 호스트가 돌림)
 # mGBA 소스는 vendor/mgba-0.10.1 (없으면 공식 태그를 받음). mGBA 파일은 고치지 않는다.
 set -euo pipefail
@@ -31,7 +31,7 @@ emcmake cmake "/work/${SRC}" \
 	-DUSE_FFMPEG=OFF -DUSE_ZLIB=OFF -DUSE_MINIZIP=OFF -DUSE_PNG=OFF -DUSE_LIBZIP=OFF \
 	-DUSE_SQLITE3=OFF -DUSE_ELF=OFF -DUSE_LUA=OFF -DUSE_LZMA=OFF -DUSE_DISCORD_RPC=OFF \
 	-DENABLE_SCRIPTING=OFF -DUSE_DEBUGGERS=OFF -DUSE_GDB_STUB=OFF -DUSE_EDITLINE=OFF \
-	-DM_CORE_GB=OFF -DM_CORE_GBA=ON -DBUILD_LTO=OFF \
+	-DM_CORE_GB=ON -DM_CORE_GBA=ON -DBUILD_LTO=OFF \
 	-DCMAKE_C_FLAGS="-D_GNU_SOURCE -DDISABLE_THREADING -O2" > /work/out/cmake.log
 emmake make -j"$(nproc)" mgba > /work/out/make.log
 popd > /dev/null
@@ -39,7 +39,7 @@ popd > /dev/null
 # 포트 웹 빌드와 같은 모양: 글루 .js 는 버리고 .wasm 만 쓴다. 바깥 함수는 기본 몇 개만 남게 파일 시스템을 끈다.
 emcc -O2 \
 	-I "/work/${SRC}/include" -I "/work/${BUILD}/include" \
-	-D_GNU_SOURCE -DM_CORE_GBA -DDISABLE_THREADING \
+	-D_GNU_SOURCE -DM_CORE_GB -DM_CORE_GBA -DDISABLE_THREADING \
 	src/webgba_core.c src/host_stubs.c "${BUILD}/libmgba.a" \
 	-o out/glue/mgba_core.js \
 	--no-entry \

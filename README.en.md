@@ -2,15 +2,15 @@
 
 [한국어](README.md) · **English** · [日本語](README.ja.md)
 
-A Windows launcher that opens GBA ROMs (`.gba`, `.zip`) and web builds (`.wasm`, `.wgba`).
+A Windows launcher that opens GBA, GB and GBC ROMs (`.gba`, `.gb`, `.gbc`, `.zip`) and web builds (`.wasm`, `.wgba`).
 It puts a WebView UI on top of Tauri 2 + Rust, and its structure follows Arbiter. The WebView runs the game
-(core, keys, sound) and Rust handles files and windows. `.gba` files run on the built-in mGBA 0.10.1 core (wasm);
+(core, keys, sound) and Rust handles files and windows. `.gba`, `.gb` and `.gbc` files run on the built-in mGBA 0.10.1 core (wasm);
 `.wasm` and `.wgba` web builds run as they are, inside the app. It starts with normal user rights (`asInvoker`) —
 **no administrator rights needed**.
 
-> **No ROMs or BIOS are included.** Open ROM files that you own. The official GBA BIOS is not included either; mGBA's built-in HLE BIOS is used.
+> **No ROMs or BIOS are included.** Open ROM files that you own. The official GBA BIOS is not included either; mGBA's built-in HLE BIOS is used. GB and GBC games start from the post-boot state without a boot ROM.
 
-**Web version:** https://webgba.vercel.app — an installable web app (PWA) for phone and PC browsers (`.gba`, `.zip`, `.wgba`, `.wasm`, `.wgbp`).
+**Web version:** https://webgba.vercel.app — an installable web app (PWA) for phone and PC browsers (`.gba`, `.gb`, `.gbc`, `.zip`, `.wgba`, `.wasm`, `.wgbp`).
 Opened in a browser tab it shows how to install; add it to the Home screen or install it as an app, then open it from that icon to play. Files and saves you pick stay inside that browser.
 
 ---
@@ -73,7 +73,11 @@ node tools/run.cjs   # list all commands
 
 - **.gba / .zip** — runs on the app's `bin\core\mgba_core.wasm` (mGBA 0.10.1). 240x160 screen (fits the right-hand area, keeps the aspect ratio; integer scaling in settings), sound, key bindings, gamepad,
   fast-forward (2x/3x/4x/8x), pause, reset, saves (`<ROM name>.sav` next to the ROM, same format as VBA and mGBA),
-  save-state slots 1–9. For `.zip`, the first `.gba`/`.agb`/`.bin` inside is opened.
+  save-state slots 1–9. For `.zip`, the first `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` inside is opened.
+- **.gb / .gbc (GB and GBC)** — run on the same mGBA core. The system is told from the ROM header, not the extension (same rule as mGBA; GBC-only and GB/GBC-compatible games get GBC colors, monochrome GB games get mGBA's default four grays).
+  160x144 screen (10:9, and the screen area is 10:9 too). Keys are the eight A, B, START, SELECT and directions (no L/R — hidden from the touch buttons, key settings and controls list as well; changed keys are the app-wide keys shared with GBA games).
+  Battery saves (`<ROM name>.sav` next to the ROM, same place and name as for .gba), the cartridge clock (MBC3 RTC — runs on real time and is stored in the last 48 bytes of the save, the same format as mGBA and VBA-M), save-state slots and the web version's auto-save.
+  Super Game Boy borders and colors, the GB link cable and monochrome palette choice are not supported (SGB-enhanced games also run as GB/GBC).
 - **.wgba / .wasm** — opens even a single file without a `.js` (`.wgba` is a wasm file with a different extension).
   - Builds that export screen, sound and saves under `Web_*` names run directly on the built-in host.
   - Large saves such as 512 KB are stored and loaded at the size the core reports (not cut to 128 KB).
@@ -90,16 +94,17 @@ node tools/run.cjs   # list all commands
 - **Choosing the ROM for a web build** — Settings › General › Files › **ROM file name for web builds**. When set, the ROM with that name in the same folder as the `.wgba`/`.wasm` (or the folder above) is used.
   When empty (default), webGBA tries `<build name>.gba`, then the only `.gba` in the same folder; if there are several, it asks the first time and remembers the choice per build.
   You can change it any time with Game › Choose ROM…. A `.wgba` with a packed ROM ignores these rules and uses its own ROM.
-- **.wgba · .wgbp file association** — double-click a `.wgba` or `.wgbp` in Explorer to open it in webGBA. Registered per user (HKCU) without administrator rights.
+- **.wgba · .wgbp · .gb · .gbc file association** — double-click a `.wgba`, `.wgbp`, `.gb` or `.gbc` in Explorer to open it in webGBA. Registered per user (HKCU) without administrator rights.
+  If another emulator is already the default for `.gb`/`.gbc`, that choice is kept and webGBA is only added to the "Open with" list (removing the association deletes only the values webGBA added).
   To remove the association, use **Settings › General › Files**.
-- **One save, next to the opened file** — for `.gba`, `.zip`, `.wgba` and `.wasm` alike, webGBA reads and writes a single `<file name>.sav` right next to the opened file (put a VBA or other emulator save there under that name and it just continues).
+- **One save, next to the opened file** — for `.gba`, `.gb`, `.gbc`, `.zip`, `.wgba` and `.wasm` alike, webGBA reads and writes a single `<file name>.sav` right next to the opened file (put a VBA or other emulator save there under that name and it just continues).
   About a second after the game saves, and also when you close the window or open another game, that `.sav` file itself is overwritten in place. No backup file is made.
   If it cannot be written (read-only, for example) the status bar says so and it is tried again on the next save or on close. To use another save, File › Import save… (overwrites the `.sav` next to the game with it); to take one out, Export save….
 - **Two directions at once** — Settings › General › Game. Chooses which direction reaches the game when two are held:
   **Last pressed only** (default, you turn as soon as you press) · Opposite: last wins (only ←+→ and ↑+↓) · Pass all (same as a real GBA).
   A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
-- **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.wgba`, `.wasm`; jump to the previous/next game),
+- **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
 - **Toolbar** — vertical bar on the left. When collapsed it no longer covers the game, which gets the extra width; the collapsed state is remembered.
 - **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, state slot, saves, file association and ROM name, clearing favorites/recent files, and key bindings — all in one window.

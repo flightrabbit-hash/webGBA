@@ -1,6 +1,6 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { DPAD_MODES, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { DPAD_MODES, GBA_PRESET, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
 import { NetHost } from "../core/net/net-host.js";
 import { lang, locale, t } from "../shell/i18n.js";
 
@@ -56,6 +56,8 @@ export function gameDpadPatch(input, prefs, mode) {
 
 /** 설명서가 없는 게임(.gba·옛 .wgba·.wasm)과 preset gba 만 쓰는 게임의 버튼 목록 = GBA 10버튼(비트 = BUTTONS 순서). */
 export const GBA_LAYOUT = Object.freeze(resolveInput(null));
+
+export const GB_LAYOUT = Object.freeze({ ...resolveInput({ input: { preset: "none", buttons: GBA_PRESET.filter((b) => b.role !== "l" && b.role !== "r").map((b) => ({ ...b })) } }), system: "gb" });
 
 /** GBA 버튼과 같은 role → 그 GBA 버튼 이름(사용자가 바꾼 GBA 키를 그 role 의 기본 키로). */
 const ROLE_GBA = { a: "A", b: "B", select: "SELECT", start: "START", right: "RIGHT", left: "LEFT", up: "UP", down: "DOWN", r: "R", l: "L" };

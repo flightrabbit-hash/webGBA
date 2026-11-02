@@ -70,7 +70,7 @@ pub fn stat(path: &str) -> Result<Entry> {
     Ok(entry_of(&full, Some(&meta)))
 }
 
-/// 롬 바이트. `.zip` 이면 안의 첫 `.gba`/`.agb`/`.bin` 을 꺼낸다.
+/// 롬 바이트. `.zip` 이면 안의 첫 `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` 을 꺼낸다(GB·GBC 는 코어가 롬 머리로 고른다).
 pub fn read_rom(path: &str) -> Result<Vec<u8>> {
     let full = Path::new(path);
     let is_zip = full.extension().map(|e| e.eq_ignore_ascii_case("zip")).unwrap_or(false);
@@ -83,7 +83,7 @@ pub fn read_rom(path: &str) -> Result<Vec<u8>> {
     for i in 0..archive.len() {
         let Ok(item) = archive.by_index(i) else { continue };
         let name = item.name().to_ascii_lowercase();
-        if item.is_file() && (name.ends_with(".gba") || name.ends_with(".agb") || name.ends_with(".bin")) {
+        if item.is_file() && [".gba", ".agb", ".gb", ".gbc", ".bin"].iter().any(|ext| name.ends_with(ext)) {
             pick = Some(i);
             break;
         }

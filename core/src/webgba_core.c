@@ -1,11 +1,13 @@
 // webGBA 의 mGBA wasm 코어. mGBA 0.10.1 의 공개 API(mCore)만 쓰고 mGBA 소스는 고치지 않는다.
 // 디컴파일 포트의 웹 빌드(예: game.wasm)와 같은 Web_* 규약으로 내보내 webGBA 의 내장 호스트 하나로 둘 다 돌린다.
-//   필수: Web_Init · Web_RunFrame(keys) · Web_GetFramebuffer(RGBA 240x160)
+//   필수: Web_Init · Web_RunFrame(keys) · Web_GetFramebuffer(RGBA, GBA 240x160 · GB 160x144)
 //   소리: Web_SetAudioRate · Web_GetAudioBuffer(float 스테레오 교차) · Web_GetAudioCount(이번 프레임 표본 수)
 //   세이브: Web_GetFlash(128KB 버퍼) · Web_FlashClear · Web_TakeFlashDirty · Web_GetSaveSize · Web_SetSaveSize
 //   추가(포트에 없음): Web_RomBuffer(size) · Web_Reset · Web_State* · Web_Alloc/Free · Web_GetTitle/Code
+//                      Web_GetScreenWidth/Height(지금 게임의 화면 크기) · Web_GetSystem(0 GBA · 1 GB · 2 GBC 모드)
 // 롬은 Web_RomBuffer 가 준 자리에 호스트가 쓴다(포트는 0x08000000 고정). 세이브는 Web_GetFlash 버퍼에 쓰고
-// Web_SetSaveSize 로 크기를 알린 뒤 Web_Init 을 부른다.
+// Web_SetSaveSize 로 크기를 알린 뒤 Web_Init 을 부른다. GB·GBC 는 확장자가 아니라 롬 머리로 고른다(isGbRom).
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,20 +15,29 @@
 #include <emscripten/emscripten.h>
 
 #include <mgba/core/blip_buf.h>
+#include <mgba/core/config.h>
 #include <mgba/core/core.h>
 #include <mgba/core/interface.h>
 #include <mgba/core/log.h>
+#include <mgba/gb/core.h>
 #include <mgba/gba/core.h>
 #include <mgba-util/vfs.h>
 
 #define WIDTH 240
 #define HEIGHT 160
+#define GB_WIDTH 160
+#define GB_HEIGHT 144
+#define VIDEO_MAX (256 * 224)
 #define FLASH_SIZE 0x20000
 #define AUDIO_CAP 4096
 
 static struct mCore* sCore;
 static color_t* sVideo;
-static uint8_t sRgba[WIDTH * HEIGHT * 4];
+static uint8_t sRgba[VIDEO_MAX * 4];
+static unsigned sWidth = WIDTH;
+static unsigned sHeight = HEIGHT;
+static unsigned sStride = WIDTH;
+static int sSystem;
 static uint8_t* sRom;
 static size_t sRomSize;
 static uint8_t sFlash[FLASH_SIZE];
@@ -87,6 +98,22 @@ static void unload(void) {
 	sSaveDirty = 0;
 	sTitle[0] = 0;
 	sCode[0] = 0;
+	sWidth = WIDTH;
+	sHeight = HEIGHT;
+	sStride = WIDTH;
+	sSystem = 0;
+}
+
+// 기종은 mGBA 의 판별(mCoreIsCompatible: GBA 머리 먼저, 다음 GB 머리)을 그대로 쓴다. 모르는 롬은 지금처럼 GBA 코어.
+// 롬 내용(로고)을 이 코드에 두지 않는다.
+static bool isGbRom(const uint8_t* rom, size_t size) {
+	struct VFile* vf = VFileFromConstMemory(rom, size);
+	if (!vf) {
+		return false;
+	}
+	bool gb = mCoreIsCompatible(vf) == mPLATFORM_GB;
+	vf->close(vf);
+	return gb;
 }
 
 EMSCRIPTEN_KEEPALIVE void* Web_Alloc(size_t size) {
@@ -142,15 +169,25 @@ EMSCRIPTEN_KEEPALIVE int Web_Init(void) {
 	}
 	mLogSetDefaultLogger(&sLogger);
 
-	struct mCore* core = GBACoreCreate();
+	bool gb = isGbRom(sRom, sRomSize);
+	struct mCore* core = gb ? GBCoreCreate() : GBACoreCreate();
 	if (!core || !core->init(core)) {
 		strcpy(sHalt, "core init failed");
 		return 0;
 	}
 	mCoreInitConfig(core, NULL);
+	if (gb) {
+		// 슈퍼 게임보이 테두리·색은 1차 제외(결정 146): SGB 를 지원하는 게임도 DMG·GBC 로 켠다.
+		mCoreConfigSetValue(&core->config, "sgb.model", "DMG");
+		mCoreConfigSetValue(&core->config, "cgb.sgbModel", "CGB");
+		// 반대 방향 동시 입력은 GBA 코어 기본값(허용)과 같게 — 거르기는 호스트의 방향키 동시 입력 설정이 한다.
+		mCoreConfigSetIntValue(&core->config, "allowOpposingDirections", 1);
+		core->reloadConfigOption(core, "allowOpposingDirections", NULL);
+	}
 
-	sVideo = calloc(WIDTH * HEIGHT, sizeof(color_t));
-	core->setVideoBuffer(core, sVideo, WIDTH);
+	sStride = gb ? 256 : WIDTH;
+	sVideo = calloc(gb ? VIDEO_MAX : WIDTH * HEIGHT, sizeof(color_t));
+	core->setVideoBuffer(core, sVideo, sStride);
 	core->setAudioBufferSize(core, 4096);
 
 	struct VFile* romVf = VFileFromMemory(sRom, sRomSize);
@@ -158,7 +195,8 @@ EMSCRIPTEN_KEEPALIVE int Web_Init(void) {
 		core->deinit(core);
 		free(sVideo);
 		sVideo = NULL;
-		strcpy(sHalt, "not a GBA rom");
+		sStride = WIDTH;
+		strcpy(sHalt, gb ? "not a GB rom" : "not a GBA rom");
 		return 0;
 	}
 
@@ -171,6 +209,14 @@ EMSCRIPTEN_KEEPALIVE int Web_Init(void) {
 	sCore = core;
 	applyAudioRate();
 	core->reset(core);
+	if (gb) {
+		unsigned w = GB_WIDTH;
+		unsigned h = GB_HEIGHT;
+		core->desiredVideoDimensions(core, &w, &h);
+		sWidth = w && w <= sStride ? w : GB_WIDTH;
+		sHeight = h && w * h <= VIDEO_MAX ? h : GB_HEIGHT;
+		sSystem = (sRom[0x143] & 0x80) ? 2 : 1;
+	}
 
 	void* data = NULL;
 	size_t size = core->savedataClone(core, &data);
@@ -213,7 +259,8 @@ EMSCRIPTEN_KEEPALIVE int Web_RunFrame(uint32_t keys) {
 	if (!sCore) {
 		return 0;
 	}
-	sCore->setKeys(sCore, keys & 0x3FF);
+	// GB 비트 0~7 은 GBA 와 같은 자리(A·B·SELECT·START·→·←·↑·↓), L·R 은 없다.
+	sCore->setKeys(sCore, keys & (sSystem ? 0xFF : 0x3FF));
 	sCore->runFrame(sCore);
 	drainAudio();
 	return 1;
@@ -221,18 +268,32 @@ EMSCRIPTEN_KEEPALIVE int Web_RunFrame(uint32_t keys) {
 
 EMSCRIPTEN_KEEPALIVE uint8_t* Web_GetFramebuffer(void) {
 	if (sVideo) {
-		const uint32_t* src = (const uint32_t*) sVideo;
 		uint8_t* dst = sRgba;
-		for (int i = 0; i < WIDTH * HEIGHT; ++i) {
-			uint32_t c = src[i];
-			dst[0] = c & 0xFF;
-			dst[1] = (c >> 8) & 0xFF;
-			dst[2] = (c >> 16) & 0xFF;
-			dst[3] = 0xFF;
-			dst += 4;
+		for (unsigned y = 0; y < sHeight; ++y) {
+			const uint32_t* src = (const uint32_t*) sVideo + y * sStride;
+			for (unsigned x = 0; x < sWidth; ++x) {
+				uint32_t c = src[x];
+				dst[0] = c & 0xFF;
+				dst[1] = (c >> 8) & 0xFF;
+				dst[2] = (c >> 16) & 0xFF;
+				dst[3] = 0xFF;
+				dst += 4;
+			}
 		}
 	}
 	return sRgba;
+}
+
+EMSCRIPTEN_KEEPALIVE uint32_t Web_GetScreenWidth(void) {
+	return sWidth;
+}
+
+EMSCRIPTEN_KEEPALIVE uint32_t Web_GetScreenHeight(void) {
+	return sHeight;
+}
+
+EMSCRIPTEN_KEEPALIVE int Web_GetSystem(void) {
+	return sSystem;
 }
 
 EMSCRIPTEN_KEEPALIVE void Web_SetAudioRate(int rate) {

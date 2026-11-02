@@ -1,4 +1,4 @@
-// 롬 없음 검사 — 웹 빌드 결과·커밋할 파일에 롬·게임·세이브가 들어가지 않았는지 본다.
+// 롬 없음 검사 — 웹 빌드 결과·커밋할 파일에 롬(GBA·GB·GBC)·게임·세이브가 들어가지 않았는지 본다(GB·GBC 는 확장자가 아니라 머리로도).
 //   node web/tools/check-no-rom.mjs [--rom <롬.gba> …] <폴더…>   폴더 안 모든 파일
 //   node web/tools/check-no-rom.mjs [--rom <롬.gba> …] --git      git 이 커밋할 수 있는 파일(추적 + 무시 안 된 새 파일)
 // --rom 을 주면 그 롬의 SHA-1(글자·바이트)과 롬 안 64곳의 32바이트 조각도 찾는다(롬은 읽기만).
@@ -44,6 +44,35 @@ function looksLikeGbaRom(bytes) {
   let sum = 0;
   for (let i = 0xa0; i <= 0xbc; i++) sum += bytes[i];
   return ((-(sum + 0x19)) & 0xff) === bytes[0xbd];
+}
+
+// GB·GBC 롬: 0x104 로고 48바이트의 CRC32(로고 내용은 이 파일에 두지 않고 앞 4바이트만 실행할 때 만든다).
+const GB_LOGO_HEAD = fromCodes(0xce, 0xed, 0x66, 0x66);
+const GB_LOGO_CRC = 0x46195417;
+const GB_LOGO_SIZE = 48;
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+const gbLogoAt = (bytes, at) => at >= 0 && at + GB_LOGO_SIZE <= bytes.length && crc32(bytes.subarray(at, at + GB_LOGO_SIZE)) === GB_LOGO_CRC;
+
+/** GB 롬 머리 모양이면 "GB"·"GBC 전용"·"GB·GBC 겸용"(0x143 GBC 표시), 아니면 "". */
+export function gbRomKind(bytes) {
+  if (bytes.length < 0x150 || !gbLogoAt(bytes, 0x104)) return "";
+  const flag = bytes[0x143];
+  return flag & 0x80 ? (flag & 0x40 ? "GBC 전용" : "GB·GBC 겸용") : "GB";
+}
+
+/** 머리 자리가 아닌 곳의 GB 로고(다른 파일 안에 묶인 롬). 없으면 -1. */
+function gbLogoElsewhere(bytes) {
+  for (let at = bytes.indexOf(GB_LOGO_HEAD); at >= 0; at = bytes.indexOf(GB_LOGO_HEAD, at + 1)) if (at !== 0x104 && gbLogoAt(bytes, at)) return at;
+  return -1;
 }
 
 function wasmSections(bytes) {
@@ -111,6 +140,10 @@ export function check(files, { needles = [], self = "" } = {}) {
     if (bytes.length > BIG) big.push(`${file.rel} ${bytes.length}`);
     if (ext === ".wasm" && wasmSections(bytes).includes("webgba.rom")) problems.push(`롬을 묶은 wasm 구획: ${file.rel}`);
     if (looksLikeGbaRom(bytes)) problems.push(`GBA 롬 머리 모양: ${file.rel}`);
+    const gb = gbRomKind(bytes);
+    if (gb) problems.push(`GB 롬 머리 모양(${gb}): ${file.rel}`);
+    const logo = gbLogoElsewhere(bytes);
+    if (logo >= 0) problems.push(`GB 롬 로고(0x${logo.toString(16)}): ${file.rel}`);
     if (bytes.includes(HEADER_SIGNATURE)) problems.push(`정식 롬 머리 바이트(제목+코드): ${file.rel}`);
     if (bytes.includes(Buffer.from(HACK_SHA1_PREFIX))) problems.push(`핵 롬 SHA-1 앞자리: ${file.rel}`);
     for (const needle of needles) if (bytes.includes(needle.bytes)) problems.push(`${needle.what}: ${file.rel}`);

@@ -131,8 +131,65 @@ function defaultFront(color, withLabel) {
   return g;
 }
 
+const GB_BODY = "#a3a6ae";
+const GB_X = [8, 45];
+const GB_PAPER = [11, 9, 42, 32];
+const GB_TEXT = [11, 14, 32, 18];
+
+function gbFront(color) {
+  const [W, H] = FRONT;
+  const [x0, x1] = GB_X;
+  const t = tones(color);
+  const g = grid(W, H);
+  const inside = (x, y) => {
+    if (x < x0 || x > x1 || y < 0 || y >= H) return false;
+    const corner = (cx, cy) => Math.abs(x - cx) + Math.abs(y - cy) < 2;
+    return !(corner(x0, 0) || corner(x1, 0) || corner(x0, H - 1) || corner(x1, H - 1));
+  };
+  for (let y = 0; y < H; y++)
+    for (let x = x0; x <= x1; x++) if (inside(x, y)) g.set(x, y, !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1) ? OUTLINE : t.base);
+  const paint = (x, y, c) => {
+    if (inside(x, y) && g.get(x, y) !== OUTLINE) g.px[y * W + x] = c;
+  };
+  for (let x = x0; x <= x1; x++) {
+    paint(x, 1, t.hi);
+    paint(x, H - 2, t.lo);
+  }
+  for (let y = 0; y < H; y++) {
+    paint(x0 + 1, y, t.hi);
+    paint(x1 - 1, y, t.lo);
+  }
+  for (const [row, a, b] of [[2, 24, 29], [3, 25, 28], [4, 26, 27]]) for (let x = a; x <= b; x++) paint(x, row, t.lo);
+  for (let x = x0 + 2; x <= x1 - 2; x++) {
+    paint(x, 5, t.lo);
+    paint(x, 6, t.hi);
+  }
+  const [px0, py0, px1, py1] = GB_PAPER;
+  for (let x = px0 - 1; x <= px1 + 1; x++) {
+    paint(x, py0 - 1, t.sh);
+    paint(x, py1 + 1, t.hi);
+  }
+  for (let y = py0 - 1; y <= py1 + 1; y++) {
+    paint(px0 - 1, y, t.sh);
+    paint(px1 + 1, y, t.hi);
+  }
+  for (let y = py0; y <= py1; y++) for (let x = px0; x <= px1; x++) paint(x, y, PAPER);
+  for (let x = px0; x <= px1; x++) {
+    paint(x, py0, PAPER_HI);
+    paint(x, py1, PAPER_LO);
+    paint(x, py0 + 2, t.base);
+    paint(x, py0 + 3, t.base);
+  }
+  for (const y of [36, 38, 40])
+    for (let x = 18; x <= 35; x++) {
+      paint(x, y, t.lo);
+      paint(x, y + 1, t.hi);
+    }
+  return g;
+}
+
 /** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리의 종이). */
-function defaultSpine(color) {
+function defaultSpine(color, shape = "gba") {
   const [W, H] = SPINE;
   const t = tones(color);
   const g = grid(W, H);
@@ -151,7 +208,8 @@ function defaultSpine(color) {
   // 글자(main.js)는 model.spineInk 로 이 몸통 색과 대비가 큰 검정·흰색을 쓴다.
   const [ax, ay, , ah] = CART_DEFAULT_TEXT_AREA;
   for (let y = ay; y < ay + ah; y++) paint(ax, y, t.hi);
-  for (const y of [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
+  for (const y of shape === "gb" ? [2, H - 4] : [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
+  if (shape === "gb") for (let x = 3; x <= W - 4; x++) paint(x, 3, t.hi);
   return g;
 }
 
@@ -164,8 +222,9 @@ const ints = (list, n) => Array.isArray(list) && list.length === n && list.every
  */
 export function cartModel(rom) {
   const cart = rom?.gameId && rom.cart && typeof rom.cart === "object" ? rom.cart : {};
+  const shape = !rom?.gameId && (rom?.type === "gb" || rom?.type === "gbc") ? "gb" : "gba";
   // 설명서 cart.color 가 있으면 그 색, 없으면(그림 없는 롬팩 등) 이름 해시로 고정 색(결정 102-8).
-  const color = typeof cart.color === "string" && rgbOf(cart.color) ? cart.color : rompackColor(rom?.name ?? "");
+  const color = typeof cart.color === "string" && rgbOf(cart.color) ? cart.color : rom?.type === "gb" && !rom.gameId ? GB_BODY : rompackColor(rom?.name ?? "");
   const has = Object.fromEntries(Object.keys(CART_PARTS).map((part) => [part, Number.isInteger(cart[part]?.scale) ? cart[part].scale : 0]));
   const k = has.front || has.label || has.spine || 1;
   const parts = Object.keys(CART_PARTS).filter((part) => has[part] === k);
@@ -182,7 +241,7 @@ export function cartModel(rom) {
   }
   // 옆면 이름 글자 색: 옆면 그림이 있으면 지금처럼 어두운 잉크, 없으면(기본 옆면 = 몸통 색) 대비로 검정·흰색 자동(결정 102-8).
   const spineInk = parts.includes("spine") ? LABEL_INK : contrastInk(color);
-  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk };
+  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk, shape };
 }
 
 const imageCache = new Map();
@@ -234,6 +293,10 @@ export function drawFront(model, images, body) {
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   const label = images.label ?? null;
+  if (model.shape === "gb") {
+    blit(ctx, gbFront(model.color ?? body), k);
+    return { canvas, textBox: GB_TEXT.map((v) => v * k), paper: PAPER };
+  }
   if (images.front) ctx.drawImage(images.front, 0, 0);
   else blit(ctx, defaultFront(model.color ?? body, Boolean(label)), k);
   const [lx, ly] = model.labelAt;
@@ -258,6 +321,6 @@ export function drawSpine(model, images, body) {
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   if (images.spine) ctx.drawImage(images.spine, 0, 0);
-  else blit(ctx, defaultSpine(model.color ?? body), k);
+  else blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
   return canvas;
 }

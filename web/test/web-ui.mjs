@@ -40,7 +40,9 @@ const ONLY_BOARD = process.env.UI_BOARD_ONLY === "1";
 const ONLY_CHOICE = process.env.UI_CHOICE_ONLY === "1";
 // UI_ASPECT_ONLY=1 이면 표시 비율·방향 입력 기본값 시험만(아래 "표시 비율" 절, 다른 시험과 함께 돌리려면 UI_ASPECT=1)
 const ONLY_ASPECT = process.env.UI_ASPECT_ONLY === "1";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT;
+// UI_GB_ONLY=1 이면 GB·GBC 시험만(아래 "GB·GBC" 절, UI_GB_DIR = 직접 만든 테스트 롬 폴더 — 저장소 밖, 경로 조회만)
+const ONLY_GB = process.env.UI_GB_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -2080,6 +2082,208 @@ async function aspectChecks() {
 }
 
 if (ASPECT) await aspectChecks();
+
+// ── GB·GBC(결정 146) ──
+// UI_GB_DIR=<테스트 롬 폴더: gb_mbc1.gb(DMG·MBC1)·gbc_mbc3.gbc(GBC 전용·MBC3 RTC)·dual_mbc3.gbc(겸용)·gbc_mbc3.zip>. 롬 화면 무늬:
+// 2행 = 누른 버튼 비트(타일 2~9열), 4행 = 켜진 횟수, 6행 = RTC 초, 8행 = A 누른 횟수(진한 칸 = 1). 화면 칸 10:9·버퍼 160×144·세로 가운데,
+// 터치 L·R 숨김·버튼 겹침 0, 키 8개만(L·R 키 무시), 세이브 저장 → 새로 고침 뒤 복원, RTC 실제 시각, 퀵슬롯·자동 저장, .zip 안 .gbc,
+// 흑백 GB 회색, 라이브러리 GB·GBC 롬팩(GB 회색·세로 모양)·종류 글·잉크 가운데, 조작법 8개.
+const GB_DIR = process.env.UI_GB_DIR ?? "";
+const GB_VIEWS = [
+  { name: "320x568", viewport: { width: 320, height: 568 }, dpr: 2, mobile: true },
+  { name: "390x844", viewport: { width: 390, height: 844 }, dpr: 3, mobile: true },
+  { name: "844x390", viewport: { width: 844, height: 390 }, dpr: 3, mobile: true },
+  { name: "1280x800", viewport: { width: 1280, height: 800 }, dpr: 1, mobile: false },
+].filter((view) => !VIEW_FILTER || VIEW_FILTER.has(view.name));
+
+const gbRow = (page, row) =>
+  page.evaluate((row) => {
+    const img = window.webgba.player.image;
+    let v = 0;
+    for (let i = 0; i < 8; i++) {
+      const o = ((row * 8 + 4) * img.width + (2 + i) * 8 + 4) * 4;
+      if (img.data[o] + img.data[o + 1] + img.data[o + 2] < 120) v |= 1 << i;
+    }
+    return v;
+  }, row);
+
+async function gbPress(page, code, ms = 120) {
+  await page.evaluate((code) => window.webgba.player.keyDown(code), code);
+  await page.waitForTimeout(ms);
+  const bits = await gbRow(page, 2);
+  await page.evaluate((code) => window.webgba.player.keyUp(code), code);
+  await page.waitForTimeout(ms);
+  return bits;
+}
+
+async function gbChecks() {
+  if (!GB_DIR) return ok("GB·GBC: UI_GB_DIR 지정", false);
+  const files = {};
+  for (const name of ["gb_mbc1.gb", "gbc_mbc3.gbc", "dual_mbc3.gbc", "gbc_mbc3.zip"]) files[name] = fs.readFileSync(path.join(GB_DIR, name));
+
+  for (const view of GB_VIEWS) {
+    const key = `${view.name} GB·GBC`;
+    const { context, page } = await aspectPage(view, files, { prefs: { lang: "ko" } });
+    await openAspectGame(page, "gbc_mbc3.gbc");
+    const info = await screenInfo(page);
+    const sameBox = info.canvas.every((v, i) => Math.abs(v - info.screen[i]) <= 0.5);
+    ok(`${key}: 화면 칸 10:9(${info.sw}x${info.sh})·캔버스 = 화면 칸·비율 유지·버퍼 ${info.buffer.join("x")}`, Math.abs(info.sw / info.sh - 10 / 9) < 0.012 && sameBox && info.fit === "contain" && !info.stretch && info.buffer.join("x") === "160x144", JSON.stringify(info));
+    ok(`${key}: 화면 칸 세로 가운데(위 ${info.gapTop} · 아래 ${info.gapBottom})`, Math.abs(info.gapTop - info.gapBottom) <= 0.5, JSON.stringify(info));
+    if (view.mobile) {
+      const shoulders = await page.evaluate(() => ["L", "R"].map((k) => { const n = document.querySelector(`#pad [data-key="${k}"]`); return { off: n?.hasAttribute("data-off"), shown: Boolean(n && n.offsetParent && n.getBoundingClientRect().width > 0) }; }));
+      const pads = overlaps((await padBoxes(page)).boxes, view.viewport);
+      ok(`${key}: 터치 L·R 숨김 · 나머지 버튼 겹침 0·화면 안`, shoulders.every((s) => s.off && !s.shown) && !pads.hits.length && !pads.outside.length, JSON.stringify({ shoulders, pads }));
+      if (view.name === "390x844") {
+        await page.waitForTimeout(1200);
+        await page.screenshot({ path: path.join(SHOTS, "GBC_세로_390x844.png") });
+      }
+    }
+    ok(`${key}: 페이지 오류 0`, page.errors.length === 0, page.errors.join(" / "));
+    await context.close();
+  }
+
+  const view = GB_VIEWS.find((v) => v.name === "390x844") ?? GB_VIEWS[0];
+  const { context, page } = await aspectPage(view, files, { prefs: { lang: "ko", autoSave: 1 } });
+  await openAspectGame(page, "gbc_mbc3.gbc");
+  const game = await page.evaluate(() => ({ type: window.webgba.state.game.type, kind: window.webgba.state.game.kind, saveId: window.webgba.state.game.saveId, keys: [...window.webgba.player.keymap.keys()] }));
+  ok("GB·GBC: .gbc 머리 판별 = GBC 전용 · 키 표에 L·R 키 없음", game.kind?.color === "only" && !game.keys.includes("KeyA") && !game.keys.includes("KeyS"), JSON.stringify(game));
+  await page.waitForTimeout(300);
+  const pressed = [];
+  for (const code of ["KeyZ", "KeyX", "Backspace", "Enter", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "KeyA", "KeyS"]) pressed.push(await gbPress(page, code));
+  ok(`GB·GBC: 키 8개 → 비트 0~7, L·R 키 → 입력 없음(${pressed.join(",")})`, pressed.join() === "1,2,4,8,16,32,64,128,0,0");
+  const touch = [];
+  for (const code of ["Pad:A", "Pad:START", "Pad:L"]) touch.push(await gbPress(page, code));
+  ok(`GB·GBC: 터치 A·START → 비트, 터치 L 자리 → 입력 없음(${touch.join(",")})`, touch.join() === "1,8,0");
+  const countBefore = await gbRow(page, 8);
+  await gbPress(page, "KeyZ");
+  await gbPress(page, "KeyZ");
+  const countAfter = await gbRow(page, 8);
+  let saved = [];
+  for (let i = 0; i < 40 && saved[4] !== countAfter; i++) {
+    await page.waitForTimeout(250);
+    saved = await page.evaluate(async (id) => Array.from((await window.webgba.store.saveBytes(id)) ?? []), game.saveId);
+  }
+  ok(`GB·GBC: 게임 저장 → 보관 세이브(WG·켜진 1·A ${countBefore}→${countAfter}·크기 ${saved.length} = 8KB + RTC 48)`, saved[0] === 0x57 && saved[1] === 0x47 && saved[2] === 1 && saved[4] === countAfter && countAfter === countBefore + 2 && saved.length === 8240, saved.slice(0, 5).join(","));
+  const sec1 = await gbRow(page, 6);
+  await page.waitForTimeout(2300);
+  const sec2 = await gbRow(page, 6);
+  const at2 = Date.now();
+  const step = (sec2 - sec1 + 60) % 60;
+  ok(`GB·GBC: RTC 실제 시각 진행(${sec1} → 2.3초 뒤 ${sec2}초)`, step >= 2 && step <= 3);
+  const frameAt = () => page.evaluate(() => window.webgba.player.host.ex.Web_GetFrameCount() >>> 0);
+  const savedOk = await page.evaluate(() => window.webgba.player.saveState(1));
+  const f1 = await frameAt();
+  await page.waitForTimeout(1500);
+  const f2 = await frameAt();
+  const loadedOk = await page.evaluate(() => window.webgba.player.loadState(1));
+  const f3 = await frameAt();
+  const slots = await page.evaluate(async (id) => (await window.webgba.store.states(id)).map((s) => ({ slot: s.slot, size: s.size, thumb: s.thumb?.byteLength ?? 0 })), game.saveId);
+  ok(`GB·GBC: 퀵슬롯 1 저장(${slots.find((s) => s.slot === 1)?.size} 바이트·사진)·불러오기 = 저장한 순간(${f1} → ${f2} → ${f3})`, savedOk && loadedOk && f3 < f2 - 30 && Math.abs(f3 - f1) < 10 && slots.some((s) => s.slot === 1 && s.thumb > 100), JSON.stringify(slots));
+  await page.evaluate(() => (window.webgba.state.quick.played = 59200));
+  await page.waitForTimeout(2500);
+  const auto = await page.evaluate(async (id) => (await window.webgba.store.states(id)).filter((s) => s.slot === 9).map((s) => ({ auto: s.auto, size: s.size })), game.saveId);
+  ok("GB·GBC: 자동 저장(9번 칸)", auto.length === 1 && auto[0].auto, JSON.stringify(auto));
+  await page.evaluate(() => window.webgba.openSheet("help"));
+  await page.waitForTimeout(300);
+  const help = await page.evaluate(() => [...document.querySelectorAll("#sheetBody .keys dt")].map((n) => n.textContent));
+  ok(`GB·GBC: 조작법 = 8버튼 + 빨리 감기(L·R 없음)`, help.includes("A") && help.includes("START") && !help.includes("L") && !help.includes("R"), help.join(" / "));
+  await page.evaluate(() => window.webgba.renderSheet && document.getElementById("sheetClose").click());
+  await page.waitForTimeout(300);
+
+  await page.reload();
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  await page.waitForTimeout(1800);
+  await openAspectGame(page, "gbc_mbc3.gbc");
+  await page.waitForTimeout(400);
+  const boots = await gbRow(page, 4);
+  const count = await gbRow(page, 8);
+  const sec3 = await gbRow(page, 6);
+  const passed = (sec3 - sec2 + 60) % 60;
+  const real = Math.round((Date.now() - at2) / 1000) % 60;
+  ok(`GB·GBC: 새로 고침 후 다시 열기 = 세이브 복원(켜진 ${boots}·A ${count})·RTC 이어짐(${sec2} → ${sec3}초, 실제 ${real}초 지남)`, boots === 2 && count === countAfter && Math.abs(passed - real) <= 2);
+
+  await openAspectGame(page, "gb_mbc1.gb");
+  const dmg = await page.evaluate(() => {
+    const d = window.webgba.player.image.data;
+    let gray = true;
+    for (let i = 0; i < d.length; i += 4) if (d[i] !== d[i + 1] || d[i + 1] !== d[i + 2]) gray = false;
+    return { gray, kind: window.webgba.state.game.kind, size: [window.webgba.player.image.width, window.webgba.player.image.height] };
+  });
+  ok(`GB·GBC: .gb(DMG) = 흑백 회색만·종류 GB·화면 ${dmg.size.join("x")}`, dmg.gray && dmg.kind?.system === "gb" && !dmg.kind.color && dmg.size.join("x") === "160x144", JSON.stringify(dmg));
+  await openAspectGame(page, "dual_mbc3.gbc");
+  ok("GB·GBC: 겸용 롬 = GBC 모드(겸용)", (await page.evaluate(() => window.webgba.state.game.kind?.color)) === "dual");
+  await openAspectGame(page, "gbc_mbc3.zip");
+  const zipped = await page.evaluate(() => ({ name: window.webgba.state.game.name, type: window.webgba.state.game.type, running: window.webgba.player.running, w: window.webgba.player.image.width }));
+  ok("GB·GBC: .zip 안 .gbc 열기", zipped.name === "gbc_mbc3.gbc" && zipped.type === "gbc" && zipped.running && zipped.w === 160, JSON.stringify(zipped));
+
+  const roms = await page.evaluate(async () => (await window.webgba.store.list("rom")).map((r) => ({ key: r.key, name: r.name, type: r.type, color: r.color ?? "" })));
+  ok("GB·GBC: 라이브러리 보관 종류(gb · gbc 전용 · gbc 겸용)", ["gb_mbc1.gb:gb:", "gbc_mbc3.gbc:gbc:only", "dual_mbc3.gbc:gbc:dual"].every((want) => roms.some((r) => `${r.name}:${r.type}:${r.color}` === want)), JSON.stringify(roms));
+  await page.evaluate(() => window.webgba.openSheet("library"));
+  await page.waitForSelector('#sheet:not([hidden]) .lib__case .spine[data-key]');
+  await page.waitForTimeout(500);
+  const metas = {};
+  for (const rom of roms) {
+    await page.evaluate((k) => {
+      window.webgba.state.lib.sel = k;
+      window.webgba.renderSheet();
+    }, rom.key);
+    await page.waitForTimeout(350);
+    const card = await page.evaluate(() => {
+      const art = document.querySelector(".lib__card .cart__art");
+      const g = art.getContext("2d");
+      const alpha = (x, y) => g.getImageData(x, y, 1, 1).data[3];
+      const px = (x, y) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)];
+      return { meta: document.querySelector(".lib__meta")?.textContent ?? "", edge: alpha(2, 22), body: px(12, 3), size: [art.width, art.height] };
+    });
+    metas[rom.name] = card;
+    await measure(page, `GB·GBC library ${rom.name}`, [".lib__name", ".lib__meta", ".lib__card .pack__label", ".lib__btns .btn"]);
+    const line = await page.evaluate(() => {
+      const tops = [...document.querySelectorAll(".lib__btns .btn")].filter((n) => n.offsetParent).map((n) => { const r = n.getBoundingClientRect(); return [Math.round(r.top * 100) / 100, Math.round(r.bottom * 100) / 100]; });
+      const rows = new Map();
+      for (const [t, b] of tops) rows.set(t, [...(rows.get(t) ?? []), b]);
+      return [...rows.values()].map((list) => Math.max(...list) - Math.min(...list));
+    });
+    ok(`GB·GBC library ${rom.name}: 같은 줄 버튼 위·아래 px 차이 0`, line.every((d) => d === 0), JSON.stringify(line));
+  }
+  ok(`GB·GBC: 롬팩 종류 글 GB · GBC 전용 · GB·GBC 겸용`, /GB/.test(metas["gb_mbc1.gb"]?.meta) && !/GBC/.test(metas["gb_mbc1.gb"]?.meta) && /GBC 전용/.test(metas["gbc_mbc3.gbc"]?.meta) && /GB·GBC 겸용/.test(metas["dual_mbc3.gbc"]?.meta), JSON.stringify(Object.fromEntries(Object.entries(metas).map(([k, v]) => [k, v.meta]))));
+  const gray = (rgb) => Math.max(...rgb) - Math.min(...rgb) < 12;
+  ok(`GB·GBC: GB 롬팩 = 회색 몸통·세로 모양(좌우 투명), GBC = 색 몸통`, metas["gb_mbc1.gb"].edge === 0 && gray(metas["gb_mbc1.gb"].body) && metas["gbc_mbc3.gbc"].edge === 0 && !gray(metas["gbc_mbc3.gbc"].body), JSON.stringify(metas));
+  const lay = await libraryLayout(page);
+  ok("GB·GBC library: 롬팩 그림 정수 배율·칸 안·겹침 0", within(lay.cardParts, lay.cardView) && !crosses(lay.cardParts) && lay.arts.every((a) => Number.isInteger(+a.ratio.toFixed(3)) && a.pixelated === "pixelated"), JSON.stringify({ parts: lay.cardParts.length }));
+  await page.evaluate(() => {
+    const k = [...document.querySelectorAll(".lib__case .spine[data-key]")].find((n) => n.getAttribute("aria-label") === "gbc_mbc3")?.dataset.key;
+    if (k) {
+      window.webgba.state.lib.sel = k;
+      window.webgba.renderSheet();
+    }
+  });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(SHOTS, "라이브러리_GB_GBC_롬팩_390x844.png") });
+  ok("GB·GBC: 페이지 오류 0", page.errors.length === 0, page.errors.join(" / "));
+  await context.close();
+
+  // 첫 화면 최근 줄: GB·GBC 롬팩(가짜 1KB 기록, 롬 아님)의 이름·종류 글·라벨 잉크 가운데
+  for (const v of GB_VIEWS.filter((x) => x.mobile)) {
+    const { context: c2, page: p2 } = await aspectPage(v, files, { prefs: { lang: "ko" } });
+    await p2.evaluate(async () => {
+      const s = window.webgba.store;
+      let t = Date.now();
+      for (const [id, name, type, color] of [["g1", "Pocket Walk.gb", "gb", ""], ["g2", "컬러 퍼즐.gbc", "gbc", "only"], ["g3", "Hybrid Run.gbc", "gbc", "dual"]]) {
+        await s.putRom({ id, name, file: name, type, color }, new Uint8Array(1024));
+        await s.patch(s.romKey(id), { opened: (t -= 1000) });
+      }
+    });
+    await p2.evaluate(() => window.webgba.refreshStart());
+    await p2.waitForTimeout(500);
+    const metas = await p2.evaluate(() => [...document.querySelectorAll("#startList .recent__item:not([hidden]) .recent__meta")].map((n) => n.textContent));
+    ok(`${v.name} GB·GBC start: 최근 줄 종류 글(${metas.join(" / ")})`, metas.length >= 1 && metas.every((m) => /^(GB|GBC 전용|GB·GBC 겸용)$/.test(m)), JSON.stringify(metas));
+    await measure(p2, `${v.name} GB·GBC start`, [".recent__name", ".recent__meta", "#startList .pack__label"]);
+    ok(`${v.name} GB·GBC start: 페이지 오류 0`, p2.errors.length === 0, p2.errors.join(" / "));
+    await c2.close();
+  }
+}
+
+if (ONLY_GB || process.env.UI_GB === "1") await gbChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

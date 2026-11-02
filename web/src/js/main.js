@@ -8,7 +8,8 @@ import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
+import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
+import { GB_SCREEN, kindKey, romKind, romType, systemKind } from "./core/rom-kind.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
@@ -84,7 +85,7 @@ const el = {
   gate: $("gate"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "zip", "wgba", "wasm", "wgbp"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wasm", "wgbp"]);
 const ROM_EXT = new Set(["gba", "agb", "bin", "zip"]);
 const WASM_EXT = new Set(["wgba", "wasm"]);
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
@@ -1360,6 +1361,15 @@ const typeOf = (name) => {
   return ext === "agb" || ext === "bin" ? "gba" : ext;
 };
 
+function storedType(file, bytes) {
+  const ext = typeOf(file);
+  if (WASM_EXT.has(ext)) return { type: ext };
+  const kind = romKind(bytes);
+  return kind.color ? { type: romType(kind), color: kind.color } : { type: romType(kind) };
+}
+
+const metaKind = (rom) => (rom?.type === "gb" ? { system: "gb", color: "" } : rom?.type === "gbc" ? { system: "gb", color: rom.color === "only" ? "only" : "dual" } : { system: "gba", color: "" });
+
 async function keepRom(name, bytes, { id = "", added = 0, sha1 = "", file = name } = {}) {
   let existing = null;
   if (!id) {
@@ -1368,7 +1378,7 @@ async function keepRom(name, bytes, { id = "", added = 0, sha1 = "", file = name
       existing = (await store.list(store.KIND_ROM)).find((item) => store.sameName(item.name, name) && !item.gameId) ?? null;
     } catch {}
   }
-  const meta = { id: id || existing?.id || store.newId(), name, file, type: typeOf(file), sha1, added: added || existing?.added || 0 };
+  const meta = { id: id || existing?.id || store.newId(), name, file, ...storedType(file, bytes), sha1, added: added || existing?.added || 0 };
   try {
     await store.persist();
     return await store.putRom(meta, bytes);
@@ -1384,13 +1394,13 @@ const saveIdOf = (meta) => meta?.gameId || meta?.id || "";
 const titleOf = (meta) => (meta?.gameId ? pickText(meta.title, i18n.lang()) || meta.name : meta?.name ?? "");
 const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
 // 라이브러리에 보일 이름: 설명서 게임은 설명서 이름(사람이 이름을 바꿨으면 그 이름), 그 밖은 보관 이름(확장자 뺌).
-const GAME_EXT = /\.(gba|agb|bin|zip|wgba|wasm)$/i;
+const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wasm)$/i;
 const bareName = (name) => String(name ?? "").replace(GAME_EXT, "") || String(name ?? "");
 const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareName(rom.name) : bareName(rom?.name));
 // 옆면 세로 글: shortName → 이름
 const spineName = (rom) => (rom?.gameId && !rom.named ? pickText(rom.shortName, i18n.lang()) || displayName(rom) : displayName(rom));
 // 롬팩 아래 작은 글: .wgba 설명서 = v1.2.0, 옛 .wgba 로 되돌린 게임 = "옛 .wgba", 그 밖 = 형식
-const kindText = (rom) => (rom.gameId ? (rom.version ? `v${rom.version}` : t("web.lib.oldWgba")) : `.${rom.type}`);
+const kindText = (rom) => (rom.gameId ? (rom.version ? `v${rom.version}` : t("web.lib.oldWgba")) : kindKey(metaKind(rom)) ? t(kindKey(metaKind(rom))) : `.${rom.type}`);
 
 /** 목차가 있으면 readWgba 결과, 없으면 null. 망가졌으면 보일 문장으로 던짐. */
 async function inspectWgba(bytes) {
@@ -1583,6 +1593,7 @@ function unzip(bytes, name) {
     return extractRom(bytes);
   } catch (error) {
     if (!(error instanceof ZipError)) throw error;
+    if (error.code === "zipNoRom") throw new Error(t("web.zipNoGame", { rom: name }));
     throw new Error(t(`patch.err.${error.code}`, { rom: name, method: error.params.method ?? "" }));
   }
 }
@@ -1622,19 +1633,19 @@ async function readSave(id) {
   }
 }
 
-const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|wgba|wasm)$/i, "")}.sav`;
+const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|wasm)$/i, "")}.sav`;
 
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
-async function startHosted(host, meta, input = null, net = null) {
+async function startHosted(host, meta, input = null, net = null, kind = null) {
   const saveId = saveIdOf(meta);
-  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "" };
+  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "", kind };
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
   // ② 자체 JS 게임은 격리 틀(#screen 안 iframe)이 화면 — 캔버스는 숨김(web.css)
   if (host.script) document.body.dataset.runtime = "script";
   else delete document.body.dataset.runtime;
-  setScreen(net?.manifest ? screenOf(net.manifest) : null);
+  setScreen(kind?.system === "gb" ? GB_SCREEN : net?.manifest ? screenOf(net.manifest) : null);
   setInput(input);
   syncControls();
   layout();
@@ -1684,7 +1695,11 @@ async function openRom(meta, bytes) {
   const module = await coreModule();
   const save = await readSave(saveIdOf(meta));
   const { host } = await bootHost({ module, rom: bytes, save, log: hostLog });
-  await startHosted(host, meta);
+  const kind = systemKind(host.system, bytes);
+  const gb = kind.system === "gb";
+  await startHosted(host, meta, gb ? GB_LAYOUT : null, null, gb ? kind : null);
+  const typed = gb ? { type: romType(kind), color: kind.color } : { type: "gba" };
+  if (!meta.transient && (meta.type !== typed.type || (gb && (meta.color ?? "") !== typed.color))) store.patch(store.romKey(meta.id), typed).catch(() => {});
   return meta.name;
 }
 
@@ -2036,6 +2051,7 @@ function packNode(rom, look, { running = false } = {}) {
   const { model, images, body } = look;
   const { canvas, textBox, paper } = cartArt.drawFront(model, images, body);
   const node = make("span", "pack");
+  if (model.shape === "gb") node.dataset.shape = "gb";
   node.style.width = `${cssOf(model, canvas.width)}px`;
   node.style.height = `${cssOf(model, canvas.height)}px`;
   node.append(sizeCanvas(canvas, model));
@@ -3493,8 +3509,8 @@ function keyName(code) {
 function renderHelp() {
   el.sheetTitle.textContent = t("help.title");
   const list = make("dl", "keys");
-  if (state.input.gba) {
-    for (const name of KEY_ORDER) {
+  if (state.input.gba || state.input.system === "gb") {
+    for (const name of KEY_ORDER.filter((key) => state.input.gba || (key !== "L" && key !== "R"))) {
       list.append(make("dt", "", t(`key.${name}`)), make("dd", "", (DEFAULT_KEYS[name] ?? []).map(keyName).join(" · ")));
     }
   } else {

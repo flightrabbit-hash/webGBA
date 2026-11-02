@@ -628,6 +628,10 @@ body:not([data-view="start"]) .start {
   white-space: nowrap;
 }
 
+.pack[data-shape="gb"] .pack__chip {
+  right: 12px;
+}
+
 .pack__chipText {
   display: block;
   height: 18px;
