@@ -6,6 +6,7 @@ import { checkManifest } from "../../src-bundle/src/js/core/wgba-format.js";
 import { cleanNick, NetSession, STATE_MAX, statePackets } from "../../src-bundle/src/js/core/net/session.js";
 import { fetchCredential, iceHosts, IcePlan, readIceServers } from "../../src-bundle/src/js/core/net/ice.js";
 import { qrMatrix } from "../../src-bundle/src/js/core/net/qr.js";
+import { RoomHost } from "../../src-bundle/src/js/core/net/signal.js";
 
 const results = [];
 const ok = (name, pass, detail = "") => {
@@ -157,6 +158,29 @@ for (const p of parts) hostS.takeState(2, p);
 hostS.takeState(3, statePackets(3, 0, Uint8Array.of(9))[0]);
 hostS.takeState(2, parts[1]);
 ok(`상태 묶음: ${STATE_MAX}바이트 → ${parts.length}조각 → 한 묶음 · 1바이트 묶음 · 첫 조각 없는 조각은 버림`, parts.length === STATE_MAX / 16384 && got.length === 2 && got[0].len === STATE_MAX && got[0].state && got[0].last === 255 && got[1].len === 1 && got[1].from === 3, JSON.stringify(got.map((g) => g.len)));
+
+// ── 방장 받기 간격: 중간 참가 게임은 손님 없이 2분 넘으면 10초 ──
+const waitsOf = (idle) => {
+  let t = 0;
+  const session = { count: 1 };
+  const host = new RoomHost({ signal: null, session, info: {}, now: () => t, idle });
+  host.eventAt = 1000;
+  const at = (ms) => {
+    t = ms + 1000;
+    return host.pollWait();
+  };
+  const out = [at(0), at(30000), at(90000), at(119000), at(125000)];
+  session.count = 2;
+  out.push(at(200000));
+  session.count = 1;
+  out.push(at(210000), at(331000));
+  host.wake();
+  out.push(at(332000));
+  return out;
+};
+const idleWaits = waitsOf(true);
+const plainWaits = waitsOf(false);
+ok("받기 간격: 중간 참가 = 3초 → 1분 뒤 5초 → 손님 없이 2분 뒤 10초 · 손님 들어오면 5초 · 다시 혼자면 2분 뒤 10초 · 창 열기(wake) = 3초 / 기본 게임 = 10초 없음", idleWaits.join() === "3000,3000,5000,5000,10000,5000,5000,10000,3000" && plainWaits.join() === "3000,3000,5000,5000,5000,5000,5000,5000,3000", JSON.stringify({ idleWaits, plainWaits }));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} 통과`);

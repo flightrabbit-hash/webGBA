@@ -3,6 +3,8 @@ export const APP_API = "https://webgba.vercel.app/api/v1/mp/";
 export const POLL_MS = 3000;
 export const SLOW_POLL_MS = 5000;
 export const SLOW_AFTER_MS = 60000;
+export const IDLE_POLL_MS = 10000;
+export const IDLE_AFTER_MS = 120000;
 export const NEAR_MS = 5000;
 export const NEAR_RETRY_MS = 10000;
 export const KEEP_MS = 100000;
@@ -131,7 +133,7 @@ export class Signal {
 }
 
 export class RoomHost {
-  constructor({ signal, session, info, log = () => {}, onChange = () => {}, onError = () => {}, now = () => Date.now() }) {
+  constructor({ signal, session, info, log = () => {}, onChange = () => {}, onError = () => {}, now = () => Date.now(), idle = false }) {
     this.signal = signal;
     this.session = session;
     this.info = info;
@@ -139,6 +141,9 @@ export class RoomHost {
     this.onChange = onChange;
     this.onError = onError;
     this.now = now;
+    this.idle = Boolean(idle);
+    this.idleAfter = IDLE_AFTER_MS;
+    this.aloneSince = 0;
     this.room = "";
     this.auth = null;
     this.q = 0;
@@ -209,7 +214,7 @@ export class RoomHost {
     if (!this.running) return;
     const waits = [];
     if (force) waits.push(force);
-    if (this.inviting) waits.push(this.now() - this.eventAt > SLOW_AFTER_MS ? SLOW_POLL_MS : POLL_MS);
+    if (this.inviting) waits.push(this.pollWait());
     if (this.rejoin) waits.push(this.rejoinWait());
     if (!waits.length) return;
     const wait = Math.max(200, Math.min(...waits));
@@ -328,6 +333,21 @@ export class RoomHost {
       clearTimeout(this.timer);
       this.timer = 0;
     }
+  }
+
+  pollWait() {
+    const now = this.now();
+    const quiet = now - this.eventAt;
+    if (this.session.count > 1) this.aloneSince = 0;
+    else this.aloneSince ||= now;
+    if (this.idle && this.aloneSince && now - this.aloneSince > this.idleAfter && quiet > this.idleAfter) return IDLE_POLL_MS;
+    return quiet > SLOW_AFTER_MS ? SLOW_POLL_MS : POLL_MS;
+  }
+
+  wake() {
+    this.eventAt = this.now();
+    this.aloneSince = 0;
+    if (this.running && !this.ticking) this.schedule();
   }
 
   resume() {

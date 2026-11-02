@@ -1056,7 +1056,7 @@ For games played alone that let others join at any time (e.g. joining an arcade 
 - **Minimum of 1**: the host can close the dialog alone (1 player) and the room stays open (dialog buttons = Leave room · Close). The host's button shows a waiting state (web = grey player badge `1/4`, PC = a dot on the button corner and "Waiting for players" in the status bar), and when someone joins there is a notice (web = toast, PC = status bar) and `JOIN`. Pressing the button again opens the room code screen.
 - Closing or cancelling the dialog does not send `CLOSED(CANCEL)` to the game (only a join attempt in progress is dropped). To close the room use "Leave room" → `CLOSED(LEFT)`.
 - The guest's way in, `rejoin` (7.10), internet connections (7.11) and the status menu (7.9) are unchanged.
-- Matchmaking server: while the room is open the host checks for a guest's answer every 3 seconds (5 after a minute, 1 command) and refreshes the room every 100 seconds (3–4 commands) — about 850 commands for a room kept open for an hour.
+- Matchmaking server: while the room is open the host checks for a guest's answer every 3 seconds (5 after a minute, 1 command) and refreshes the room every 100 seconds (3–4 commands). After 2 minutes with no guest the check slows to every 10 seconds (a guest may wait up to about 10 seconds longer; back to normal when someone joins or the dialog is opened) — about 520 commands for a room kept open for an hour (about 850 without the slowdown).
 
 ---
 

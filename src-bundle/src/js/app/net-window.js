@@ -173,6 +173,7 @@ export class NetWindow {
       if (snap.rejoining) this.go("rejoin");
       else if (snap.role === "make") {
         this.roomHost?.setActive(true);
+        this.roomHost?.wake();
         this.go(this.roomHost ? "room" : "host");
       } else this.go(snap.connected ? "joined" : this.joinInfo ? "wait" : "join2");
     } else if (this.request.role === "make") this.startRoom();
@@ -777,6 +778,7 @@ export class NetWindow {
       log: this.net.log ?? (() => {}),
       onChange: () => this.update(),
       onError: () => this.open && this.screen === "room" && this.setError(t("net.err.serverLost")),
+      idle: Boolean(this.net.anytime),
     });
     this.roomHost = host;
     this.go("room");

@@ -749,16 +749,43 @@ async function anytimeTests() {
   const still = await H.page.evaluate(() => ({ active: window.webgba.player.net.active, ended: window.webgba.player.net.ended }));
   ok(`창을 닫은 채 ${waitMs / 1000}초 방 유지: 끝남·시간 초과 없음 · Upstash ${used}명령(요청 ${ops.length}회: ${[...new Set(ops)].map((o) => `${o} ${ops.filter((x) => x === o).length}`).join(", ")})`, still.active && !still.ended && (await game(H))?.closed === 0, JSON.stringify(still));
 
+  // 손님 없는 대기가 길어지면 받기 10초(시험에서는 2분 대신 5초 뒤) — 창을 열면 원래 간격
+  const polls = (from) => local.apiCalls.slice(from).filter((c) => c.op === "msg").length;
+  await H.page.evaluate(() => {
+    window.webgba.net.win.roomHost.idleAfter = 5000;
+  });
+  await sleep(12000);
+  const idleMs = opt.fast ? 20000 : 60000;
+  const i0 = stats();
+  const ia = local.apiCalls.length;
+  await sleep(idleMs);
+  const idleUsed = stats() - i0;
+  const idlePolls = polls(ia);
+  ok(`손님 없는 대기(시험 5초 뒤) 받기 10초: ${idleMs / 1000}초 동안 받기 ${idlePolls}회 · Upstash ${idleUsed}명령(5초 간격이면 받기 약 ${idleMs / 5000}회)`, idlePolls >= idleMs / 10000 - 1 && idlePolls <= idleMs / 10000 + 1, JSON.stringify({ idlePolls, idleUsed }));
+  await H.page.click("#btnNet");
+  const wa = local.apiCalls.length;
+  const w0 = Date.now();
+  const woke = await waitFor(() => polls(wa) > 0, 6000, 100);
+  const wakeMs = Date.now() - w0;
+  ok(`창 열기 → 원래 간격(다음 받기 ${(wakeMs / 1000).toFixed(1)}초 뒤, 3초 이하)`, woke && wakeMs <= 3600, String(wakeMs));
+  await H.page.click('[data-action="net-close"]');
+  await waitFor(async () => (await sheetOf(H)) === "", 4000, 100);
+  await sleep(17000);
+  const idleBack = await H.page.evaluate(() => window.webgba.net.win.roomHost.pollWait());
+
   await press(G, "KeyZ");
   await sleep(1200);
   const gQuiet = await sheetOf(G);
   await G.page.click("#btnNet");
   const listed = await waitFor(() => G.page.$(`[data-action="net-near-join"][data-room="${code}"]`), 12000);
+  const j0 = Date.now();
   await G.page.click(`[data-action="net-near-join"][data-room="${code}"]`);
   const toastSeen = await waitFor(() => H.page.evaluate(() => {
     const n = document.getElementById("toast");
     return n && !n.hidden && /들어왔습니다/.test(n.textContent) ? n.textContent : "";
   }), 25000, 100);
+  const joinMs = Date.now() - j0;
+  ok(`받기 10초 상태에서 손님 들어오기: 누른 뒤 방장 알림까지 ${(joinMs / 1000).toFixed(1)}초(받기 10초 + 연결)`, idleBack === 10000 && Boolean(toastSeen) && joinMs <= 16000, JSON.stringify({ idleBack, joinMs }));
   if (CAPTURE) await H.page.screenshot({ path: path.join(CAPTURE, "웹_손님참가_알림_390x844.png") });
   const joined = await waitFor(async () => (await game(H))?.count === 2 && (await game(G))?.open === 1, 10000, 200);
   const hBtn = (await topBar(H)).find((b) => b.id === "btnNet");
