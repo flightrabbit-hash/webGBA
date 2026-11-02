@@ -1,32 +1,26 @@
-//! `.wgba`·`.wgbp` 확장자 연결(사용자 2026-10-26, `.wgbp` 2026-10-28). 아비터 abtapp.rs 의 `.abtapp` 연결과 같은 방식.
+//! `.wgbp` 확장자 연결(사용자 2026-11-02 "wgbp만 연결하는걸로 할게"). 아비터 abtapp.rs 의 `.abtapp` 연결과 같은 방식.
 //!
 //! 새 확장자라 `HKCU\Software\Classes` 의 ProgID 등록으로 충분하다(관리자 권한 불필요, UserChoice 제약 없음).
-//!   .wgba                              (기본값) webGBA.wgba
-//!   webGBA.wgba                        (기본값) webGBA 게임
-//!   webGBA.wgba\DefaultIcon            "<exe>",0   ← 앱 아이콘
-//!   webGBA.wgba\shell\open\command     "<exe>" "%1"
-//!   .wgbp / webGBA.wgbp                같은 짜임, 이름 "webGBA 패치"(롬이 들어 있지 않은 공유용 패치 — 열면 롬을 골라 .wgba 를 만듦)
-//! 넷을 함께 다룬다: 모두 이 exe 를 가리켜야 "연결됨". 앱을 켤 때 등록된 exe 가 지금 exe 와 다르거나 하나가 빠졌으면
-//! 고쳐 쓴다(폴더를 옮겨도 계속 열림, 옛 판이 `.wgba` 만 등록했어도 나머지가 더해짐). 사람이 "연결 해제"를 고르면
-//! `personalization.cfg` 의 `wgbaLink: false` 를 남기고 다시 등록하지 않는다.
+//!   .wgbp                              (기본값) webGBA.wgbp
+//!   webGBA.wgbp                        (기본값) webGBA 패치(롬이 없는 공유용 패치 — 열면 롬을 선택해 .wgba 를 생성)
+//!   webGBA.wgbp\DefaultIcon            "<exe>",0   ← 앱 아이콘
+//!   webGBA.wgbp\shell\open\command     "<exe>" "%1"
+//! 이 exe 를 가리켜야 "연결됨". 앱을 켤 때 등록된 exe 가 현재 exe 와 다르거나 빠졌으면 고쳐 쓴다(폴더를 이동해도 계속 열림).
+//! 사용자가 "연결 해제"를 선택하면 `personalization.cfg` 의 `wgbaLink: false` 를 남기고 다시 등록하지 않는다.
 //!
-//! `.gb`·`.gbc`(결정 146)는 다른 에뮬레이터가 이미 쓰는 확장자라 남의 연결을 덮지 않는다:
-//!   .gb\OpenWithProgids               webGBA.gb = ""   ← 탐색기 "연결 프로그램" 목록에 webGBA 를 더함(늘)
-//!   .gb                               (기본값) webGBA.gb  ← 합친 보기(HKCR)에 기본 프로그램이 없거나 이미 webGBA 일 때만
-//!   webGBA.gb / webGBA.gbc            같은 짜임, 이름 "webGBA GB 게임"·"webGBA GBC 게임"
-//! 해제는 우리 값(OpenWithProgids 의 webGBA.gb, 우리를 가리키는 기본값, ProgID)만 지운다. 사람이 고른 기본 앱(UserChoice)은 건드리지 않는다.
+//! `.wgba`·`.gb`·`.gbc` 는 연결하지 않는다(더블클릭으로 게임이 바로 실행되므로). 이전 버전이 쓴 값은 연결·해제·앱 시작 때 지운다:
+//!   .wgba (기본값) webGBA.wgba · .gb·.gbc (기본값) webGBA.gb·webGBA.gbc · <ext>\OpenWithProgids 의 같은 이름 값 · ProgID 키
+//! webGBA 이름의 값만 지우고, 다른 프로그램의 값·사용자가 선택한 기본 앱(UserChoice)은 건드리지 않는다.
 
 use serde::Serialize;
 
 use crate::error::Result;
 
-pub const EXTENSION: &str = ".wgba";
+/// (확장자, ProgID, 탐색기 "유형" 칸 번역 키)
+const KINDS: [(&str, &str, &str); 1] = [(".wgbp", "webGBA.wgbp", "rs.assocPatchLabel")];
 
-/// (확장자, ProgID, 탐색기 "유형" 칸 번역 키) — 새 확장자라 기본값을 바로 가짐.
-const KINDS: [(&str, &str, &str); 2] = [(".wgba", "webGBA.wgba", "rs.assocLabel"), (".wgbp", "webGBA.wgbp", "rs.assocPatchLabel")];
-
-/// 남도 쓰는 확장자(GB·GBC 롬). "연결 프로그램" 목록에 넣고, 기본값은 비어 있을 때만 가짐.
-const SHARED_KINDS: [(&str, &str, &str); 2] = [(".gb", "webGBA.gb", "rs.assocGbLabel"), (".gbc", "webGBA.gbc", "rs.assocGbcLabel")];
+/// 이전 버전이 연결했던 확장자와 ProgID.
+const OLD_KINDS: [(&str, &str); 3] = [(".wgba", "webGBA.wgba"), (".gb", "webGBA.gb"), (".gbc", "webGBA.gbc")];
 
 /// 연결 프로그램 목록 키(`HKCU\Software\Classes\<ext>\OpenWithProgids`).
 fn open_with(ext: &str) -> String {
@@ -36,9 +30,9 @@ fn open_with(ext: &str) -> String {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    /// `.wgba`·`.wgbp`·`.gb`·`.gbc` 가 모두 이 exe 로 연결되어 있음(`.gb`·`.gbc` 는 연결 프로그램 목록에 있으면 됨).
+    /// `.wgbp` 가 이 exe 로 연결되어 있음.
     pub linked: bool,
-    /// 하나라도 webGBA 로 연결되어 있으나 다른 exe(옮기기 전 자리 등)를 가리키거나 하나가 빠짐.
+    /// webGBA 로 연결되어 있으나 다른 exe(이동 전 위치 등)를 가리킴.
     pub elsewhere: bool,
 }
 
@@ -64,10 +58,37 @@ pub fn status() -> Status {
     for (ext, progid, _) in KINDS {
         check(reg::get_default(&format!(r"Software\Classes\{ext}")).as_deref() == Some(progid), progid);
     }
-    for (ext, progid, _) in SHARED_KINDS {
-        check(reg::has_value(&open_with(ext), progid), progid);
-    }
     Status { linked: all, elsewhere: any && !all }
+}
+
+/// `<ext>` 의 webGBA 값(우리 ProgID 를 가리키는 기본값·OpenWithProgids 의 같은 이름 값)과 ProgID 키를 지운다.
+/// 다른 프로그램의 값이 남은 키는 그대로 둔다. 지울 것이 있었으면 true.
+#[cfg(windows)]
+fn clear(ext: &str, progid: &str) -> Result<bool> {
+    let key = format!(r"Software\Classes\{ext}");
+    let progid_key = format!(r"Software\Classes\{progid}");
+    let ours = reg::get_default(&key).as_deref() == Some(progid);
+    if !ours && !reg::has_value(&open_with(ext), progid) && !reg::exists(&progid_key) {
+        return Ok(false);
+    }
+    reg::delete_value(&open_with(ext), Some(progid))?;
+    if ours {
+        reg::delete_value(&key, None)?;
+    }
+    reg::delete_if_empty(&open_with(ext));
+    reg::delete_if_empty(&key);
+    reg::delete_tree(&progid_key)?;
+    Ok(true)
+}
+
+/// 이전 버전이 쓴 `.wgba`·`.gb`·`.gbc` 연결 값을 지운다.
+#[cfg(windows)]
+fn clear_old() -> Result<bool> {
+    let mut changed = false;
+    for (ext, progid) in OLD_KINDS {
+        changed |= clear(ext, progid)?;
+    }
+    Ok(changed)
 }
 
 #[cfg(windows)]
@@ -81,17 +102,10 @@ fn write_progid(progid: &str, label: &str, exe: &str) -> Result<()> {
 pub fn link() -> Result<()> {
     use crate::error::Error;
     let exe = exe().ok_or_else(|| Error::Config(crate::i18n::tr("rs.noExe")))?;
+    clear_old()?;
     for (ext, progid, label) in KINDS {
         reg::set_default(&format!(r"Software\Classes\{ext}"), progid)?;
         write_progid(progid, label, &exe)?;
-    }
-    for (ext, progid, label) in SHARED_KINDS {
-        write_progid(progid, label, &exe)?;
-        reg::set_value(&open_with(ext), progid, "")?;
-        let owner = reg::classes_default(ext);
-        if owner.as_deref().map(|o| o.is_empty() || o == progid).unwrap_or(true) {
-            reg::set_default(&format!(r"Software\Classes\{ext}"), progid)?;
-        }
     }
     reg::notify();
     Ok(())
@@ -104,7 +118,7 @@ pub fn refresh_label() {
         return;
     }
     let mut changed = false;
-    for (_, progid, label) in KINDS.into_iter().chain(SHARED_KINDS) {
+    for (_, progid, label) in KINDS {
         changed |= reg::set_default(&format!(r"Software\Classes\{progid}"), &crate::i18n::tr(label)).is_ok();
     }
     if changed {
@@ -115,42 +129,51 @@ pub fn refresh_label() {
 #[cfg(not(windows))]
 pub fn refresh_label() {}
 
-/// 연결을 푼다. 확장자가 다른 프로그램을 가리키면 그 연결은 건드리지 않는다.
+/// 연결을 해제한다. 확장자가 다른 프로그램을 가리키면 해당 연결은 건드리지 않는다.
 #[cfg(windows)]
 pub fn unlink() -> Result<()> {
     for (ext, progid, _) in KINDS {
-        if reg::get_default(&format!(r"Software\Classes\{ext}")).as_deref() == Some(progid) {
-            reg::delete_tree(&format!(r"Software\Classes\{ext}"))?;
-        }
-        reg::delete_tree(&format!(r"Software\Classes\{progid}"))?;
+        clear(ext, progid)?;
     }
-    for (ext, progid, _) in SHARED_KINDS {
-        let key = format!(r"Software\Classes\{ext}");
-        reg::delete_value(&open_with(ext), Some(progid))?;
-        if reg::get_default(&key).as_deref() == Some(progid) {
-            reg::delete_value(&key, None)?;
-        }
-        reg::delete_if_empty(&open_with(ext));
-        reg::delete_if_empty(&key);
-        reg::delete_tree(&format!(r"Software\Classes\{progid}"))?;
-    }
+    clear_old()?;
     reg::notify();
     Ok(())
 }
 
-/// 켤 때: 해제를 고르지 않았으면 연결을 이 exe 로 맞춘다.
+/// 켤 때: 이전 버전의 연결 값을 지우고, 해제를 선택하지 않았으면 연결을 이 exe 로 맞춘다.
 pub fn ensure_on_start() {
+    match clear_old() {
+        Ok(true) => {
+            reg_notify();
+            crate::logging::write("INFO", "이전 버전의 .wgba·.gb·.gbc 연결을 해제했습니다");
+        }
+        Ok(false) => {}
+        Err(e) => crate::logging::write("WARN", &format!("이전 버전의 .wgba·.gb·.gbc 연결을 해제하지 못했습니다: {e}")),
+    }
     let refused = crate::config::prefs().get("wgbaLink").and_then(|v| v.as_bool()) == Some(false);
     if refused {
         return;
     }
     if !status().linked {
         if let Err(e) = link() {
-            crate::logging::write("WARN", &format!(".wgba·.wgbp·.gb·.gbc 연결을 쓰지 못했습니다: {e}"));
+            crate::logging::write("WARN", &format!(".wgbp 연결을 쓰지 못했습니다: {e}"));
         } else {
-            crate::logging::write("INFO", ".wgba·.wgbp·.gb·.gbc 를 이 실행 파일로 연결했습니다");
+            crate::logging::write("INFO", ".wgbp 를 이 실행 파일로 연결했습니다");
         }
     }
+}
+
+#[cfg(windows)]
+fn reg_notify() {
+    reg::notify();
+}
+
+#[cfg(not(windows))]
+fn reg_notify() {}
+
+#[cfg(not(windows))]
+fn clear_old() -> Result<bool> {
+    Ok(false)
 }
 
 #[cfg(not(windows))]
@@ -175,41 +198,38 @@ mod reg {
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows::Win32::System::Registry::{
         RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteKeyW, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegQueryInfoKeyW,
-        RegSetValueExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_ANY,
-        RRF_RT_REG_SZ,
+        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_ANY, RRF_RT_REG_SZ,
     };
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    /// `<root>\<sub>` 의 기본값(문자열). 없으면 None.
-    fn read_default(root: HKEY, sub: &str) -> Option<String> {
+    /// `HKCU\<sub>` 의 기본값. 없으면 None.
+    pub fn get_default(sub: &str) -> Option<String> {
         let wsub = wide(sub);
         let mut size: u32 = 0;
-        let rc = unsafe { RegGetValueW(root, PCWSTR(wsub.as_ptr()), PCWSTR::null(), RRF_RT_REG_SZ, None, None, Some(&mut size)) };
+        let rc = unsafe { RegGetValueW(HKEY_CURRENT_USER, PCWSTR(wsub.as_ptr()), PCWSTR::null(), RRF_RT_REG_SZ, None, None, Some(&mut size)) };
         if rc != ERROR_SUCCESS || size == 0 {
             return None;
         }
         let mut buf = vec![0u16; (size as usize / 2) + 1];
         let mut got = (buf.len() * 2) as u32;
         let rc = unsafe {
-            RegGetValueW(root, PCWSTR(wsub.as_ptr()), PCWSTR::null(), RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as *mut core::ffi::c_void), Some(&mut got))
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(wsub.as_ptr()),
+                PCWSTR::null(),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                Some(&mut got),
+            )
         };
         if rc != ERROR_SUCCESS {
             return None;
         }
         Some(String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string())
-    }
-
-    /// `HKCU\<sub>` 의 기본값. 없으면 None.
-    pub fn get_default(sub: &str) -> Option<String> {
-        read_default(HKEY_CURRENT_USER, sub)
-    }
-
-    /// 합친 보기(HKCR = HKCU 위 HKLM)의 확장자 기본값 — 다른 프로그램이 기본 연결을 가졌는지 본다.
-    pub fn classes_default(ext: &str) -> Option<String> {
-        read_default(HKEY_CLASSES_ROOT, ext)
     }
 
     /// `HKCU\<sub>` 에 이름 `name` 값이 있는지(형식 무관).
@@ -219,10 +239,22 @@ mod reg {
         rc == ERROR_SUCCESS
     }
 
-    /// `HKCU\<sub>` 에 문자열 값을 쓴다(키가 없으면 만든다). name 이 None 이면 기본값.
-    fn write_sz(sub: &str, name: Option<&str>, data: &str) -> Result<()> {
+    /// `HKCU\<sub>` 키가 있는지.
+    pub fn exists(sub: &str) -> bool {
         let wsub = wide(sub);
-        let wname = name.map(wide);
+        let mut key = HKEY::default();
+        if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(wsub.as_ptr()), None, KEY_READ, &mut key) } != ERROR_SUCCESS {
+            return false;
+        }
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+        true
+    }
+
+    /// `HKCU\<sub>` 의 기본값을 쓴다(키가 없으면 만든다).
+    pub fn set_default(sub: &str, data: &str) -> Result<()> {
+        let wsub = wide(sub);
         let mut key = HKEY::default();
         let rc = unsafe {
             RegCreateKeyExW(HKEY_CURRENT_USER, PCWSTR(wsub.as_ptr()), None, PCWSTR::null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, None, &mut key, None)
@@ -232,8 +264,7 @@ mod reg {
         }
         let wdata = wide(data);
         let bytes = unsafe { std::slice::from_raw_parts(wdata.as_ptr() as *const u8, wdata.len() * 2) };
-        let value = wname.as_ref().map(|w| PCWSTR(w.as_ptr())).unwrap_or(PCWSTR::null());
-        let rc = unsafe { RegSetValueExW(key, value, None, REG_SZ, Some(bytes)) };
+        let rc = unsafe { RegSetValueExW(key, PCWSTR::null(), None, REG_SZ, Some(bytes)) };
         unsafe {
             let _ = RegCloseKey(key);
         }
@@ -241,16 +272,6 @@ mod reg {
             return Err(Error::Config(crate::i18n::tr1("rs.regWrite", sub)));
         }
         Ok(())
-    }
-
-    /// `HKCU\<sub>` 의 기본값을 쓴다(키가 없으면 만든다).
-    pub fn set_default(sub: &str, data: &str) -> Result<()> {
-        write_sz(sub, None, data)
-    }
-
-    /// `HKCU\<sub>` 에 이름 있는 문자열 값을 쓴다.
-    pub fn set_value(sub: &str, name: &str, data: &str) -> Result<()> {
-        write_sz(sub, Some(name), data)
     }
 
     /// `HKCU\<sub>` 의 값 하나를 지운다(None = 기본값). 없으면 그대로 성공.

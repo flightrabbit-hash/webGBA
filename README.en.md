@@ -94,8 +94,8 @@ node tools/run.cjs   # list all commands
 - **Choosing the ROM for a web build** — Settings › General › Files › **ROM file name for web builds**. When set, the ROM with that name in the same folder as the `.wgba`/`.wasm` (or the folder above) is used.
   When empty (default), webGBA tries `<build name>.gba`, then the only `.gba` in the same folder; if there are several, it asks the first time and remembers the choice per build.
   You can change it any time with Game › Choose ROM…. A `.wgba` with a packed ROM ignores these rules and uses its own ROM.
-- **.wgba · .wgbp · .gb · .gbc file association** — double-click a `.wgba`, `.wgbp`, `.gb` or `.gbc` in Explorer to open it in webGBA. Registered per user (HKCU) without administrator rights.
-  If another emulator is already the default for `.gb`/`.gbc`, that choice is kept and webGBA is only added to the "Open with" list (removing the association deletes only the values webGBA added).
+- **.wgbp file association** — double-click a `.wgbp` (shared patch) in Explorer to open it in webGBA and pick a ROM. Registered per user (HKCU) without administrator rights.
+  `.wgba`, `.gb` and `.gbc` start a game right away, so they are not associated (open them or drag and drop them instead). On start, webGBA deletes only the values it added for `.wgba`, `.gb` and `.gbc` in earlier versions.
   To remove the association, use **Settings › General › Files**.
 - **One save, next to the opened file** — for `.gba`, `.gb`, `.gbc`, `.zip`, `.wgba` and `.wasm` alike, webGBA reads and writes a single `<file name>.sav` right next to the opened file (put a VBA or other emulator save there under that name and it just continues).
   About a second after the game saves, and also when you close the window or open another game, that `.sav` file itself is overwritten in place. No backup file is made.
@@ -142,7 +142,7 @@ Game keys can be changed in Settings › Keys; gamepads are mapped automatically
 ```text
 core/          mGBA wasm core build — build.sh (Docker, downloads the official mGBA source), src/ wrappers (webgba_core.c · host_stubs.c)
 src-bundle/    UI — src/ (html · css · js · icons · i18n), ini/ (settings seeds), bin/core/ (mgba_core.wasm · licenses/)
-src-tauri/     Rust — windows · files · saves · web-build origins · .wgba association
+src-tauri/     Rust — windows · files · saves · web-build origins · .wgbp association
 tools/         npm commands (run.cjs · scripts.cjs), core build, wgba.mjs (pack and check .wgba files), pack-wgba.mjs (pack a ROM into a .wgba), make-wgbp.mjs (make a ROM-free .wgbp), lib/, test/ (test tools)
 docs/wgba/     manifest schema · example (the .wgba spec text is further down in this README)
 documents/     design documents (Korean)

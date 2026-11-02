@@ -2,7 +2,7 @@
 //   node tools/test/app-features.mjs <exe> <작업 폴더>
 // 작업 폴더에 rom\test.gba·rom\townmap.sav·wasm_only\<빌드>.wasm·captures\port.sav·pc30\·<롬>(그 웹 빌드의 롬)이 있어야 한다.
 // <빌드>·<롬> 은 환경 변수 WEBGBA_TEST_BUILD·WEBGBA_TEST_ROM(cdp.mjs). 앱 폴더는 <작업>\app2 를 새로 만든다.
-// 끝나면 .wgba 연결을 시험 전 값으로 되돌린다(시작할 때 reg export 한 <작업>\reg_backup\*.reg 를 다시 넣음).
+// 끝나면 파일 연결(.wgbp, 이전 버전의 .wgba)을 시험 전 값으로 되돌린다(시작할 때 reg export 한 <작업>\reg_backup\*.reg 를 다시 넣음).
 import fs from "fs";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
@@ -32,9 +32,9 @@ function regDefault(key) {
   const line = done.stdout.split(/\r?\n/).find((l) => /REG_SZ/.test(l));
   return line ? line.replace(/^.*REG_SZ\s+/, "").trim() : "";
 }
-const EXT_KEY = "HKCU\\Software\\Classes\\.wgba";
-const CMD_KEY = "HKCU\\Software\\Classes\\webGBA.wgba\\shell\\open\\command";
-const ICON_KEY = "HKCU\\Software\\Classes\\webGBA.wgba\\DefaultIcon";
+const EXT_KEY = "HKCU\\Software\\Classes\\.wgbp";
+const CMD_KEY = "HKCU\\Software\\Classes\\webGBA.wgbp\\shell\\open\\command";
+const ICON_KEY = "HKCU\\Software\\Classes\\webGBA.wgbp\\DefaultIcon";
 
 const running = () => runningIn(work);
 
@@ -117,9 +117,7 @@ try {
   // 1. 켤 때 자동 연결
   app = await start();
   const cmd = regDefault(CMD_KEY);
-  check("연결: 켤 때 .wgba 를 이 exe 로 등록(HKCU)", regDefault(EXT_KEY) === "webGBA.wgba" && cmd?.toLowerCase().includes(appExe.toLowerCase()) && (regDefault(ICON_KEY) ?? "").toLowerCase().includes("webgba.exe"), `${regDefault(EXT_KEY)} · ${cmd}`);
-  const patchCmd = regDefault("HKCU\\Software\\Classes\\webGBA.wgbp\\shell\\open\\command");
-  check("연결: 켤 때 .wgbp 도 이 exe 로 등록(HKCU)", regDefault("HKCU\\Software\\Classes\\.wgbp") === "webGBA.wgbp" && patchCmd?.toLowerCase().includes(appExe.toLowerCase()), `${regDefault("HKCU\\Software\\Classes\\.wgbp")} · ${patchCmd}`);
+  check("연결: 켤 때 .wgbp 를 이 exe 로 등록(HKCU) · .wgba 는 등록하지 않음", regDefault(EXT_KEY) === "webGBA.wgbp" && cmd?.toLowerCase().includes(appExe.toLowerCase()) && (regDefault(ICON_KEY) ?? "").toLowerCase().includes("webgba.exe") && regDefault("HKCU\\Software\\Classes\\webGBA.wgba\\shell\\open\\command") === null, `${regDefault(EXT_KEY)} · ${cmd}`);
 
   // 2. .gba 옆 .sav 를 그대로 읽음(시각 비교·가져오기 없음)
   const hostSum = () => app.evaluate(`(() => { const d = ${T}.player.host.saveData(); let s = 0; for (const b of d) s = (s * 31 + b) >>> 0; return s; })()`);

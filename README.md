@@ -93,8 +93,8 @@ node tools/run.cjs   # 전체 명령 목록
 - **웹 빌드의 롬 선택** — 설정 창 › 일반 › 파일 › **웹 빌드에 쓸 롬 파일 이름**. 입력하면 `.wgba`·`.wasm`과 같은 폴더(없으면 상위 폴더)에서 해당 파일명의 롬을 사용합니다.
   비워 두면(기본) `<빌드 이름>.gba` → 같은 폴더의 유일한 `.gba` 순서로 검색하고, 여러 개라 결정할 수 없으면 처음 열 때 선택하게 한 후 각 빌드별로 기억합니다.
   게임 메뉴 › 롬 지정…으로 언제든 변경할 수 있습니다. 롬 포함 `.wgba`는 이 규칙을 사용하지 않고 내부의 롬을 사용합니다.
-- **.wgba · .wgbp · .gb · .gbc 파일 연결** — 탐색기에서 `.wgba`·`.wgbp`·`.gb`·`.gbc`를 더블클릭하면 webGBA로 열립니다. 관리자 권한 없이 사용자 범위(HKCU)에 등록합니다.
-  `.gb`·`.gbc`는 다른 에뮬레이터가 이미 기본 프로그램이면 해당 지정을 바꾸지 않고 "연결 프로그램" 목록에만 추가합니다(해제 시에도 webGBA가 추가한 값만 삭제).
+- **.wgbp 파일 연결** — 탐색기에서 `.wgbp`(공유용 패치)를 더블클릭하면 webGBA로 열고 롬을 선택합니다. 관리자 권한 없이 사용자 범위(HKCU)에 등록합니다.
+  더블클릭으로 게임이 바로 실행되는 `.wgba`·`.gb`·`.gbc`는 연결하지 않습니다(열기·Drag & Drop으로 실행). 이전 버전이 등록한 `.wgba`·`.gb`·`.gbc` 연결은 앱을 실행할 때 webGBA가 추가한 값만 삭제합니다.
   연결 해제는 **설정 창 › 일반 › 파일**에서 합니다.
 - **세이브는 연 파일 옆 한 개** — `.gba`·`.gb`·`.gbc`·`.zip`·`.wgba`·`.wasm` 모두 연 파일 옆 `<파일명>.sav` 한 개를 조회·기록합니다(VBA 등 다른 실행기의 세이브를 같은 파일명으로 두면 그대로 이어집니다).
   게임이 저장하면 약 1초 후, 창을 닫거나 다른 게임을 열 때도 해당 `.sav` 파일을 직접 Overwrite합니다. 백업 파일은 생성하지 않습니다.
@@ -141,7 +141,7 @@ node tools/run.cjs   # 전체 명령 목록
 ```text
 core/          mGBA wasm 코어 빌드 — build.sh(Docker, mGBA 공식 소스 다운로드), src/ 래퍼(webgba_core.c · host_stubs.c)
 src-bundle/    화면 — src/(html · css · js · icons · i18n), ini/(설정 기본 파일), bin/core/(mgba_core.wasm · licenses/)
-src-tauri/     Rust — 창 · 파일 · 세이브 · 웹 빌드 출처 · .wgba 연결
+src-tauri/     Rust — 창 · 파일 · 세이브 · 웹 빌드 출처 · .wgbp 연결
 tools/         npm 명령(run.cjs · scripts.cjs), 코어 빌드, wgba.mjs(.wgba 규격 패키징·검사), pack-wgba.mjs(롬 포함 .wgba 패키징), make-wgbp.mjs(롬 없는 .wgbp 생성), lib/, test/(테스트 도구)
 docs/wgba/     manifest 스키마 · 예제(.wgba 규격 본문은 이 README 아래)
 documents/     설계 문서
