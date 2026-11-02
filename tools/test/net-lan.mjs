@@ -6,7 +6,7 @@ import { checkManifest } from "../../src-bundle/src/js/core/wgba-format.js";
 import { cleanNick, NetSession, STATE_MAX, statePackets } from "../../src-bundle/src/js/core/net/session.js";
 import { fetchCredential, iceHosts, IcePlan, readIceServers } from "../../src-bundle/src/js/core/net/ice.js";
 import { qrMatrix } from "../../src-bundle/src/js/core/net/qr.js";
-import { RoomHost } from "../../src-bundle/src/js/core/net/signal.js";
+import { RoomHost, SignalError } from "../../src-bundle/src/js/core/net/signal.js";
 
 const results = [];
 const ok = (name, pass, detail = "") => {
@@ -159,28 +159,58 @@ hostS.takeState(3, statePackets(3, 0, Uint8Array.of(9))[0]);
 hostS.takeState(2, parts[1]);
 ok(`상태 묶음: ${STATE_MAX}바이트 → ${parts.length}조각 → 한 묶음 · 1바이트 묶음 · 첫 조각 없는 조각은 버림`, parts.length === STATE_MAX / 16384 && got.length === 2 && got[0].len === STATE_MAX && got[0].state && got[0].last === 255 && got[1].len === 1 && got[1].from === 3, JSON.stringify(got.map((g) => g.len)));
 
-// ── 방장 받기 간격: 중간 참가 게임은 손님 없이 2분 넘으면 10초 ──
-const waitsOf = (idle) => {
-  let t = 0;
-  const session = { count: 1 };
-  const host = new RoomHost({ signal: null, session, info: {}, now: () => t, idle });
-  host.eventAt = 1000;
-  const at = (ms) => {
-    t = ms + 1000;
-    return host.pollWait();
+// ── 중간 참가 게임 방장: 만들기·갱신부터 2분 30초만 받기, 지나면 멈춤(w: 0 한 번) · 갱신 = 같은 방 코드(빼앗겼거나 옛 서버면 새 방) ──
+const fakeSignal = (renewFail = "") => {
+  const calls = [];
+  return {
+    calls,
+    create: async (info) => (calls.push(["create", info]), { room: calls.some((c) => c[0] === "create") && calls.filter((c) => c[0] === "create").length > 1 ? "222222" : "111111", x: "xxxxxxxxxxx", g: "gggggggggggggggg", i: 0, t: "t", q: 1, rj: 1 }),
+    update: async (info) => (calls.push(["update", info]), { ok: true }),
+    renew: async (info) => {
+      calls.push(["renew", info]);
+      if (renewFail) throw new SignalError(renewFail, 409);
+      return { room: info.room, i: info.i, t: info.t };
+    },
+    poll: async () => (calls.push(["poll"]), { a: null, c: 0 }),
   };
-  const out = [at(0), at(30000), at(90000), at(119000), at(125000)];
-  session.count = 2;
-  out.push(at(200000));
-  session.count = 1;
-  out.push(at(210000), at(331000));
-  host.wake();
-  out.push(at(332000));
-  return out;
 };
-const idleWaits = waitsOf(true);
-const plainWaits = waitsOf(false);
-ok("받기 간격: 중간 참가 = 3초 → 1분 뒤 5초 → 손님 없이 2분 뒤 10초 · 손님 들어오면 5초 · 다시 혼자면 2분 뒤 10초 · 창 열기(wake) = 3초 / 기본 게임 = 10초 없음", idleWaits.join() === "3000,3000,5000,5000,10000,5000,5000,10000,3000" && plainWaits.join() === "3000,3000,5000,5000,5000,5000,5000,5000,3000", JSON.stringify({ idleWaits, plainWaits }));
+const fakeSession = () => ({ count: 1, closed: false, rejoinGame: false, invites: 0, cancelled: 0, invite: async function () { this.invites++; return { id: this.invites, code: `AQ${"z".repeat(40)}${this.invites}` }; }, cancelInvite() { this.cancelled++; }, attention: () => [] });
+async function acceptRun(renewFail = "") {
+  let t = 1000;
+  const signal = fakeSignal(renewFail);
+  const session = fakeSession();
+  let paused = 0;
+  const host = new RoomHost({ signal, session, info: { c: "c", p: "p", m: 4, n: "n" }, now: () => t, limit: 150000, onPause: () => paused++ });
+  await host.open();
+  const out = { room1: host.room, before: host.inviting, left: host.acceptLeft };
+  host.stop();
+  t += 149000;
+  out.at149 = host.inviting;
+  t += 2000;
+  out.at151 = host.inviting;
+  host.claimSeen = t - 5000;
+  out.claimGrace = host.inviting;
+  host.claimSeen = 0;
+  host.running = true;
+  await host.pause();
+  host.stop();
+  host.running = true;
+  const pausePush = signal.calls.filter((c) => c[0] === "update").at(-1)?.[1];
+  out.pause = { w: pausePush?.w, paused, keep: host.keepAt === Infinity, wait: host.rejoinWait(), inviting: host.inviting };
+  t += 3600000;
+  const before = signal.calls.length;
+  out.idleCalls = signal.calls.length - before;
+  await host.renew();
+  const left = host.acceptLeft;
+  host.stop();
+  out.renew = { inviting: host.inviting, left, q: host.q, room: host.room, kinds: signal.calls.slice(before).map((c) => c[0]).join(","), cancelled: session.cancelled };
+  return out;
+}
+const runOk = await acceptRun();
+const runTaken = await acceptRun("taken");
+const runOld = await acceptRun("op");
+ok("중간 참가 방장: 2분 30초 받기(149초 받음·151초 멈춤, 자리 잡은 손님 20초 유예) → 멈춤 = w:0 갱신 1번·이후 서버 요청 0 → 갱신 = renew 1번·같은 방 코드·다시 2분 30초", runOk.before && runOk.left === 150000 && runOk.at149 && !runOk.at151 && runOk.claimGrace && runOk.pause.w === 0 && runOk.pause.paused === 1 && runOk.pause.keep === true && runOk.pause.wait === 0 && runOk.idleCalls === 0 && runOk.renew.inviting && runOk.renew.left === 150000 && runOk.renew.room === "111111" && runOk.renew.kinds === "renew" && runOk.renew.q === 2, JSON.stringify(runOk));
+ok("갱신: 방 코드를 다른 방이 가져갔거나(taken) 옛 서버(op)면 새 방 만들기", runTaken.renew.room === "222222" && runTaken.renew.kinds === "renew,create" && runOld.renew.kinds === "renew,create" && runOld.renew.inviting, JSON.stringify({ taken: runTaken.renew, old: runOld.renew }));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} 통과`);

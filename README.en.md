@@ -679,7 +679,7 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 > Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi with **a 6-digit room code or the nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
-> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and the host can keep a room open alone (7.12).
+> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and players are taken for 2 min 30 s after the host creates or renews the room (7.12).
 
 #### 7.1 Overview
 
@@ -711,7 +711,7 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 | `sync` | `"messages"` \| `"inputs"` | no | `"messages"` | `"inputs"` = the host lines up everyone's keys every frame (7.6, optional feature) |
 | `inputDelay` | integer | no | `3` | With `sync: "inputs"`, how many frames later keys take effect (1–10) |
 | `rejoin` | boolean | no | `false` | `true` = rejoin (7.10). A dropped guest's seat is kept until the session ends and the same device can come back to it |
-| `join` | `"anytime"` | no | none (7.7 behavior) | `"anytime"` = drop-in game (7.12). The dialog does not open by itself when the game asks, there is no timeout, and the host can close the dialog alone (1 player) while the room stays open |
+| `join` | `"anytime"` | no | none (7.7 behavior) | `"anytime"` = drop-in game (7.12). The dialog does not open by itself when the game asks, there is no timeout, and players are taken for 2 min 30 s after the host creates the room or presses Renew (also with the dialog closed; the host can close it alone) |
 | `iceServers` | array | no | none (webGBA default STUN) | The game's own connection servers (STUN/TURN, 7.11). Used only when the user turned on "Also connect over the internet" |
 
 ```json
@@ -1053,10 +1053,13 @@ For games played alone that let others join at any time (e.g. joining an arcade 
 
 - **No automatic dialog**: while the game asks, only the "Multiplayer" button above the screen (the toolbar button on PC) is shown. The user opens the dialog with it to host a room, enter a code or use nearby rooms.
 - **No timeout**: the request lasts until the game withdraws it (0 / `unwant()`); no `CLOSED(TIMEOUT)` while waiting.
-- **Minimum of 1**: the host can close the dialog alone (1 player) and the room stays open (dialog buttons = Leave room · Close). The host's button shows a waiting state (web = grey player badge `1/4`, PC = a dot on the button corner and "Waiting for players" in the status bar), and when someone joins there is a notice (web = toast, PC = status bar) and `JOIN`. Pressing the button again opens the room code screen.
+- **Taking players for 2 min 30 s**: creating the room or pressing **Renew** in the dialog takes players for 2 minutes 30 seconds from then. It keeps going after the dialog is closed and you play; when the time is up it stops (with a notice, and no more matchmaking server requests). To take more, press **Renew** — the same room code is used again, or a new one if another room took it meanwhile. Players already in stay, and players who join after a renew get the next seat numbers.
+- The host can close the dialog alone (1 player) (dialog buttons = Leave room · Close). The dialog shows "Taking players · time left" / "Not taking players" and a Renew button.
+- The host's button: web = player badge blue (taking players) / grey (stopped), PC = a dot on the button corner green / grey and the status bar "Taking players · 2:14 left" / "Not taking players". When someone joins there is a notice (web = toast, PC = status bar) and `JOIN`.
+- Trying to join a stopped room shows "The host has stopped taking players. Ask the host to press Renew" (the server refuses it and drops it from the nearby list).
 - Closing or cancelling the dialog does not send `CLOSED(CANCEL)` to the game (only a join attempt in progress is dropped). To close the room use "Leave room" → `CLOSED(LEFT)`.
 - The guest's way in, `rejoin` (7.10), internet connections (7.11) and the status menu (7.9) are unchanged.
-- Matchmaking server: while the room is open the host checks for a guest's answer every 3 seconds (5 after a minute, 1 command) and refreshes the room every 100 seconds (3–4 commands). After 2 minutes with no guest the check slows to every 10 seconds (a guest may wait up to about 10 seconds longer; back to normal when someone joins or the dialog is opened) — about 520 commands for a room kept open for an hour (about 850 without the slowdown).
+- Matchmaking server: while taking players the host checks for a player's answer every 3 seconds (5 after a minute, 1 command). One room creation or renew = about 45 commands over its 2 min 30 s (create or renew 4–6 + checks about 38 + stop marker 3), and 0 while playing after it stops. Games with rejoin (7.10) keep refreshing the room every 120 seconds after it stops while players are in, so dropped seats can come back (3–4 commands, about 120 an hour).
 
 ---
 

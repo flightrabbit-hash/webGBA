@@ -191,12 +191,42 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
     const q = int(body.q, 1, 1e6);
     const k = int(body.k, 1, fields.m);
     need(q !== null && k !== null);
+    const w = body.w === 0 || body.w === "0" ? 0 : 1;
     const pre = await limitWrite(await groupOf(request));
-    const rec = { x, ...fields, k, q, o, g, i };
+    const rec = { x, ...fields, k, q, o, g, i, w };
     const cmds = [["SET", `r:${room}`, JSON.stringify(rec), "EX", LIMITS.ROOM_TTL]];
-    if (i >= 0) cmds.push(k >= fields.m ? ["SET", nearKey(g, i), "", "XX", "EX", 1] : ["SET", nearKey(g, i), nearValue(room, rec), "EX", LIMITS.ROOM_TTL]);
+    if (i >= 0) cmds.push(k >= fields.m || !w ? ["SET", nearKey(g, i), "", "XX", "EX", 1] : ["SET", nearKey(g, i), nearValue(room, rec), "EX", LIMITS.ROOM_TTL]);
     await db.run([...pre, ...cmds]);
     return { ok: true };
+  }
+
+  async function renewRoom(request, body) {
+    const { room, x, g, i } = await hostBody(body);
+    const fields = roomFields(body);
+    const o = code(body.o);
+    const q = int(body.q, 1, 1e6);
+    const k = int(body.k, 1, fields.m);
+    need(q !== null && k !== null);
+    const pre = await limitWrite(await groupOf(request));
+    const rec = { x, ...fields, k, q, o, g, i, w: 1 };
+    const key = `r:${room}`;
+    const got = await db.run([...pre, ["SET", key, JSON.stringify(rec), "NX", "EX", LIMITS.ROOM_TTL], ["GET", key]]);
+    const [made, now] = got.slice(-2);
+    if (made !== "OK" && readRoom(now)?.x !== x) throw new HttpError(409, "taken");
+    let slot = i;
+    if (i >= 0) {
+      const [held] = await db.run([["GET", nearKey(g, i)]]);
+      let mine = false;
+      try {
+        mine = Boolean(held) && JSON.parse(held).r === room;
+      } catch {}
+      const cmd = k >= fields.m ? null : ["SET", nearKey(g, i), nearValue(room, rec), mine || held === "" ? "XX" : "NX", "EX", LIMITS.ROOM_TTL];
+      const [placed] = cmd ? await db.run([cmd]) : ["OK"];
+      if (placed !== "OK") slot = -1;
+    }
+    rec.i = slot;
+    if (made !== "OK" || slot !== i) await db.run([["SET", key, JSON.stringify(rec), "XX", "EX", LIMITS.ROOM_TTL]]);
+    return { room, i: slot, t: slot === i ? String(body.t) : await token("h", room, x, g, slot), same: made !== "OK" };
   }
 
   async function closeRoom(request, body) {
@@ -244,6 +274,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
     if (!rec) throw new HttpError(404, "none");
     if (rec.c !== c) throw new HttpError(409, "version");
     if (rec.p !== p) throw new HttpError(409, "purpose");
+    if (rec.w === 0) throw new HttpError(409, "paused");
     if (rec.k >= rec.m) throw new HttpError(409, "full");
     const last = rec.k + 1 >= rec.m;
     const cmds = [["SET", `c:${rec.x}:${rec.q}`, String(now()), "NX", "EX", LIMITS.ROOM_TTL]];
@@ -397,7 +428,8 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       if (request.method === "POST" && op === "room") {
         const body = await readBody(request);
         out = body.close ? await closeRoom(request, body) : body.room ? await updateRoom(request, body) : await createRoom(request, body);
-      } else if (request.method === "GET" && op === "near") out = await near(request);
+      } else if (request.method === "POST" && op === "renew") out = await renewRoom(request, await readBody(request));
+      else if (request.method === "GET" && op === "near") out = await near(request);
       else if (request.method === "POST" && op === "join") out = await join(request, await readBody(request));
       else if (request.method === "POST" && op === "msg") out = await answer(request, await readBody(request));
       else if (request.method === "GET" && op === "msg") out = await poll(request, query);

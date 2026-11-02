@@ -3,8 +3,8 @@ export const APP_API = "https://webgba.vercel.app/api/v1/mp/";
 export const POLL_MS = 3000;
 export const SLOW_POLL_MS = 5000;
 export const SLOW_AFTER_MS = 60000;
-export const IDLE_POLL_MS = 10000;
-export const IDLE_AFTER_MS = 120000;
+export const ACCEPT_MS = 150000;
+export const ROOM_TTL_MS = 150000;
 export const NEAR_MS = 5000;
 export const NEAR_RETRY_MS = 10000;
 export const KEEP_MS = 100000;
@@ -88,6 +88,10 @@ export class Signal {
     return this.request("POST", "room", info);
   }
 
+  renew(info) {
+    return this.request("POST", "renew", info);
+  }
+
   close(auth) {
     return this.request("POST", "room", { ...auth, close: 1 });
   }
@@ -133,17 +137,20 @@ export class Signal {
 }
 
 export class RoomHost {
-  constructor({ signal, session, info, log = () => {}, onChange = () => {}, onError = () => {}, now = () => Date.now(), idle = false }) {
+  constructor({ signal, session, info, log = () => {}, onChange = () => {}, onError = () => {}, onPause = () => {}, now = () => Date.now(), limit = 0 }) {
     this.signal = signal;
     this.session = session;
     this.info = info;
     this.log = log;
     this.onChange = onChange;
     this.onError = onError;
+    this.onPause = onPause;
     this.now = now;
-    this.idle = Boolean(idle);
-    this.idleAfter = IDLE_AFTER_MS;
-    this.aloneSince = 0;
+    this.limit = limit > 0 ? limit : 0;
+    this.acceptUntil = 0;
+    this.pausedAt = 0;
+    this.pushedAt = 0;
+    this.renewing = false;
     this.room = "";
     this.auth = null;
     this.q = 0;
@@ -174,7 +181,9 @@ export class RoomHost {
     this.auth = { room: made.room, x: made.x, g: made.g, i: made.i, t: made.t };
     this.q = made.q;
     this.lastCode = this.invite.code;
-    this.keepAt = this.now() + KEEP_MS;
+    this.pushedAt = this.now();
+    this.acceptUntil = this.pushedAt + this.limit;
+    this.keepAt = this.limit ? this.acceptUntil + 1 : this.now() + KEEP_MS;
     this.eventAt = this.now();
     this.running = true;
     this.rejoin = made.rj === 1 && this.session.rejoinGame;
@@ -200,11 +209,26 @@ export class RoomHost {
       return this.now() - this.watchSince < REJOIN_FAST_FOR_MS ? REJOIN_POLL_MS : REJOIN_SLOW_MS;
     }
     this.watchSince = 0;
-    return Math.max(1000, this.keepAt - this.now());
+    return Number.isFinite(this.keepAt) ? Math.max(1000, this.keepAt - this.now()) : 0;
+  }
+
+  get expired() {
+    if (!this.limit || this.now() < this.acceptUntil) return false;
+    return !(this.claimSeen && this.now() - this.claimSeen <= CLAIM_MS);
   }
 
   get inviting() {
-    return !this.parked && this.active;
+    return !this.parked && this.active && !this.expired;
+  }
+
+  get acceptLeft() {
+    return this.limit && this.running ? Math.max(0, this.acceptUntil - this.now()) : 0;
+  }
+
+  nextKeep(now) {
+    if (this.inviting) return this.limit ? this.acceptUntil + 1 : now + KEEP_MS;
+    if (this.limit && !(this.rejoin && this.session.count > 1)) return Infinity;
+    return now + REJOIN_KEEP_MS;
   }
 
   schedule(force = 0) {
@@ -214,8 +238,12 @@ export class RoomHost {
     if (!this.running) return;
     const waits = [];
     if (force) waits.push(force);
-    if (this.inviting) waits.push(this.pollWait());
-    if (this.rejoin) waits.push(this.rejoinWait());
+    if (this.inviting) waits.push(this.now() - this.eventAt > SLOW_AFTER_MS ? SLOW_POLL_MS : POLL_MS);
+    if (this.limit && !this.pausedAt) waits.push(Math.max(200, this.acceptUntil - this.now()));
+    if (this.rejoin) {
+      const wait = this.rejoinWait();
+      if (wait) waits.push(wait);
+    }
     if (!waits.length) return;
     const wait = Math.max(200, Math.min(...waits));
     this.waitLeft = wait;
@@ -228,6 +256,7 @@ export class RoomHost {
     if (this.session.closed) return this.stop();
     this.ticking = true;
     try {
+      if (this.limit && !this.pausedAt && this.expired) await this.pause();
       if (this.rejoin) await this.rejoinTick();
       if (this.inviting) {
         if (!this.invite) {
@@ -316,9 +345,77 @@ export class RoomHost {
     await this.push();
   }
 
+  get count() {
+    return Math.min(this.info.m, Math.max(1, this.session.count));
+  }
+
   async push() {
-    await this.signal.update({ ...this.auth, ...this.info, o: this.invite?.code ?? this.lastCode, q: this.q, k: Math.min(this.info.m, Math.max(1, this.session.count)) });
-    this.keepAt = this.now() + (this.inviting ? KEEP_MS : REJOIN_KEEP_MS);
+    const open = this.inviting;
+    await this.signal.update({ ...this.auth, ...this.info, o: this.invite?.code ?? this.lastCode, q: this.q, k: this.count, ...(this.limit && !open ? { w: 0 } : {}) });
+    this.pushedAt = this.now();
+    this.keepAt = this.nextKeep(this.pushedAt);
+  }
+
+  async pause() {
+    this.pausedAt = this.now();
+    if (this.invite) this.session.cancelInvite(this.invite.id);
+    this.invite = null;
+    this.claimSeen = 0;
+    this.log("info", `방 ${this.room}: 참가 받기 멈춤(2분 30초 지남)`);
+    try {
+      await this.push();
+    } finally {
+      this.onPause();
+      this.onChange();
+    }
+  }
+
+  async renew() {
+    if (!this.limit || !this.running || this.session.closed || this.renewing) return false;
+    this.renewing = true;
+    clearTimeout(this.timer);
+    this.timer = 0;
+    try {
+      const now = this.now();
+      if (this.invite) this.session.cancelInvite(this.invite.id);
+      this.invite = null;
+      this.claimSeen = 0;
+      this.parked = this.full;
+      if (!this.parked) {
+        this.invite = await this.session.invite();
+        this.lastCode = this.invite.code;
+      }
+      this.q += 1;
+      this.acceptUntil = now + this.limit;
+      this.pausedAt = 0;
+      this.eventAt = now;
+      await this.reclaim();
+      this.log("info", `방 ${this.room}: 참가 다시 받기(2분 30초)`);
+      return true;
+    } finally {
+      this.renewing = false;
+      this.onChange();
+      this.schedule();
+    }
+  }
+
+  async reclaim() {
+    const body = { ...this.auth, ...this.info, o: this.lastCode, q: this.q, k: this.count };
+    try {
+      const got = await this.signal.renew(body);
+      this.auth = { ...this.auth, i: got.i, t: got.t };
+    } catch (error) {
+      if (!(error instanceof SignalError) || !["taken", "op", "token", "none"].includes(error.code)) throw error;
+      const old = this.room;
+      const made = await this.signal.create({ ...this.info, o: this.lastCode });
+      this.room = made.room;
+      this.auth = { room: made.room, x: made.x, g: made.g, i: made.i, t: made.t };
+      this.q = made.q;
+      this.log("warn", `방 ${old}: 같은 방 코드를 다시 쓰지 못해 새 방 ${made.room}`);
+      if (this.session.count > 1) await this.signal.update({ ...this.auth, ...this.info, o: this.lastCode, q: this.q, k: this.count });
+    }
+    this.pushedAt = this.now();
+    this.keepAt = this.nextKeep(this.pushedAt);
   }
 
   setActive(on) {
@@ -333,21 +430,6 @@ export class RoomHost {
       clearTimeout(this.timer);
       this.timer = 0;
     }
-  }
-
-  pollWait() {
-    const now = this.now();
-    const quiet = now - this.eventAt;
-    if (this.session.count > 1) this.aloneSince = 0;
-    else this.aloneSince ||= now;
-    if (this.idle && this.aloneSince && now - this.aloneSince > this.idleAfter && quiet > this.idleAfter) return IDLE_POLL_MS;
-    return quiet > SLOW_AFTER_MS ? SLOW_POLL_MS : POLL_MS;
-  }
-
-  wake() {
-    this.eventAt = this.now();
-    this.aloneSince = 0;
-    if (this.running && !this.ticking) this.schedule();
   }
 
   resume() {

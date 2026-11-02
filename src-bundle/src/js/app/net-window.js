@@ -2,7 +2,7 @@ import { CodeError, cleanCode } from "../core/net/lan.js";
 import { SessionError } from "../core/net/session.js";
 import { CONNECTED_CLOSE_MS, WHY } from "../core/net/net-host.js";
 import { drawQr } from "../core/net/qr.js";
-import { JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, serverDown, signalCompat, signalPurpose } from "../core/net/signal.js";
+import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, serverDown, signalCompat, signalPurpose } from "../core/net/signal.js";
 import { pickText } from "../core/wgba-read.js";
 import { lang, t } from "../shell/i18n.js";
 
@@ -110,6 +110,7 @@ export function errorText(error, field) {
   }
   if (error instanceof SignalError) {
     if (error.code === "none") return t("net.err.noRoom");
+    if (error.code === "paused") return t("net.err.paused");
     if (error.code === "full") return t("net.why.full");
     if (error.code === "version" || error.code === "purpose") return t("net.why.incompatible");
     if (error.code === "limit") return t("net.err.limit");
@@ -125,11 +126,13 @@ export function defaultNick(no) {
 }
 
 export class NetWindow {
-  constructor({ net, kit, onClosed = () => {} }) {
+  constructor({ net, kit, onClosed = () => {}, onState = () => {} }) {
     this.net = net;
     this.kit = kit;
     this.signal = kit.signal ?? null;
     this.onClosed = onClosed;
+    this.onState = onState;
+    this.clock = 0;
     this.open = false;
     this.screen = "";
     this.request = null;
@@ -173,7 +176,6 @@ export class NetWindow {
       if (snap.rejoining) this.go("rejoin");
       else if (snap.role === "make") {
         this.roomHost?.setActive(true);
-        this.roomHost?.wake();
         this.go(this.roomHost ? "room" : "host");
       } else this.go(snap.connected ? "joined" : this.joinInfo ? "wait" : "join2");
     } else if (this.request.role === "make") this.startRoom();
@@ -189,6 +191,7 @@ export class NetWindow {
 
   go(screen) {
     this.stopScan();
+    this.stopClock();
     clearTimeout(this.closeTimer);
     this.closeTimer = 0;
     if (screen !== "choose") this.stopNear();
@@ -202,6 +205,7 @@ export class NetWindow {
     if (!this.open) return;
     this.stopScan();
     this.stopNear();
+    this.stopClock();
     clearTimeout(this.closeTimer);
     this.closeTimer = 0;
     this.open = false;
@@ -248,6 +252,14 @@ export class NetWindow {
   }
 
   update(snap = this.net.snapshot()) {
+    try {
+      this.apply(snap);
+    } finally {
+      this.onState();
+    }
+  }
+
+  apply(snap) {
     if (this.roomHost && (!snap.active || snap.role !== "make")) {
       this.roomHost.close();
       this.roomHost = null;
@@ -315,6 +327,65 @@ export class NetWindow {
     if (r.help) r.help.hidden = !this.errorHelp;
     if (r.offline) r.offline.hidden = !this.offerLan;
     if (r.rejoinState) r.rejoinState.textContent = this.rejoinText(snap);
+    if (r.accept) r.accept.textContent = this.acceptText();
+    if (r.renew) r.renew.disabled = Boolean(this.roomHost?.renewing);
+  }
+
+  acceptState() {
+    const h = this.roomHost;
+    if (!h?.limit || !h.running) return null;
+    return { on: h.inviting, left: h.acceptLeft, room: h.room };
+  }
+
+  acceptText() {
+    const state = this.acceptState();
+    if (!state) return "";
+    if (!state.on) return t("net.accept.off");
+    const s = Math.ceil(state.left / 1000);
+    return t("net.accept.on", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` });
+  }
+
+  startClock() {
+    this.stopClock();
+    this.clock = setInterval(() => {
+      if (!this.open || !this.refs.accept) return this.stopClock();
+      this.refreshDynamic();
+    }, 1000);
+  }
+
+  stopClock() {
+    clearInterval(this.clock);
+    this.clock = 0;
+  }
+
+  paused() {
+    this.kit.notice(t("net.notice.paused"), "info");
+    if (this.open && this.screen === "room") this.render();
+  }
+
+  async renewRoom() {
+    const host = this.roomHost;
+    if (!host || host.renewing) return;
+    this.error = "";
+    this.errorHelp = false;
+    this.refreshDynamic();
+    try {
+      await host.renew();
+    } catch (error) {
+      this.setError(errorText(error));
+      return;
+    }
+    if (this.open && this.screen === "room") this.render();
+  }
+
+  acceptNodes() {
+    const k = this.kit;
+    const state = k.note(this.acceptText());
+    state.classList.add("net-accept");
+    this.refs.accept = state;
+    const renew = k.button({ label: k.label("renew"), kind: "primary", action: "net-renew", onClick: () => this.renewRoom(), disabled: Boolean(this.roomHost?.renewing) });
+    this.refs.renew = renew;
+    return [state, ...this.choices([{ text: t("net.renew"), button: renew }])];
   }
 
   rejoinText(snap) {
@@ -651,16 +722,19 @@ export class NetWindow {
       members.append(...this.memberRows(snap));
       this.refs.members = members;
       body = snap.reached && !this.stay ? [k.note(t("net.reachedNote", { n: snap.count, max: snap.max }))] : [];
-      if (snap.anytime && !snap.reached) body.push(k.note(t("net.anytimeNote")));
+      const timed = Boolean(this.roomHost?.limit && this.roomHost.running);
+      if (snap.anytime && snap.count < snap.max) body.push(k.note(t("net.anytimeNote")));
       if (snap.count < snap.max) {
         const box = k.make("div", "net-room");
         this.refs.roomBox = box;
         box.append(this.roomCodeNode(this.roomHost?.room ?? ""), k.note(this.roomHost?.room ? t(snap.wan ? "net.roomHintWan" : "net.roomHint") : t("net.roomMaking")));
         body.push(k.group(t("net.roomCode"), box));
+        if (timed) body.push(...this.acceptNodes());
       }
       body.push(...this.iceNodes(snap));
       body.push(k.group(t("net.room"), count, members), ...this.errorNodes());
       actions = this.hostActions(snap, cancel);
+      if (this.refs.accept && this.roomHost?.inviting) this.startClock();
     } else if (this.screen === "wait") {
       body = [k.note(t("net.joinWait", { nick: this.joinInfo?.hn ?? "" })), ...this.errorNodes()];
       actions = [cancel];
@@ -778,7 +852,8 @@ export class NetWindow {
       log: this.net.log ?? (() => {}),
       onChange: () => this.update(),
       onError: () => this.open && this.screen === "room" && this.setError(t("net.err.serverLost")),
-      idle: Boolean(this.net.anytime),
+      limit: this.net.anytime ? ACCEPT_MS : 0,
+      onPause: () => this.paused(),
     });
     this.roomHost = host;
     this.go("room");
@@ -865,7 +940,7 @@ export class NetWindow {
       this.busy = false;
       if (session) this.net.discard();
       if (seq !== this.joinSeq) return;
-      if (this.screen === "choose" && error instanceof SignalError && ["none", "full", "version", "purpose"].includes(error.code)) this.startNear();
+      if (this.screen === "choose" && error instanceof SignalError && ["none", "full", "version", "purpose", "paused"].includes(error.code)) this.startNear();
       if (this.open && this.screen !== "choose" && this.screen !== "code") this.go("code");
       this.offerLan = serverDown(error);
       this.setError(errorText(error), error instanceof SessionError && ["noLan", "rtc", "timeout", "failed"].includes(error.code));

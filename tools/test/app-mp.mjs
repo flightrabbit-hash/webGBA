@@ -354,49 +354,76 @@ async function anytimeFlow() {
   const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
   await sleep(300);
   const acts = await app.evaluate("[...document.querySelectorAll('#dialog-actions > button')].map((n) => { const r = n.getBoundingClientRect(); return { a: n.dataset.action, t: n.textContent, top: r.top, bottom: r.bottom }; })");
-  const note = await app.evaluate("[...document.querySelectorAll('#dialog-body .net-note')].map((n) => n.textContent).join(' | ')");
-  check("exe 방장 혼자 방 코드 화면: 하단 LEAVE·CLOSE(위·아래 차이 0) · 방 유지 안내", /^\d{6}$/.test(code ?? "") && acts.map((b) => `${b.a}:${b.t}`).join() === "net-leave:LEAVE,net-close:CLOSE" && spread(acts, "top") === 0 && spread(acts, "bottom") === 0 && note.includes(ko["net.anytimeNote"]), JSON.stringify({ code, acts }));
+  const view = await app.evaluate("({ note: [...document.querySelectorAll('#dialog-body .net-note')].map((n) => n.textContent).join(' | '), accept: document.querySelector('#dialog-body .net-accept')?.textContent ?? '', entries: [...document.querySelectorAll('#dialog-body .net-entry')].map((n) => (n.querySelector('.net-entry__label')?.textContent ?? '') + '|' + (n.querySelector('button')?.textContent ?? '')) })");
+  check("exe 방장 혼자 방 코드 화면: 받는 중·남은 시간 · 이름 줄(갱신 RENEW) · 하단 LEAVE·CLOSE(위·아래 차이 0)", /^\d{6}$/.test(code ?? "") && acts.map((b) => `${b.a}:${b.t}`).join() === "net-leave:LEAVE,net-close:CLOSE" && spread(acts, "top") === 0 && spread(acts, "bottom") === 0 && view.note.includes(ko["net.anytimeNote"]) && /2:[0-9]{2}/.test(view.accept) && view.entries.includes(`${ko["net.renew"]}|RENEW`), JSON.stringify({ code, acts, view }));
+  await sleep(300);
+  const inks = await entryInks();
+  check("exe 갱신 이름 줄 잉크 세로 가운데(이름 위·아래 차이 ≤ 2 기기 픽셀, 버튼 = 줄 높이)", inks.length >= 1 && inks.every((i) => i.ok), JSON.stringify(inks));
+  await app.screenshot(path.join(shots, "exe_mp_중간참가_방코드.png"));
+  await app.evaluate(`(() => { const rh = ${T}.netWin.roomHost; rh.limit = 25000; rh.acceptUntil = Date.now() + 25000; rh.keepAt = rh.acceptUntil + 1; rh.schedule(); })()`);
   await app.evaluate("document.querySelector('[data-action=net-close]').click()");
-  await sleep(1200);
-  const wait = await app.evaluate(`({ layer: !document.getElementById('layer').hidden, active: ${T}.player.net.active, waiting: ${T}.player.net.waiting, dot: !document.getElementById('btn-net-dot').hidden, title: document.getElementById('btn-net').title, status: document.getElementById('status-right')?.textContent ?? '' })`);
+  await sleep(1500);
+  const state = () => app.evaluate(`({ layer: !document.getElementById('layer').hidden, active: ${T}.player.net.active, dot: !document.getElementById('btn-net-dot').hidden, tone: document.getElementById('btn-net-dot').dataset.tone ?? '', title: document.getElementById('btn-net').title, status: document.getElementById('status-right')?.textContent ?? '', count: ${T}.player.net.session?.count ?? 0 })`);
+  const on = await state();
   const rail = await app.evaluate(RAIL);
   const dot = await app.evaluate("(() => { const b = document.getElementById('btn-net').getBoundingClientRect(); const d = document.getElementById('btn-net-dot').getBoundingClientRect(); return { inside: d.left >= b.left && d.right <= b.right && d.top >= b.top && d.bottom <= b.bottom, w: d.width, h: d.height }; })()");
-  check("exe 방장 혼자 창 닫기 → 방 유지 · 레일 버튼 점(기다리는 중)·제목·상태 줄", !wait.layer && wait.active && wait.waiting && wait.dot && dot.inside && wait.title === ko["net.buttonWait"] && wait.status.includes(ko["net.statusWait"].split(" · ")[0]), JSON.stringify({ wait, dot }));
-  check("exe 기다리는 중 레일 버튼 좌·우 위치·크기 같음", spread(rail, "left") === 0 && spread(rail, "right") === 0 && spread(rail, "w") === 0 && spread(rail, "h") === 0, JSON.stringify(rail.map((b) => `${b.id}:${b.left}-${b.right}`)));
-  await app.screenshot(path.join(shots, "exe_mp_중간참가_기다리는중.png"));
-  if (CAPTURE) await app.screenshot(path.join(CAPTURE, "exe_기다리는중_레일버튼.png"));
+  check("exe 창 닫기(게임 중) → 받기 계속 · 레일 점 초록·제목 '참가 받는 중'·상태 줄 남은 시간", !on.layer && on.active && on.dot && on.tone === "on" && dot.inside && on.title === ko["net.buttonAccept"] && /참가 받는 중 · \d:\d{2} 남음/.test(on.status), JSON.stringify({ on, dot }));
+  check("exe 받는 중 레일 버튼 좌·우 위치·크기 같음", spread(rail, "left") === 0 && spread(rail, "right") === 0 && spread(rail, "w") === 0 && spread(rail, "h") === 0, JSON.stringify(rail.map((b) => `${b.id}:${b.left}-${b.right}`)));
+  if (CAPTURE) await app.screenshot(path.join(CAPTURE, "exe_받는중_레일버튼.png"));
 
-  const guestCtx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 } });
-  await guestCtx.addInitScript(() => {
-    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
-    if (window === window.top) {
-      localStorage.setItem("webgba.installHint", "1");
-      localStorage.setItem("webgba.prefs", JSON.stringify({ netNick: "웹 손님", lang: "ko" }));
-    }
-  });
-  const G = await guestCtx.newPage();
-  await G.goto(WEB);
-  await G.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
-  await G.evaluate(async (b64) => {
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    await window.webgba.openFiles([new File([bytes], "net-anytime.wgba")]);
-  }, Buffer.from(atBytes).toString("base64"));
-  await G.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
-  await G.evaluate(() => {
-    window.webgba.player.keyDown("KeyZ");
-    setTimeout(() => window.webgba.player.keyUp("KeyZ"), 150);
-  });
-  await sleep(800);
-  await G.click("#btnNet");
-  await G.waitForSelector('[data-action="net-room-join"]', { timeout: 8000 });
-  await G.click('[data-action="net-room-join"]');
-  await G.fill('[data-action="net-code-in"]', code);
-  await G.click('[data-action="net-code-go"]');
-  const joined = await waitFor(async () => (await G.evaluate(() => window.webgba.player.host?.ex?.Net_Open?.()) === 1) && (await app.evaluate(GAME))?.count === 2, 30000, 200);
-  const after = await app.evaluate(`({ status: document.getElementById('status').textContent, dot: !document.getElementById('btn-net-dot').hidden, layer: !document.getElementById('layer').hidden })`);
-  check("exe 방장: 웹 손님이 방 코드로 들어옴 → 상태 줄 참가 알림 · 점 사라짐 · 창 닫힌 채", joined && /들어왔습니다/.test(after.status) && !after.dot && !after.layer, JSON.stringify(after));
-  await app.screenshot(path.join(shots, "exe_mp_중간참가_손님참가.png"));
+  const guestPage = async (nick) => {
+    const ctx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript((nick) => {
+      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+      if (window === window.top) {
+        localStorage.setItem("webgba.installHint", "1");
+        localStorage.setItem("webgba.prefs", JSON.stringify({ netNick: nick, lang: "ko" }));
+      }
+    }, nick);
+    const p = await ctx.newPage();
+    await p.goto(WEB);
+    await p.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+    await p.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      await window.webgba.openFiles([new File([bytes], "net-anytime.wgba")]);
+    }, Buffer.from(atBytes).toString("base64"));
+    await p.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+    await p.evaluate(() => {
+      window.webgba.player.keyDown("KeyZ");
+      setTimeout(() => window.webgba.player.keyUp("KeyZ"), 150);
+    });
+    await sleep(800);
+    await p.click("#btnNet");
+    await p.waitForSelector('[data-action="net-room-join"]', { timeout: 8000 });
+    await p.click('[data-action="net-room-join"]');
+    await p.fill('[data-action="net-code-in"]', code);
+    await p.click('[data-action="net-code-go"]');
+    return { ctx, p, game: () => p.evaluate(() => { const ex = window.webgba.player.host?.ex; return ex?.Net_Hash ? { open: ex.Net_Open(), slot: ex.Net_Slot(), closed: ex.Net_Closed() } : null; }) };
+  };
+  const G = await guestPage("웹 유저");
+  const joined = await waitFor(async () => (await G.game())?.open === 1 && (await app.evaluate(GAME))?.count === 2, 30000, 200);
+  const after = await app.evaluate(`({ status: document.getElementById('status').textContent, layer: !document.getElementById('layer').hidden })`);
+  check("exe 방장(게임 중): 웹 유저가 받는 시간 안에 방 코드로 들어옴 → 상태 줄 참가 알림 · 창 닫힌 채", joined && /들어왔습니다/.test(after.status) && !after.layer, JSON.stringify(after));
+  await app.screenshot(path.join(shots, "exe_mp_중간참가_유저참가.png"));
+  await waitFor(() => app.evaluate(`${T}.netWin.roomHost?.pausedAt > 0`), 35000, 300);
+  await sleep(1500);
+  const off = await state();
+  check("exe 받는 시간(시험 25초) 지나면 자동 멈춤 · 레일 점 회색·제목·상태 줄 '참가 받기 멈춤' · 유저 그대로", off.dot && off.tone === "off" && off.title === ko["net.buttonPaused"] && /참가 받기 멈춤/.test(off.status) && off.count === 2 && (await G.game())?.open === 1, JSON.stringify(off));
+  if (CAPTURE) await app.screenshot(path.join(CAPTURE, "exe_멈춤_레일버튼.png"));
+  await app.evaluate("document.getElementById('btn-net').click()");
+  await sleep(700);
+  await app.evaluate("document.querySelector('#mppanel [data-action=board-window]')?.click()");
+  await appDialog("net-renew");
+  await app.evaluate("document.querySelector('[data-action=net-renew]').click()");
+  const renewed = await waitFor(() => app.evaluate(`${T}.netWin.roomHost?.inviting === true && !${T}.netWin.roomHost.renewing && document.querySelector('.net-room-code')?.textContent`), 10000);
+  check("exe '갱신' → 같은 방 코드로 다시 받기", renewed === code, String(renewed));
+  await app.evaluate(`${T}.netWin.requestClose()`);
+  const G2 = await guestPage("웹 유저 2");
+  const added = await waitFor(async () => (await G2.game())?.open === 1 && (await app.evaluate(GAME))?.count === 3, 30000, 200);
+  const slots = { g: await G.game(), g2: await G2.game() };
+  check("exe 갱신 뒤 새 유저 추가 · 기존 유저 연결·자리 그대로", added && slots.g?.open === 1 && slots.g.slot === 1 && slots.g2?.slot === 2, JSON.stringify(slots));
   await app.evaluate(`${T}.player.net.leave()`);
-  check("exe 방장 나감 → 웹 손님 CLOSED(HOST_LEFT)", await waitFor(async () => ((await G.evaluate(() => window.webgba.player.host?.ex?.Net_Closed?.())) === 7 ? true : null), 8000));
-  await guestCtx.close();
+  check("exe 방장 나감 → 웹 유저 CLOSED(HOST_LEFT)", await waitFor(async () => ((await G.game())?.closed === 7 && (await G2.game())?.closed === 7 ? true : null), 8000));
+  await G.ctx.close();
+  await G2.ctx.close();
 }

@@ -1879,6 +1879,15 @@ async function anytimeChecks() {
         await fits(page, `${key}|net-room`, ".sheet__panel");
         const acts = await lineUp(page, `${key}|net-room`, "#sheetBody .net-actions", ":scope > button");
         ok(`${key}|net-room 하단 버튼 = 방 나가기·닫기`, acts[0]?.map((i) => i.id).join() === "net-leave,net-close", JSON.stringify(acts));
+        const renew = await page.evaluate(() => {
+          const btn = document.querySelector('[data-action="net-renew"]');
+          const accept = document.querySelector("#sheetBody .net-accept");
+          if (!btn || !accept) return null;
+          const s = getComputedStyle(btn);
+          return { label: btn.querySelector(".btn__label")?.textContent ?? btn.textContent, accept: accept.textContent, clipped: btn.scrollWidth > btn.clientWidth + 1 || accept.scrollWidth > accept.clientWidth + 1, display: s.display };
+        });
+        ok(`${key}|net-room 받기 상태 줄 + 갱신 버튼(잘림 없음)`, renew && renew.label && /\d:\d{2}/.test(renew.accept) && !renew.clipped, JSON.stringify(renew));
+        await measure(page, `${key}|net-room`, ["#sheetBody .net-line"]);
         if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `중간참가_${view.name}_방코드.png`) });
         await page.click('[data-action="net-close"]');
         await page.waitForTimeout(500);
@@ -1886,10 +1895,10 @@ async function anytimeChecks() {
           const b = document.querySelector("#btnNet .tool__badge");
           return { sheet: window.webgba.state.sheet, text: b?.textContent ?? "", tone: b?.dataset.tone ?? "", hidden: b?.hidden, active: window.webgba.player.net.active };
         });
-        ok(`${key} 창 닫기 → 방 유지 · 회색 배지 1/4`, badge.sheet === "" && badge.active && badge.text === "1/4" && badge.tone === "wait" && !badge.hidden, JSON.stringify(badge));
+        ok(`${key} 창 닫기(게임 중) → 받기 계속 · 파랑 배지 1/4`, badge.sheet === "" && badge.active && badge.text === "1/4" && badge.tone === "" && !badge.hidden, JSON.stringify(badge));
         await measure(page, `${key}|bar`, ["#btnNet .tool__badge"]);
         await barLineUp(page, `${key}|bar`);
-        if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `중간참가_${view.name}_기다리는중.png`) });
+        if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `중간참가_${view.name}_받는중.png`) });
       } else ok(`${key} 방 만들기(서버 필요)`, false, "방 코드를 받지 못함 — <주소> 가 /api/v1/mp 를 내주는지 확인");
       ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
       await context.close();

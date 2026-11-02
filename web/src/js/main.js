@@ -244,7 +244,7 @@ const netKit = {
   make: (tag, className, text) => make(tag, className, text),
   button: ({ label, kind = "", onClick, disabled = false, action = "" }) => button({ label, kind, onClick, disabled, action }),
   signal: new Signal({ base: new URL(API_PATH, location.origin).href }),
-  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo"), rejoin: t("net.rejoinNow"), solo: t("net.solo") })[code] ?? code,
+  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo"), rejoin: t("net.rejoinNow"), solo: t("net.solo"), renew: t("net.renew") })[code] ?? code,
   action: ({ id, primary = false, onClick }) => {
     const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back") }[id] ?? id;
     return button({ label, kind: primary ? "primary" : id === "leave" ? "danger" : "", onClick, action: `net-${id}` });
@@ -326,7 +326,7 @@ const netKit = {
   setNick: (value) => savePrefs({ netNick: [...String(value)].slice(0, 12).join("") }),
 };
 
-const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
+const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls(), onState: () => syncControls() });
 
 function netWant(request) {
   if (!request) {
@@ -815,15 +815,18 @@ function syncControls() {
   if (el.btnNet.hidden !== !netOn) el.btnNet.hidden = !netOn;
   if (el.btnFast.hidden !== netOn) el.btnFast.hidden = netOn;
   const netBadge = el.btnNet.querySelector(".tool__badge") ?? el.btnNet.appendChild(make("span", "tool__badge"));
+  const netBadgeText = netBadge.querySelector(".tool__badgeText") ?? netBadge.appendChild(make("span", "tool__badgeText"));
   const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
-  if (netBadge.textContent !== netText) netBadge.textContent = netText;
+  if (netBadgeText.textContent !== netText) netBadgeText.textContent = netText;
   if (netBadge.hidden !== !netText) netBadge.hidden = !netText;
-  const netTone = player.net.connected && (player.net.session.rejoining || player.net.session.memberList().some((m) => m.stalled || m.held)) ? "warn" : player.net.waiting ? "wait" : "";
+  const accept = netWin?.acceptState() ?? null;
+  const idle = accept ? !accept.on : player.net.waiting;
+  const netTone = player.net.connected && (player.net.session.rejoining || player.net.session.memberList().some((m) => m.stalled || m.held)) ? "warn" : idle ? "wait" : "";
   if ((netBadge.dataset.tone ?? "") !== netTone) {
     if (netTone) netBadge.dataset.tone = netTone;
     else delete netBadge.dataset.tone;
   }
-  const netLabel = boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
+  const netLabel = accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();
@@ -1010,7 +1013,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-slot, .net-room-code,.net-offline__label, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-slot, .net-room-code,.net-offline__label, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";

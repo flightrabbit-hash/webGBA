@@ -483,6 +483,14 @@ body {
   pointer-events: none;
 }
 
+.iconbtn__dot[data-tone="on"] {
+  background: var(--on);
+}
+
+.iconbtn__dot[data-tone="off"] {
+  background: var(--off);
+}
+
 .railbar__sep {
   flex: none;
   width: 18px;

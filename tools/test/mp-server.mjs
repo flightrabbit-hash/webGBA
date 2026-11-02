@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { createServer, LIMITS } from "../../api/_mp/server.js";
 import { startFakeUpstash } from "./fake-upstash.mjs";
+import { makeStore } from "../../api/_mp/store.js";
 
 const args = process.argv.slice(2);
 const outFile = args[args.indexOf("--out") + 1] && args.includes("--out") ? args[args.indexOf("--out") + 1] : "";
@@ -145,6 +146,37 @@ try {
   const joinT = await call("POST", "join", { body: { room: rt.room, c: C, p: "trade", n: "x" }, ip: "192.0.2.91" });
   const statT = await call("GET", "room", { query: { room: rt.room }, ip: "192.0.2.91" });
   ok(`TTL ${LIMITS.ROOM_TTL}초 지나면 방·근처 목록 저절로 사라짐`, !nearT.body.rooms.some((x) => x.room === rt.room) && joinT.status === 404 && statT.status === 404);
+
+  // ── 중간 참가 게임: 받기 멈춤(w: 0)·갱신(renew) ──
+  fake.reset();
+  const IP = "192.0.2.120";
+  const hb = (r, q, more = {}) => ({ ...hostQ(r, q), c: C, p: "trade", m: 4, n: "H", o: OFFER, k: 1, ...more });
+  const rw = (await makeRoom({ body: { m: 4 }, ip: IP })).body;
+  const p0 = fake.stats().total;
+  const pause = await call("POST", "room", { body: hb(rw, 1, { w: 0 }), ip: IP });
+  const pauseCmds = fake.stats().total - p0;
+  const nearP = await call("GET", "near", { ip: IP });
+  const joinP = await call("POST", "join", { body: { room: rw.room, c: C, p: "trade", n: "G" }, ip: IP });
+  ok(`받기 멈춤(w: 0, ${pauseCmds}명령) → 근처 목록에서 빠지고 들어가기 409 paused`, pause.status === 200 && !nearP.body.rooms.some((x) => x.room === rw.room) && joinP.status === 409 && joinP.body.error === "paused", JSON.stringify(joinP.body));
+  const r0 = fake.stats().total;
+  const alive = await call("POST", "renew", { body: hb(rw, 2), ip: IP });
+  const aliveCmds = fake.stats().total - r0;
+  const nearA = await call("GET", "near", { ip: IP });
+  const joinA = await call("POST", "join", { body: { room: rw.room, c: C, p: "trade", n: "G" }, ip: IP });
+  ok(`갱신(방 기록 남음, ${aliveCmds}명령) → 같은 방 코드·근처 목록 다시 표시·들어가기 됨`, alive.status === 200 && alive.body.room === rw.room && alive.body.same === true && nearA.body.rooms.some((x) => x.room === rw.room) && joinA.status === 200 && joinA.body.q === 2, JSON.stringify(alive.body));
+  fake.advance((LIMITS.ROOM_TTL + 1) * 1000);
+  const e0 = fake.stats().total;
+  const expired = await call("POST", "renew", { body: hb(rw, 3, { t: alive.body.t, i: alive.body.i }), ip: IP });
+  const expiredCmds = fake.stats().total - e0;
+  const joinE = await call("POST", "join", { body: { room: rw.room, c: C, p: "trade", n: "G2" }, ip: IP });
+  ok(`갱신(방 기록 만료, ${expiredCmds}명령) → 같은 방 코드 다시 잡음·들어가기 됨`, expired.status === 200 && expired.body.room === rw.room && expired.body.same === false && joinE.status === 200 && joinE.body.q === 3, JSON.stringify(expired.body));
+  fake.advance((LIMITS.ROOM_TTL + 1) * 1000);
+  await makeStore({ env }).run([["SET", `r:${rw.room}`, JSON.stringify({ x: "zzzzzzzzzzz", c: C, p: "trade", m: 2, n: "other", k: 1, q: 1, o: OFFER, g: rw.g, i: -1 }), "EX", 150]]);
+  const otherJoin = await call("POST", "join", { body: { room: rw.room, c: C, p: "trade", n: "X" }, ip: IP });
+  const taken = await call("POST", "renew", { body: hb(rw, 4, { t: expired.body.t, i: expired.body.i }), ip: IP });
+  ok("갱신: 그사이 다른 방이 같은 코드를 쓰면 409 taken(남의 방 기록은 그대로)", otherJoin.status === 200 && otherJoin.body.hn === "other" && taken.status === 409 && taken.body.error === "taken", JSON.stringify({ taken: taken.body, other: otherJoin.status }));
+  const forgedR = await call("POST", "renew", { body: { ...hb(rw, 5), t: "20260101.xxxxxxxxxxxxxxxxxxxxxx" }, ip: IP });
+  ok("갱신: 방장 토큰이 틀리면 403", forgedR.status === 403, String(forgedR.status));
 
   // ── 다시 들어오기 우편함(rj) ──
   fake.reset();

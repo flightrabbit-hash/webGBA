@@ -140,6 +140,11 @@ function netNick() {
   return String(state.prefs.netNick ?? "").trim() || defaultNick(no);
 }
 
+const clockText = (ms) => {
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
 function netStatus() {
   const s = player.net.session;
   if (!s || s.closed) return "";
@@ -147,6 +152,9 @@ function netStatus() {
   if (!s.open) return t("net.status", { n: s.count, max: s.max, role: s.host ? t("net.roleHost") : t("net.roleGuest", { slot: s.slot + 1 }) });
   const ms = s.memberList().filter((m) => !m.host && Number.isFinite(m.rtt)).map((m) => m.rtt);
   const n = s.max > 1 ? `${s.count}/${s.max}` : s.count;
+  const accept = netWin?.acceptState();
+  if (accept?.on) return t("net.statusAccept", { n, time: clockText(accept.left) });
+  if (accept) return t("net.statusPaused", { n });
   if (player.net.waiting) return t("net.statusWait", { n });
   return ms.length ? t("board.summary", { n, ms: Math.round(Math.max(...ms)) }) : t("board.summaryHost", { n });
 }
@@ -171,7 +179,7 @@ const netKit = {
     return b;
   },
   signal: new Signal({ base: APP_API }),
-  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN", rejoin: "RETRY", solo: "SOLO" })[code] ?? code.toUpperCase(),
+  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN", rejoin: "RETRY", solo: "SOLO", renew: "RENEW" })[code] ?? code.toUpperCase(),
   action: ({ id, primary = false, onClick }) => {
     const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK" }[id] ?? id.toUpperCase());
     b.type = "button";
@@ -264,7 +272,7 @@ const netKit = {
   },
 };
 
-const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls() });
+const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls(), onState: () => syncControls() });
 let netLayer = false;
 
 const TAB_HOLD_MS = 250;
@@ -572,8 +580,11 @@ function syncControls() {
   const netOn = hosted && Boolean(player.net.request || player.net.active);
   el.btnNet.hidden = !netOn;
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
-  el.btnNetDot.hidden = !player.net.waiting;
-  const netLabel = mpWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
+  const accept = netWin?.acceptState() ?? null;
+  const dotTone = accept ? (accept.on ? "on" : "off") : player.net.waiting ? "wait" : "";
+  el.btnNetDot.hidden = !dotTone;
+  if ((el.btnNetDot.dataset.tone ?? "") !== dotTone) el.btnNetDot.dataset.tone = dotTone;
+  const netLabel = accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : mpWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) {
     el.btnNet.dataset.i18nTitle = netLabel;
     el.btnNet.title = t(netLabel);
