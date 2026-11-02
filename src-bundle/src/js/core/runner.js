@@ -99,6 +99,7 @@
         if (stamp !== lastStamp) {
           lastStamp = stamp;
           frames++;
+          fireTick();
         }
         fn(stamp);
       }),
@@ -110,6 +111,7 @@
     rafLive.clear();
     const stamp = now();
     frames++;
+    fireTick();
     for (const [, entry] of due) {
       nativeCaf(entry.handle);
       try {
@@ -330,6 +332,31 @@
     codeDown.set(b.code, next);
     if ((down && count === 0) || (!down && next === 0)) dispatchKey(b.code, down);
     emit("button", { id: b.id, down });
+  }
+
+  let fireFrame = 0;
+  let fireRate = 0;
+  let fireSet = new Set();
+  const fireSince = new Map();
+  function hostButton(index, down) {
+    if (down && fireRate && fireSet.has(index)) fireSince.set(index, fireFrame);
+    else fireSince.delete(index);
+    setButton(index, down);
+  }
+  function fireTick() {
+    fireFrame++;
+    for (const [index, since] of fireSince) setButton(index, Math.floor(((fireFrame - since) * fireRate) / 30) % 2 === 0);
+  }
+  function setFire(data) {
+    fireRate = Number.isInteger(data?.rate) && data.rate > 0 ? data.rate : 0;
+    fireSet = new Set(fireRate && Array.isArray(data.buttons) ? data.buttons.filter(Number.isInteger) : []);
+    for (const index of [...fireSince.keys()]) {
+      fireSince.delete(index);
+      setButton(index, true);
+    }
+    buttons.forEach((b, index) => {
+      if (fireRate && fireSet.has(index) && held.has(b.id)) fireSince.set(index, fireFrame);
+    });
   }
 
   // ── 일시정지·빨리 감기 ──
@@ -679,6 +706,7 @@
     setVolume(data.volume ?? 1);
     if (data.paused) setPaused(true);
     speed = Number(data.speed) || 1;
+    setFire(data.autoFire);
     if (data.manifest.pointer?.use) canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     let ls = {};
     if (data.manifest.save?.kind === "localStorage" && saveBytes) {
@@ -710,8 +738,11 @@
         start(data).catch((error) => send({ type: "error", text: `${error?.name ?? "Error"}: ${String(error?.message ?? error).slice(0, 500)}` }));
         break;
       case "buttons":
-        for (const i of data.up ?? []) setButton(i, false);
-        for (const i of data.down ?? []) setButton(i, true);
+        for (const i of data.up ?? []) hostButton(i, false);
+        for (const i of data.down ?? []) hostButton(i, true);
+        break;
+      case "autoFire":
+        setFire(data);
         break;
       case "rawKey":
         dispatchKey(String(data.code), Boolean(data.down), { key: data.key, keyCode: data.keyCode, repeat: data.repeat, shift: data.shift });

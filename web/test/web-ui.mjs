@@ -44,7 +44,9 @@ const ONLY_ASPECT = process.env.UI_ASPECT_ONLY === "1";
 const ONLY_GB = process.env.UI_GB_ONLY === "1";
 // UI_ANYTIME_ONLY=1 이면 중간 참가 게임(join: "anytime") 연결 창·상단 버튼 시험만(UI_NET_WGBA 를 메모리에서 다시 묶음, <주소> 는 /api/v1/mp 를 내주는 로컬 서버)
 const ONLY_ANYTIME = process.env.UI_ANYTIME_ONLY === "1";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME;
+// UI_AUTOFIRE_ONLY=1 이면 설정의 연사 켜기·단계 바 줄 시험만(세 화면 × 세 언어 — 잉크 세로 가운데·화면 안·끔이면 바 비활성)
+const ONLY_AUTOFIRE = process.env.UI_AUTOFIRE_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -2345,6 +2347,51 @@ async function gbChecks() {
 }
 
 if (ONLY_GB || process.env.UI_GB === "1") await gbChecks();
+
+async function autoFireChecks() {
+  for (const view of [...VIEWS, ...(VIEW_FILTER && !VIEW_FILTER.has("320x568") ? [] : [{ name: "320x568", viewport: { width: 320, height: 568 } }])]) {
+    for (const lang of LANGS) {
+      for (const on of [true, false]) {
+        const key = `${view.name}|${lang}|autofire-${on ? "on" : "off"}`;
+        const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: 2, reducedMotion: "reduce" });
+        await context.addInitScript(({ lang, on }) => {
+          Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+          if (window !== window.top) return;
+          localStorage.setItem("webgba.installHint", "1");
+          localStorage.setItem("webgba.prefs", JSON.stringify({ lang, autoFire: on, autoFireLevel: 7 }));
+        }, { lang, on });
+        const page = await context.newPage();
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(URL_BASE);
+        await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+        await page.evaluate(() => window.webgba.openSheet("settings"));
+        await page.waitForTimeout(400);
+        const info = await page.evaluate(() => {
+          const range = document.querySelector('#sheetBody input[data-key="autoFireLevel"]');
+          const level = range?.closest(".field");
+          const sw = level?.previousElementSibling;
+          if (!level || !sw) return null;
+          level.dataset.uiFire = "1";
+          sw.dataset.uiFire = "1";
+          level.scrollIntoView({ block: "center" });
+          const r = range.getBoundingClientRect();
+          const f = level.getBoundingClientRect();
+          return { disabled: range.disabled, off: level.classList.contains("field--off"), note: level.querySelector(".field__note")?.textContent ?? "", label: sw.querySelector(".field__label")?.textContent ?? "", switchOn: sw.querySelector(".switch")?.getAttribute("aria-checked"), rangeMid: +((r.top + r.bottom) / 2 - (f.top + f.bottom) / 2).toFixed(2) };
+        });
+        await page.waitForTimeout(300);
+        ok(`${key} 연사 켜기·끄기 줄 + 단계 바 줄(7단계 글, 끄면 바 비활성 · 바 세로 가운데)`, info && info.switchOn === String(on) && info.disabled === !on && info.off === !on && /7/.test(info.note) && /20/.test(info.note) && Math.abs(info.rangeMid) <= 1, JSON.stringify(info));
+        await measure(page, `${key}|settings`, ["[data-ui-fire]"]);
+        await fits(page, `${key}|settings`, ".sheet__panel");
+        if (lang === "ko" && view.name === "390x844") await page.screenshot({ path: path.join(SHOTS, `웹_설정_연사_${on ? "켬" : "끔"}.png`) });
+        ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+        await context.close();
+      }
+    }
+  }
+}
+
+if (ONLY_AUTOFIRE || process.env.UI_AUTOFIRE === "1") await autoFireChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

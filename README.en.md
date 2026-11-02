@@ -103,11 +103,13 @@ node tools/run.cjs   # list all commands
 - **Two directions at once** — Settings › General › Game. Chooses which direction reaches the game when two are held:
   **Last pressed only** (default, you turn as soon as you press) · Opposite: last wins (only ←+→ and ↑+↓) · Pass all (same as a real GBA).
   A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
+- **Auto fire** — Settings › General › Game (web: Settings). When on, holding A · B · C · D · L · R (roles `a`, `b`, `c`, `d`, `l`, `r`) presses it repeatedly (not the directions, START or SELECT).
+  Speed levels 1–9 = 4 · 6 · 8 · 10 · 12 · 15 · 20 · 24 · 30 presses per second (default level 5, level 9 = press and release every 2 frames). It counts game frames, so the pattern is the same while fast-forwarding, and the same setting applies to the keyboard, gamepads and on-screen buttons (one app-wide setting). Off by default.
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
 - **Toolbar** — vertical bar on the left. When collapsed it no longer covers the game, which gets the extra width; the collapsed state is remembered.
-- **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, state slot, saves, file association and ROM name, clearing favorites/recent files, and key bindings — all in one window.
+- **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, auto fire, state slot, saves, file association and ROM name, clearing favorites/recent files, and key bindings — all in one window.
 - **13 themes** — the same theme set as Arbiter (7 dark, 5 light, custom). Applied instantly to the whole webGBA UI (toolbar, lists, windows, dialogs); the game screen itself is not changed.
 - **Languages** — 한국어 (default), English, 日本語. Switching in Settings › Language applies immediately without a restart and is remembered.
 
@@ -563,6 +565,7 @@ One button:
 - If `l2`·`r2` exist, `l`·`r` use only gamepad buttons 4·5.
 - Roles that match a GBA button (`a` `b` `select` `start`, directions, `l` `r`) follow the GBA keys the user set in the app (the table shows the initial values).
 - A key goes to one button only (whichever was assigned first). In the Windows app, Settings › Keys shows just that game's buttons and remembers changes per game id.
+- When the user turns on **auto fire**, the host passes buttons with role `a`, `b`, `c`, `d`, `l` or `r` as repeated presses and releases while they are held (4–30 per second; ① = per `Web_RunFrame(keys)` frame, ② = key events per display frame of the frame runtime). Give buttons that should not repeat `role: "extra"`.
 
 #### 5.3 GBA default layout `preset: "gba"`
 

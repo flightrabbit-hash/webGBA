@@ -115,6 +115,7 @@ export class ScriptHost {
     this.sentBits = 0;
     this.paused = false;
     this.speed = 1;
+    this.fire = { buttons: [], rate: 0 };
     this.volume = 1;
     this.frame = null;
     this.port = null;
@@ -254,6 +255,7 @@ export class ScriptHost {
         volume: this.volume,
         paused: this.paused,
         speed: this.speed,
+        autoFire: this.fire,
         text: { tap: this.text.tap ?? "" },
         net: this.manifest.multiplayer ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
       },
@@ -429,6 +431,11 @@ export class ScriptHost {
     if (speed === this.speed) return;
     this.speed = speed;
     this.post({ type: "speed", value: speed });
+  }
+
+  setAutoFire(buttons, rate) {
+    this.fire = { buttons: rate ? [...buttons] : [], rate: rate | 0 };
+    this.post({ type: "autoFire", ...this.fire });
   }
 
   setVolume(volume) {

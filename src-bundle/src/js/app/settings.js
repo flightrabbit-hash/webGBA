@@ -1,6 +1,6 @@
 import * as theme from "../shell/theme.js";
 import { CHANGED as LANG_CHANGED, LANGS, lang, t } from "../shell/i18n.js";
-import { codeOf, DPAD_DEFAULT } from "./player.js";
+import { AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, codeOf, DPAD_DEFAULT } from "./player.js";
 
 const el = {};
 
@@ -60,6 +60,8 @@ const FIELDS = [
     items: [
       { key: "fastScale", type: "radio", default: 4, options: [2, 3, 4, 8] },
       { key: "dpadMode", type: "radio", default: DPAD_DEFAULT, options: ["both", "opposite", "latest"] },
+      { key: "autoFire", default: false },
+      { key: "autoFireLevel", type: "level", min: 1, max: AUTO_FIRE_RATES.length, default: AUTO_FIRE_LEVEL, requires: "autoFire" },
       { key: "slot", type: "number", min: 1, max: 9, default: 1 },
     ],
   },
@@ -251,7 +253,7 @@ function drawFields() {
 }
 
 function fieldRow(item) {
-  const row = document.createElement(item.type === "radio" || item.type === "clear" || item.type === "text" ? "div" : "label");
+  const row = document.createElement(item.type === "radio" || item.type === "clear" || item.type === "text" || item.type === "level" ? "div" : "label");
   row.className = "cfg__row";
 
   const text = document.createElement("span");
@@ -305,6 +307,33 @@ function control(item, hint) {
       paintRequires();
     });
     return box;
+  }
+
+  if (item.type === "level") {
+    const wrap = document.createElement("span");
+    wrap.className = "cfg__level";
+    if (item.requires) wrap.dataset.requires = item.key;
+    const range = document.createElement("input");
+    range.type = "range";
+    range.className = "cfg__range";
+    range.min = String(item.min);
+    range.max = String(item.max);
+    range.step = "1";
+    range.value = String(value);
+    range.dataset.key = item.key;
+    range.setAttribute("aria-label", t(`cfg.${item.key}`));
+    const caption = document.createElement("span");
+    caption.className = "cfg__level-value";
+    const paint = () => {
+      caption.textContent = t(`cfg.${item.key}.value`, { n: range.value, rate: AUTO_FIRE_RATES[Number(range.value) - 1] });
+    };
+    range.addEventListener("input", () => {
+      draft[item.key] = Number(range.value);
+      paint();
+    });
+    paint();
+    wrap.append(caption, range);
+    return wrap;
   }
 
   const input = document.createElement("input");

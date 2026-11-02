@@ -5,7 +5,7 @@ import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
-import { buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
+import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
@@ -1400,6 +1400,8 @@ async function settingsSnapshot() {
     fastMute: player.fastMute,
     fastScale: player.fastScale,
     dpadMode: player.dpadMode,
+    autoFire: player.autoFire.on,
+    autoFireLevel: player.autoFire.level,
     slot: slot(),
     netOn: state.prefs.netOn !== false,
     netWan: state.prefs.netWan === true,
@@ -1424,6 +1426,8 @@ async function applySettings(next) {
     fastMute: Boolean(next.fastMute),
     fastScale: next.fastScale,
     dpadMode: DPAD_MODES.includes(next.dpadMode) ? next.dpadMode : DPAD_DEFAULT,
+    autoFire: next.autoFire === true,
+    autoFireLevel: autoFireLevel(next.autoFireLevel),
     slot: next.slot,
     netOn: next.netOn !== false,
     netWan: next.netWan === true,
@@ -1470,6 +1474,7 @@ async function applySettings(next) {
   player.fastScale = next.fastScale;
   player.fastMute = patch.fastMute;
   player.setDpadMode(dpadFor(state.input, state.prefs));
+  player.setAutoFire({ on: patch.autoFire, level: patch.autoFireLevel });
   syncControls();
   renderPanel();
   if (!el.start.hidden) renderStart();
@@ -2030,6 +2035,7 @@ async function boot() {
   player.fastScale = state.prefs.fastScale ?? 4;
   player.fastMute = Boolean(state.prefs.fastMute);
   player.setDpadMode(state.prefs.dpadMode);
+  player.setAutoFire({ on: state.prefs.autoFire === true, level: state.prefs.autoFireLevel ?? AUTO_FIRE_LEVEL });
   if (state.prefs.panel === undefined) state.prefs.panel = "files";
   setMaximized(await win.isMaximized());
   state.root = state.prefs.lastDir ?? "";

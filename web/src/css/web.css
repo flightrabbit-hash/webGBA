@@ -1935,6 +1935,11 @@ body[data-layout="landscape"] .lib__shelf {
   box-shadow: 0 calc(var(--px) * -1) 0 0 var(--accent), 0 var(--px) 0 0 var(--accent), calc(var(--px) * -1) 0 0 0 var(--accent), var(--px) 0 0 0 var(--accent);
 }
 
+.field input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .switch {
   position: relative;
   flex: none;

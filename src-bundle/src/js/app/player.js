@@ -40,6 +40,14 @@ export { DPAD_MODES };
 
 export const DPAD_DEFAULT = "latest";
 
+export const AUTO_FIRE_RATES = Object.freeze([4, 6, 8, 10, 12, 15, 20, 24, 30]);
+export const AUTO_FIRE_ROLES = Object.freeze(["a", "b", "c", "d", "l", "r"]);
+export const AUTO_FIRE_LEVEL = 5;
+
+export const autoFireLevel = (value) => (Number.isInteger(value) && value >= 1 && value <= AUTO_FIRE_RATES.length ? value : AUTO_FIRE_LEVEL);
+
+export const autoFireDown = (frames, rate) => Math.floor((frames * rate) / 30) % 2 === 0;
+
 export function dpadFor(input, prefs) {
   if (!input?.dpad) return DPAD_MODES.includes(prefs?.dpadMode) ? prefs.dpadMode : DPAD_DEFAULT;
   const own = input.gameId ? prefs?.gameDpad?.[input.gameId] : undefined;
@@ -231,6 +239,11 @@ export class Player {
     this.dropped = 0;
     this.released = 0;
     this.sent = 0;
+    this.autoFire = { on: false, level: AUTO_FIRE_LEVEL };
+    this.fireMask = 0;
+    this.fireHeld = 0;
+    this.fireStart = new Map();
+    this.frameNo = 0;
     this.padPrev = 0;
     this.stamp = 0;
     this.dirStamp = {};
@@ -363,6 +376,7 @@ export class Player {
     this.bitOf = new Map();
     this.padMap = [];
     const dirs = { right: 0, left: 0, up: 0, down: 0 };
+    let fire = 0;
     for (const [index, b] of this.layout.buttons.entries()) {
       // ② 자체 JS 버튼은 bit 가 없다 — 목록 순서를 비트로 쓴다(script-host.js setInput 이 같은 순서로 code 를 찾음, 24개까지)
       const bit = Number.isInteger(b.bit) ? b.bit : b.code ? index : null;
@@ -370,14 +384,54 @@ export class Player {
       const mask = 1 << bit;
       this.bitOf.set(b.id, mask);
       if (b.role in dirs && !dirs[b.role]) dirs[b.role] = mask;
+      if (AUTO_FIRE_ROLES.includes(b.role)) fire |= mask;
       if (b.pad?.length) this.padMap.push([mask, padTest(b.pad)]);
     }
+    this.fireMask = fire >>> 0;
+    this.fireHeld = 0;
     this.dirs = dirs;
     this.dirMask = dirs.right | dirs.left | dirs.up | dirs.down;
     this.dirBits = [dirs.right, dirs.left, dirs.up, dirs.down].filter(Boolean);
     this.dirStamp = Object.fromEntries(this.dirBits.map((bit) => [bit, 0]));
     this.padPrev = 0;
     this.setKeys(keys ?? this.keys ?? {});
+    this.pushAutoFire();
+  }
+
+  setAutoFire({ on = false, level = AUTO_FIRE_LEVEL } = {}) {
+    this.autoFire = { on: Boolean(on), level: autoFireLevel(level) };
+    this.fireHeld = 0;
+    this.pushAutoFire();
+  }
+
+  get fireRate() {
+    return this.autoFire.on ? AUTO_FIRE_RATES[this.autoFire.level - 1] : 0;
+  }
+
+  pushAutoFire() {
+    if (!this.host?.script || typeof this.host.setAutoFire !== "function") return;
+    const indices = [];
+    for (let i = 0; i < 32; i++) if (this.fireMask & (1 << i)) indices.push(i);
+    this.host.setAutoFire(this.fireRate ? indices : [], this.fireRate);
+  }
+
+  fireKeys(keys) {
+    const rate = this.fireRate;
+    const mask = rate ? this.fireMask : 0;
+    const held = (keys & mask) >>> 0;
+    if (!held) {
+      this.fireHeld = 0;
+      return keys;
+    }
+    const fresh = held & ~this.fireHeld;
+    this.fireHeld = held;
+    let out = keys & ~mask;
+    for (let bit = 1; bit && bit <= held; bit = (bit << 1) >>> 0) {
+      if (!(held & bit)) continue;
+      if (fresh & bit) this.fireStart.set(bit, this.frameNo);
+      if (autoFireDown(this.frameNo - this.fireStart.get(bit), rate)) out |= bit;
+    }
+    return out >>> 0;
   }
 
   /** keys = { 버튼 id: [KeyboardEvent.code…], FAST: [...] } — 지금 버튼 목록에 있는 id 만 쓴다. */
@@ -678,10 +732,12 @@ export class Player {
     this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
     this.releaseAll();
     this.sent = 0;
+    this.fireHeld = 0;
     this.padPrev = 0;
     this.padNow = 0;
     this.pace = { speed: 1, emu: 0, real: 0 };
     if (host.script) {
+      this.pushAutoFire();
       // ② 자체 JS: 게임이 틀 안에서 스스로 그리고 소리를 낸다. 여기서는 입력·세이브·일시정지·소리 크기만.
       host.onHalt = (why) => {
         this.running = false;
@@ -854,12 +910,13 @@ export class Player {
       }
       this.sent = input;
       this.net.beforeFrame();
-      if (!this.host.runFrame(input)) {
+      if (!this.host.runFrame(this.fireKeys(input))) {
         this.running = false;
         this.net.leave();
         this.onHalt(this.host.halted);
         return;
       }
+      this.frameNo++;
       this.net.afterFrame();
       ran++;
       const samples = this.host.audio();

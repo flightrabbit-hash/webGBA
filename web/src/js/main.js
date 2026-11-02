@@ -8,7 +8,7 @@ import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { audioSessionType, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
+import { audioSessionType, AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
 import { GB_SCREEN, kindKey, romKind, romType, systemKind } from "./core/rom-kind.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
@@ -574,6 +574,7 @@ function applyPlayerPrefs() {
   player.gameSpeed = SPEEDS.includes(p.gameSpeed) ? p.gameSpeed : 1;
   player.fast = player.gameSpeed !== 1;
   player.fastMute = Boolean(p.fastMute);
+  player.setAutoFire({ on: p.autoFire === true, level: p.autoFireLevel ?? AUTO_FIRE_LEVEL });
 }
 
 function toast(text, level = "info", ms = TOAST_MS) {
@@ -3323,6 +3324,36 @@ function rangeField(label, note, value, onChange) {
   return field(label, note, range);
 }
 
+function levelField(label, value, { min = 1, max = 9, text, onChange, disabled = false }) {
+  const range = document.createElement("input");
+  range.type = "range";
+  range.min = String(min);
+  range.max = String(max);
+  range.step = "1";
+  range.value = String(value);
+  range.dataset.key = "autoFireLevel";
+  range.setAttribute("aria-label", label);
+  const row = field(label, text(value), range);
+  const note = row.querySelector(".field__note");
+  const paint = () => {
+    const n = Number(range.value);
+    range.style.setProperty("--fill", String((n - min) / (max - min)));
+    range.setAttribute("aria-valuetext", text(n));
+    if (note.textContent !== text(n)) note.textContent = text(n);
+  };
+  paint();
+  range.addEventListener("input", () => {
+    paint();
+    onChange(Number(range.value));
+  });
+  row.setOff = (off) => {
+    range.disabled = off;
+    row.classList.toggle("field--off", off);
+  };
+  row.setOff(disabled);
+  return row;
+}
+
 const CUSTOM_COLORS = [
   { id: "back", tokens: ["--bg-sunken", "--bg-deep"], fallback: "#070a14" },
   { id: "panel", tokens: ["--bg", "--bg-raised", "--bg-tint"], fallback: "#151d33" },
@@ -3404,6 +3435,7 @@ function nickSetting() {
 function renderSettings() {
   el.sheetTitle.textContent = t("cfg.title");
   const p = state.prefs;
+  let fireLevel = null;
   const themeId = theme.known(p.theme) ? p.theme : "dark";
   const children = [
     group(
@@ -3473,6 +3505,20 @@ function renderSettings() {
           applyPlayerPrefs();
         },
       ),
+      switchField(t("cfg.autoFire"), t("cfg.autoFire.note"), p.autoFire === true, (on) => {
+        savePrefs({ autoFire: on });
+        applyPlayerPrefs();
+        fireLevel.setOff(!on);
+      }),
+      (fireLevel = levelField(t("cfg.autoFireLevel"), autoFireLevel(p.autoFireLevel), {
+        max: AUTO_FIRE_RATES.length,
+        text: (n) => t("cfg.autoFireLevel.value", { n, rate: AUTO_FIRE_RATES[n - 1] }),
+        onChange: (level) => {
+          savePrefs({ autoFireLevel: level });
+          applyPlayerPrefs();
+        },
+        disabled: p.autoFire !== true,
+      })),
       switchField(t("web.pauseWhenHidden"), t("web.pauseWhenHidden.note"), p.pauseWhenHidden, (on) => savePrefs({ pauseWhenHidden: on })),
     ),
     group(
