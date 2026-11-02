@@ -3722,7 +3722,8 @@ async function registerWorker() {
     const watch = (worker) => {
       if (!worker) return;
       worker.addEventListener("statechange", () => {
-        if (worker.state === "installed" && navigator.serviceWorker.controller) showUpdate(worker);
+        const current = navigator.serviceWorker.controller;
+        if (worker.state === "installed" && current && current !== worker) showUpdate(worker);
       });
     };
     if (reg.waiting && navigator.serviceWorker.controller) showUpdate(reg.waiting);
