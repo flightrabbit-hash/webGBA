@@ -463,6 +463,12 @@ export class NetWindow {
     return line;
   }
 
+  choices(items) {
+    const k = this.kit;
+    if (typeof k.entry === "function") return items.map(({ text, button }) => k.entry(text, button));
+    return [k.line(...items.map(({ button }) => button))];
+  }
+
   toLan() {
     this.joinSeq++;
     this.error = "";
@@ -554,10 +560,10 @@ export class NetWindow {
       const near = k.make("div", "net-near-box");
       this.refs.near = near;
       near.append(...this.nearNodes());
-      const buttons = [];
-      if (this.request?.role !== "join") buttons.push(k.button({ label: k.label("make"), kind: "primary", action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy }));
-      buttons.push(k.button({ label: k.label("codeJoin"), action: "net-room-join", onClick: () => this.toCode(), disabled: this.busy }));
-      body = [k.note(t("net.lead")), this.nickField(), k.line(...buttons), k.group(t("net.near"), near), this.offlineLine(), ...this.errorNodes()];
+      const items = [];
+      if (this.request?.role !== "join") items.push({ text: t("net.make"), button: k.button({ label: k.label("make"), kind: "primary", action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy }) });
+      items.push({ text: t("net.codeJoin"), button: k.button({ label: k.label("codeJoin"), action: "net-room-join", onClick: () => this.toCode(), disabled: this.busy }) });
+      body = [k.note(t("net.lead")), this.nickField(), ...this.choices(items), k.group(t("net.near"), near), this.offlineLine(), ...this.errorNodes()];
       actions = [cancel];
     } else if (this.screen === "lan") {
       body = [];
@@ -565,7 +571,10 @@ export class NetWindow {
       body.push(
         k.note(t("net.lead")),
         this.nickField(),
-        k.line(k.button({ label: k.label("makeCode"), kind: "primary", action: "net-make", onClick: () => this.startHost() }), k.button({ label: k.label("join"), action: "net-join", onClick: () => this.go("join1") })),
+        ...this.choices([
+          { text: t("net.make"), button: k.button({ label: k.label("makeCode"), kind: "primary", action: "net-make", onClick: () => this.startHost() }) },
+          { text: t("net.join"), button: k.button({ label: k.label("join"), action: "net-join", onClick: () => this.go("join1") }) },
+        ]),
         k.note(t("net.codeNote")),
       );
       actions = [k.action({ id: "back", onClick: () => this.go("choose") }), cancel];

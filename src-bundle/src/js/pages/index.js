@@ -224,6 +224,11 @@ const netKit = {
     row.append(...nodes);
     return row;
   },
+  entry: (text, button) => {
+    const row = node("div", "net-line net-entry");
+    row.append(node("span", "net-entry__label", text), button);
+    return row;
+  },
   list: (items, className) => {
     const ul = node("ul", className);
     for (const text of items) ul.append(node("li", "", text));

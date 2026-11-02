@@ -2265,7 +2265,8 @@ label.cfg__swatch-row {
   flex: none;
 }
 
-.net-offline {
+.net-offline,
+.net-entry {
   flex-wrap: nowrap;
   justify-content: space-between;
 }
@@ -2274,7 +2275,8 @@ label.cfg__swatch-row {
   display: none;
 }
 
-.net-offline__label {
+.net-offline__label,
+.net-entry__label {
   min-width: 0;
   color: var(--text);
   font-size: 13px;

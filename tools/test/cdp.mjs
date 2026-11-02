@@ -119,6 +119,11 @@ export async function connect(port, { timeoutMs = 30000, match = "ui.localhost" 
       else resolve(message.result);
     }
   };
+  // 앱이 답하기 전에 끝나면(shutdown 등) 기다리던 요청이 끝나지 않아 시험이 멈춘다
+  ws.onclose = () => {
+    for (const { reject } of waiting.values()) reject(new Error("CDP 연결이 닫혔습니다"));
+    waiting.clear();
+  };
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = next++;
