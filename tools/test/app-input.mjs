@@ -176,7 +176,7 @@ async function inputTests(label) {
   await up("ArrowLeft");
   await sleep(100);
   check(
-    `${label} K1 기본 "한 방향만 전달": ←누른 채 ↑ 누르면 ↑만, ↑를 떼면 ←는 그대로`,
+    `${label} K1 기본 "설정 안함": ←누른 채 ↑ 누르면 ↑만, ↑를 떼면 ←는 그대로`,
     firstMode === "latest" && (firstSaved ?? "latest") === "latest" && tail(upOnly).every((k) => (k & 240) === BIT.UP) && tail(f).every((k) => (k & 240) === BIT.LEFT),
     `${firstMode} · 저장값 ${firstSaved ?? "없음"} · ${fmt(tail(upOnly, 3))} | ${fmt(tail(f, 3))}`,
   );
@@ -228,7 +228,7 @@ async function inputTests(label) {
 
   const opposite = await setSetting("방향키 동시 입력", 1);
   if (!opposite) {
-    check(`${label} K6 방향키 동시 입력 설정(대각선 허용·나중 방향만)`, false, "설정 줄 없음");
+    check(`${label} K6 방향키 동시 입력 설정(대각선 입력·나중 방향만)`, false, "설정 줄 없음");
   } else {
     at = await mark();
     await down("ArrowLeft");
@@ -246,7 +246,7 @@ async function inputTests(label) {
     await up("ArrowLeft");
     await sleep(100);
     check(
-      `${label} K6 "대각선 허용": ←누른 채 → 누르면 →만, →를 떼면 ←, ↑는 함께`,
+      `${label} K6 "대각선 입력": ←누른 채 → 누르면 →만, →를 떼면 ←, ↑는 함께`,
       tail(both).every((k) => (k & 48) === BIT.RIGHT) && tail(left).every((k) => (k & 48) === BIT.LEFT) && tail(diag).every((k) => (k & 96) === 96),
       `${fmt(tail(both, 3))} | ${fmt(tail(left, 3))} | ${fmt(tail(diag, 3))}`,
     );
@@ -263,7 +263,7 @@ async function inputTests(label) {
     await up("ArrowUp");
     await sleep(100);
     check(
-      `${label} K7 "한 방향만 전달": ↑누른 채 ← 누르면 ←만(바로 꺾음), ←를 떼면 ↑`,
+      `${label} K7 "설정 안함": ↑누른 채 ← 누르면 ←만(바로 꺾음), ←를 떼면 ↑`,
       tail(latest).every((k) => (k & 240) === BIT.LEFT) && tail(back).every((k) => (k & 240) === BIT.UP),
       `${fmt(tail(latest, 3))} | ${fmt(tail(back, 3))}`,
     );
@@ -277,7 +277,7 @@ async function inputTests(label) {
     await up("ArrowLeft");
     await sleep(100);
     const saved = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8")).dpadMode;
-    check(`${label} K8 "모든 방향 전달": ←+→ 둘 다 넘김, 설정 저장`, tail(f).every((k) => (k & 48) === 48) && saved === "both", `${fmt(tail(f, 3))} · dpadMode ${saved}`);
+    check(`${label} K8 "모든 입력": ←+→ 둘 다 넘김, 설정 저장`, tail(f).every((k) => (k & 48) === 48) && saved === "both", `${fmt(tail(f, 3))} · dpadMode ${saved}`);
     at = await mark();
     await down("ArrowLeft");
     await sleep(120);
@@ -288,7 +288,7 @@ async function inputTests(label) {
     f = await since(at);
     await up("ArrowLeft");
     await sleep(100);
-    check(`${label} K9 "모든 방향 전달": 두 방향을 함께 누르고 한쪽만 떼면 다른 쪽은 그대로`, f.some((k) => (k & 96) === 96) && tail(f).every((k) => k & BIT.LEFT && !(k & BIT.UP)), fmt(tail(f, 6)));
+    check(`${label} K9 "모든 입력": 두 방향을 함께 누르고 한쪽만 떼면 다른 쪽은 그대로`, f.some((k) => (k & 96) === 96) && tail(f).every((k) => k & BIT.LEFT && !(k & BIT.UP)), fmt(tail(f, 6)));
     await setSetting("방향키 동시 입력", 2);
   }
 

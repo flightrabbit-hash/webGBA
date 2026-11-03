@@ -15,7 +15,7 @@ const opt = {};
 for (let i = 0; i < args.length; i++) opt[args[i].replace(/^--/, "")] = args[++i];
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
-const RATES = [4, 6, 8, 10, 12, 15, 20, 24, 30];
+const RATES = [1, 2, 3, 4, 6, 8, 12, 20, 30];
 const results = [];
 const ok = (name, pass, detail = "") => {
   results.push({ name, pass: Boolean(pass), detail });
@@ -105,12 +105,16 @@ try {
   await setFire(false);
   const offA = await hold({ code: "KeyZ", bit: 0, frames: 40 });
   ok("연사 끔(기본): A 를 누르고 있는 동안 매 프레임 그대로 눌림", offA === "1".repeat(40), offA);
+  const exported = await page.evaluate(async () => (await import("/js/app/player.js")).AUTO_FIRE_RATES.join(","));
+  ok(`연사 단계 값 AUTO_FIRE_RATES = ${RATES.join("·")}`, exported === RATES.join(","), exported);
   for (let level = 1; level <= 9; level++) {
     await setFire(true, level);
     const bits = await hold({ code: "KeyZ", bit: 0, frames: 66 });
     const want = expected(66, RATES[level - 1]);
     const gaps = edges(bits);
-    ok(`연사 ${level}단계(초당 ${RATES[level - 1]}회): 게임 프레임 무늬 = 공식 · 누름 간격 ${[...new Set(gaps)].join("/")}프레임(평균 ${(gaps.reduce((a, b) => a + b, 0) / Math.max(1, gaps.length)).toFixed(2)})`, bits === want, `${bits}`);
+    const presses = [...bits.slice(0, 60)].filter((b, i, all) => b === "1" && (i === 0 || all[i - 1] === "0")).length;
+    ok(`연사 ${level}단계(초당 ${RATES[level - 1]}회): 게임 프레임 무늬 = 공식 · 60프레임 누름 ${presses}회 · 누름 간격 ${[...new Set(gaps)].join("/")}프레임(평균 ${(gaps.reduce((a, b) => a + b, 0) / Math.max(1, gaps.length)).toFixed(2)})`, bits === want && presses === RATES[level - 1], `${bits}`);
+    if (level === 1) ok("연사 1단계: 60프레임 = 누름 30·뗌 30(첫 프레임 누름)", bits.slice(0, 60) === "1".repeat(30) + "0".repeat(30), bits.slice(0, 60));
   }
   await setFire(true, 9);
   const keysFor = {};
@@ -127,9 +131,9 @@ try {
   }
   await setFire(true, 6);
   const touch = await hold({ code: "Pad:A", bit: 0, frames: 40 });
-  ok("화면 터치 A(Pad:A)도 같은 설정(6단계 = 초당 15회)", touch === expected(40, 15), touch);
+  ok(`화면 터치 A(Pad:A)도 같은 설정(6단계 = 초당 ${RATES[5]}회)`, touch === expected(40, RATES[5]), touch);
   const gp = await hold({ pad: 0, bit: 0, frames: 40 });
-  ok("게임패드 A(버튼 0)도 같은 설정(6단계)", gp === expected(40, 15), gp);
+  ok("게임패드 A(버튼 0)도 같은 설정(6단계)", gp === expected(40, RATES[5]), gp);
   await page.evaluate(() => {
     const p = window.webgba.player;
     p.gameSpeed = 4;
@@ -138,7 +142,7 @@ try {
   await setFire(true, 5);
   const fast = await hold({ code: "KeyZ", bit: 0, frames: 120 });
   const fastSpeed = await page.evaluate(() => window.webgba.player.runSpeed);
-  ok(`빨리 감기 ${fastSpeed}배에서도 게임 프레임 기준(5단계 무늬 = 공식)`, fastSpeed === 4 && fast === expected(120, 12), fast.slice(0, 40));
+  ok(`빨리 감기 ${fastSpeed}배에서도 게임 프레임 기준(5단계 무늬 = 공식)`, fastSpeed === 4 && fast === expected(120, RATES[4]), fast.slice(0, 40));
   await page.evaluate(() => {
     const p = window.webgba.player;
     p.gameSpeed = 1;
@@ -147,6 +151,9 @@ try {
 
   // ② 자체 JS 게임: 틀 안에서 rAF 프레임마다 키 이벤트
   await openGame("script");
+  await setFire(true, 1);
+  const scriptFire = await page.evaluate(() => window.webgba.player.host.fire);
+  ok("② 자체 JS 게임: 1단계 → 틀에 초당 1회 전달(ScriptHost.setAutoFire)", scriptFire?.rate === 1 && scriptFire.buttons.length > 0, JSON.stringify(scriptFire));
   await setFire(true, 9);
   await sleep(800);
   const frame = page.frames().find((f) => f !== page.mainFrame() && f.parentFrame() === page.mainFrame());
@@ -184,8 +191,17 @@ try {
     const range = document.querySelector('#sheetBody input[data-key="autoFireLevel"]');
     return { sw: Boolean(sw), on: sw?.getAttribute("aria-checked"), range: Boolean(range), disabled: range?.disabled, value: range?.value, min: range?.min, max: range?.max, note: range?.closest(".field")?.querySelector(".field__note")?.textContent ?? "" };
   });
-  ok("설정: 연사 켜기·끄기 + 1~9단계 바(기본 끔·5단계, 끄면 바 비활성)", before.sw && before.on === "false" && before.range && before.disabled && before.value === "5" && before.min === "1" && before.max === "9" && /5단계 · 초당 12회/.test(before.note), JSON.stringify(before));
+  ok("설정: 연사 켜기·끄기 + 1~9단계 바(기본 끔·5단계, 끄면 바 비활성)", before.sw && before.on === "false" && before.range && before.disabled && before.value === "5" && before.min === "1" && before.max === "9" && /5단계 · 초당 6회/.test(before.note), JSON.stringify(before));
   await page.evaluate(() => [...document.querySelectorAll("#sheetBody .switch")].find((n) => n.getAttribute("aria-label") === "연사").click());
+  const levelOne = await page.evaluate(() => {
+    const range = document.querySelector('#sheetBody input[data-key="autoFireLevel"]');
+    range.value = "1";
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+    return range.closest(".field").querySelector(".field__note").textContent;
+  });
+  const tables = Object.fromEntries(["ko", "en", "ja"].map((id) => [id, JSON.parse(fs.readFileSync(fileURLToPath(new URL(`../../src-bundle/src/i18n/${id}.json`, import.meta.url)), "utf8"))]));
+  const oneText = Object.fromEntries(Object.entries(tables).map(([id, table]) => [id, table["cfg.autoFireLevel.value"].replace("{n}", "1").replace("{rate}", "1")]));
+  ok("설정: 1단계 글 '1단계 · 초당 1회'(세 언어 Level 1 · 1/s · 1段階 · 1秒に1回)", /1단계 · 초당 1회/.test(levelOne) && oneText.ko === "1단계 · 초당 1회" && oneText.en === "Level 1 · 1/s" && oneText.ja === "1段階 · 1秒に1回", JSON.stringify({ levelOne, oneText }));
   await page.evaluate(() => {
     const range = document.querySelector('#sheetBody input[data-key="autoFireLevel"]');
     range.value = "9";

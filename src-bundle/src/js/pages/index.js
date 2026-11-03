@@ -570,13 +570,25 @@ function showView(view) {
 const favorites = () => state.prefs.favorites ?? [];
 const isFavorite = (path) => favorites().some((item) => samePath(item, path));
 
+function netBlock(node, key, blocked) {
+  if (blocked) node.setAttribute("aria-disabled", "true");
+  else node.removeAttribute("aria-disabled");
+  if (node.dataset.i18nTitle !== key) {
+    node.dataset.i18nTitle = key;
+    node.title = t(key);
+  }
+}
+
 function syncControls() {
   const hosted = player.active;
   el.btnPause.disabled = !hosted;
   el.btnReset.disabled = !state.game || player.net.locked;
   el.btnFast.disabled = !hosted || player.net.locked;
   el.btnStateSave.disabled = !player.canState;
-  el.btnStateLoad.disabled = !player.canState || player.net.locked;
+  el.btnStateLoad.disabled = !player.canState;
+  const stateBlocked = player.canState && player.net.locked;
+  netBlock(el.btnStateSave, stateBlocked ? "rail.stateSaveNet" : "rail.stateSave", stateBlocked);
+  netBlock(el.btnStateLoad, stateBlocked ? "rail.stateLoadNet" : "rail.stateLoad", stateBlocked);
   const netOn = hosted && Boolean(player.net.request || player.net.active);
   el.btnNet.hidden = !netOn;
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
@@ -1543,6 +1555,10 @@ async function toggleLink() {
 /* ── 세이브·상태 ── */
 
 async function saveStateTo(index) {
+  if (player.net.locked) {
+    status(t("net.blockQuick"), "warn");
+    return;
+  }
   if (!player.canState) {
     status(t("status.noStateSupport"), "warn");
     return;
@@ -1557,7 +1573,7 @@ async function saveStateTo(index) {
 
 async function loadStateFrom(index) {
   if (player.net.locked) {
-    status(t("net.blockState"), "warn");
+    status(t("net.blockQuick"), "warn");
     return;
   }
   if (!player.canState) {
@@ -1721,8 +1737,8 @@ function menuItems(name) {
       { label: t("menu.reset"), keys: "Ctrl+R", run: resetGame, disabled: !game || player.net.locked },
       player.net.active ? { label: t("board.open"), keys: "Tab", run: () => (mp.open ? closeMp() : openMp()), disabled: !mpWanted(), checked: mp.open } : { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted || player.net.locked, checked: player.fast },
       { sep: true },
-      { label: t("menu.stateSave", { slot: slot() }), keys: `Shift+F${slot()}`, run: () => saveStateTo(slot()), disabled: !player.canState },
-      { label: t("menu.stateLoad", { slot: slot() }), keys: `F${slot()}`, run: () => loadStateFrom(slot()), disabled: !player.canState || player.net.locked },
+      { label: t("menu.stateSave", { slot: slot() }), keys: `Shift+F${slot()}`, run: () => saveStateTo(slot()), disabled: !player.canState, blocked: player.net.locked },
+      { label: t("menu.stateLoad", { slot: slot() }), keys: `F${slot()}`, run: () => loadStateFrom(slot()), disabled: !player.canState, blocked: player.net.locked },
       { head: t("menu.slots") },
       ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => ({ label: t("menu.slot", { slot: index }), checked: slot() === index, run: () => setSlot(index) })),
       { sep: true },
@@ -1780,6 +1796,10 @@ async function openMenu(name, anchor) {
     button.className = "menu__item";
     button.setAttribute("role", "menuitem");
     button.disabled = Boolean(item.disabled);
+    if (item.blocked && !item.disabled) {
+      button.setAttribute("aria-disabled", "true");
+      button.title = t("net.blockQuick");
+    }
     const check = Object.assign(document.createElement("span"), { className: "menu__check", textContent: item.checked ? "✓" : "" });
     const label = Object.assign(document.createElement("span"), { className: "menu__label", textContent: item.label });
     const keys = Object.assign(document.createElement("span"), { className: "menu__keys", textContent: item.keys ?? "" });
@@ -1982,6 +2002,7 @@ el.btnReset.addEventListener("click", resetGame);
 el.btnFast.addEventListener("click", toggleFast);
 el.btnStateSave.addEventListener("click", () => saveStateTo(slot()));
 el.btnStateLoad.addEventListener("click", () => loadStateFrom(slot()));
+for (const node of [el.btnStateSave, el.btnStateLoad]) node.addEventListener("mousedown", (event) => node.getAttribute("aria-disabled") === "true" && event.preventDefault());
 el.btnNet.addEventListener("click", onNetRail);
 el.statusRight.addEventListener("click", () => {
   if (mpWanted() && !mp.open) openMp();

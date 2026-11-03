@@ -46,7 +46,12 @@ const ONLY_GB = process.env.UI_GB_ONLY === "1";
 const ONLY_ANYTIME = process.env.UI_ANYTIME_ONLY === "1";
 // UI_AUTOFIRE_ONLY=1 이면 설정의 연사 켜기·단계 바 줄 시험만(세 화면 × 세 언어 — 잉크 세로 가운데·화면 안·끔이면 바 비활성)
 const ONLY_AUTOFIRE = process.env.UI_AUTOFIRE_ONLY === "1";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE;
+// UI_OVERLAY_ONLY=1 이면 가상 버튼 오버레이 시험만(가로 = 화면 최대·게임 화면 안 반투명 버튼·입력·눌림, 세로 = 표시와 같음, 회전, 표시·숨김 그대로)
+const ONLY_OVERLAY = process.env.UI_OVERLAY_ONLY === "1";
+// UI_SETTEXT_ONLY=1 이면 설정 줄 문구·테마 목록(대표 색 4개 견본, 커스텀 없음)·빈 라이브러리·빈 세이브 시험만. UI_CAPTURE = 기능 캡처 폴더(없으면 캡처 폴더)
+const ONLY_SETTEXT = process.env.UI_SETTEXT_ONLY === "1";
+const CAPTURE = process.env.UI_CAPTURE || "";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE || ONLY_OVERLAY || ONLY_SETTEXT;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -2434,7 +2439,7 @@ async function autoFireChecks() {
           return { disabled: range.disabled, off: level.classList.contains("field--off"), note: level.querySelector(".field__note")?.textContent ?? "", label: sw.querySelector(".field__label")?.textContent ?? "", switchOn: sw.querySelector(".switch")?.getAttribute("aria-checked"), rangeMid: +((r.top + r.bottom) / 2 - (f.top + f.bottom) / 2).toFixed(2) };
         });
         await page.waitForTimeout(300);
-        ok(`${key} 연사 켜기·끄기 줄 + 단계 바 줄(7단계 글, 끄면 바 비활성 · 바 세로 가운데)`, info && info.switchOn === String(on) && info.disabled === !on && info.off === !on && /7/.test(info.note) && /20/.test(info.note) && Math.abs(info.rangeMid) <= 1, JSON.stringify(info));
+        ok(`${key} 연사 켜기·끄기 줄 + 단계 바 줄(7단계 글, 끄면 바 비활성 · 바 세로 가운데)`, info && info.switchOn === String(on) && info.disabled === !on && info.off === !on && /7/.test(info.note) && /12/.test(info.note) && Math.abs(info.rangeMid) <= 1, JSON.stringify(info));
         await measure(page, `${key}|settings`, ["[data-ui-fire]"]);
         await fits(page, `${key}|settings`, ".sheet__panel");
         if (lang === "ko" && view.name === "390x844") await page.screenshot({ path: path.join(SHOTS, `웹_설정_연사_${on ? "켬" : "끔"}.png`) });
@@ -2446,6 +2451,300 @@ async function autoFireChecks() {
 }
 
 if (ONLY_AUTOFIRE || process.env.UI_AUTOFIRE === "1") await autoFireChecks();
+
+// ── 가상 버튼 오버레이(설정 web.pad: 표시·오버레이·숨김) ──
+const PAD_PARTS = ["L", "R", "A", "B", "SELECT", "START", "DIR"];
+
+const padState = (page) =>
+  page.evaluate(() => {
+    const box = (n) => {
+      const r = n.getBoundingClientRect();
+      return { l: +r.left.toFixed(2), r: +r.right.toFixed(2), t: +r.top.toFixed(2), b: +r.bottom.toFixed(2), cx: +((r.left + r.right) / 2).toFixed(2), cy: +((r.top + r.bottom) / 2).toFixed(2), w: +r.width.toFixed(2) };
+    };
+    const out = {};
+    for (const n of document.querySelectorAll("#pad [data-key]")) if (n.getBoundingClientRect().width > 0) out[n.dataset.key] = box(n);
+    const dir = document.querySelector("#pad [data-dpad]");
+    if (dir.getBoundingClientRect().width > 0) out.DIR = box(dir);
+    out.FACE = box(document.querySelector("#pad .face"));
+    out.SCREEN = box(document.getElementById("screen"));
+    const s = getComputedStyle(document.documentElement);
+    const a = document.querySelector('#pad [data-key="A"]');
+    return { boxes: out, pad: document.body.dataset.pad, sw: parseFloat(s.getPropertyValue("--sw")), sh: parseFloat(s.getPropertyValue("--sh")), art: window.webgba.skin.art, display: getComputedStyle(document.getElementById("pad")).display, opacity: getComputedStyle(a).opacity };
+  });
+
+const sameBoxes = (x, y) => PAD_PARTS.every((n) => x[n] && y[n] && x[n].l === y[n].l && x[n].t === y[n].t && x[n].r === y[n].r && x[n].b === y[n].b);
+
+// A 터치·스틱 오른쪽 끌기 → 게임에 가는 비트·눌림 표시
+async function padTouch(page, context, boxes) {
+  const cdp = await context.newCDPSession(page);
+  const touch = touchApi(cdp);
+  const read = () =>
+    page.evaluate(() => {
+      const a = document.querySelector('#pad [data-key="A"]');
+      const d = document.querySelector("#pad [data-dpad]");
+      return { held: window.webgba.player.held, a: a.hasAttribute("data-down"), aOp: getComputedStyle(a).opacity, d: d.hasAttribute("data-down"), dOp: getComputedStyle(d).opacity };
+    });
+  const A = boxes.A;
+  await touch("touchStart", [{ x: A.cx, y: A.cy, id: 1 }]);
+  await page.waitForTimeout(80);
+  const aDown = await read();
+  await touch("touchEnd", []);
+  await page.waitForTimeout(80);
+  const aUp = await read();
+  const D = boxes.DIR;
+  await touch("touchStart", [{ x: D.cx, y: D.cy, id: 2 }]);
+  await touch("touchMove", [{ x: D.cx + D.w / 2, y: D.cy, id: 2 }]);
+  await page.waitForTimeout(80);
+  const dDown = await read();
+  await touch("touchEnd", []);
+  await page.waitForTimeout(80);
+  const dUp = await read();
+  await cdp.detach();
+  return { aDown, aUp, dDown, dUp };
+}
+
+async function overlayChecks() {
+  const files = { "overlay.wgba": await exampleWgba((m) => m) };
+  const land = { viewport: { width: 844, height: 390 }, dpr: 2, mobile: true };
+  const port = { viewport: { width: 390, height: 844 }, dpr: 2, mobile: true };
+  const shots = CAPTURE || SHOTS;
+  const withGame = async (view, pad) => {
+    const p = await aspectPage(view, files, { prefs: { lang: "ko", pad } });
+    p.start = await padState(p.page);
+    await openAspectGame(p.page, "overlay.wgba");
+    await p.page.waitForTimeout(300);
+    return p;
+  };
+
+  const off = await withGame(land, "off");
+  const offState = await padState(off.page);
+  ok("가로 숨김 그대로: data-pad off · 가상 버튼 없음", offState.pad === "off" && offState.display === "none", JSON.stringify({ pad: offState.pad, display: offState.display }));
+  await off.context.close();
+  const on = await withGame(land, "on");
+  const onState = await padState(on.page);
+  const onB = onState.boxes;
+  ok("가로 표시 그대로: data-pad on · 버튼은 게임 화면 양옆", onState.pad === "on" && onB.A.l >= onB.SCREEN.r && onB.DIR.r <= onB.SCREEN.l && onState.opacity === "1", JSON.stringify({ pad: onState.pad, A: onB.A, DIR: onB.DIR, SCREEN: onB.SCREEN }));
+  const onInput = await padTouch(on.page, on.context, onB);
+  await on.context.close();
+
+  const ov = await withGame(land, "overlay");
+  ok("가로 오버레이 첫 화면(게임 없음): 가상 버튼 숨김", ov.start.pad === "overlay" && ov.start.display === "none", JSON.stringify({ pad: ov.start.pad, display: ov.start.display }));
+  const st = await padState(ov.page);
+  const B = st.boxes;
+  const S = B.SCREEN;
+  const parts = PAD_PARTS.map((n) => [n, B[n]]);
+  const inside = parts.every(([, b]) => b && b.l >= S.l && b.r <= S.r && b.t >= S.t && b.b <= S.b);
+  ok(`가로 오버레이: data-pad overlay · 게임 화면 = 숨김과 같은 최대 크기(${st.sw}x${st.sh}) · 버튼 7개 모두 게임 화면 안`, st.pad === "overlay" && st.sw === offState.sw && st.sh === offState.sh && inside, JSON.stringify({ screen: S, parts: Object.fromEntries(parts) }));
+  const hits = [];
+  for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
+    const [n1, x] = parts[i];
+    const [n2, y] = parts[j];
+    if (x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b) hits.push(`${n1}×${n2}`);
+  }
+  ok("가로 오버레이: 버튼끼리 겹침 0", hits.length === 0, hits.join(","));
+  const row = { lr: [B.L.t - B.R.t, B.L.b - B.R.b], ss: [B.SELECT.t - B.START.t, B.SELECT.b - B.START.b], mid: +(B.DIR.cy - B.FACE.cy).toFixed(2) };
+  ok("가로 오버레이: 같은 줄 위·아래 차이 0(L·R, SELECT·START) · 스틱·A·B 묶음 가운데 차이 0", row.lr.every((v) => v === 0) && row.ss.every((v) => v === 0) && row.mid === 0, JSON.stringify(row));
+  ok(`가로 오버레이: 원래 크기(배율 ${st.art} = 표시 ${onState.art}) · 반투명 ${st.opacity}`, st.art === onState.art && st.opacity === "0.5", "");
+  const through = await ov.page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id ?? "", [S.cx, S.cy]);
+  ok("가로 오버레이: 게임 화면 가운데는 버튼이 받지 않음(게임 화면으로)", through === "canvas", through);
+  const ovInput = await padTouch(ov.page, ov.context, B);
+  const sameInput = ovInput.aDown.held === onInput.aDown.held && ovInput.dDown.held === onInput.dDown.held && ovInput.aUp.held === 0 && ovInput.dUp.held === 0;
+  ok("가로 오버레이 입력 = 표시 모드(A 터치·스틱 오른쪽) · 누르는 동안 눌림 표시(불투명 0.85) · 떼면 0", sameInput && (ovInput.aDown.held & PAD_BITS.A) && (ovInput.dDown.held & PAD_BITS.RIGHT) && ovInput.aDown.a && ovInput.aDown.aOp === "0.85" && ovInput.dDown.d && ovInput.dDown.dOp === "0.85" && !ovInput.aUp.a && !ovInput.dUp.d, JSON.stringify({ ovInput, onInput }));
+  const bar = await ov.page.evaluate(() => [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).map((n) => { const r = n.getBoundingClientRect(); return [r.top, r.bottom]; }));
+  ok("가로 오버레이: 상단 버튼 줄 위·아래 차이 0", bar.length > 1 && bar.every((b) => b[0] === bar[0][0] && b[1] === bar[0][1]), JSON.stringify(bar));
+  await ov.page.screenshot({ path: path.join(shots, "가로_844x390_오버레이.png") });
+  await ov.page.keyboard.press("KeyP");
+  await ov.page.waitForTimeout(200);
+  const paused = await padState(ov.page);
+  await ov.page.keyboard.press("KeyP");
+  await ov.page.waitForTimeout(200);
+  const resumed = await padState(ov.page);
+  ok("가로 오버레이: 일시정지 덮개가 보이는 동안 가상 버튼 숨김(덮개 버튼을 가리지 않음) · 다시 실행하면 표시", paused.display === "none" && resumed.display === "grid", `${paused.display} → ${resumed.display}`);
+
+  const portOn = await withGame(port, "on");
+  const portOnState = await padState(portOn.page);
+  await portOn.context.close();
+  const portOv = await withGame(port, "overlay");
+  const portOvState = await padState(portOv.page);
+  ok("세로 오버레이 = 표시와 같은 배치(data-pad on · 버튼 자리 같음)", portOvState.pad === "on" && sameBoxes(portOvState.boxes, portOnState.boxes), JSON.stringify({ pad: portOvState.pad }));
+  await portOv.page.setViewportSize(land.viewport);
+  await portOv.page.waitForTimeout(500);
+  const turned = await padState(portOv.page);
+  await portOv.page.setViewportSize(port.viewport);
+  await portOv.page.waitForTimeout(500);
+  const back = await padState(portOv.page);
+  ok("회전: 세로(표시 배치) → 가로(오버레이, 같은 자리) → 세로(표시 배치)", turned.pad === "overlay" && sameBoxes(turned.boxes, B) && back.pad === "on" && sameBoxes(back.boxes, portOnState.boxes), JSON.stringify({ turned: turned.pad, back: back.pad }));
+
+  await portOv.page.evaluate(() => window.webgba.openSheet("settings"));
+  await portOv.page.waitForTimeout(400);
+  const words = await (await fetch(new URL("/i18n/ko.json", URL_BASE))).json();
+  await portOv.page.evaluate((label) => {
+    const row = [...document.querySelectorAll("#sheetBody .field")].find((n) => n.querySelector(".field__label")?.textContent === label);
+    row.scrollIntoView({ block: "center" });
+    row.querySelector(".pick").dataset.uiPick = "1";
+  }, words["web.pad"]);
+  await portOv.page.click('[data-ui-pick="1"]');
+  await portOv.page.waitForSelector("#choice:not([hidden]) .choice__opt");
+  await portOv.page.waitForTimeout(300);
+  const choice = await portOv.page.evaluate(() => ({ labels: [...document.querySelectorAll(".choice__opt")].map((n) => n.querySelector(".choice__label").textContent), selected: document.querySelector('.choice__opt[aria-selected="true"]')?.dataset.value }));
+  ok(`설정 가상 버튼: 세 값(${choice.labels.join("·")}) · 현재 오버레이`, choice.labels.join("|") === [words["web.pad.on"], words["web.pad.overlay"], words["web.pad.off"]].join("|") && choice.selected === "overlay", JSON.stringify(choice));
+  await measure(portOv.page, "390x844|ko|가상 버튼 옵션", ["#choice .sheet__head", ".choice__opt"]);
+  await rowPads(portOv.page, "390x844|ko|가상 버튼 옵션·여백", ".choice__opt");
+  await portOv.page.screenshot({ path: path.join(shots, "세로_390x844_설정_가상버튼.png") });
+  await portOv.page.click('.choice__opt[data-value="off"]');
+  await portOv.page.waitForTimeout(300);
+  const picked = await portOv.page.evaluate(() => ({ pref: window.webgba.state.prefs.pad, pad: document.body.dataset.pad }));
+  ok("설정에서 숨김 고르면 바로 반영·저장", picked.pref === "off" && picked.pad === "off", JSON.stringify(picked));
+  ok("오버레이 시험 페이지 오류 없음", portOv.page.errors.length === 0 && ov.page.errors.length === 0, [...portOv.page.errors, ...ov.page.errors].join(" | "));
+  await portOv.context.close();
+  await ov.context.close();
+}
+
+if (ONLY_OVERLAY) await overlayChecks();
+
+// ── 설정 줄 문구·테마 목록(웹: 커스텀 없음, 대표 색 4개 견본)·빈 라이브러리·빈 세이브 ──
+async function settextChecks() {
+  const shots = CAPTURE || SHOTS;
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    for (const lang of LANGS) {
+      const key = `${viewport.width}x${viewport.height}|${lang}`;
+      const { context, page } = await aspectPage({ viewport, dpr: 2, mobile: true }, {}, { prefs: { lang } });
+      await page.evaluate(() => window.webgba.openSheet("settings"));
+      await page.waitForTimeout(400);
+      const count = await page.evaluate(() => document.querySelectorAll("#sheetBody .field").length);
+      for (let at = 0; at < count; at += 4) {
+        await page.evaluate((i) => document.querySelectorAll("#sheetBody .field")[i].scrollIntoView({ block: "start" }), at);
+        await page.waitForTimeout(80);
+        await measure(page, `${key}|settings@${at}`, [".field"]);
+      }
+      await rowPads(page, `${key}|settings·여백`, "#sheetBody .field");
+      const cut = await page.evaluate(() =>
+        [...document.querySelectorAll("#sheetBody .field__label, #sheetBody .field__note, #sheetBody .pick__value")]
+          .filter((n) => {
+            const row = n.closest(".field").getBoundingClientRect();
+            const r = n.getBoundingClientRect();
+            return n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1 || r.top < row.top - 0.5 || r.bottom > row.bottom + 0.5;
+          })
+          .map((n) => n.textContent.trim()),
+      );
+      ok(`${key} 설정 이름·설명·선택 값 잘림 0`, cut.length === 0, cut.join(" / "));
+      if (lang === "ko" && viewport.width === 390) {
+        await page.evaluate(() => (document.getElementById("sheetBody").scrollTop = 0));
+        await page.waitForTimeout(150);
+        await page.screenshot({ path: path.join(shots, "세로_390x844_설정.png") });
+      }
+      if (viewport.width === 390) await themeRows(page, key, lang === "ko" ? path.join(shots, "세로_390x844_설정_테마.png") : "");
+      await context.close();
+    }
+  }
+  const { context, page } = await aspectPage({ viewport: { width: 390, height: 844 }, dpr: 2, mobile: true }, {}, { prefs: { lang: "ko" } });
+  const words = await (await fetch(new URL("/i18n/ko.json", URL_BASE))).json();
+  for (const [sheet, selector, word, shot] of [
+    ["library", ".lib__empty", "web.lib.empty", "세로_390x844_빈_라이브러리.png"],
+    ["saves", "#sheetBody .empty", "web.save.empty", ""],
+  ]) {
+    await page.evaluate((name) => window.webgba.openSheet(name), sheet);
+    await page.waitForTimeout(600);
+    const info = await page.evaluate((selector) => {
+      const n = document.querySelector(selector);
+      const r = n.getBoundingClientRect();
+      const host = n.parentElement.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const lines = [...range.getClientRects()].map((c) => Math.round(c.top)).filter((v, i, a) => a.indexOf(v) === i).length;
+      const text = range.getBoundingClientRect();
+      return { text: n.textContent, align: getComputedStyle(n).textAlign, lines, left: +(text.left - host.left).toFixed(2), right: +(host.right - text.right).toFixed(2) };
+    }, selector);
+    ok(`빈 ${sheet}: 문구 '${words[word]}' · 가운데 정렬(좌우 여백 차이 ${Math.abs(info.left - info.right).toFixed(2)}px) · ${info.lines}줄`, info.text === words[word] && info.align === "center" && Math.abs(info.left - info.right) <= 1, JSON.stringify(info));
+    await measure(page, `390x844|ko|빈 ${sheet}`, [selector]);
+    if (shot) await page.screenshot({ path: path.join(shots, shot) });
+    await page.click("#sheetClose");
+    await page.waitForTimeout(300);
+  }
+  await context.close();
+}
+
+// 테마 옵션 줄: 커스텀 없음, 줄마다 대표 색 4개(바탕·면·강조·글자) 한 줄이 글자 좌측 — 견본 묶음 가운데 = 글자 잉크 가운데, 줄 위·아래 여백 같음(선택 줄 포함)
+async function themeRows(page, key, shot) {
+  const label = await page.evaluate(() => document.querySelectorAll("#sheetBody .field")[1].querySelector(".field__label").textContent);
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll("#sheetBody .field")][1];
+    row.scrollIntoView({ block: "center" });
+    row.querySelector(".pick").dataset.uiPick = "1";
+  });
+  await page.click('[data-ui-pick="1"]');
+  await page.waitForSelector("#choice:not([hidden]) .choice__opt");
+  await page.waitForTimeout(350);
+  const meta = await page.evaluate(async () => {
+    const T = await import("/js/shell/theme.js");
+    const rows = [...document.querySelectorAll(".choice__opt")];
+    const want = T.MODES.filter((m) => m.id !== "custom").map((m) => m.id);
+    const list = document.getElementById("choiceList").getBoundingClientRect();
+    return {
+      values: rows.map((r) => r.dataset.value),
+      want,
+      chips: rows
+        .map((r) => {
+          const preset = T.presetOf(r.dataset.value);
+          const b = r.querySelector(".choice__swatch").getBoundingClientRect();
+          return { value: r.dataset.value, want: ["--bg-sunken", "--bg", "--accent", "--text"].map((t) => preset[t].toLowerCase()), at: [0, 1, 2, 3].map((i) => [b.left + 7 + 16 * i, b.top + 7]), visible: b.top >= list.top && b.bottom <= list.bottom };
+        })
+        .filter((c) => c.visible),
+      leftOf: rows.every((r) => r.querySelector(".choice__swatch").getBoundingClientRect().right < r.querySelector(".choice__label").getBoundingClientRect().left),
+      gap: rows.map((r) => +(r.querySelector(".choice__label").getBoundingClientRect().left - r.querySelector(".choice__swatch").getBoundingClientRect().right).toFixed(2)),
+    };
+  });
+  const dpr = await page.evaluate(() => devicePixelRatio);
+  const shown = await shoot(page);
+  const hexAt = ([x, y]) => {
+    const o = (Math.round(y * dpr) * shown.width + Math.round(x * dpr)) * 4;
+    return "#" + [0, 1, 2].map((k) => shown.data[o + k].toString(16).padStart(2, "0")).join("");
+  };
+  const wrong = meta.chips.filter((c) => c.at.map(hexAt).join() !== c.want.join()).map((c) => `${c.value}: ${c.at.map(hexAt).join(",")} ≠ ${c.want.join(",")}`);
+  ok(`${key} 테마 목록 ${meta.values.length}개 · 커스텀 없음 · 견본 4색 = 테마 토큰(바탕·면·강조·글자, 보이는 ${meta.chips.length}줄 픽셀) · 견본은 글자 좌측(간격 ${[...new Set(meta.gap)].join("/")}px)`, meta.values.join() === meta.want.join() && !meta.values.includes("custom") && meta.chips.length > 0 && wrong.length === 0 && meta.leftOf && new Set(meta.gap).size === 1, `${label} · ${wrong.join(" / ")}`);
+  const seen = new Map();
+  const total = meta.values.length;
+  for (let round = 0; round < total && seen.size < total; round++) {
+    const next = [...Array(total).keys()].find((i) => !seen.has(i));
+    await page.evaluate((i) => document.querySelectorAll(".choice__opt")[i].scrollIntoView({ block: "nearest" }), next);
+    await page.waitForTimeout(80);
+    const image = await shoot(page);
+    const rows = await page.evaluate(() => {
+      const list = document.getElementById("choiceList").getBoundingClientRect();
+      return [...document.querySelectorAll(".choice__opt")].map((r, i) => {
+        const b = r.getBoundingClientRect();
+        const st = getComputedStyle(r);
+        const lab = r.querySelector(".choice__label").getBoundingClientRect();
+        const sw = r.querySelector(".choice__swatch").getBoundingClientRect();
+        return { i, value: r.dataset.value, selected: r.getAttribute("aria-selected") === "true", visible: b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5, top: b.top, bottom: b.bottom - parseFloat(st.borderBottomWidth), lab: { left: lab.left, right: lab.right }, sw: { top: sw.top, bottom: sw.bottom } };
+      });
+    });
+    for (const r of rows) {
+      if (!r.visible || seen.has(r.i)) continue;
+      const ink = inkCheck(image, dpr, { left: r.lab.left, right: r.lab.right, top: r.top, bottom: r.bottom, inset: 0 });
+      const textMid = ink ? (r.top + r.bottom + ink.top - ink.bottom) / 2 : NaN;
+      const swMid = (r.sw.top + r.sw.bottom) / 2;
+      seen.set(r.i, { value: r.value, selected: r.selected, mid: +Math.abs(textMid - swMid).toFixed(2), top: +Math.min(ink?.top ?? Infinity, r.sw.top - r.top).toFixed(2), bottom: +Math.min(ink?.bottom ?? Infinity, r.bottom - r.sw.bottom).toFixed(2), swatch: `${+(r.sw.top - r.top).toFixed(2)}/${+(r.bottom - r.sw.bottom).toFixed(2)}`, height: +(r.bottom - r.top).toFixed(2) });
+    }
+  }
+  const all = [...seen.values()];
+  const mids = all.map((r) => r.mid);
+  table.push({ key, target: "테마 견본·글자 가운데", top: 0, bottom: 0, diff: Math.max(...mids) });
+  ok(`${key} 테마 줄 ${all.length}/${total}: 견본 묶음 가운데 = 글자 잉크 가운데(최대 차이 ${Math.max(...mids)}px, 선택 줄 포함)`, all.length === total && mids.every((v) => v === 0), JSON.stringify(all.filter((r) => r.mid !== 0)));
+  // 줄 높이는 fitRows 가 글자 잉크 + 여백을 짝수 px 로 맞춘 값이라, 아래로 내려가는 획(g·p)이 있는 이름 줄은 2px 높고 여백이 0.5px 다를 수 있다
+  const pads = all.flatMap((r) => [r.top, r.bottom]);
+  const spread = +(Math.max(...pads) - Math.min(...pads)).toFixed(2);
+  ok(`${key} 테마 줄마다 위 여백 = 아래 여백(차이 0, 선택 줄 포함) · 줄끼리 여백 차이 ${spread}px`, all.length === total && all.every((r) => r.top === r.bottom) && spread <= 0.5, JSON.stringify(all.map((r) => `${r.value}${r.selected ? "*" : ""}:${r.top}/${r.bottom} 높이 ${r.height}`)));
+  if (shot) {
+    await page.evaluate(() => (document.getElementById("choiceList").scrollTop = 0));
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: shot });
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+}
+
+if (ONLY_SETTEXT) await settextChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

@@ -73,7 +73,7 @@ node tools/run.cjs   # list all commands
 
 - **.gba / .zip** — runs on the app's `bin\core\mgba_core.wasm` (mGBA 0.10.1). 240x160 screen (fits the right-hand area, keeps the aspect ratio; integer scaling in settings), sound, key bindings, gamepad,
   fast-forward (2x/3x/4x/8x), pause, reset, saves (`<ROM name>.sav` next to the ROM, same format as VBA and mGBA),
-  save-state slots 1–9. For `.zip`, the first `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` inside is opened.
+  save-state slots 1–9 (neither saving nor loading is available during multiplayer). For `.zip`, the first `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` inside is opened.
 - **.gb / .gbc (GB and GBC)** — run on the same mGBA core. The system is told from the ROM header, not the extension (same rule as mGBA; GBC-only and GB/GBC-compatible games get GBC colors, monochrome GB games get mGBA's default four grays).
   160x144 screen (10:9, and the screen area is 10:9 too). Keys are the eight A, B, START, SELECT and directions (no L/R — hidden from the touch buttons, key settings and controls list as well; changed keys are the app-wide keys shared with GBA games).
   Battery saves (`<ROM name>.sav` next to the ROM, same place and name as for .gba), the cartridge clock (MBC3 RTC — runs on real time and is stored in the last 48 bytes of the save, the same format as mGBA and VBA-M), save-state slots and the web version's auto-save.
@@ -101,16 +101,16 @@ node tools/run.cjs   # list all commands
   About a second after the game saves, and also when you close the window or open another game, that `.sav` file itself is overwritten in place. No backup file is made.
   If it cannot be written (read-only, for example) the status bar says so and it is tried again on the next save or on close. To use another save, File › Import save… (overwrites the `.sav` next to the game with it); to take one out, Export save….
 - **Two directions at once** — Settings › General › Game. Chooses which direction reaches the game when two are held:
-  **Last pressed only** (default, you turn as soon as you press) · Opposite: last wins (only ←+→ and ↑+↓) · Pass all (same as a real GBA).
+  **Off** (default, you turn as soon as you press) · Diagonal input (only ←+→ and ↑+↓ keep the last one) · All input (same as a real GBA).
   A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
 - **Auto fire** — Settings › General › Game (web: Settings). When on, holding A · B · C · D · L · R (roles `a`, `b`, `c`, `d`, `l`, `r`) presses it repeatedly (not the directions, START or SELECT).
-  Speed levels 1–9 = 4 · 6 · 8 · 10 · 12 · 15 · 20 · 24 · 30 presses per second (default level 5, level 9 = press and release every 2 frames). It counts game frames, so the pattern is the same while fast-forwarding, and the same setting applies to the keyboard, gamepads and on-screen buttons (one app-wide setting). Off by default.
+  Speed levels 1–9 = 1 · 2 · 3 · 4 · 6 · 8 · 12 · 20 · 30 presses per second (default level 5 = 6 per second, level 1 = 30 frames pressed and 30 frames released, level 9 = press and release every 2 frames). It counts game frames, so the pattern is the same while fast-forwarding, and the same setting applies to the keyboard, gamepads and on-screen buttons (one app-wide setting). Off by default.
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
 - **Toolbar** — vertical bar on the left. When collapsed it no longer covers the game, which gets the extra width; the collapsed state is remembered.
 - **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, auto fire, state slot, saves, file association and ROM name, clearing favorites/recent files, and key bindings — all in one window.
-- **13 themes** — the same theme set as Arbiter (7 dark, 5 light, custom). Applied instantly to the whole webGBA UI (toolbar, lists, windows, dialogs); the game screen itself is not changed.
+- **13 themes** — the same theme set as Arbiter (7 dark, 5 light, custom; the web version has the 12 without custom, each shown with 4 key colours in the list). Applied instantly to the whole webGBA UI (toolbar, lists, windows, dialogs); the game screen itself is not changed.
 - **Languages** — 한국어 (default), English, 日本語. Switching in Settings › Language applies immediately without a restart and is remembered.
 
 ---
@@ -565,7 +565,7 @@ One button:
 - If `l2`·`r2` exist, `l`·`r` use only gamepad buttons 4·5.
 - Roles that match a GBA button (`a` `b` `select` `start`, directions, `l` `r`) follow the GBA keys the user set in the app (the table shows the initial values).
 - A key goes to one button only (whichever was assigned first). In the Windows app, Settings › Keys shows just that game's buttons and remembers changes per game id.
-- When the user turns on **auto fire**, the host passes buttons with role `a`, `b`, `c`, `d`, `l` or `r` as repeated presses and releases while they are held (4–30 per second; ① = per `Web_RunFrame(keys)` frame, ② = key events per display frame of the frame runtime). Give buttons that should not repeat `role: "extra"`.
+- When the user turns on **auto fire**, the host passes buttons with role `a`, `b`, `c`, `d`, `l` or `r` as repeated presses and releases while they are held (1–30 per second; ① = per `Web_RunFrame(keys)` frame, ② = key events per display frame of the frame runtime). Give buttons that should not repeat `role: "extra"`.
 
 #### 5.3 GBA default layout `preset: "gba"`
 
@@ -878,7 +878,7 @@ Guest: ① enter the host code and press Next → ② give the answer code (· Q
 - Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly. `join: "anytime"` games differ (7.12).
 - Help when connecting fails: "Check that you are on the same Wi-Fi, that it is not a guest or public Wi-Fi, and that VPN is off."
 
-During a session the host keeps to: fast-forward and speed changes off (1×), loading states and reset blocked, opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others (not when only the tab is hidden on a PC: frames keep running), `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
+During a session the host keeps to: fast-forward and speed changes off (1×), quick slots (saving and loading states), web auto save and reset blocked (the game's own save stays as it is), opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others (not when only the tab is hidden on a PC: frames keep running), `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
 
 #### 7.8 For game authors
 

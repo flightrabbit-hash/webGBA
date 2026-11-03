@@ -5,6 +5,7 @@
 //   [--only base,rejoin,wan,ice,anytime] 로 묶음을 고른다(기본 전부). rejoin = 다시 들어오기(손님 끊김 20초·ICE 재시작·방장 끊김·선택 안 한 게임),
 //   wan = 인터넷 연결 설정(STUN 후보·코드), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 설정 끔, 지정 안 한 게임),
 //   anytime = 중간 참가 게임(join: "anytime" — 창 자동 열림·시간 초과 없음, 방장 혼자 창 닫기·방 유지 Upstash 명령 수, 손님 참가 알림, 다시 들어오기·인터넷 연결과 함께).
+//   nosave = 세션 중 퀵슬롯·자동 저장 막음(혼자 = 그대로, 방장 혼자 받는 중·2명·다시 들어오기 대기 = 버튼 끔 모양·클릭·탭 알림·포커스·눌림 없음·자동 저장 건너뜀, 세션 끝 = 다시 동작, 상단 버튼 잉크 위·아래 차이 0).
 //   크롬 개발자 도구의 오프라인은 WebRTC 를 끊지 않으므로, 끊김은 페이지의 RTCPeerConnection 을 감싸 채널 송수신을 막고(window.__netCut)
 //   동시에 오프라인(context.setOffline)으로 서버 요청도 막아 흉내 낸다.
 import fs from "node:fs";
@@ -23,7 +24,7 @@ const which = opt.browser ?? "chrome";
 const SHOTS = opt.shots ?? "";
 const CAPTURE = opt.capture ?? "";
 const REMOTE = opt.base ?? "";
-const ONLY = new Set(String(opt.only ?? "base,rejoin,wan,ice,anytime").split(","));
+const ONLY = new Set(String(opt.only ?? "base,rejoin,wan,ice,anytime,nosave").split(","));
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 if (CAPTURE) fs.mkdirSync(CAPTURE, { recursive: true });
 
@@ -96,8 +97,8 @@ function rtcWrap() {
   window.RTCPeerConnection = Wrapped;
 }
 
-async function peer(name, { nick = "", ip = "", prefs = {} } = {}) {
-  const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+async function peer(name, { nick = "", ip = "", prefs = {}, touch = false } = {}) {
+  const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: touch });
   await context.addInitScript(rtcWrap);
   await context.addInitScript(({ nick, prefs }) => {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
@@ -163,6 +164,7 @@ try {
   if (ONLY.has("ice") && !REMOTE) await iceTests();
   if (opt.turn && !REMOTE) await turnTests();
   if (ONLY.has("anytime") && !REMOTE) await anytimeTests();
+  if (ONLY.has("nosave") && !REMOTE) await nosaveTests();
   for (const p of peers) if (p.errors.length) ok(`페이지 오류 없음 ${p.name}`, false, p.errors.slice(0, 3).join(" | "));
 } catch (error) {
   ok("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 4).join(" | "));
@@ -859,4 +861,190 @@ async function anytimeTests() {
     ok("중간 참가 게임 손님 끊김 20초 → 같은 자리로 돌아옴", back, JSON.stringify(await snap(RG)));
   }
   for (const p of [RH, RG]) await p.context.close();
+}
+
+function quickView(p) {
+  return p.page.evaluate(() => {
+    const w = window.webgba;
+    const btn = document.getElementById("btnQuick");
+    const toastNode = document.getElementById("toast");
+    const tool = w.skin.tools.get(btn) ?? {};
+    return {
+      locked: w.player.net.locked,
+      aria: btn.getAttribute("aria-disabled"),
+      htmlDisabled: btn.disabled,
+      title: btn.title,
+      sheet: w.state.sheet,
+      toast: toastNode && !toastNode.hidden ? toastNode.textContent : "",
+      focus: document.activeElement === btn,
+      focusVisible: btn.matches(":focus-visible"),
+      drawnOff: Boolean(tool.disabled),
+      pressed: Boolean(tool.pressed),
+      autoCount: w.state.quick.autoCount,
+      played: w.state.quick.played,
+    };
+  });
+}
+
+// the quick button canvas: alpha mask signature + ink rows, to tell the off art keeps the same place and size
+function quickArt(p) {
+  return p.page.evaluate(() => {
+    const c = document.querySelector("#btnQuick canvas");
+    const { data, width, height } = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+    let mask = "";
+    let colors = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      mask += data[i + 3] ? "1" : "0";
+      colors = (colors * 31 + data[i] * 7 + data[i + 1] * 3 + data[i + 2]) % 1000003;
+    }
+    return { width, height, mask, colors };
+  });
+}
+
+// visible top-bar tools: canvas ink rows (alpha > 0) in CSS px — the drawn button, not the element box
+function barInk(p) {
+  return p.page.evaluate(() =>
+    [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null && !n.closest(".bar__group--files")).map((n) => {
+      const c = n.querySelector("canvas");
+      const r = c.getBoundingClientRect();
+      const { data, width, height } = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+      let y0 = -1;
+      let y1 = -1;
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++)
+          if (data[(y * width + x) * 4 + 3]) {
+            if (y0 < 0) y0 = y;
+            y1 = y;
+            break;
+          }
+      const k = r.height / height;
+      const box = n.getBoundingClientRect();
+      return { id: n.id, off: n.getAttribute("aria-disabled") === "true", top: box.top, bottom: box.bottom, it: +(r.top + y0 * k).toFixed(2), ib: +(r.top + (y1 + 1) * k).toFixed(2) };
+    }),
+  );
+}
+
+async function quickSlot9(p) {
+  return p.page.evaluate(async () => (await window.webgba.store.states(window.webgba.state.game.saveId)).find((s) => s.slot === 9)?.saved ?? 0);
+}
+
+// push the auto-save clock past one minute and wait two ticks
+async function autoTry(p) {
+  const before = await quickView(p);
+  const saved = await quickSlot9(p);
+  await p.page.evaluate(() => (window.webgba.state.quick.played = 59200));
+  await sleep(2600);
+  const after = await quickView(p);
+  return { saved: after.autoCount > before.autoCount && (await quickSlot9(p)) > saved, skipped: after.autoCount === before.autoCount && (await quickSlot9(p)) === saved, played: after.played, toast: after.toast };
+}
+
+// click (mouse) or tap (touch) the quick button; the press art is read between down and up for the mouse
+async function hitQuick(p, how) {
+  await p.page.evaluate(() => window.webgba.toast(""));
+  await sleep(100);
+  const r = await p.page.evaluate(() => {
+    const b = document.getElementById("btnQuick").getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  let downPressed = false;
+  if (how === "tap") await p.page.touchscreen.tap(r.x, r.y);
+  else {
+    await p.page.mouse.move(r.x, r.y);
+    await p.page.mouse.down();
+    downPressed = (await quickView(p)).pressed;
+    await p.page.mouse.up();
+  }
+  await sleep(250);
+  return { ...(await quickView(p)), downPressed };
+}
+
+function blockedOk(v) {
+  return v.locked && v.aria === "true" && !v.htmlDisabled && v.drawnOff && v.sheet === "" && v.toast === "멀티플레이 중에는 사용할 수 없습니다" && !v.focus && !v.focusVisible && !v.pressed && !v.downPressed && v.title === "퀵슬롯";
+}
+
+async function nosaveTests() {
+  const BLOCK_TEXT = "멀티플레이 중에는 사용할 수 없습니다";
+  const H = await peer("NH", { nick: "방장 N", prefs: { autoSave: 1 } });
+  const G = await peer("NG", { nick: "유저 N", prefs: { autoSave: 1 }, touch: true });
+  for (const p of [H, G]) await open(p, "anytimeRejoin");
+
+  // ── 혼자 실행: 그대로 ──
+  const solo = await quickView(H);
+  const soloArt = await quickArt(H);
+  const soloAuto = await autoTry(H);
+  ok("혼자 실행: 퀵슬롯 버튼 켜짐 · 자동 저장(1분) 9번 칸에 저장", !solo.locked && solo.aria === "false" && !solo.drawnOff && soloAuto.saved, JSON.stringify({ solo, soloAuto }));
+  const soloHit = await hitQuick(H, "click");
+  ok("혼자 실행: 퀵슬롯 버튼 클릭 → 퀵슬롯 창 열림", soloHit.sheet === "quick", JSON.stringify(soloHit));
+  await H.page.click("#sheetClose");
+  await waitFor(async () => (await sheetOf(H)) === "", 3000);
+
+  // ── 방장 혼자 받는 중(창 닫음, 세션 열림) ──
+  await press(H, "KeyZ");
+  await sleep(800);
+  await H.page.click("#btnNet");
+  await waitFor(async () => (await sheetOf(H)) === "net" && Boolean(await H.page.$('[data-action="net-room-make"]')), 5000);
+  await H.page.click('[data-action="net-room-make"]');
+  const code = await roomCode(H);
+  await H.page.click('[data-action="net-close"]');
+  await waitFor(async () => (await sheetOf(H)) === "", 4000, 100);
+  await sleep(400);
+  const lobbyHit = await hitQuick(H, "click");
+  ok(`방장 혼자 받는 중(${code}): 퀵슬롯 버튼 끔 모양(aria-disabled, title 은 이름 그대로) · 클릭 → 알림 '${BLOCK_TEXT}' · 창 안 열림 · 포커스·눌림 없음`, blockedOk(lobbyHit), JSON.stringify(lobbyHit));
+  const lobbyArt = await quickArt(H);
+  ok("끔 모양 그림: 켜짐과 같은 크기·같은 모양(알파 무늬 같음) · 색만 다름", lobbyArt.width === soloArt.width && lobbyArt.height === soloArt.height && lobbyArt.mask === soloArt.mask && lobbyArt.colors !== soloArt.colors, `${soloArt.width}x${soloArt.height}`);
+  const lobbyAuto = await autoTry(H);
+  ok("방장 혼자 받는 중: 자동 저장 시간이 지나도 저장 안 함 · 알림 없음 · 쌓은 시간 0", lobbyAuto.skipped && lobbyAuto.played === 0 && !/자동 저장/.test(lobbyAuto.toast), JSON.stringify(lobbyAuto));
+  const direct = await H.page.evaluate(async () => ({ save: await window.webgba.player.saveState(3), load: await window.webgba.player.loadState(9) }));
+  ok("세션 중 player.saveState·loadState 직접 호출도 false", direct.save === false && direct.load === false, JSON.stringify(direct));
+
+  // ── 2명 게임 진행 ──
+  await press(G, "KeyZ");
+  await sleep(800);
+  await G.page.click("#btnNet");
+  await waitFor(() => G.page.$(`[data-action="net-near-join"][data-room="${code}"]`), 12000);
+  await G.page.click(`[data-action="net-near-join"][data-room="${code}"]`);
+  const joined = await waitFor(async () => (await game(H))?.count === 2 && (await game(G))?.open === 1, 25000, 200);
+  await waitFor(async () => (await sheetOf(G)) === "", 5000);
+  await sleep(1500);
+  const gHit = await hitQuick(G, "tap");
+  ok("2명 게임 중 유저(터치): 퀵슬롯 버튼 끔 모양 · 탭 → 알림 · 창 안 열림 · 포커스·눌림 없음", joined && blockedOk(gHit), JSON.stringify(gHit));
+  const hHit = await hitQuick(H, "click");
+  ok("2명 게임 중 방장: 클릭 → 알림 · 창 안 열림", blockedOk(hHit), JSON.stringify(hHit));
+  const ink = await barInk(H);
+  const spreadInk = (k) => spreadOf(ink, k);
+  ok("세션 중 상단 버튼 줄(퀵슬롯 끔 포함): 버튼·그림 잉크 위·아래 차이 0", ink.some((b) => b.id === "btnQuick" && b.off) && spreadInk("top") === 0 && spreadInk("bottom") === 0 && spreadInk("it") === 0 && spreadInk("ib") === 0, JSON.stringify(ink.map((b) => `${b.id}${b.off ? "(끔)" : ""}:${b.it}-${b.ib}`)));
+  await H.page.evaluate(() => window.webgba.toast("멀티플레이 중에는 사용할 수 없습니다", "warn"));
+  if (SHOTS) await H.page.screenshot({ path: path.join(SHOTS, "웹_세션중_퀵슬롯_끔_390x844.png") });
+  const gAuto = await autoTry(G);
+  ok("2명 게임 중 유저: 자동 저장 건너뜀", gAuto.skipped && gAuto.played === 0, JSON.stringify(gAuto));
+
+  // ── 다시 들어오기 대기(유저 끊김) ──
+  await cut(G, true);
+  const rejoining = await waitFor(async () => (await snap(G)).rejoining, 30000, 250);
+  await G.page.evaluate(() => window.webgba.net.win.requestClose());
+  await waitFor(async () => (await sheetOf(G)) === "", 3000);
+  const rHit = await hitQuick(G, "tap");
+  const rAuto = await autoTry(G);
+  ok("다시 들어오기 대기(끊긴 유저): 퀵슬롯 버튼 끔 · 탭 → 알림 · 자동 저장 건너뜀", Boolean(rejoining) && blockedOk(rHit) && rAuto.skipped, JSON.stringify({ rHit, rAuto }));
+  await cut(G, false);
+  const back = await waitFor(async () => {
+    const s = await snap(G);
+    return s.connected && !s.rejoining;
+  }, 40000, 250);
+  ok("끊긴 유저 돌아옴(세션 계속 = 계속 막힘)", Boolean(back) && (await quickView(G)).aria === "true", JSON.stringify(await snap(G)));
+
+  // ── 세션 끝 → 다시 동작 ──
+  await H.page.evaluate(() => window.webgba.player.net.leave());
+  const ended = await waitFor(async () => !(await quickView(G)).locked && !(await quickView(H)).locked, 10000);
+  await waitFor(async () => (await sheetOf(G)) === "", 3000);
+  const endView = await quickView(G);
+  ok("세션 끝(방장 나감): 방장·유저 퀵슬롯 버튼 다시 켜짐", Boolean(ended) && endView.aria === "false" && !endView.drawnOff && (await quickView(H)).aria === "false", JSON.stringify(endView));
+  const endHit = await hitQuick(G, "tap");
+  ok("세션 끝: 탭 → 퀵슬롯 창 열림", endHit.sheet === "quick", JSON.stringify(endHit));
+  await G.page.click("#sheetClose");
+  await waitFor(async () => (await sheetOf(G)) === "", 3000);
+  const endAuto = await autoTry(G);
+  const endAutoH = await autoTry(H);
+  ok("세션 끝: 자동 저장 다시 동작(방장·유저)", endAuto.saved && endAutoH.saved, JSON.stringify({ endAuto, endAutoH }));
+  for (const p of [H, G]) await p.context.close();
 }

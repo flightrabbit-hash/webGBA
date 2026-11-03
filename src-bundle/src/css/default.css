@@ -288,7 +288,7 @@ body {
   height: var(--glyph);
 }
 
-.iconbtn:hover:not(:disabled) {
+.iconbtn:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--bg-hover);
   color: var(--text);
 }
@@ -299,12 +299,13 @@ body {
   box-shadow: var(--focus-ring);
 }
 
-.iconbtn:disabled {
+.iconbtn:disabled,
+.iconbtn[aria-disabled="true"] {
   color: var(--off);
   cursor: default;
 }
 
-.iconbtn:active:not(:disabled) {
+.iconbtn:active:not(:disabled, [aria-disabled="true"]) {
   transform: scale(0.92);
 }
 
@@ -396,13 +397,14 @@ body {
   cursor: pointer;
 }
 
-.menu__item:hover:not(:disabled),
+.menu__item:hover:not(:disabled, [aria-disabled="true"]),
 .menu__item:focus-visible {
   outline: none;
   background: var(--bg-hover);
 }
 
-.menu__item:disabled {
+.menu__item:disabled,
+.menu__item[aria-disabled="true"] {
   color: var(--off);
   cursor: default;
 }

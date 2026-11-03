@@ -113,7 +113,7 @@ const buzzes = (log) => log.filter((x) => x.startsWith("buzz:")).length;
 {
   const { context, page } = await open({ mobile: true });
   const row = await vibrateRow(page);
-  ok("휴대폰: 설정 › 화면 \"버튼 진동\" 기본 끔 · 켤 수 있음 · 안내 글", row && row.checked === "false" && !row.disabled && !row.off && row.note === "게임 버튼을 누르면 짧게 진동합니다(십자 패드·스틱 제외)", JSON.stringify(row));
+  ok("휴대폰: 설정 › 화면 \"버튼 진동\" 기본 끔 · 켤 수 있음 · 안내 글", row && row.checked === "false" && !row.disabled && !row.off && row.note === "게임 버튼을 누르면 짧게 진동합니다", JSON.stringify(row));
   const offLog = await page.evaluate(() => (document.getElementById("sheetClose").click(), true)).then(() => page.waitForTimeout(400)).then(() => press(page, tap('[data-key="A"]')));
   ok(`휴대폰: 끈 상태에서 A → 진동 0(${buzzes(offLog)})`, buzzes(offLog) === 0 && offLog.some((x) => x.startsWith("key:")), offLog.join(" "));
   await page.evaluate(() => {

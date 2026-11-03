@@ -91,7 +91,7 @@ try {
   await sleep(200);
   const rows = await app.evaluate(ROWS);
   const centered = rows && Object.values(rows.offsets).every((v) => Math.abs(v) <= 1);
-  check("설정: 연사(체크) + 연사 속도(값 글·바), 기본 끔·5단계 · 끄면 바 비활성 · 줄 안 세로 가운데(1px 이하)", rows && rows.fireLabel === "연사" && !rows.checked && rows.disabled && rows.rowOff && rows.value === "5" && rows.min === "1" && rows.max === "9" && /5단계 · 초당 12회/.test(rows.caption) && centered, JSON.stringify(rows));
+  check("설정: 연사(체크) + 연사 속도(값 글·바), 기본 끔·5단계 · 끄면 바 비활성 · 줄 안 세로 가운데(1px 이하)", rows && rows.fireLabel === "연사" && !rows.checked && rows.disabled && rows.rowOff && rows.value === "5" && rows.min === "1" && rows.max === "9" && /5단계 · 초당 6회/.test(rows.caption) && centered, JSON.stringify(rows));
   await app.screenshot(path.join(work, "exe_설정_연사_끔.png"));
   await app.evaluate(`(() => {
     const range = document.querySelector('#settings-body input[data-key="autoFireLevel"]');
@@ -112,7 +112,7 @@ try {
   check("9단계: 게임 프레임 무늬 = 공식(2프레임마다)", nine === expected(40, 30), nine);
   await app.evaluate(`${T}.player.setAutoFire({ on: true, level: 1 })`);
   const one = await app.evaluate(HOLD("KeyZ", 66));
-  check("1단계: 게임 프레임 무늬 = 공식(15프레임마다)", one === expected(66, 4), one);
+  check("1단계: 게임 프레임 무늬 = 공식(초당 1회 = 30프레임 누름·30프레임 뗌)", one === expected(66, 1) && one.slice(0, 60) === "1".repeat(30) + "0".repeat(30), one);
   const cfg = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
   check("personalization.cfg 에 autoFire·autoFireLevel 저장", cfg.autoFire === true && cfg.autoFireLevel === 9, JSON.stringify({ autoFire: cfg.autoFire, autoFireLevel: cfg.autoFireLevel }));
   await app.evaluate(`${T}.shutdown()`).catch(() => {});

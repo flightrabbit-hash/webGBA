@@ -87,7 +87,7 @@ try {
 
   await app.evaluate(`${T}.openSettings('general').then(() => new Promise((r) => setTimeout(() => r(true), 400)))`);
   const row = await app.evaluate(`(() => { const row = ${DPAD_ROW}; row.scrollIntoView({ block: 'center' }); const radios = [...row.querySelectorAll('input[name="cfg-dpadMode"]')]; return { checked: radios.findIndex((n) => n.checked), hint: row.querySelector('.cfg__hint').textContent }; })()`);
-  check("설정 창: 방향 값 = 게임 값(모든 방향 전달)·안내 = 게임 전용", row.checked === 0 && (row.hint.includes("안녕 wgba") || row.hint.includes("Hello wgba")), JSON.stringify(row));
+  check("설정 창: 방향 값 = 게임 값(모든 입력)·안내 = 게임 전용", row.checked === 0 && (row.hint.includes("안녕 wgba") || row.hint.includes("Hello wgba")), JSON.stringify(row));
   await sleep(200);
   await app.screenshot(path.join(captures, "aspect_exe_설정_게임전용방향.png"));
   await app.evaluate(`(() => { ${DPAD_ROW}.querySelectorAll('input[name="cfg-dpadMode"]')[2].click(); document.getElementById('settings-save').click(); return true; })()`);

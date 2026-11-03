@@ -1005,6 +1005,44 @@ body[data-layout="landscape"] .key--start {
   margin-bottom: 10px;
 }
 
+body[data-pad="overlay"] .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "bar" "stage";
+}
+
+body[data-pad="overlay"] .pad {
+  grid-area: stage;
+  place-self: center;
+  z-index: 2;
+  display: grid;
+  width: var(--sw);
+  height: var(--sh);
+  grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "l . r" "dpad . face" "sel . start";
+  pointer-events: none;
+}
+
+body[data-pad="overlay"] .pad > * {
+  pointer-events: auto;
+}
+
+body[data-pad="overlay"] .key,
+body[data-pad="overlay"] .dpad {
+  opacity: 0.5;
+}
+
+body[data-pad="overlay"] .key[data-down],
+body[data-pad="overlay"] .dpad[data-down] {
+  opacity: 0.85;
+}
+
+body[data-pad="overlay"][data-view="start"] .pad,
+body[data-pad="overlay"] .app:has(#pauseVeil:not([hidden])) .pad {
+  display: none;
+}
+
 .overlay-box {
   position: fixed;
   left: 0;
@@ -1857,31 +1895,19 @@ body[data-layout="landscape"] .lib__shelf {
   visibility: hidden;
 }
 
-.field input[type="color"] {
+.choice__main {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  min-width: 0;
+}
+
+.choice__swatch {
+  display: block;
   flex: none;
-  width: 48px;
-  height: 32px;
-  margin-right: var(--px);
-  padding: calc(var(--px) * 2);
-  border: 0;
-  border-radius: 0;
-  background: var(--px-face);
-  box-shadow: 0 calc(var(--px) * -1) 0 0 var(--px-ol), 0 var(--px) 0 0 var(--px-ol), calc(var(--px) * -1) 0 0 0 var(--px-ol), var(--px) 0 0 0 var(--px-ol);
-  cursor: pointer;
-}
-
-.field input[type="color"]::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-
-.field input[type="color"]::-webkit-color-swatch {
-  border: 0;
-  border-radius: 0;
-}
-
-.field input[type="color"]::-moz-color-swatch {
-  border: 0;
-  border-radius: 0;
+  width: 62px;
+  height: 14px;
+  background: no-repeat 0 0 / 62px 14px;
 }
 
 .field input[type="range"] {

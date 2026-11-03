@@ -15,15 +15,16 @@ import { decodePng } from "../../web/test/png.mjs";
 //   [--api <짝 찾기 서버 주소>] = exe 의 서버 주소를 시험 중에만 바꿈(예: tools/test/mp-local.mjs 의 http://127.0.0.1:8791/api/v1/mp/).
 //   [--only base,wan,rejoin,anytime] — wan = exe 에서 인터넷 연결 켬 → STUN 공인 후보, rejoin = exe 손님 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함),
 //   anytime = 중간 참가 게임(join: "anytime"): 창 자동 열림 없음 → 레일 버튼으로 방 만들기 → 혼자 창 닫기 → 레일 점·상태 줄 "기다리는 중" → 웹 손님 참가 알림.
+//   nosave = 세션 중 상태 저장·불러오기 막음(레일 끔 모양·이유 title·클릭·Shift+F1/F1·게임 메뉴 → 상태 줄 경고, 언어 바꾸기, 세션 끝 = 다시 동작).
 //   [--capture <폴더>] = anytime 캡처를 그 폴더에도.
 const [exe, work, example, ...rest] = process.argv.slice(2);
 if (!exe || !work || !example) {
-  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>] [--api <주소>] [--only base,wan,rejoin,anytime] [--capture <폴더>]");
+  console.error("사용법: node tools/test/app-mp.mjs <exe> <작업 폴더> <net-webapi 예제 폴더> [--web <주소>] [--api <주소>] [--only base,wan,rejoin,anytime,nosave] [--capture <폴더>]");
   process.exit(2);
 }
 const WEB = rest.includes("--web") ? rest[rest.indexOf("--web") + 1] : "https://webgba.vercel.app/";
 const API = rest.includes("--api") ? rest[rest.indexOf("--api") + 1] : "";
-const ONLY = new Set((rest.includes("--only") ? rest[rest.indexOf("--only") + 1] : "base,wan,rejoin,anytime").split(","));
+const ONLY = new Set((rest.includes("--only") ? rest[rest.indexOf("--only") + 1] : "base,wan,rejoin,anytime,nosave").split(","));
 const CAPTURE = rest.includes("--capture") ? rest[rest.indexOf("--capture") + 1] : "";
 const PORT = 9352;
 const appDir = path.join(work, "app_mp");
@@ -125,6 +126,7 @@ try {
   if (ONLY.has("wan")) await wanFlow();
   if (ONLY.has("rejoin")) await rejoinFlow();
   if (ONLY.has("anytime")) await anytimeFlow();
+  if (ONLY.has("nosave")) await nosaveFlow();
 } catch (error) {
   check("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 3).join(" | "));
 } finally {
@@ -426,4 +428,122 @@ async function anytimeFlow() {
   check("exe 방장 나감 → 웹 유저 CLOSED(HOST_LEFT)", await waitFor(async () => ((await G.game())?.closed === 7 && (await G2.game())?.closed === 7 ? true : null), 8000));
   await G.ctx.close();
   await G2.ctx.close();
+}
+
+// 세션 중 상태 저장·불러오기 막음: 레일 버튼(끔 모양 aria-disabled + 이유 title)·클릭·Shift+F1/F1·게임 메뉴 항목 → 상태 줄 경고, 세션 끝 = 다시 동작
+async function nosaveFlow() {
+  const RAILSTATE = `(() => ["btn-state-save", "btn-state-load"].map((id) => {
+    const n = document.getElementById(id);
+    const r = n.getBoundingClientRect();
+    const i = n.querySelector(".icon").getBoundingClientRect();
+    return { id, aria: n.getAttribute("aria-disabled"), disabled: n.disabled, title: n.title, key: n.dataset.i18nTitle, color: getComputedStyle(n).color, focus: document.activeElement === n, focusVisible: n.matches(":focus-visible"), x: r.left + r.width / 2, y: r.top + r.height / 2, dx: +(i.left + i.width / 2 - (r.left + r.width / 2)).toFixed(2), dy: +(i.top + i.height / 2 - (r.top + r.height / 2)).toFixed(2) };
+  }))()`;
+  const STATUS = `(() => { const s = document.getElementById("status"); return { text: s.textContent, warn: s.classList.contains("is-warn") }; })()`;
+  const clear = () => app.evaluate(`document.getElementById("status").textContent = ""`);
+  const BLOCK = ko["net.blockQuick"];
+  const slotText = (key) => ko[key].replace("{slot}", "1");
+  const press = async (x, y, during = "") => {
+    await app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await app.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+    const mid = during ? await app.evaluate(during) : null;
+    await app.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+    await sleep(250);
+    return mid;
+  };
+  const fkey = async (shift) => {
+    for (const type of ["rawKeyDown", "keyUp"]) await app.send("Input.dispatchKeyEvent", { type, key: "F1", code: "F1", windowsVirtualKeyCode: 112, nativeVirtualKeyCode: 112, modifiers: shift ? 8 : 0 });
+    await sleep(250);
+    return app.evaluate(STATUS);
+  };
+  await app.evaluate(`${T}.player.net.leave()`);
+  await sleep(500);
+  const solo = await app.evaluate(RAILSTATE);
+  await clear();
+  await press(solo[0].x, solo[0].y);
+  const soloSave = await app.evaluate(STATUS);
+  await clear();
+  const soloLoad = await fkey(false);
+  check("exe 혼자 실행: 레일 상태 저장·불러오기 켜짐 · 클릭 저장 · F1 불러오기 그대로", solo.every((b) => b.aria === null && !b.disabled) && solo[0].key === "rail.stateSave" && soloSave.text === slotText("status.stateSaved") && soloLoad.text === slotText("status.stateLoaded"), JSON.stringify({ solo: solo.map((b) => `${b.id}:${b.aria}/${b.key}`), soloSave, soloLoad }));
+
+  await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
+  await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-room-make]'))"), 8000);
+  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
+  const lobby = await app.evaluate(RAILSTATE);
+  await clear();
+  await app.evaluate(`${T}.saveStateTo(1)`);
+  const lobbySave = await app.evaluate(STATUS);
+  check(`exe 방장 혼자 기다림(${code}): 레일 상태 저장·불러오기 끔(aria-disabled) · 저장 시도 → 상태 줄 '${BLOCK}'`, lobby.every((b) => b.aria === "true" && !b.disabled) && lobbySave.text === BLOCK && lobbySave.warn, JSON.stringify({ lobby: lobby.map((b) => `${b.id}:${b.aria}/${b.key}`), lobbySave }));
+
+  await page.goto(WEB);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  await page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    await window.webgba.openFiles([new File([bytes], "net-demo.wgba")]);
+  }, Buffer.from(wgba).toString("base64"));
+  await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+  await page.evaluate(() => {
+    const p = window.webgba.player;
+    p.keyDown("KeyZ");
+    setTimeout(() => p.keyUp("KeyZ"), 150);
+  });
+  await page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await page.click('[data-action="net-room-join"]');
+  await page.fill('[data-action="net-code-in"]', code);
+  await page.click('[data-action="net-code-go"]');
+  const joined = await waitFor(async () => (await webGame())?.open === 1 && (await app.evaluate(GAME))?.count === 2, 30000, 200);
+  await sleep(500);
+  await app.evaluate("document.querySelector('[data-action=net-done]')?.click()");
+  await waitFor(() => app.evaluate("document.getElementById('layer').hidden"), 4000);
+  await sleep(400);
+
+  const rails = await app.evaluate(RAILSTATE);
+  const fastColor = await app.evaluate(`getComputedStyle(document.getElementById("btn-fast")).color`);
+  check("exe 2명 세션: 레일 상태 저장·불러오기 끔 모양(aria-disabled, 색 = 끈 빨리 감기와 같음) · title = 이유 붙은 이름", joined && rails.every((b) => b.aria === "true" && !b.disabled && b.color === fastColor) && rails[0].title === ko["rail.stateSaveNet"] && rails[1].title === ko["rail.stateLoadNet"], JSON.stringify(rails.map((b) => ({ id: b.id, aria: b.aria, title: b.title, color: b.color })).concat([{ fastColor }])));
+  await clear();
+  const midTransform = await press(rails[0].x, rails[0].y, `getComputedStyle(document.getElementById("btn-state-save")).transform`);
+  const clickSave = await app.evaluate(STATUS);
+  const afterClick = await app.evaluate(RAILSTATE);
+  await clear();
+  await press(rails[1].x, rails[1].y);
+  const clickLoad = await app.evaluate(STATUS);
+  check(`exe 세션 중 레일 클릭(저장·불러오기) → 상태 줄 경고 '${BLOCK}' · 누르는 동안 눌림 모양 없음 · 포커스 표시 없음`, clickSave.text === BLOCK && clickSave.warn && clickLoad.text === BLOCK && midTransform === "none" && afterClick.every((b) => !b.focusVisible), JSON.stringify({ clickSave, clickLoad, midTransform }));
+  await clear();
+  const keySave = await fkey(true);
+  await clear();
+  const keyLoad = await fkey(false);
+  const afterKeys = await app.evaluate(RAILSTATE);
+  check("exe 세션 중 Shift+F1·F1 → 상태 줄 경고 · 막힌 버튼을 누른 뒤 키를 눌러도 포커스·포커스 테두리 없음", keySave.text === BLOCK && keyLoad.text === BLOCK && afterClick.concat(afterKeys).every((b) => !b.focus && !b.focusVisible), JSON.stringify({ keySave, keyLoad, focus: afterKeys.map((b) => `${b.id}:${b.focus}/${b.focusVisible}`) }));
+  await app.evaluate(`document.querySelector('.menubar__item[data-menu="game"]').click()`);
+  await sleep(250);
+  const items = await app.evaluate(`[...document.querySelectorAll(".menu__item")].filter((n) => /^상태 (저장|불러오기)/.test(n.querySelector(".menu__label").textContent)).map((n) => ({ label: n.querySelector(".menu__label").textContent, aria: n.getAttribute("aria-disabled"), disabled: n.disabled, title: n.title }))`);
+  await clear();
+  await app.evaluate(`[...document.querySelectorAll(".menu__item")].find((n) => /^상태 저장/.test(n.querySelector(".menu__label").textContent)).click()`);
+  await sleep(250);
+  const menuSave = await app.evaluate(STATUS);
+  const menuClosed = await app.evaluate(`[...document.querySelectorAll(".menu__item")].every((n) => n.offsetParent === null)`);
+  check("exe 세션 중 게임 메뉴 상태 저장·불러오기: 끔 모양(aria-disabled) · title 이유 · 누르면 메뉴 닫힘 + 상태 줄 경고", items.length === 2 && items.every((i) => i.aria === "true" && !i.disabled && i.title === BLOCK) && menuSave.text === BLOCK && menuClosed, JSON.stringify({ items, menuSave, menuClosed }));
+  const rail = await app.evaluate(RAIL);
+  const centered = rails.every((b) => b.dx === 0 && b.dy === 0);
+  check("exe 세션 중 레일 버튼 좌·우 위치·크기 같음 · 끈 상태 버튼 아이콘 가운데(차이 0)", spread(rail, "left") === 0 && spread(rail, "right") === 0 && spread(rail, "w") === 0 && spread(rail, "h") === 0 && centered, JSON.stringify({ rail: rail.map((b) => `${b.id}:${b.left}-${b.right}`), icons: rails.map((b) => `${b.id}:${b.dx},${b.dy}`) }));
+  await app.evaluate(`${T}.setLang("en")`);
+  await sleep(300);
+  const enTitle = await app.evaluate(`document.getElementById("btn-state-save").title`);
+  await app.evaluate(`${T}.setLang("ko")`);
+  await sleep(300);
+  const en = readJson(fileURLToPath(new URL("../../src-bundle/src/i18n/en.json", import.meta.url)));
+  check("exe 세션 중 언어 바꾸기 → title 이유도 그 언어", enTitle === en["rail.stateSaveNet"], enTitle);
+  await app.evaluate(`document.getElementById("status").textContent = ${JSON.stringify(BLOCK)}`);
+  await app.screenshot(path.join(shots, "exe_세션중_상태저장_끔.png"));
+
+  await app.evaluate(`${T}.player.net.leave()`);
+  check("exe 방장 나감 → 웹 유저 CLOSED(HOST_LEFT)", await waitFor(async () => ((await webGame())?.closed === 7 ? true : null), 8000));
+  const ended = await waitFor(async () => {
+    const list = await app.evaluate(RAILSTATE);
+    return list.every((b) => b.aria === null) ? list : null;
+  }, 5000);
+  await clear();
+  if (ended) await press(ended[0].x, ended[0].y);
+  const endSave = await app.evaluate(STATUS);
+  check("exe 세션 끝: 레일 다시 켜짐(title 원래 이름) · 클릭 저장 동작", Boolean(ended) && ended[0].title === ko["rail.stateSave"] && endSave.text === slotText("status.stateSaved"), JSON.stringify({ ended: ended && ended.map((b) => `${b.id}:${b.aria}/${b.title}`), endSave }));
 }

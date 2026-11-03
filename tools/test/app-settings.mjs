@@ -106,7 +106,7 @@ try {
   }))()`);
   check("설정 창: 도구 막대 버튼으로 열림, 탭 4개(일반·키·테마·언어)", shape.open && shape.tabs.join() === "일반,키,테마,언어" && shape.pressed === "true", shape.tabs.join(" · "));
   check("설정 창: 일반 탭 6묶음 14줄(화면·소리·게임·세이브·파일·개발)", shape.groups.join() === "화면,소리,게임,세이브,파일,개발" && shape.rows === 14, `${shape.groups.join(" · ")} / ${shape.rows}줄`);
-  check("방향키 동시 입력: 기본 '한 방향만 전달'", shape.dpad === "한 방향만 전달" && shape.webRom === "", `${shape.dpad} · 롬 이름 칸 '${shape.webRom}'`);
+  check("방향키 동시 입력: 기본 '설정 안함'", shape.dpad === "설정 안함" && shape.webRom === "", `${shape.dpad} · 롬 이름 칸 '${shape.webRom}'`);
   check(
     "세이브 묶음: 항목 없이 '연 파일 바로 옆 <파일 이름>.sav' 안내 한 줄(종료 세이브·세이브 폴더·백업 항목 없음)",
     shape.saveGroup?.rows === 0 && /연 파일 바로 옆 <파일 이름>\.sav/.test(shape.saveGroup?.note ?? "") && shape.oldRows === 0,

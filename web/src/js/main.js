@@ -102,6 +102,7 @@ const AUTO_SLOT = 9;
 const AUTO_SAVE_MINUTES = [0, 1, 3, 5, 10, 15, 30];
 const AUTO_SAVE_DEFAULT = 5;
 const AUTO_TOAST_MS = 1600;
+const PAD_MODES = ["on", "overlay", "off"];
 
 const state = {
   prefs: store.loadPrefs(),
@@ -501,9 +502,25 @@ const pad = new VirtualPad({
   vibrate: () => (state.prefs.vibrate ? HAPTIC : ""),
   vibrateDir: () => (state.prefs.vibrateDir ? HAPTIC : ""),
   onChange: (name, down) => (down ? player.keyDown(padCode(name)) : player.keyUp(padCode(name))),
-  onVisual: (name, down) => skin.key(name, down),
-  onStick: (x, y, active) => skin.stick(x, y, active),
+  onVisual: (name, down) => {
+    skin.key(name, down);
+    padMark(name, down);
+  },
+  onStick: (x, y, active) => {
+    skin.stick(x, y, active);
+    padMark("stick", active);
+  },
 });
+
+const padDown = new Set();
+
+function padMark(name, down) {
+  if (down) padDown.add(name);
+  else padDown.delete(name);
+  const dir = name === "stick" || DIRS.includes(name);
+  const node = dir ? el.dpad : el.pad.querySelector(`[data-key="${name}"]`);
+  node?.toggleAttribute("data-down", dir ? padDown.has("stick") || DIRS.some((item) => padDown.has(item)) : down);
+}
 
 // C·D 터치 버튼을 켜고 끄는 곳(하나뿐): shown = { C: true, D: true } 처럼 게임이 c·d role 을 정의한 자리.
 // 없거나 null 이면 A·B 만 = 지금 화면 그대로(.gba·설명서 없는 .wgba·.wasm·preset gba 만 쓰는 게임 — 설정 항목 없음).
@@ -596,8 +613,8 @@ function safeInsets() {
   return { t: parseFloat(style.paddingTop) || 0, r: parseFloat(style.paddingRight) || 0, b: parseFloat(style.paddingBottom) || 0, l: parseFloat(style.paddingLeft) || 0 };
 }
 
-function padVisible() {
-  return state.prefs.pad !== "off";
+function padMode() {
+  return PAD_MODES.includes(state.prefs.pad) ? state.prefs.pad : "on";
 }
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -654,10 +671,12 @@ function layout() {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const landscape = width > height;
-  const padOn = padVisible();
+  const mode = padMode();
+  const padOn = mode !== "off";
+  const overlay = padOn && landscape && mode === "overlay";
   const body = document.body;
   body.dataset.layout = landscape ? "landscape" : "portrait";
-  body.dataset.pad = padOn ? "on" : "off";
+  body.dataset.pad = overlay ? "overlay" : padOn ? "on" : "off";
   if (landscape && (state.menuOpen || el.menuPanel.dataset.open)) setMenu(false, { instant: true });
   const dpr = window.devicePixelRatio || 1;
   const inset = safeInsets();
@@ -710,7 +729,7 @@ function layout() {
       }
     }
     root.setProperty("--side", "0px");
-  } else if (padOn && landscape) {
+  } else if (padOn && landscape && !overlay) {
     art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
     if (four) {
       // 네 버튼 묶음은 오른쪽 세로줄 전체에서 R(위 여백 8) 아래 ~ START(아래 여백 10) 위 가운데(web.css) — 그 사이에 들어가는 배율까지.
@@ -732,7 +751,18 @@ function layout() {
     const availH = innerH - el.bar.offsetHeight - 16 - edge * 2;
     sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
-    root.setProperty("--side", "0px");
+    let side = 0;
+    if (overlay) {
+      const sideOf = (a) => Math.ceil(Math.max(face.w, ART.stick) * (skin.px(a) / dpr) + 16);
+      const fits = (a) => {
+        const u = skin.px(a) / dpr;
+        return sideOf(a) * 2 <= sw && ART.shoulderH * u + 8 + Math.max(Math.round(faceH * u), ART.stick * u) + ART.pillH * u + 10 + 4 <= sh;
+      };
+      art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
+      while (art > 2 && !fits(art)) art--;
+      side = sideOf(art);
+    }
+    root.setProperty("--side", `${side}px`);
   }
   state.art = art;
   skin.resize({ art, icon, dpr });
@@ -810,7 +840,7 @@ function syncControls() {
   const full = Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
-  el.btnQuick.setAttribute("aria-disabled", String(!canQuick()));
+  el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
   const netOn = running && Boolean(player.net.request || player.net.active);
   if (el.btnNet.hidden !== !netOn) el.btnNet.hidden = !netOn;
   if (el.btnFast.hidden !== netOn) el.btnFast.hidden = netOn;
@@ -2910,7 +2940,7 @@ function quickThumb() {
 }
 
 async function quickSave(slot, { auto = false } = {}) {
-  if (!canQuick() || state.quick.busy || (slot === AUTO_SLOT) !== auto) return false;
+  if (!canQuick() || player.net.locked || state.quick.busy || (slot === AUTO_SLOT) !== auto) return false;
   state.quick.busy = true;
   const started = performance.now();
   try {
@@ -2931,7 +2961,7 @@ async function quickSave(slot, { auto = false } = {}) {
 async function quickLoad(slot) {
   if (!canQuick()) return false;
   if (player.net.locked) {
-    toast(t("net.blockLoad"), "warn");
+    toast(t("net.blockQuick"), "warn");
     return false;
   }
   try {
@@ -2958,6 +2988,10 @@ function openQuick() {
     toast(t("web.quick.noState"), "warn");
     return;
   }
+  if (player.net.locked) {
+    toast(t("net.blockQuick"), "warn");
+    return;
+  }
   openSheet("quick");
 }
 
@@ -2967,7 +3001,8 @@ function revokeQuickUrls() {
 }
 
 function slotUsable(slot) {
-  return state.quick.tab === "save" ? slot !== AUTO_SLOT : !player.net.locked && state.quick.info.has(slot);
+  if (player.net.locked) return false;
+  return state.quick.tab === "save" ? slot !== AUTO_SLOT : state.quick.info.has(slot);
 }
 
 function applyQuickTab() {
@@ -3056,7 +3091,7 @@ async function renderQuick() {
       failed ? make("p", "note note--warn", t("web.noStore")) : null,
       make("p", "note", minutes ? t("web.quick.noteAuto", { n: minutes }) : t("web.quick.noteAutoOff")),
       make("p", "note", t("web.quick.noteSav")),
-      player.net.locked ? make("p", "note note--warn", t("net.blockLoad")) : null,
+      player.net.locked ? make("p", "note note--warn", t("net.blockQuick")) : null,
     ),
   );
   applyQuickTab();
@@ -3084,6 +3119,10 @@ function autoTick() {
   const dt = state.quick.lastTick ? Math.min(now - state.quick.lastTick, 2000) : 0;
   state.quick.lastTick = now;
   const minutes = autoMinutes();
+  if (player.net.locked) {
+    state.quick.played = 0;
+    return;
+  }
   if (!minutes || !canQuick() || player.paused || holds.size || state.opening || document.visibilityState !== "visible") return;
   state.quick.played += dt;
   if (state.quick.played < minutes * 60000 || state.quick.busy) return;
@@ -3143,6 +3182,11 @@ function selectField(label, note, options, value, onChange) {
     open();
   });
   return field(label, note, pick);
+}
+
+function swatchImage(colors, line) {
+  const rects = colors.map((color, i) => `<rect x="${i * 16}" width="14" height="14" fill="${line}"/><rect x="${i * 16 + 1}" y="1" width="12" height="12" fill="${color}"/>`).join("");
+  return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="62" height="14" shape-rendering="crispEdges">${rects}</svg>`)}")`;
 }
 
 function choiceRows() {
@@ -3220,6 +3264,7 @@ function stopChoicePad() {
 function openChoice({ title, options, value, from = null }) {
   if (state.choiceDone) state.choiceDone(null);
   el.choiceTitle.textContent = title;
+  let line;
   const rows = options.map((option) => {
     const row = make("button", "choice__opt");
     row.type = "button";
@@ -3228,7 +3273,15 @@ function openChoice({ title, options, value, from = null }) {
     const on = String(option.value) === String(value);
     row.setAttribute("aria-selected", String(on));
     row.tabIndex = -1;
-    row.append(make("span", "choice__label", option.label), iconNode("check"));
+    const label = make("span", "choice__label", option.label);
+    if (option.swatch) {
+      const main = make("span", "choice__main");
+      const chips = make("span", "choice__swatch");
+      chips.setAttribute("aria-hidden", "true");
+      chips.style.backgroundImage = swatchImage(option.swatch, (line ??= getComputedStyle(document.documentElement).getPropertyValue("--line-strong").trim()));
+      main.append(chips, label);
+      row.append(main, iconNode("check"));
+    } else row.append(label, iconNode("check"));
     return row;
   });
   el.choiceList.replaceChildren(...rows);
@@ -3368,33 +3421,19 @@ function levelField(label, value, { min = 1, max = 9, text, onChange, disabled =
   return row;
 }
 
-const CUSTOM_COLORS = [
-  { id: "back", tokens: ["--bg-sunken", "--bg-deep"], fallback: "#070a14" },
-  { id: "panel", tokens: ["--bg", "--bg-raised", "--bg-tint"], fallback: "#151d33" },
-  { id: "text", tokens: ["--text", "--text-hi"], fallback: "#eef1f8" },
-  { id: "accent", tokens: ["--accent", "--accent-hi"], fallback: "#6c93ff" },
-  { id: "line", tokens: ["--line", "--line-strong"], fallback: "#3a4670" },
-];
-
-function customTokens() {
-  const picked = state.prefs.customColors ?? {};
-  const colors = {};
-  for (const item of CUSTOM_COLORS) {
-    const value = /^#[0-9a-f]{6}$/i.test(picked[item.id] ?? "") ? picked[item.id] : item.fallback;
-    for (const token of item.tokens) colors[token] = value;
-  }
-  return colors;
-}
+const WEB_THEMES = theme.MODES.filter((mode) => mode.id !== "custom");
+const THEME_SWATCH = ["--bg-sunken", "--bg", "--accent", "--text"];
+const webTheme = (mode) => (WEB_THEMES.some((item) => item.id === mode) ? mode : "dark");
 
 function applyTheme(mode) {
-  const id = theme.known(mode) ? mode : "dark";
+  const id = webTheme(mode);
   if (document.documentElement.dataset.ready && !reducedMotion()) {
     const veil = make("div", "theme-fade");
     veil.style.background = getComputedStyle(document.body).backgroundColor;
     document.body.append(veil);
     setTimeout(() => veil.remove(), 260);
   }
-  theme.apply(id === "custom" ? { mode: "custom", colors: customTokens() } : { mode: id });
+  theme.apply({ mode: id });
   const color = getComputedStyle(document.documentElement).getPropertyValue("--bg-sunken").trim();
   try {
     if (color) localStorage.setItem("webgba.bootBg", color);
@@ -3406,18 +3445,6 @@ function applyTheme(mode) {
     // 기본 롬팩 몸통 색은 테마에서 만든다
     refreshStart();
   }
-}
-
-function colorField(item) {
-  const input = document.createElement("input");
-  input.type = "color";
-  input.value = customTokens()[item.tokens[0]];
-  input.setAttribute("aria-label", t(`web.color.${item.id}`));
-  input.addEventListener("input", () => {
-    savePrefs({ customColors: { ...(state.prefs.customColors ?? {}), [item.id]: input.value } });
-    applyTheme("custom");
-  });
-  return field(t(`web.color.${item.id}`), "", input);
 }
 
 async function setLang(id) {
@@ -3450,17 +3477,16 @@ function renderSettings() {
   el.sheetTitle.textContent = t("cfg.title");
   const p = state.prefs;
   let fireLevel = null;
-  const themeId = theme.known(p.theme) ? p.theme : "dark";
+  const themeId = webTheme(p.theme);
   const children = [
     group(
       "",
       selectField(t("cfg.lang.title"), "", i18n.LANGS.map((item) => ({ value: item.id, label: item.label })), i18n.lang(), (id) => setLang(id)),
-      selectField(t("cfg.tab.theme"), "", theme.MODES.map((mode) => ({ value: mode.id, label: t(`theme.mode.${mode.id}`) })), themeId, (mode) => {
+      selectField(t("cfg.tab.theme"), "", WEB_THEMES.map((mode) => ({ value: mode.id, label: t(`theme.mode.${mode.id}`), swatch: THEME_SWATCH.map((token) => theme.presetOf(mode.id)[token]) })), themeId, (mode) => {
         savePrefs({ theme: mode });
         applyTheme(mode);
         renderSheet();
       }),
-      ...(themeId === "custom" ? CUSTOM_COLORS.map(colorField) : []),
       selectField(t("web.dirInput"), t("web.dirInput.note"), DIR_MODES.map((value) => ({ value, label: t(`web.dirInput.${value}`) })), DIR_MODES.includes(p.dirInput) ? p.dirInput : "stick", (value) => {
         savePrefs({ dirInput: value });
         applyDirInput();
@@ -3468,8 +3494,8 @@ function renderSettings() {
       selectField(
         t("web.pad"),
         t("web.pad.note"),
-        ["on", "off"].map((value) => ({ value, label: t(`web.pad.${value}`) })),
-        p.pad === "off" ? "off" : "on",
+        PAD_MODES.map((value) => ({ value, label: t(`web.pad.${value}`) })),
+        padMode(),
         (value) => {
           savePrefs({ pad: value });
           layout();

@@ -40,7 +40,7 @@ export { DPAD_MODES };
 
 export const DPAD_DEFAULT = "latest";
 
-export const AUTO_FIRE_RATES = Object.freeze([4, 6, 8, 10, 12, 15, 20, 24, 30]);
+export const AUTO_FIRE_RATES = Object.freeze([1, 2, 3, 4, 6, 8, 12, 20, 30]);
 export const AUTO_FIRE_ROLES = Object.freeze(["a", "b", "c", "d", "l", "r"]);
 export const AUTO_FIRE_LEVEL = 5;
 
@@ -968,7 +968,7 @@ export class Player {
   }
 
   async saveState(slot) {
-    if (!this.canState) return false;
+    if (!this.canState || this.net.locked) return false;
     // ② 는 틀에 물어 받는다(비동기) — 그 순간 틀 화면 사진을 this.image 로(웹 퀵슬롯 칸 그림)
     const bytes = this.host.script ? await this.host.stateSave() : this.host.stateSave();
     if (!bytes) return false;
