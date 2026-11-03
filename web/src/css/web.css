@@ -1778,14 +1778,22 @@ body[data-layout="landscape"] .lib__shelf {
   visibility: hidden;
 }
 
-.pick:hover {
-  background: var(--px-face-hov);
+.pick:focus-visible {
+  outline: none;
 }
 
-.pick:focus-visible,
 .pick[aria-expanded="true"] {
   --ol: var(--accent);
-  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pick:hover {
+    background: var(--px-face-hov);
+  }
+
+  .pick:focus-visible {
+    --ol: var(--accent);
+  }
 }
 
 .pick::after {
@@ -1866,18 +1874,26 @@ body[data-layout="landscape"] .lib__shelf {
   border-bottom: 0;
 }
 
-.choice__opt:hover {
-  background: var(--bg-hover);
-}
-
 .choice__opt[aria-selected="true"] {
   background: var(--accent-soft);
 }
 
-.choice__opt:focus-visible,
-.choice__opt.is-focus {
+.choice__opt:focus-visible {
   outline: none;
+}
+
+.choice__opt.is-focus {
   box-shadow: inset 0 0 0 var(--px) var(--accent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .choice__opt:hover:not([aria-selected="true"]) {
+    background: var(--bg-hover);
+  }
+
+  .choice__opt:focus-visible {
+    box-shadow: inset 0 0 0 var(--px) var(--accent);
+  }
 }
 
 .choice__label {
@@ -1965,8 +1981,10 @@ body[data-layout="landscape"] .lib__shelf {
   outline: none;
 }
 
-.field input[type="range"]:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 calc(var(--px) * -1) 0 0 var(--accent), 0 var(--px) 0 0 var(--accent), calc(var(--px) * -1) 0 0 0 var(--accent), var(--px) 0 0 0 var(--accent);
+@media (hover: hover) and (pointer: fine) {
+  .field input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 calc(var(--px) * -1) 0 0 var(--accent), 0 var(--px) 0 0 var(--accent), calc(var(--px) * -1) 0 0 0 var(--accent), var(--px) 0 0 0 var(--accent);
+  }
 }
 
 .field input[type="range"]:disabled {
@@ -2013,13 +2031,35 @@ body[data-layout="landscape"] .lib__shelf {
 }
 
 .switch:focus-visible {
-  outline: var(--px) solid var(--accent);
-  outline-offset: calc(var(--px) * 2);
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .switch:focus-visible {
+    outline: var(--px) solid var(--accent);
+    outline-offset: calc(var(--px) * 2);
+  }
 }
 
 .switch:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+@media not all and (hover: hover) and (pointer: fine) {
+  .sheet[data-sheet="settings"] .btn:hover:not(:disabled),
+  .sheet[data-sheet="settings"] .tool--small:hover:not(:disabled) {
+    background: var(--face);
+  }
+
+  .sheet[data-sheet="settings"] .btn:focus-visible,
+  .sheet[data-sheet="settings"] .tool--small:focus-visible {
+    --ol: var(--px-ol);
+  }
+
+  .sheet[data-sheet="settings"] .cfg-nick:focus {
+    --ol: var(--line-strong);
+  }
 }
 
 .field--off .field__label {
