@@ -64,6 +64,8 @@
   "web.pad.on": "表示",
   "web.pad.overlay": "オーバーレイ",
   "web.pad.off": "隠す",
+  "web.padCombo": "A・B 同時押し",
+  "web.padCombo.note": "AボタンとBボタンの間を押すと両方が押されます",
   "web.vibrate": "ボタンの振動",
   "web.vibrate.note": "ゲームボタンを押すと短く振動します",
   "web.vibrate.unsupported": "この端末は振動に対応していません",

@@ -60,6 +60,8 @@
   "web.pad.on": "표시",
   "web.pad.overlay": "오버레이",
   "web.pad.off": "숨김",
+  "web.padCombo": "A·B 함께 누르기",
+  "web.padCombo.note": "A와 B 버튼 사이를 누르면 두 버튼이 함께 눌립니다",
   "web.dirInput": "방향 입력",
   "web.dirInput.note": "스틱은 손가락 위치를 따라 이동합니다. 십자 패드는 누른 칸의 방향을 입력합니다",
   "web.dirInput.stick": "스틱",

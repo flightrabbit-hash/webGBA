@@ -64,6 +64,8 @@
   "web.pad.on": "Show",
   "web.pad.overlay": "Overlay",
   "web.pad.off": "Hide",
+  "web.padCombo": "Press A and B together",
+  "web.padCombo.note": "Pressing between A and B presses both",
   "web.vibrate": "Button vibration",
   "web.vibrate.note": "A short vibration when you press a game button",
   "web.vibrate.unsupported": "This device doesn't support vibration",

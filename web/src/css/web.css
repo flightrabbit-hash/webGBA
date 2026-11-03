@@ -256,8 +256,14 @@ button {
 }
 
 .tool:focus-visible {
-  outline: var(--px) solid var(--accent);
-  outline-offset: var(--px);
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tool:focus-visible {
+    outline: var(--px) solid var(--accent);
+    outline-offset: var(--px);
+  }
 }
 
 .btn,
@@ -277,12 +283,6 @@ button {
   background: var(--face);
   color: var(--face-ink);
   box-shadow: 0 calc(var(--px) * -1) 0 0 var(--ol), 0 var(--px) 0 0 var(--ol), calc(var(--px) * -1) 0 0 0 var(--ol), var(--px) 0 0 0 var(--ol), 0 calc(var(--px) * 2) 0 0 var(--px-drop);
-}
-
-.btn:hover:not(:disabled),
-.tool--small:hover:not(:disabled),
-.recent__all:hover {
-  background: var(--face-hov);
 }
 
 .btn:active:not(:disabled),
@@ -306,8 +306,21 @@ button {
 .btn:focus-visible,
 .tool--small:focus-visible,
 .recent__all:focus-visible {
-  --ol: var(--accent);
   outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled),
+  .tool--small:hover:not(:disabled),
+  .recent__all:hover {
+    background: var(--face-hov);
+  }
+
+  .btn:focus-visible,
+  .tool--small:focus-visible,
+  .recent__all:focus-visible {
+    --ol: var(--accent);
+  }
 }
 
 .tool--small {
@@ -517,22 +530,24 @@ body:not([data-view="start"]) .start {
   transition: transform 120ms var(--pop-ease);
 }
 
-.recent__item:hover .pack {
-  transform: translate3d(0, -2px, 0);
-}
-
-.recent__item:active .pack {
-  transform: none;
-}
-
 .recent__item:focus-visible {
   outline: none;
 }
 
-.recent__item:focus-visible .pack,
-.lib__pack:focus-visible .pack {
-  outline: var(--px) solid var(--accent);
-  outline-offset: calc(var(--px) * 2);
+@media (hover: hover) and (pointer: fine) {
+  .recent__item:hover .pack {
+    transform: translate3d(0, -2px, 0);
+  }
+
+  .recent__item:focus-visible .pack,
+  .lib__pack:focus-visible .pack {
+    outline: var(--px) solid var(--accent);
+    outline-offset: calc(var(--px) * 2);
+  }
+}
+
+.recent__item:active .pack {
+  transform: none;
 }
 
 .recent__name,
@@ -1551,17 +1566,19 @@ body[data-layout="landscape"] .lib__shelf {
   transition: transform 120ms var(--pop-ease);
 }
 
-.spine:hover .spine__art {
-  transform: translate3d(0, -3px, 0);
-}
-
 .spine:focus-visible {
   outline: none;
 }
 
-.spine:focus-visible .spine__art {
-  outline: var(--px) solid var(--accent);
-  outline-offset: var(--px);
+@media (hover: hover) and (pointer: fine) {
+  .spine:hover .spine__art {
+    transform: translate3d(0, -3px, 0);
+  }
+
+  .spine:focus-visible .spine__art {
+    outline: var(--px) solid var(--accent);
+    outline-offset: var(--px);
+  }
 }
 
 .spine__name {
@@ -1600,8 +1617,10 @@ body[data-layout="landscape"] .lib__shelf {
   opacity: var(--spine-out);
 }
 
-.spine.is-out:hover .spine__art {
-  transform: none;
+@media (hover: hover) and (pointer: fine) {
+  .spine.is-out:hover .spine__art {
+    transform: none;
+  }
 }
 
 .lib__fly {
@@ -1643,9 +1662,11 @@ body[data-layout="landscape"] .lib__shelf {
   bottom: 50px;
 }
 
-.spine--add:hover {
-  color: var(--accent);
-  --icon-ol: var(--px-accent-icol);
+@media (hover: hover) and (pointer: fine) {
+  .spine--add:hover {
+    color: var(--accent);
+    --icon-ol: var(--px-accent-icol);
+  }
 }
 
 .lib__empty {
@@ -2046,22 +2067,6 @@ body[data-layout="landscape"] .lib__shelf {
   cursor: default;
 }
 
-@media not all and (hover: hover) and (pointer: fine) {
-  .sheet[data-sheet="settings"] .btn:hover:not(:disabled),
-  .sheet[data-sheet="settings"] .tool--small:hover:not(:disabled) {
-    background: var(--face);
-  }
-
-  .sheet[data-sheet="settings"] .btn:focus-visible,
-  .sheet[data-sheet="settings"] .tool--small:focus-visible {
-    --ol: var(--px-ol);
-  }
-
-  .sheet[data-sheet="settings"] .cfg-nick:focus {
-    --ol: var(--line-strong);
-  }
-}
-
 .field--off .field__label {
   color: var(--text-faint);
 }
@@ -2141,9 +2146,11 @@ body[data-layout="landscape"] .bar__group--quick {
   touch-action: manipulation;
 }
 
-.seg__btn:hover:not([aria-selected="true"]) {
-  background: var(--bg-hover);
-  color: var(--text);
+@media (hover: hover) and (pointer: fine) {
+  .seg__btn:hover:not([aria-selected="true"]) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
 }
 
 .seg__btn[aria-selected="true"] {
@@ -2166,8 +2173,14 @@ body[data-layout="landscape"] .bar__group--quick {
 }
 
 .seg__btn:focus-visible {
-  outline: var(--px) solid var(--accent);
-  outline-offset: 0;
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .seg__btn:focus-visible {
+    outline: var(--px) solid var(--accent);
+    outline-offset: 0;
+  }
 }
 
 .slots {
@@ -2207,10 +2220,6 @@ body[data-layout="landscape"] .bar__group--quick {
   container-type: inline-size;
 }
 
-.slot:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
 .slot:active:not(:disabled) {
   transform: translate3d(0, var(--px), 0);
 }
@@ -2221,8 +2230,17 @@ body[data-layout="landscape"] .bar__group--quick {
 }
 
 .slot:focus-visible {
-  --card-ol: var(--accent);
   outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .slot:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  .slot:focus-visible {
+    --card-ol: var(--accent);
+  }
 }
 
 .slot__shot {
@@ -2430,8 +2448,13 @@ body[data-layout="landscape"] .bar__group--quick {
 }
 
 .dialog__input:focus {
-  --ol: var(--accent);
   outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dialog__input:focus {
+    --ol: var(--accent);
+  }
 }
 
 .dialog__hint {
@@ -2479,9 +2502,11 @@ body[data-layout="landscape"] .bar__group--quick {
   touch-action: manipulation;
 }
 
-.zpick__all:focus-visible,
-.zpick__row:focus-visible {
-  background: var(--accent-soft);
+@media (hover: hover) and (pointer: fine) {
+  .zpick__all:focus-visible,
+  .zpick__row:focus-visible {
+    background: var(--accent-soft);
+  }
 }
 
 .zpick__row[aria-disabled="true"],
@@ -2588,9 +2613,11 @@ body[data-layout="landscape"] .bar__group--quick {
   --press: var(--px);
 }
 
-.zpick__all:focus-visible > .cbox,
-.zpick__row:focus-visible > .cbox {
-  --ol: var(--accent);
+@media (hover: hover) and (pointer: fine) {
+  .zpick__all:focus-visible > .cbox,
+  .zpick__row:focus-visible > .cbox {
+    --ol: var(--accent);
+  }
 }
 
 [aria-disabled="true"] > .cbox {
@@ -3234,8 +3261,13 @@ textarea {
 }
 
 .net-code:focus {
-  --ol: var(--accent);
   outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .net-code:focus {
+    --ol: var(--accent);
+  }
 }
 
 .net-line {

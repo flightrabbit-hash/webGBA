@@ -501,6 +501,7 @@ const HAPTIC = hapticKind();
 const pad = new VirtualPad({
   root: el.pad,
   diagonal: () => player.dpadMode !== "latest",
+  combo: () => state.prefs.padCombo !== false,
   vibrate: () => (state.prefs.vibrate ? HAPTIC : ""),
   vibrateDir: () => (state.prefs.vibrateDir ? HAPTIC : ""),
   onChange: (name, down) => (down ? player.keyDown(padCode(name)) : player.keyUp(padCode(name))),
@@ -3661,6 +3662,7 @@ function renderSettings() {
           layout();
         },
       ),
+      switchField(t("web.padCombo"), t("web.padCombo.note"), p.padCombo !== false, (on) => savePrefs({ padCombo: on })),
       switchField(t("web.vibrate"), t(HAPTIC ? "web.vibrate.note" : "web.vibrate.unsupported"), p.vibrate, (on) => savePrefs({ vibrate: on }), { disabled: !HAPTIC }),
       switchField(t("web.vibrateDir"), t(HAPTIC ? "web.vibrateDir.note" : "web.vibrate.unsupported"), p.vibrateDir, (on) => savePrefs({ vibrateDir: on }), { disabled: !HAPTIC }),
       "wakeLock" in navigator

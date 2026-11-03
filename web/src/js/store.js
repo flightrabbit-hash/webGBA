@@ -229,6 +229,7 @@ export const DEFAULT_PREFS = {
   lang: "",
   theme: "dark",
   pad: "on",
+  padCombo: true,
   dirInput: "stick",
   vibrate: false,
   vibrateDir: false,

@@ -9,6 +9,8 @@ const DPAD_REACH = 1.4;
 const STICK_REACH = 1.55;
 const KEY_MARGIN = 0.4;
 const KEY_MARGIN_MAX = 40;
+export const COMBO_KEYS = ["A", "B"];
+export const COMBO_INTO = 0.25;
 
 export const BUZZ_MS = 12;
 export const DIR_HOLD_MS = 40;
@@ -70,13 +72,29 @@ export function stickDirs(dx, dy, radius) {
   return SECTORS_4[cardinal];
 }
 
+export function comboZone(pair) {
+  if (pair.length !== 2 || !pair.every(Boolean)) return null;
+  const [a, b] = pair.map(({ box }) => ({ x: box.left + box.width / 2, y: box.top + box.width / 2, r: box.width / 2 }));
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  if (dist < 1) return null;
+  const small = Math.min(a.r, b.r);
+  return { a, b, ux: (b.x - a.x) / dist, uy: (b.y - a.y) / dist, reach: Math.max(0, dist - a.r - b.r) + small * COMBO_INTO, side: small };
+}
+
+export function comboHit(zone, x, y) {
+  const { a, b } = zone;
+  if (Math.hypot(x - a.x, y - a.y) - a.r > zone.reach || Math.hypot(x - b.x, y - b.y) - b.r > zone.reach) return false;
+  return Math.abs((y - a.y) * zone.ux - (x - a.x) * zone.uy) <= zone.side;
+}
+
 export class VirtualPad {
-  constructor({ root, onChange, onVisual, onStick, diagonal = () => false, vibrate = () => "", vibrateDir = () => "" }) {
+  constructor({ root, onChange, onVisual, onStick, diagonal = () => false, combo = () => false, vibrate = () => "", vibrateDir = () => "" }) {
     this.root = root;
     this.onChange = onChange;
     this.onVisual = onVisual ?? (() => {});
     this.onStick = onStick ?? (() => {});
     this.diagonal = diagonal;
+    this.combo = combo;
     this.vibrate = vibrate;
     this.vibrateDir = vibrateDir;
     this.mode = "stick";
@@ -118,8 +136,14 @@ export class VirtualPad {
       const box = dir.getBoundingClientRect();
       if (box.width >= 1) rects.dir = { cx: box.left + box.width / 2, cy: box.top + box.height / 2, r: Math.min(box.width, box.height) / 2 };
     }
+    rects.combo = comboZone(COMBO_KEYS.map((name) => rects.keys.find((key) => key.name === name)));
     this.rects = rects;
     return rects;
+  }
+
+  inCombo(x, y) {
+    const zone = (this.rects ?? this.measure()).combo;
+    return Boolean(zone) && this.combo() && comboHit(zone, x, y);
   }
 
   invalidate() {
@@ -172,6 +196,7 @@ export class VirtualPad {
 
   hit(x, y, owner) {
     if (owner === "stick") return this.stick(x, y);
+    if (this.inCombo(x, y)) return COMBO_KEYS;
     const exact = this.keyAt(x, y, true);
     if (exact.length) return exact;
     if (this.mode === "dpad" && this.inDir(x, y)) return this.dpadDirs(x, y);
@@ -183,7 +208,7 @@ export class VirtualPad {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
     const stickBusy = [...this.pointers.values()].some((entry) => entry.owner === "stick");
-    const onKey = this.keyAt(event.clientX, event.clientY, true).length > 0;
+    const onKey = this.keyAt(event.clientX, event.clientY, true).length > 0 || this.inCombo(event.clientX, event.clientY);
     const owner = this.mode === "stick" && !stickBusy && !onKey && this.inDir(event.clientX, event.clientY) ? "stick" : "keys";
     this.pointers.set(event.pointerId, { owner, keys: [] });
     this.track(event);
