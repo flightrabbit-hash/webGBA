@@ -16,6 +16,7 @@ const K_HELLO = 1;
 const K_WELCOME = 2;
 const K_REJECT = 3;
 const K_MEMBERS = 4;
+const K_READY = 5;
 const K_DATA = 0x10;
 const K_PAUSE = 0x11;
 const K_BYE = 0x12;
@@ -28,6 +29,7 @@ const HEARTBEAT_MS = 500;
 const STALL_MS = 1500;
 const AWAY_MS = 15000;
 const CONNECT_MS = 25000;
+const READY_MS = 10000;
 const MEMBERS_MS = 2000;
 const RESTART_MS = 3000;
 const RTT_STEP = 3;
@@ -330,7 +332,7 @@ export class NetSession {
   failCode(desc) {
     if (!this.wan && (desc.wan || desc.skipped)) return "wanOff";
     if (this.wan && !desc.wan) return "peerLan";
-    return this.wan ? "wanFailed" : "timeout";
+    return this.wan ? "wanFailed" : "lanFailed";
   }
 
   cancelInvite(id) {
@@ -373,12 +375,13 @@ export class NetSession {
   }
 
   freeSlot() {
-    for (let s = 1; s < this.max; s++) if (!this.members.has(s)) return s;
+    const welcomed = new Set([...this.invites.values()].filter((l) => l.state === "welcomed").map((l) => l.slot));
+    for (let s = 1; s < this.max; s++) if (!this.members.has(s) && !welcomed.has(s)) return s;
     return -1;
   }
 
   pairOk(pair) {
-    return !pair || pair.host || this.wan;
+    return !pair || pair.lan || this.wan;
   }
 
   async onHostMessage(link, b) {
@@ -393,7 +396,7 @@ export class NetSession {
       const pair = await (link.pair ?? selectedPair(link.pc).catch(() => null));
       if (this.closed || link.state !== "connecting") return;
       if (!this.pairOk(pair)) {
-        this.log("warn", `초대 ${link.id}: 고른 후보 쌍이 host/host 가 아님(${pair.local}/${pair.remote}) — 끊음`);
+        this.log("warn", `초대 ${link.id}: 고른 후보 쌍이 같은 와이파이 밖 경로(${pair.local}/${pair.remote}) — 끊음`);
         this.reject(link, WHY.NO_NETWORK, "notLan");
         return;
       }
@@ -412,21 +415,23 @@ export class NetSession {
         return;
       }
       clearTimeout(link.timer);
-      link.state = "joined";
-      link.ready = true;
       link.slot = slot;
-      this.invites.delete(link.id);
-      this.links.set(slot, link);
-      const key = this.rejoinGame && this.helper?.rejoin ? rejoinKey() : "";
-      this.members.set(slot, { nick: cleanNick(hello.nick, `${slot + 1}P`), lastSeen: this.now(), rtt: pair?.rttMs ?? null, key });
-      this.log("info", `자리 ${slot} 들어옴 · 후보 ${pair ? `${pair.local}/${pair.remote}` : "?"}`);
-      this.gone.delete(slot);
-      this.sendTo(link, ctl(K_WELCOME, key ? { slot, max: this.max, members: this.wireMembers(), rk: key } : { slot, max: this.max, members: this.wireMembers() }));
-      for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
-      this.broadcastMembers(null, slot);
-      this.emit(EV.JOIN, slot, this.count);
-      link.resolve?.({ slot, nick: this.members.get(slot).nick });
-      this.changed();
+      link.nick = cleanNick(hello.nick, `${slot + 1}P`);
+      link.rtt = pair?.rttMs ?? null;
+      link.pairText = pair ? `${pair.local}/${pair.remote}` : "?";
+      link.key = this.rejoinGame && this.helper?.rejoin ? rejoinKey() : "";
+      if (hello.rd !== 1) return this.admit(link, true);
+      link.state = "welcomed";
+      link.timer = setTimeout(() => {
+        if (link.state !== "welcomed") return;
+        this.log("warn", `초대 ${link.id}: 자리 ${slot} 안내 뒤 유저 확인이 오지 않음`);
+        this.reject(link, WHY.LOST, "timeout");
+      }, READY_MS);
+      this.sendTo(link, this.welcomePacket(link, [...this.wireMembers(), { slot, nick: link.nick, rtt: null, st: 0 }].sort((a, b) => a.slot - b.slot)));
+      return;
+    }
+    if (kind === K_READY) {
+      if (link.state === "welcomed") this.admit(link, false);
       return;
     }
     if (!link.ready || !member) return;
@@ -467,6 +472,30 @@ export class NetSession {
       return;
     }
     if (kind === K_BYE) this.drop(link.slot, WHY.LEFT);
+  }
+
+  welcomePacket(link, members) {
+    const body = { slot: link.slot, max: this.max, members };
+    if (link.key) body.rk = link.key;
+    return ctl(K_WELCOME, body);
+  }
+
+  admit(link, welcome) {
+    const slot = link.slot;
+    clearTimeout(link.timer);
+    link.state = "joined";
+    link.ready = true;
+    this.invites.delete(link.id);
+    this.links.set(slot, link);
+    this.members.set(slot, { nick: link.nick, lastSeen: this.now(), rtt: link.rtt, key: link.key });
+    this.log("info", `자리 ${slot} 들어옴 · 후보 ${link.pairText}`);
+    this.gone.delete(slot);
+    if (welcome) this.sendTo(link, this.welcomePacket(link, this.wireMembers()));
+    for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
+    this.broadcastMembers(null, welcome ? slot : -1);
+    this.emit(EV.JOIN, slot, this.count);
+    link.resolve?.({ slot, nick: link.nick });
+    this.changed();
   }
 
   reattach(link, hello, pair) {
@@ -516,7 +545,10 @@ export class NetSession {
   onHostClose(link) {
     if (link.state === "joined") {
       if (this.links.get(link.slot) === link) this.lose(link.slot);
-    } else this.failInvite(link, "failed");
+      return;
+    }
+    if (link.state === "welcomed") this.log("warn", `초대 ${link.id}: 자리 ${link.slot} 안내 뒤 유저가 확인 없이 끊음 — 자리를 남기지 않음`);
+    this.failInvite(link, "failed");
   }
 
   hostOffline() {
@@ -749,7 +781,7 @@ export class NetSession {
         dc.binaryType = "arraybuffer";
         const hello = () => {
           link.pair = selectedPair(pc).catch(() => null);
-          this.sendTo(link, ctl(K_HELLO, { p: PROTOCOL, compat: this.compat, purpose: this.purpose, nick: this.nick }));
+          this.sendTo(link, ctl(K_HELLO, { p: PROTOCOL, compat: this.compat, purpose: this.purpose, nick: this.nick, rd: 1 }));
         };
         if (dc.readyState === "open") hello();
         else dc.onopen = hello;
@@ -908,7 +940,8 @@ export class NetSession {
       const pair = await (link.pair ?? selectedPair(link.pc).catch(() => null));
       if (this.closed || this.link !== link) return;
       if (!this.pairOk(pair)) {
-        this.log("warn", `고른 후보 쌍이 host/host 가 아님(${pair.local}/${pair.remote}) — 끊음`);
+        this.log("warn", `고른 후보 쌍이 같은 와이파이 밖 경로(${pair.local}/${pair.remote}) — 끊음`);
+        this.failHint = "notLan";
         return this.close(WHY.NO_NETWORK);
       }
       if (link.rejoin) return this.rejoined(link, w, pair);
@@ -917,6 +950,7 @@ export class NetSession {
       this.rejoinKey = typeof w.rk === "string" && /^[A-Za-z0-9_-]{16,32}$/.test(w.rk) ? w.rk : "";
       link.ready = true;
       link.state = "joined";
+      this.sendTo(link, Uint8Array.of(K_READY));
       this.applyMembers(w.members, null, true);
       this.opened = true;
       if (this.myRow) this.setRow(this.myRow);
@@ -928,6 +962,7 @@ export class NetSession {
     if (kind === K_REJECT) {
       const r = readCtl(b);
       const why = [WHY.INCOMPATIBLE, WHY.FULL, WHY.NO_NETWORK, WHY.LOST].includes(r?.why) ? r.why : WHY.INCOMPATIBLE;
+      if (why === WHY.NO_NETWORK) this.failHint = "notLan";
       return this.close(why);
     }
     if (!link.ready) return;
@@ -1134,8 +1169,9 @@ export class NetSession {
     const all = this.host ? [...this.links.values(), ...this.invites.values()] : this.link ? [this.link] : [];
     for (const l of all) {
       clearTimeout(l.timer);
-      if (l.ready) this.sendTo(l, bye);
-      this.killLink(l, l.ready ? 150 : 0);
+      const told = l.ready || l.state === "welcomed";
+      if (told) this.sendTo(l, bye);
+      this.killLink(l, told ? 150 : 0);
       if (l.state !== "joined") l.reject?.(new SessionError("closed", why));
     }
     this.invites.clear();

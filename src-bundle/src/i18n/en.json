@@ -663,6 +663,8 @@
   "net.err.wanOff": "The other device has 'Also connect over the internet' on, but this device has it off, so only the same Wi-Fi works. If you are somewhere else, turn it on in Settings › Multiplayer.",
   "net.err.peerLan": "The other device has 'Also connect over the internet' off, so only the same Wi-Fi works. Turn it on in the other device's settings too.",
   "net.err.wanFailed": "Could not connect over the internet. Mobile data, office or school networks may not connect.",
+  "net.err.lanFailed": "Could not connect to the other device on this Wi-Fi. Check the items below.",
+  "net.err.notLan": "The connection went outside this Wi-Fi, so it was closed. If you are somewhere else, turn on 'Also connect over the internet' in Settings › Multiplayer on both devices.",
   "net.why.solo": "Switched to playing alone",
   "net.notice.hold": "{nick} disconnected · waiting",
   "net.notice.back": "{nick} is back",

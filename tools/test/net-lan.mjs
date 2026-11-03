@@ -1,6 +1,6 @@
-// 멀티플레이 부품 시험(브라우저 없이): 망 안 후보 거르기·연결 코드(인터넷 후보 포함)·Web_NetWanted 값·설명서 multiplayer 읽기·호환 키·QR 크기·게임별 연결 서버·상태 묶음 조각·중간 참가 게임(join).
+// 멀티플레이 부품 시험(브라우저 없이): 망 안 후보 거르기·연결 코드(인터넷 후보 포함)·Web_NetWanted 값·설명서 multiplayer 읽기·호환 키·QR 크기·게임별 연결 서버·상태 묶음 조각·중간 참가 게임(join)·인터넷 연결 후보 모으기 순서·고른 후보 쌍(prflx)·참가 확인 READY.
 //   node tools/test/net-lan.mjs
-import { cleanCode, decodeCode, encodeCode, isLanAddress } from "../../src-bundle/src/js/core/net/lan.js";
+import { cleanCode, decodeCode, encodeCode, isLanAddress, selectedPair, waitGathering } from "../../src-bundle/src/js/core/net/lan.js";
 import { compatKey, NetHost, netConfig, packWanted, unpackWanted } from "../../src-bundle/src/js/core/net/net-host.js";
 import { checkManifest } from "../../src-bundle/src/js/core/wgba-format.js";
 import { cleanNick, NetSession, STATE_MAX, statePackets } from "../../src-bundle/src/js/core/net/session.js";
@@ -211,6 +211,90 @@ const runTaken = await acceptRun("taken");
 const runOld = await acceptRun("op");
 ok("중간 참가 방장: 2분 30초 받기(149초 받음·151초 멈춤, 자리 잡은 손님 20초 유예) → 멈춤 = w:0 갱신 1번·이후 서버 요청 0 → 갱신 = renew 1번·같은 방 코드·다시 2분 30초", runOk.before && runOk.left === 150000 && runOk.at149 && !runOk.at151 && runOk.claimGrace && runOk.pause.w === 0 && runOk.pause.paused === 1 && runOk.pause.keep === true && runOk.pause.wait === 0 && runOk.idleCalls === 0 && runOk.renew.inviting && runOk.renew.left === 150000 && runOk.renew.room === "111111" && runOk.renew.kinds === "renew" && runOk.renew.q === 2, JSON.stringify(runOk));
 ok("갱신: 방 코드를 다른 방이 가져갔거나(taken) 옛 서버(op)면 새 방 만들기", runTaken.renew.room === "222222" && runTaken.renew.kinds === "renew,create" && runOld.renew.kinds === "renew,create" && runOld.renew.inviting, JSON.stringify({ taken: runTaken.renew, old: runOld.renew }));
+
+// ── 인터넷 연결 켬: srflx 가 망 안(mDNS) 후보보다 먼저 나와도 망 안 후보를 기다림 ──
+function gatherPc() {
+  const on = {};
+  return { iceGatheringState: "gathering", addEventListener: (k, fn) => (on[k] = fn), removeEventListener: (k) => delete on[k], emit: (line) => on.icecandidate?.({ candidate: { candidate: line } }) };
+}
+async function gatherRun(steps) {
+  const pc = gatherPc();
+  const t0 = performance.now();
+  let lastAt = 0;
+  const end = waitGathering(pc, { wan: true }).then(() => performance.now() - t0);
+  for (const [at, line] of steps) setTimeout(() => ((lastAt = performance.now() - t0), pc.emit(line)), at);
+  const doneAt = await end;
+  return { doneAt: Math.round(doneAt), lastAt: Math.round(lastAt) };
+}
+const SRFLX = "candidate:2 1 udp 1686052607 1.2.3.4 50003 typ srflx raddr 0.0.0.0 rport 0";
+const MDNS = "candidate:1 1 udp 2122260223 0b6c3a2e-1111-2222-3333-444455556666.local 50002 typ host";
+const lateLan = await gatherRun([[0, SRFLX], [700, MDNS]]);
+const lanFirst = await gatherRun([[0, MDNS], [100, SRFLX]]);
+const srflxOnly = await gatherRun([[0, SRFLX]]);
+ok("인터넷 연결 켬 모으기: srflx 다음 0.7초 뒤 mDNS 도 담음(그 뒤 0.4초) · 망 안 먼저면 이전처럼 srflx + 0.4초 · srflx 만이면 1.5초", lateLan.doneAt >= 1050 && lateLan.doneAt < 1400 && lanFirst.doneAt >= 450 && lanFirst.doneAt < 800 && srflxOnly.doneAt >= 1450 && srflxOnly.doneAt < 1800, JSON.stringify({ lateLan, lanFirst, srflxOnly }));
+
+// ── 참가 확인 READY · prflx 쌍(PC 방장 + 휴대폰 유저: 유저는 방장 mDNS 이름을 풀지 못해 host/prflx) ──
+const statsOf = (local, remote) => ({ getStats: async () => new Map([["t", { type: "transport", selectedCandidatePairId: "p" }], ["p", { type: "candidate-pair", localCandidateId: "l", remoteCandidateId: "r" }], ["l", { type: "local-candidate", candidateType: local }], ["r", { type: "remote-candidate", candidateType: remote }]]) });
+const pairs = {};
+for (const [l, r] of [["host", "host"], ["host", "prflx"], ["prflx", "host"], ["host", "srflx"], ["relay", "host"], [undefined, undefined]]) pairs[`${l}/${r}`] = await selectedPair(statsOf(l, r));
+const guestS = new NetSession({ role: "join", nick: "G", sink: { event() {}, deliver() {}, change() {} }, makePeer: () => ({}) });
+clearInterval(guestS.timer);
+ok("고른 후보 쌍: 끈 기기는 host/host·host/prflx·종류 모름을 받고 srflx·relay 만 거절", ["host/host", "host/prflx", "prflx/host", "undefined/undefined"].every((k) => guestS.pairOk(pairs[k])) && !guestS.pairOk(pairs["host/srflx"]) && !guestS.pairOk(pairs["relay/host"]) && pairs["host/prflx"].host === false, JSON.stringify(Object.fromEntries(Object.entries(pairs).map(([k, v]) => [k, v.lan]))));
+
+const helloOf = (extra = {}) => {
+  const body = new TextEncoder().encode(JSON.stringify({ p: 1, compat: "c", purpose: "raid", nick: "G", ...extra }));
+  const out = new Uint8Array(1 + body.length);
+  out[0] = 1;
+  out.set(body, 1);
+  return out;
+};
+function readyHost() {
+  const events = [];
+  const s = new NetSession({ role: "make", nick: "H", max: 4, compat: "c", purpose: "raid", rejoinGame: true, sink: { event: (k, a, b) => events.push([k, a, b]), deliver() {}, change() {} }, makePeer: () => ({}) });
+  clearInterval(s.timer);
+  s.helper = { rejoin: true };
+  s.start();
+  let id = 0;
+  const link = () => {
+    const sent = [];
+    const l = { id: ++id, pc: { close() {} }, dc: { readyState: "open", send: (b) => sent.push(b[0]), close() {} }, slot: -1, ready: false, state: "connecting", created: 0, lastSeen: 0, pair: Promise.resolve({ local: "host", remote: "host", host: true, lan: true, rttMs: 3 }), sent };
+    l.done = new Promise((resolve, reject) => Object.assign(l, { resolve, reject }));
+    l.done.then(() => (l.result = "joined"), (e) => (l.result = e.code));
+    s.invites.set(l.id, l);
+    return l;
+  };
+  return { s, events, link };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const ra = readyHost();
+const l1 = ra.link();
+await ra.s.onHostMessage(l1, helloOf({ rd: 1 }));
+const afterHello = { state: l1.state, sent: l1.sent.join(","), count: ra.s.count, events: ra.events.length };
+ra.s.onHostClose(l1);
+await tick();
+const afterClose = { count: ra.s.count, members: [...ra.s.members.keys()].join(","), events: ra.events.map((e) => e[0]).join(","), result: l1.result };
+ok("새 유저(HELLO rd:1): WELCOME 만 보내고 자리 예약 · READY 전에 닫히면 자리·인원·JOIN·HOLD 없음", afterHello.state === "welcomed" && afterHello.sent === "2" && afterHello.count === 1 && afterHello.events === 1 && afterClose.count === 1 && afterClose.members === "0" && afterClose.events === "1" && afterClose.result === "failed", JSON.stringify({ afterHello, afterClose }));
+const l2 = ra.link();
+await ra.s.onHostMessage(l2, helloOf({ rd: 1 }));
+const l3 = ra.link();
+await ra.s.onHostMessage(l3, helloOf({ rd: 1 }));
+const reserved = [l2.slot, l3.slot].join(",");
+await ra.s.onHostMessage(l2, Uint8Array.of(5));
+await tick();
+const joined = { count: ra.s.count, slot: l2.slot, ready: l2.ready, key: Boolean(ra.s.members.get(l2.slot)?.key), join: ra.events.filter((e) => e[0] === 2).map((e) => `${e[1]}:${e[2]}`).join(","), result: l2.result, l3: l3.state };
+const l4 = ra.link();
+await ra.s.onHostMessage(l4, helloOf({ rd: 1 }));
+const l5 = ra.link();
+await ra.s.onHostMessage(l5, helloOf({ rd: 1 }));
+await tick();
+ok("READY 뒤에만 멤버·인원·JOIN(자리 열쇠 포함) · 예약 중인 자리는 다른 유저에게 주지 않음 · 예약 포함 가득 차면 REJECT(full)", reserved === "1,2" && joined.count === 2 && joined.slot === 1 && joined.ready && joined.key && joined.join === "1:2" && joined.result === "joined" && joined.l3 === "welcomed" && l4.slot === 3 && l5.result === "full", JSON.stringify({ reserved, joined, l4: l4.slot, l5: l5.result }));
+const rb = readyHost();
+const old = rb.link();
+await rb.s.onHostMessage(old, helloOf());
+const oldJoin = { state: old.state, count: rb.s.count, sent: old.sent.join(",") };
+rb.s.onHostClose(old);
+ok("rd 없는 HELLO(0.5.1 이하 유저): 이전처럼 바로 들어옴, 끊기면 자리 보관", oldJoin.state === "joined" && oldJoin.count === 2 && oldJoin.sent.startsWith("2") && rb.s.members.get(1)?.held === true, JSON.stringify(oldJoin));
+for (const x of [ra.s, rb.s]) x.close();
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} 통과`);

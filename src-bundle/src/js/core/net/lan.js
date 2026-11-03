@@ -270,6 +270,8 @@ export function waitGathering(pc, { wan = false, turn = false, fresh = false, ms
       resolve(value);
     };
     const timer = setTimeout(() => done(false), ms);
+    let lanSeen = false;
+    let wanSeen = false;
     const onState = () => pc.iceGatheringState === "complete" && done(true);
     const onCandidate = (event) => {
       if (!event.candidate) return done(true);
@@ -277,8 +279,13 @@ export function waitGathering(pc, { wan = false, turn = false, fresh = false, ms
       if (!wan) {
         if (lanCandidateOk(c)) soon(1200);
       } else if (c?.type === "relay" && wanCandidateOk(c)) soon(300);
-      else if (c?.type === "srflx" && wanCandidateOk(c)) soon(turn ? 2500 : 400);
-      else if (lanCandidateOk(c)) soon(turn ? 4000 : 2500);
+      else if (c?.type === "srflx" && wanCandidateOk(c)) {
+        wanSeen = true;
+        soon(turn ? 2500 : lanSeen ? 400 : 1500);
+      } else if (lanCandidateOk(c)) {
+        lanSeen = true;
+        soon(turn ? 4000 : wanSeen ? 400 : 2500);
+      }
     };
     pc.addEventListener("icegatheringstatechange", onState);
     pc.addEventListener("icecandidate", onCandidate);
@@ -297,14 +304,13 @@ export async function selectedPair(pc) {
   if (!pair) return null;
   const local = stats.get(pair.localCandidateId);
   const remote = stats.get(pair.remoteCandidateId);
-  const addr = (c) => c?.address || c?.ip || "";
-  const lanOf = (c) => (addr(c) ? Boolean(isLanAddress(addr(c))) || /^(127\.|::1$)/.test(addr(c)) : true);
+  const far = (c) => ["srflx", "relay"].includes(c?.candidateType);
   const host = local?.candidateType === "host" && remote?.candidateType === "host";
   return {
     local: local?.candidateType ?? "none",
     remote: remote?.candidateType ?? "none",
     host,
-    lan: host && lanOf(local) && lanOf(remote),
+    lan: !far(local) && !far(remote),
     rttMs: pair.currentRoundTripTime != null ? pair.currentRoundTripTime * 1000 : null,
   };
 }

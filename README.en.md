@@ -869,11 +869,12 @@ Host:  ① give the host code (111 characters · QR) to the other player → ②
 Guest: ① enter the host code and press Next → ② give the answer code (· QR) to the host
 ```
 
-- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair is not host/host after connecting, the link is dropped. This is the default; a device with "Also connect over the internet" on follows 7.11.
+- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair has a srflx or relay candidate after connecting, the link is dropped. A prflx candidate (learned from a connectivity check when the other side could not resolve an mDNS name, as happens between a PC and a phone on the same Wi-Fi) is accepted. This is the default; a device with "Also connect over the internet" on follows 7.11.
 - A code is for one person, once. For 3 or more players the host makes a new host code per player (used codes and answer codes for another invite are refused).
 - Requests with a fixed role (create only, join only) start on that screen.
 - When the minimum player count is reached, it shows "Connected" and closes after 1 second. Any further confirmation (e.g. "Press A to start") happens inside the game.
 - Until the maximum is reached, the room host keeps a small indicator ("2/4 · waiting"); more players arrive as `JOIN`.
+- `JOIN`, the player count and the count in the room list change only after the joining device reports that it accepted its seat. A player who drops before that does not keep a seat (no `HOLD`).
 - Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly. `join: "anytime"` games differ (7.12).
 - Help when connecting fails: "Check that you are on the same Wi-Fi, that it is not a guest or public Wi-Fi, and that VPN is off."
 
@@ -1025,7 +1026,7 @@ When the user turns on Settings › Multiplayer **Also connect over the internet
   - Host on, guest off: the guest drops the host's public candidates and answers with local ones only (the guest's public IP is not sent). Same Wi-Fi connects, elsewhere fails; the guest is told to turn the setting on too.
   - Host off, guest on: the host code has no mark, so the guest adds no public candidates. Same Wi-Fi only; the guest is told the other device has it off.
   - Both on and failing: "Could not connect over the internet. Mobile data, office or school networks may not connect."
-- A device with it on also accepts non host/host pairs (srflx, relay). A device with it off accepts host/host only, as before.
+- A device with it on also accepts srflx and relay pairs. A device with it off accepts host and prflx pairs only.
 - Off = the earlier behavior (local candidates only, no STUN request). The nearby-room list still only shows the same router (same public IP).
 
 `multiplayer.iceServers` — the game names its own STUN/TURN servers. Used only when the user turned the internet connection on; when given, **only the game's list** is used instead of webGBA's default STUN. Games without it use the default STUN. webGBA runs no TURN server of its own.

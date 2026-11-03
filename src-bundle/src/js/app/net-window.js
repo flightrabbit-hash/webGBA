@@ -79,16 +79,20 @@ export function noticeText(info) {
 
 export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" ? "warn" : "info";
 
-const HINTS = { wanOff: "net.err.wanOff", peerLan: "net.err.peerLan", wanFailed: "net.err.wanFailed" };
+const HINTS = { wanOff: "net.err.wanOff", peerLan: "net.err.peerLan", wanFailed: "net.err.wanFailed", lanFailed: "net.err.lanFailed", notLan: "net.err.notLan" };
+const HELP_HINTS = ["lanFailed", "notLan"];
+const HELP_CODES = ["timeout", "failed", "noLan", "rtc", ...HELP_HINTS];
 
 export function hintText(code) {
   return HINTS[code] ? t(HINTS[code]) : "";
 }
 
+const helpFor = (hint) => !HINTS[hint] || HELP_HINTS.includes(hint);
+
 export function hintOf(wan, peerWan, skipped = 0) {
   if (!wan && (peerWan || skipped)) return "wanOff";
   if (wan && !peerWan) return "peerLan";
-  return wan ? "wanFailed" : "";
+  return wan ? "wanFailed" : "lanFailed";
 }
 
 export function errorText(error, field) {
@@ -102,7 +106,7 @@ export function errorText(error, field) {
     if (HINTS[error.code]) return hintText(error.code);
     if (error.code === "used") return t("net.err.used");
     if (error.code === "mismatch") return t("net.err.mismatch");
-    if (error.code === "noLan" || error.code === "rtc" || error.code === "notLan") return t("net.err.noLan");
+    if (error.code === "noLan" || error.code === "rtc") return t("net.err.noLan");
     if (error.code === "incompatible") return t("net.why.incompatible");
     if (error.code === "full") return t("net.why.full");
     if (error.code === "timeout" || error.code === "failed") return t("net.err.failed");
@@ -293,9 +297,8 @@ export class NetWindow {
       return;
     }
     if ((this.screen === "join2" || this.screen === "wait") && !snap.active && snap.failed) {
-      const hint = hintText(snap.failed.hint);
-      this.error = hint || whyText(snap.failed.why);
-      this.errorHelp = !hint;
+      this.error = hintText(snap.failed.hint) || whyText(snap.failed.why);
+      this.errorHelp = helpFor(snap.failed.hint);
       this.offerText = "";
       const back = this.screen === "wait" ? "choose" : "join1";
       this.clearJoin();
@@ -929,9 +932,8 @@ export class NetWindow {
         this.clearJoin();
         this.net.discard();
         if (this.open && this.screen === "wait") {
-          const hint = hintText(this.joinHint);
-          this.error = hint || t("net.err.failed");
-          this.errorHelp = !hint;
+          this.error = hintText(this.joinHint) || t("net.err.failed");
+          this.errorHelp = helpFor(this.joinHint);
           this.go("choose");
         }
       }, JOIN_WAIT_MS);
@@ -943,7 +945,7 @@ export class NetWindow {
       if (this.screen === "choose" && error instanceof SignalError && ["none", "full", "version", "purpose", "paused"].includes(error.code)) this.startNear();
       if (this.open && this.screen !== "choose" && this.screen !== "code") this.go("code");
       this.offerLan = serverDown(error);
-      this.setError(errorText(error), error instanceof SessionError && ["noLan", "rtc", "timeout", "failed"].includes(error.code));
+      this.setError(errorText(error), error instanceof SessionError && HELP_CODES.includes(error.code));
       this.paintNear();
     }
   }
@@ -999,7 +1001,7 @@ export class NetWindow {
       const field = error instanceof CodeError || (error instanceof SessionError && ["used", "mismatch", "noLan"].includes(error.code));
       if (!field && this.invite === invite) this.invite = null;
       this.error = errorText(error, "answer");
-      this.errorHelp = error instanceof SessionError && ["timeout", "failed", "noLan", "notLan"].includes(error.code);
+      this.errorHelp = error instanceof SessionError && HELP_CODES.includes(error.code);
       if (this.screen === "host") {
         if (field) this.refreshDynamic();
         else this.render();
