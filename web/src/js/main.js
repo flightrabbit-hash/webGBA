@@ -2462,7 +2462,9 @@ function toggleFullscreen() {
 }
 
 function openSheet(name) {
+  const leaveNet = state.sheet === "net" && name !== "net" && netWin.open;
   state.sheet = name;
+  if (leaveNet) netWin.close();
   if (name !== "saves") state.lib.savesFor = null;
   el.sheet.dataset.sheet = name;
   showNow(el.sheet);
@@ -3730,7 +3732,10 @@ function renderSettings() {
         player.net.syncEnabled();
         syncControls();
       }),
-      switchField(t("cfg.netWan"), t("cfg.netWan.note"), p.netWan === true, (on) => savePrefs({ netWan: on })),
+      switchField(t("cfg.netWan"), t("cfg.netWan.note"), p.netWan === true, (on) => {
+        savePrefs({ netWan: on });
+        player.net.wanChanged();
+      }),
       nickSetting(),
     ),
     group(

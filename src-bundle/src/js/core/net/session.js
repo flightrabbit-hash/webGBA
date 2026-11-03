@@ -34,6 +34,7 @@ const MEMBERS_MS = 2000;
 const RESTART_MS = 3000;
 const RTT_STEP = 3;
 const CTL_MAX = 8192;
+const SYM_NOTE = " · 공인 주소가 STUN 서버마다 다름(대칭 NAT로 보임)";
 const STATE_CHUNK = MSG_MAX;
 
 export class SessionError extends Error {
@@ -120,6 +121,8 @@ export class NetSession {
     this.ice = ice;
     this.wan = Boolean(wan);
     this.turn = Boolean(turn);
+    this.cfg = 0;
+    this.symSelf = false;
     this.peerWan = false;
     this.rejoinGame = Boolean(rejoinGame);
     this.helper = null;
@@ -207,6 +210,22 @@ export class NetSession {
     return this.opened && !this.closed;
   }
 
+  get idle() {
+    if (this.closed) return false;
+    if (!this.host) return !this.opened && !this.link;
+    return this.count <= 1 && ![...this.invites.values()].some((l) => l.state === "connecting" || l.state === "welcomed");
+  }
+
+  setWan({ wan, turn = false, ice = null }) {
+    if (!this.idle) return false;
+    this.wan = Boolean(wan);
+    this.turn = Boolean(turn);
+    this.ice = ice;
+    this.cfg++;
+    this.changed();
+    return true;
+  }
+
   memberList() {
     return [...this.members.entries()]
       .sort((a, b) => a[0] - b[0])
@@ -273,7 +292,7 @@ export class NetSession {
     if (!this.host || this.closed) throw new SessionError("closed");
     const waiting = [...this.invites.values()].filter((l) => l.state !== "dead" && !l.rejoin).length;
     if (this.count + waiting >= this.max) throw new SessionError("full", WHY.FULL);
-    const link = { id: ++this.inviteSeq, pc: null, dc: null, slot: -1, ready: false, state: "invite", created: this.now(), lastSeen: this.now(), pair: null };
+    const link = { id: ++this.inviteSeq, pc: null, dc: null, slot: -1, ready: false, state: "invite", created: this.now(), lastSeen: this.now(), pair: null, cfg: this.cfg };
     this.invites.set(link.id, link);
     try {
       const pc = await this.peer();
@@ -296,8 +315,9 @@ export class NetSession {
       if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
       link.code = code.code;
       link.ufrag = code.ufrag;
-      this.log("info", `초대 ${link.id}: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · 코드 ${code.code.length}자`);
-      return { id: link.id, code: code.code, public: code.public };
+      link.sym = code.sym;
+      this.log("info", `초대 ${link.id}: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · 코드 ${code.code.length}자${code.sym ? SYM_NOTE : ""}`);
+      return { id: link.id, code: code.code, public: code.public, cfg: link.cfg };
     } catch (error) {
       this.killLink(link);
       link.state = "dead";
@@ -316,10 +336,12 @@ export class NetSession {
     this.used.add(desc.ufrag);
     link.state = "connecting";
     link.peerWan = desc.wan;
+    link.peerSym = desc.sym;
+    if (desc.sym) this.log("info", `초대 ${link.id}: 유저 답 코드${SYM_NOTE}`);
     const done = new Promise((resolve, reject) => {
       link.resolve = resolve;
       link.reject = reject;
-      link.timer = setTimeout(() => this.failInvite(link, this.failCode(desc), WHY.NO_NETWORK), CONNECT_MS);
+      link.timer = setTimeout(() => this.failInvite(link, this.failCode(desc, link.sym), WHY.NO_NETWORK), CONNECT_MS);
     });
     try {
       await link.pc.setRemoteDescription({ type: "answer", sdp: desc.sdp });
@@ -329,9 +351,11 @@ export class NetSession {
     return done;
   }
 
-  failCode(desc) {
+  failCode(desc, self = false) {
     if (!this.wan && (desc.wan || desc.skipped)) return "wanOff";
     if (this.wan && !desc.wan) return "peerLan";
+    if (this.wan && self) return "wanSym";
+    if (this.wan && desc.sym) return "peerSym";
     return this.wan ? "wanFailed" : "lanFailed";
   }
 
@@ -536,7 +560,7 @@ export class NetSession {
   onHostState(link) {
     const st = link.pc?.connectionState;
     if (link.state !== "joined") {
-      if (st === "failed") this.failInvite(link, link.peerWan !== undefined ? this.failCode({ wan: link.peerWan, skipped: 0 }) : "failed", WHY.NO_NETWORK);
+      if (st === "failed") this.failInvite(link, link.peerWan !== undefined ? this.failCode({ wan: link.peerWan, skipped: 0, sym: link.peerSym }, link.sym) : "failed", WHY.NO_NETWORK);
       return;
     }
     if (this.links.get(link.slot) === link && this.rejoinable && (st === "disconnected" || st === "failed")) this.helperCall("watch");
@@ -795,9 +819,10 @@ export class NetSession {
       if (this.closed) throw new SessionError("closed");
       const code = encodeCode(pc.localDescription.sdp, desc.ufrag, { wan: this.wan && desc.wan });
       if (!code.kept) throw new SessionError("noLan", WHY.NO_NETWORK);
-      this.log("info", `답 코드: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · ${code.code.length}자`);
+      this.symSelf = code.sym;
+      this.log("info", `답 코드: 후보 ${code.kept}개(공인 ${code.public}, 버림 ${code.dropped}) · ${code.code.length}자${code.sym ? SYM_NOTE : ""} · 방장 코드 후보 ${desc.total}개(공인 ${desc.public}${desc.wan ? "" : ", 인터넷 연결 끔"})${desc.sym ? SYM_NOTE : ""}`);
       this.changed();
-      return { code: code.code, peerWan: desc.wan, skipped: desc.skipped };
+      return { code: code.code, peerWan: desc.wan, skipped: desc.skipped, sym: code.sym, peerSym: desc.sym };
     } catch (error) {
       this.killLink(link);
       this.link = null;
@@ -812,7 +837,7 @@ export class NetSession {
       if (st !== "failed") return;
       if (link.rejoin) return this.linkDown(link, WHY.LOST);
       this.log("warn", "연결 실패(ICE·DTLS)");
-      this.failHint = desc ? this.failCode(desc) : "";
+      this.failHint = desc ? this.failCode(desc, this.symSelf) : "";
       this.close(this.opened ? WHY.LOST : WHY.NO_NETWORK);
       return;
     }
