@@ -2050,8 +2050,19 @@ body[data-layout="landscape"] .lib__shelf {
   line-height: 20px;
 }
 
-.links a {
+.links a,
+.info__line a {
   color: var(--accent);
+}
+
+.doc__text {
+  margin: 0;
+  color: var(--text-dim);
+  font: 15px/20px var(--font-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* 퀵슬롯(빠른 저장·불러오기) */
@@ -2389,6 +2400,217 @@ body[data-layout="landscape"] .bar__group--quick {
   font-family: var(--font-small);
   font-size: 12px;
   line-height: 16px;
+}
+
+.dialog[data-kind="pick"] .dialog__card {
+  width: min(100%, 460px);
+}
+
+.dialog[data-kind="pick"] .dialog__body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dialog[data-kind="pick"] .dialog__body > p {
+  flex: none;
+}
+
+.zpick {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: var(--gap-1);
+}
+
+.zpick__all,
+.zpick__row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--gap-2);
+  height: 40px;
+  padding: 0 var(--gap-2);
+  color: var(--text);
+  line-height: 20px;
+  cursor: pointer;
+  outline: none;
+  touch-action: manipulation;
+}
+
+.zpick__all:focus-visible,
+.zpick__row:focus-visible {
+  background: var(--accent-soft);
+}
+
+.zpick__row[aria-disabled="true"],
+.zpick__all[aria-disabled="true"] {
+  cursor: default;
+}
+
+.zpick__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: var(--px) solid var(--line);
+  list-style: none;
+}
+
+.zpick__name,
+.zpick__allLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zpick__meta,
+.zpick__count {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zpick__count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.zpick__meta--why {
+  color: var(--danger);
+}
+
+.zpick__row[aria-disabled="true"] .zpick__name {
+  color: var(--text-faint);
+}
+
+.cbox {
+  --ol: var(--px-ol);
+  --edge: var(--px-pan-hi);
+  --face: var(--px-well);
+  --press: 0px;
+  position: relative;
+  flex: none;
+  width: calc(var(--px) * 11);
+  height: calc(var(--px) * 11);
+  background: var(--face);
+  color: var(--px-acc-ink);
+  box-shadow: inset 0 var(--press) 0 0 var(--edge), inset 0 0 0 var(--px) var(--edge), 0 calc(var(--px) * -1) 0 0 var(--ol), 0 var(--px) 0 0 var(--ol), calc(var(--px) * -1) 0 0 0 var(--ol), var(--px) 0 0 0 var(--ol);
+}
+
+.cbox__mark,
+.cbox__dash {
+  position: absolute;
+  visibility: hidden;
+}
+
+.cbox__mark {
+  top: calc(var(--px) * 2 + var(--press));
+  left: calc(var(--px) * 2);
+  width: var(--px);
+  height: var(--px);
+  box-shadow: calc(var(--px) * 6) 0 0 0 currentColor, calc(var(--px) * 5) var(--px) 0 0 currentColor, calc(var(--px) * 6) var(--px) 0 0 currentColor, 0 calc(var(--px) * 2) 0 0 currentColor, calc(var(--px) * 4) calc(var(--px) * 2) 0 0 currentColor, calc(var(--px) * 5) calc(var(--px) * 2) 0 0 currentColor, 0 calc(var(--px) * 3) 0 0 currentColor, var(--px) calc(var(--px) * 3) 0 0 currentColor, calc(var(--px) * 3) calc(var(--px) * 3) 0 0 currentColor, calc(var(--px) * 4) calc(var(--px) * 3) 0 0 currentColor, var(--px) calc(var(--px) * 4) 0 0 currentColor, calc(var(--px) * 2) calc(var(--px) * 4) 0 0 currentColor, calc(var(--px) * 3) calc(var(--px) * 4) 0 0 currentColor, calc(var(--px) * 2) calc(var(--px) * 5) 0 0 currentColor;
+}
+
+.cbox__dash {
+  top: calc(var(--px) * 5 + var(--press));
+  left: calc(var(--px) * 3);
+  width: calc(var(--px) * 5);
+  height: var(--px);
+  background: currentColor;
+}
+
+[aria-checked="true"] > .cbox,
+[aria-checked="mixed"] > .cbox {
+  --edge: var(--px-acc-hi);
+  --face: var(--px-acc);
+}
+
+[aria-checked="true"] > .cbox .cbox__mark,
+[aria-checked="mixed"] > .cbox .cbox__dash {
+  visibility: visible;
+}
+
+.zpick__all:not([aria-disabled="true"]):active > .cbox,
+.zpick__row:not([aria-disabled="true"]):active > .cbox,
+.zpick__all.is-down > .cbox,
+.zpick__row.is-down > .cbox {
+  --edge: var(--px-acc-side);
+  --press: var(--px);
+}
+
+.zpick__all:focus-visible > .cbox,
+.zpick__row:focus-visible > .cbox {
+  --ol: var(--accent);
+}
+
+[aria-disabled="true"] > .cbox {
+  --edge: var(--px-off-side);
+  --face: var(--px-off);
+}
+
+.loader--count {
+  z-index: 29;
+}
+
+.loader__file {
+  flex: none;
+  height: 20px;
+  margin: 0 0 var(--gap-3);
+  overflow: hidden;
+  color: var(--text-dim);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loader--count .loader__meta {
+  justify-content: flex-start;
+  gap: var(--gap-2);
+}
+
+.loader__ratio {
+  margin-left: auto;
+}
+
+.loader__dots {
+  display: flex;
+  flex: none;
+  gap: var(--px);
+}
+
+.loader__dots i {
+  width: calc(var(--px) * 3);
+  height: calc(var(--px) * 3);
+  background: var(--line-strong);
+  animation: loader-dot 0.9s steps(1, end) infinite;
+}
+
+.loader__dots i:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.loader__dots i:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+@keyframes loader-dot {
+  0% {
+    background: var(--px-acc);
+  }
+
+  34% {
+    background: var(--line-strong);
+  }
 }
 
 .loader__steps {

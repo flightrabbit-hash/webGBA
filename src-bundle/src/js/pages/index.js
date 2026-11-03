@@ -3,8 +3,9 @@ import { bootHost, inspectModule, readEmbeddedRom, readRomPayload, SCREEN_H, SCR
 import { compileCode, gameInfo, problemText, readWgba, screenOf, supportProblem, titleLine, wgbaErrorText } from "../core/wgba-read.js";
 import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
-import { ZIP_MAX, zipFile } from "../core/zip.js";
+import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
+import { openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
@@ -74,6 +75,7 @@ const PATCH_EXT = "wgbp";
 const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
 const RECENT_MAX = 10;
 const LICENSE_LINE = "webGBA — MIT License, © 2026 flightrabbit";
+const BLOG_URL = "https://flightrabbit.tistory.com";
 
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
 // 키 설정 창(과 앱 전체 키 저장)에는 C·D 칸도 둔다 — 설명서가 C·D 를 정의하지 않은 게임·게임 없음에서도 미리 지정할 수 있게(기본 빈 상태,
@@ -643,6 +645,144 @@ async function readZip(path) {
   return zipFile(await core.fileReadBytes(path));
 }
 
+const ZIP_ROM_MAX = 64 * 1024 * 1024;
+const BAD_FILE_CHAR = /[\\/:*?"<>|\u0000-\u001f]/g;
+const safeName = (name) => name.replace(BAD_FILE_CHAR, "_").replace(/[. ]+$/, "") || "game";
+const sepOf = (path) => (path.includes("\\") ? "\\" : "/");
+const zipFolder = (path) => besideOf(path, stemOf(path));
+
+const zipFileName = (game, where) => {
+  if (!where) return game.name;
+  const dot = game.name.lastIndexOf(".");
+  return `${game.name.slice(0, dot)} (${where})${game.name.slice(dot)}`;
+};
+
+async function openZip(path) {
+  const items = await core.zipList(path);
+  const games = zipGames(
+    items.map((item) => ({ index: item.index, name: zipName(new Uint8Array(item.raw)), size: item.size, method: item.method, flags: item.encrypted ? 1 : 0 })),
+    { romMax: ZIP_ROM_MAX },
+  );
+  if (!games.length) throw new Error(t("zip.noGame", { name: baseOf(path) }));
+  if (games.length > 1) {
+    core.log("INFO", `zip 안 게임 ${games.length}개 ${path}`);
+    await pickZip(path, games);
+    return null;
+  }
+  const [game] = games;
+  if (!WASM_EXT.has(game.ext)) return path;
+  if (game.problem) throw new Error(`${game.name}: ${whyText(game.problem)}`);
+  const dir = zipFolder(path);
+  const target = `${dir}${sepOf(path)}${safeName(game.name)}`;
+  const loader = openCountLoader({ title: t("zip.load.unpack"), buttonClass: "btn" });
+  loader.set({ fraction: 0, count: t("zip.load.count", { n: 1, total: 1 }), name: game.name });
+  let result;
+  try {
+    result = await core.zipExtract(path, game.entry.index, target, false);
+  } finally {
+    loader.close();
+  }
+  if (result === "exists") {
+    if (!(await confirmDialog(t("confirm.zipOverwriteTitle"), t("confirm.zipOverwriteOne", { folder: baseOf(dir), name: game.name })))) {
+      status(t("status.zipPickCancelled"), "warn");
+      return null;
+    }
+    result = await core.zipExtract(path, game.entry.index, target, true);
+  }
+  core.log("INFO", `zip 안 ${game.path} → ${target} (${result})`);
+  return target;
+}
+
+async function pickZip(path, games) {
+  const dir = zipFolder(path);
+  let ok = null;
+  const picker = zipPicker({ games, onChange: (count) => ok && (ok.disabled = count === 0) });
+  const asked = openDialog({
+    title: t("zip.pick.title", { count: games.length }),
+    body: [t("zip.pick.textExe", { name: baseOf(path), folder: baseOf(dir) }), picker.node],
+    kind: "pick",
+    actions: [
+      { label: "CANCEL", value: false },
+      { label: "OK", go: true, value: true },
+    ],
+  });
+  ok = el.dialogActions.querySelector(".btn--go");
+  ok.disabled = picker.chosen().length === 0;
+  picker.center();
+  window.addEventListener("resize", picker.center);
+  const go = await asked;
+  window.removeEventListener("resize", picker.center);
+  if (!go) {
+    status(t("status.zipPickCancelled"), "warn");
+    return;
+  }
+  await unpackZip(path, dir, picker.chosen());
+}
+
+async function unpackZip(path, dir, games) {
+  const total = games.length;
+  const where = shownNames(games);
+  const loader = openCountLoader({ title: t("zip.load.unpack"), cancel: "CANCEL", buttonClass: "btn" });
+  const done = [];
+  const conflicts = [];
+  const failed = [];
+  let stopped = false;
+  try {
+    for (const [index, game] of games.entries()) {
+      if (loader.aborted) {
+        stopped = true;
+        break;
+      }
+      const name = safeName(zipFileName(game, where[index]));
+      const target = `${dir}${sepOf(path)}${name}`;
+      const count = t("zip.load.count", { n: index + 1, total });
+      loader.set({ fraction: index / total, count, name });
+      try {
+        const result = await core.zipExtract(path, game.entry.index, target, false);
+        if (result === "exists") conflicts.push({ game, target, name });
+        else done.push(target);
+      } catch (error) {
+        failed.push({ name, why: reason(error) });
+        core.log("WARN", `zip 안 ${game.path} 풀기 실패 ${path}: ${reason(error)}`);
+      }
+      loader.set({ fraction: (index + 1) / total, count, name });
+    }
+  } finally {
+    loader.close();
+  }
+  let kept = 0;
+  if (conflicts.length && !stopped) {
+    const names = `${conflicts
+      .slice(0, 3)
+      .map((item) => item.name)
+      .join(", ")}${conflicts.length > 3 ? " …" : ""}`;
+    const replace = await confirmDialog(t("confirm.zipOverwriteTitle"), t("confirm.zipOverwriteText", { folder: baseOf(dir), count: conflicts.length, names }));
+    for (const item of conflicts) {
+      if (replace) {
+        try {
+          await core.zipExtract(path, item.game.entry.index, item.target, true);
+        } catch (error) {
+          failed.push({ name: item.name, why: reason(error) });
+          continue;
+        }
+      } else kept++;
+      done.push(item.target);
+    }
+  }
+  core.log("INFO", `zip 게임 풀기 ${done.length}/${total} → ${dir}${failed.length ? ` · 실패 ${failed.length}` : ""}${stopped ? " · 취소" : ""}`);
+  if (done.length) {
+    const rest = favorites().filter((item) => !done.some((target) => samePath(target, item)));
+    await savePrefs({ favorites: [...rest, ...done] });
+    if (state.prefs.panel === "favorites") renderPanel();
+    else await showPanel("favorites");
+    if (el.start.hidden === false) renderStart();
+    syncControls();
+  }
+  const head = stopped ? t("status.zipStopped", { count: done.length }) : t("status.zipAdded", { count: done.length, folder: baseOf(dir) });
+  const tail = failed.length ? t("status.zipFailed", { count: failed.length, name: failed[0].name, reason: failed[0].why }) : "";
+  status(join(head, kept ? t("status.zipKept", { count: kept }) : "", tail), failed.length || stopped ? "warn" : "info");
+}
+
 function hostLog(level, line) {
   if (level === "error") core.log("WARN", `[코어] ${line}`);
 }
@@ -674,6 +814,12 @@ async function openPath(path, options = {}) {
   status(t("status.opening", { name: baseOf(path) }));
   let made = null;
   try {
+    if (ext === "zip") {
+      const picked = await openZip(path);
+      if (!picked) return false;
+      path = picked;
+      ext = extOf(path);
+    }
     await closeGame({ quiet: true });
     if (ext === PATCH_EXT) {
       made = await makeFromPatch(path, options);
@@ -700,7 +846,7 @@ async function openPath(path, options = {}) {
   } catch (error) {
     status(t("status.openFailed", { reason: reason(error) }), "error");
     core.log("ERROR", `열지 못했습니다 ${path}: ${reason(error)}`);
-    showView("start");
+    if (!state.game) showView("start");
     if (made?.loader) await made.loader.fail(reason(error), "open");
     return false;
   } finally {
@@ -1291,7 +1437,7 @@ function renderStart() {
 
 let dialogDone = null;
 
-function openDialog({ title, body, actions, wide = false }) {
+function openDialog({ title, body, actions, wide = false, kind = "" }) {
   closeMenu();
   player.releaseAll();
   return new Promise((resolve) => {
@@ -1305,6 +1451,7 @@ function openDialog({ title, body, actions, wide = false }) {
       else el.stage.focus();
     };
     el.dialog.classList.toggle("dialog--wide", wide);
+    el.dialog.dataset.kind = kind;
     el.dialogTitle.textContent = title;
     el.dialogBody.replaceChildren(...(Array.isArray(body) ? body : [body]).map((part) => (typeof part === "string" ? Object.assign(document.createElement("p"), { textContent: part }) : part)));
     el.dialogActions.replaceChildren(
@@ -1375,6 +1522,13 @@ async function showInfo() {
   pre.className = "license";
   pre.textContent = license || "MPL-2.0 — https://mozilla.org/MPL/2.0/";
   const lead = Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: `webGBA V${state.info?.version ?? ""}` });
+  const blog = Object.assign(document.createElement("p"), { className: "dialog__link" });
+  const blogLink = Object.assign(document.createElement("a"), { href: BLOG_URL, textContent: BLOG_URL });
+  blogLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    core.openLink(BLOG_URL).catch((error) => status(reason(error), "error"));
+  });
+  blog.append(Object.assign(document.createElement("span"), { textContent: `${t("info.blog")} ` }), blogLink);
   const sub = Object.assign(document.createElement("p"), { className: "dialog__sub", textContent: t("info.openSource") });
   // 설명서가 있는 .wgba 를 열고 있으면 그 게임: 이름·버전·id·만든 이·빌드 앞 8자리
   const game = state.game?.info;
@@ -1391,6 +1545,7 @@ async function showInfo() {
       ...gameLines,
       lead,
       LICENSE_LINE,
+      blog,
       t("info.about"),
       sub,
       t("info.mgba"),

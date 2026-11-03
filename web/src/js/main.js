@@ -14,7 +14,8 @@ import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
 import { DIR_MODES, DIRS, VirtualPad, hapticKind } from "./pad.js";
-import { extractRom, ZIP_MAX, zipFile, ZipError } from "./core/zip.js";
+import { extractRom, ZIP_MAX, zipEntries, zipFile, zipGames, zipReadAsync, ZipError } from "./core/zip.js";
+import { openCountLoader, shownNames, whyText, zipPicker } from "./app/zip-pick.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
 import { iconBits, iconStyle } from "./icons.js";
@@ -93,6 +94,7 @@ const NAMED_CODES = ["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "
 const SPEEDS = [1, 1.5, 2, 3, 4];
 const HOLD_SPEED = 4;
 const LICENSE_LINE = "webGBA — MIT License, © 2026 flightrabbit";
+const BLOG_URL = "https://flightrabbit.tistory.com";
 const SAVE_IMPORT_MAX = 0x100000;
 const TOAST_MS = 3200;
 const NAME_MAX = 40;
@@ -1228,10 +1230,11 @@ function pickFile({ multiple = false } = {}) {
   });
 }
 
-function openDialog({ title, body = [], actions, input = null }) {
+function openDialog({ title, body = [], actions, input = null, kind = "" }) {
   if (state.dialogDone) state.dialogDone(null);
   el.dialogTitle.textContent = title;
-  const nodes = body.filter(Boolean).map((text) => make("p", "", text));
+  el.dialog.dataset.kind = kind;
+  const nodes = body.filter(Boolean).map((part) => (typeof part === "string" ? make("p", "", part) : part));
   let field = null;
   let hint = null;
   if (input) {
@@ -1979,30 +1982,187 @@ async function busy(work) {
 
 function openFile(file, patchRom = null) {
   return busy(async () => {
-    let name = file.name;
-    let ext = extOf(name);
+    const name = file.name;
+    const ext = extOf(name);
     if (!OPEN_EXT.has(ext)) {
       toast(t("status.unsupported", { name }), "warn");
       return false;
     }
+    if (ext === "zip") return openZip(file);
     await closeGame({ quiet: true });
     toast(t("status.opening", { name }));
     await paint();
-    let bytes = new Uint8Array(await file.arrayBuffer());
-    if (ext === "zip") {
-      ({ name, bytes } = unzip(bytes, name));
-      ext = extOf(name);
-    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
     if (ext === "wgbp") {
       const made = await makeFromPatch(name, bytes, patchRom);
       if (!made) return false;
       return launch(made.meta, made.bytes, { note: made.note, loader: made.loader, wgba: made.wgba });
     }
-    const kept = await importGame(name, bytes);
-    if (!kept) return false;
-    if (kept.stored) return launchStored(kept);
-    return launch(kept.meta, bytes, { note: kept.note, wgba: kept.wgba });
+    return openBytes(name, bytes);
   });
+}
+
+async function openBytes(name, bytes) {
+  const kept = await importGame(name, bytes);
+  if (!kept) return false;
+  if (kept.stored) return launchStored(kept);
+  return launch(kept.meta, bytes, { note: kept.note, wgba: kept.wgba });
+}
+
+function zipText(error, name) {
+  if (!(error instanceof ZipError)) return reason(error);
+  if (error.code === "zipNoRom") return t("web.zipNoGame", { rom: name });
+  return t(`patch.err.${error.code}`, { rom: name, method: error.params.method ?? "" });
+}
+
+async function readFileBytes(file, onProgress, signal) {
+  if (typeof file.stream !== "function") return new Uint8Array(await file.arrayBuffer());
+  const out = new Uint8Array(file.size);
+  const reader = file.stream().getReader();
+  let filled = 0;
+  let last = 0;
+  for (;;) {
+    if (signal.aborted) {
+      reader.cancel().catch(() => {});
+      return null;
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (filled + value.length > out.length) throw new ZipError("zipCorrupt", { why: "size" });
+    out.set(value, filled);
+    filled += value.length;
+    const now = performance.now();
+    if (now - last > 40) {
+      last = now;
+      onProgress(filled / out.length);
+    }
+  }
+  return filled === out.length ? out : out.subarray(0, filled);
+}
+
+async function openZip(file) {
+  const name = file.name;
+  if (file.size > ZIP_MAX) throw new Error(zipText(new ZipError("zipTooBig"), name));
+  hold("zip", true);
+  const loader = openCountLoader({ title: t("zip.load.read", { name }), cancel: t("web.btn.cancel"), onShow: () => toast("") });
+  try {
+    const step = (fraction) => loader.set({ fraction, name, count: t("zip.load.size", { done: fmtSize(fraction * file.size), total: fmtSize(file.size) }) });
+    step(0);
+    const bytes = await readFileBytes(file, step, loader);
+    if (!bytes) {
+      loader.close();
+      toast(t("web.zip.readCancelled"));
+      return false;
+    }
+    let games;
+    try {
+      games = zipGames(zipEntries(zipFile(bytes)));
+    } catch (error) {
+      throw new Error(zipText(error, name));
+    }
+    if (!games.length) throw new Error(zipText(new ZipError("zipNoRom"), name));
+    if (games.length > 1) {
+      loader.close();
+      logLine("INFO", `zip 안 게임 ${games.length}개 ${name}`);
+      return await pickZipGames(name, bytes, games);
+    }
+    const [game] = games;
+    const count = t("zip.load.count", { n: 1, total: 1 });
+    let data;
+    try {
+      data = await zipReadAsync(bytes, game.entry, { signal: loader, onProgress: (fraction) => loader.set({ fraction, name: game.name, count }) });
+    } catch (error) {
+      if (error?.code === "zipCancelled") {
+        loader.close();
+        toast(t("web.zip.readCancelled"));
+        return false;
+      }
+      throw new Error(zipText(error, name));
+    }
+    loader.close();
+    hold("zip", false);
+    await closeGame({ quiet: true });
+    return await openBytes(game.name, data);
+  } finally {
+    loader.close();
+    hold("zip", false);
+  }
+}
+
+async function pickZipGames(zipName, bytes, games) {
+  let add = null;
+  const picker = zipPicker({ games, onChange: (count) => add && (add.disabled = count === 0) });
+  toast("");
+  const asked = openDialog({
+    title: t("zip.pick.title", { count: games.length }),
+    body: [t("web.zip.pickText", { name: zipName }), picker.node],
+    kind: "pick",
+    actions: [
+      { label: t("web.btn.cancel"), value: false },
+      { label: t("web.btn.add"), value: true, primary: true, id: "zip-add" },
+    ],
+  });
+  add = el.dialogActions.querySelector('[data-action="zip-add"]');
+  add.disabled = picker.chosen().length === 0;
+  picker.center();
+  el.dialog.querySelector(".dialog__card")?.addEventListener("animationend", () => picker.center(), { once: true });
+  window.addEventListener("resize", picker.center);
+  const go = await asked;
+  window.removeEventListener("resize", picker.center);
+  if (!go) {
+    toast(t("web.zip.pickCancelled"));
+    return false;
+  }
+  return addZipGames(picker.chosen(), bytes);
+}
+
+const zipFileName = (game, where) => {
+  if (!where) return game.name;
+  const dot = game.name.lastIndexOf(".");
+  return `${game.name.slice(0, dot)} (${where})${game.name.slice(dot)}`;
+};
+
+async function addZipGames(games, bytes) {
+  const total = games.length;
+  const where = shownNames(games);
+  const loader = openCountLoader({ title: t("web.zip.loadAdd"), cancel: t("web.btn.cancel"), onShow: () => toast("") });
+  const added = [];
+  const failed = [];
+  let stopped = false;
+  try {
+    for (const [index, game] of games.entries()) {
+      if (loader.aborted) {
+        stopped = true;
+        break;
+      }
+      const count = t("zip.load.count", { n: index + 1, total });
+      const name = zipFileName(game, where[index]);
+      loader.set({ fraction: index / total, count, name });
+      try {
+        const data = await zipReadAsync(bytes, game.entry, { signal: loader, onProgress: (part) => loader.set({ fraction: (index + part * 0.7) / total, count, name }) });
+        const kept = await importGame(name, data);
+        if (kept) added.push(kept);
+        loader.set({ fraction: (index + 1) / total, count, name });
+      } catch (error) {
+        if (error?.code === "zipCancelled") {
+          stopped = true;
+          break;
+        }
+        const why = error instanceof ZipError ? whyText(error) || zipText(error, name) : reason(error);
+        failed.push({ name, why });
+        logLine("WARN", `zip 안 ${game.path} 등록 실패: ${why}`);
+      }
+    }
+  } finally {
+    loader.close();
+  }
+  logLine("INFO", `zip 게임 등록 ${added.length}/${total}${failed.length ? ` · 실패 ${failed.length}` : ""}${stopped ? " · 취소" : ""}`);
+  await refreshStart();
+  const notes = [stopped ? t("web.zip.stopped", { count: added.length }) : t("web.zip.added", { count: added.length })];
+  if (failed.length) notes.push(t("web.zip.failed", { count: failed.length, name: failed[0].name, reason: failed[0].why }));
+  toast(join(...notes), failed.length || stopped ? "warn" : "info");
+  if (added.length) openSheet("library");
+  return added.length > 0;
 }
 
 // 낮은 버전 경고에서 "아니요" → 라이브러리에 있던 버전을 그대로 엶(결정 102-6)
@@ -2341,7 +2501,7 @@ function closeSheet({ fromHistory = false, force = false } = {}) {
 function renderSheet() {
   const name = state.sheet;
   if (!name) return;
-  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo, net: () => netWin.open && netWin.render() }[name];
+  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo, doc: renderDoc, net: () => netWin.open && netWin.render() }[name];
   render?.();
 }
 
@@ -3609,6 +3769,39 @@ function renderHelp() {
   el.sheetBody.replaceChildren(group(t("web.help.keyboard"), list), group(t("web.help.touchTitle"), make("p", "note", t("web.help.touch")), make("p", "note", t("web.help.gamepad"))));
 }
 
+function outLink(href, label) {
+  const link = make("a", "", label);
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  return link;
+}
+
+function openDoc(href, label) {
+  state.doc = { href, label };
+  openSheet("doc");
+}
+
+async function renderDoc() {
+  const doc = state.doc;
+  el.sheetTitle.textContent = doc?.label ?? "";
+  const back = make("div", "start__actions start__actions--left");
+  back.append(button({ label: t("info.title"), icon: "back", kind: "small", action: "back-info", onClick: () => openSheet("info") }));
+  const text = make("pre", "doc__text", t("web.doc.loading"));
+  el.sheetBody.replaceChildren(back, group("", text));
+  el.sheetBody.scrollTop = 0;
+  if (!doc) return;
+  let body;
+  try {
+    const response = await fetch(doc.href);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    body = await response.text();
+  } catch (error) {
+    body = t("web.doc.failed", { reason: reason(error) });
+  }
+  if (state.sheet === "doc" && state.doc === doc) text.textContent = body;
+}
+
 function renderInfo() {
   el.sheetTitle.textContent = t("info.title");
   const links = make("div", "links");
@@ -3623,12 +3816,16 @@ function renderInfo() {
     ["/fonts/Galmuri-OFL.txt", "Galmuri (OFL-1.1)"],
     ["https://github.com/flightrabbit-hash/webGBA", "GitHub"],
   ]) {
-    const link = make("a", "", label);
-    link.href = href;
-    link.target = "_blank";
-    link.rel = "noopener";
+    const link = outLink(href, label);
+    if (href.startsWith("/"))
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        openDoc(href, label);
+      });
     links.append(link);
   }
+  const blog = make("p", "note info__line");
+  blog.append(make("span", "", `${t("info.blog")} `), outLink(BLOG_URL, BLOG_URL));
   // 설명서가 있는 .wgba 를 열고 있으면 그 게임: 이름·버전·id·만든 이·빌드 앞 8자리
   const game = state.game?.gameId ? state.game : null;
   // 소리 확인 한 줄(iOS 무음 원인 찾기용): 상태 · 표본률 · 오디오 세션. 시트가 열려 있는 동안 0.5초마다 고침.
@@ -3646,7 +3843,7 @@ function renderInfo() {
   paintAudio();
   el.sheetBody.replaceChildren(
     ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note info__line", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
-    group("", make("p", "info__line", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE)),
+    group("", make("p", "info__line", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE), blog),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );
   setTimeout(paintAudio, 500);

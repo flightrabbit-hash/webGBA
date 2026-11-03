@@ -1030,6 +1030,225 @@ html.is-rail-collapsed .sidepanel {
   justify-content: flex-end;
 }
 
+.loader--count[hidden] {
+  display: none;
+}
+
+.loader__file {
+  height: 20px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loader--count .loader__meta {
+  gap: 8px;
+  justify-content: flex-start;
+  height: 16px;
+  margin-top: 0;
+  line-height: 16px;
+}
+
+.loader__ratio {
+  margin-left: auto;
+}
+
+.loader__dots {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.loader__dots i {
+  width: 6px;
+  height: 6px;
+  background: var(--line-strong);
+  animation: loader-dot 0.9s steps(1, end) infinite;
+}
+
+.loader__dots i:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.loader__dots i:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+@keyframes loader-dot {
+  0% {
+    background: var(--accent);
+  }
+
+  34% {
+    background: var(--line-strong);
+  }
+}
+
+.dialog[data-kind="pick"] {
+  --dialog-w: 520px;
+}
+
+.dialog[data-kind="pick"] .dialog__body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+.dialog[data-kind="pick"] .dialog__body > p {
+  flex: none;
+}
+
+.zpick {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.zpick__all,
+.zpick__row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  outline: none;
+}
+
+.zpick__all:focus-visible,
+.zpick__row:focus-visible {
+  background: var(--accent-soft);
+}
+
+.zpick__all[aria-disabled="true"],
+.zpick__row[aria-disabled="true"] {
+  cursor: default;
+}
+
+.zpick__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.zpick__name,
+.zpick__allLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zpick__meta,
+.zpick__count {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zpick__count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.zpick__meta--why {
+  color: var(--danger);
+}
+
+.zpick__row[aria-disabled="true"] .zpick__name {
+  color: var(--text-faint);
+}
+
+.cbox {
+  --dot: 2px;
+  --ol: var(--bg-sunken);
+  --edge: var(--line-strong);
+  --face: var(--bg-sunken);
+  --press: 0px;
+  position: relative;
+  flex: none;
+  width: calc(var(--dot) * 11);
+  height: calc(var(--dot) * 11);
+  background: var(--face);
+  color: var(--ink-accent);
+  box-shadow: inset 0 var(--press) 0 0 var(--edge), inset 0 0 0 var(--dot) var(--edge), 0 calc(var(--dot) * -1) 0 0 var(--ol), 0 var(--dot) 0 0 var(--ol), calc(var(--dot) * -1) 0 0 0 var(--ol), var(--dot) 0 0 0 var(--ol);
+}
+
+.cbox__mark,
+.cbox__dash {
+  position: absolute;
+  visibility: hidden;
+}
+
+.cbox__mark {
+  top: calc(var(--dot) * 2 + var(--press));
+  left: calc(var(--dot) * 2);
+  width: var(--dot);
+  height: var(--dot);
+  box-shadow: calc(var(--dot) * 6) 0 0 0 currentColor, calc(var(--dot) * 5) var(--dot) 0 0 currentColor, calc(var(--dot) * 6) var(--dot) 0 0 currentColor, 0 calc(var(--dot) * 2) 0 0 currentColor, calc(var(--dot) * 4) calc(var(--dot) * 2) 0 0 currentColor, calc(var(--dot) * 5) calc(var(--dot) * 2) 0 0 currentColor, 0 calc(var(--dot) * 3) 0 0 currentColor, var(--dot) calc(var(--dot) * 3) 0 0 currentColor, calc(var(--dot) * 3) calc(var(--dot) * 3) 0 0 currentColor, calc(var(--dot) * 4) calc(var(--dot) * 3) 0 0 currentColor, var(--dot) calc(var(--dot) * 4) 0 0 currentColor, calc(var(--dot) * 2) calc(var(--dot) * 4) 0 0 currentColor, calc(var(--dot) * 3) calc(var(--dot) * 4) 0 0 currentColor, calc(var(--dot) * 2) calc(var(--dot) * 5) 0 0 currentColor;
+}
+
+.cbox__dash {
+  top: calc(var(--dot) * 5 + var(--press));
+  left: calc(var(--dot) * 3);
+  width: calc(var(--dot) * 5);
+  height: var(--dot);
+  background: currentColor;
+}
+
+[aria-checked="true"] > .cbox,
+[aria-checked="mixed"] > .cbox {
+  --edge: var(--accent-hi);
+  --face: var(--accent);
+}
+
+[aria-checked="true"] > .cbox .cbox__mark,
+[aria-checked="mixed"] > .cbox .cbox__dash {
+  visibility: visible;
+}
+
+.zpick__all:not([aria-disabled="true"]):active > .cbox,
+.zpick__row:not([aria-disabled="true"]):active > .cbox,
+.zpick__all.is-down > .cbox,
+.zpick__row.is-down > .cbox {
+  --edge: var(--accent-line);
+  --press: var(--dot);
+}
+
+.zpick__all:focus-visible > .cbox,
+.zpick__row:focus-visible > .cbox {
+  --ol: var(--accent);
+}
+
+[aria-disabled="true"] > .cbox {
+  --edge: var(--line);
+  --face: var(--bg-raised);
+}
+
+.dialog__body .dialog__link a {
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

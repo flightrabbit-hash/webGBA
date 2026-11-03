@@ -70,6 +70,88 @@ pub fn stat(path: &str) -> Result<Entry> {
     Ok(entry_of(&full, Some(&meta)))
 }
 
+/// zip 안 롬 한도(`read_rom` 과 같음). `.wgba`·`.wasm` 은 웹 빌드라 ZIP 한도(256MB)까지.
+const ZIP_ROM_MAX: u64 = 64 * 1024 * 1024;
+const ZIP_WEB_MAX: u64 = 256 * 1024 * 1024;
+
+fn open_zip(path: &str) -> Result<zip::ZipArchive<std::fs::File>> {
+    let full = Path::new(path);
+    let file = std::fs::File::open(full).map_err(io_at(full))?;
+    zip::ZipArchive::new(file).map_err(|e| Error::Game(crate::i18n::tr1("rs.zipOpen", e)))
+}
+
+/// macOS 가 덧붙이는 `__MACOSX/`·`._이름` 은 게임이 아니다(웹 `zip.js` 의 hidden 과 같은 기준).
+fn hidden_entry(name: &str) -> bool {
+    let name = name.replace('\\', "/");
+    let base = name.rsplit('/').next().unwrap_or("");
+    name.ends_with('/') || name.starts_with("__MACOSX/") || name.contains("/__MACOSX/") || base.starts_with("._")
+}
+
+/// zip 항목 목록(폴더 제외). 이름은 원래 바이트로 넘겨 화면이 웹과 같은 규칙(UTF-8 → EUC-KR)으로 읽는다.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZipItem {
+    pub index: usize,
+    pub raw: Vec<u8>,
+    pub size: u64,
+    pub method: u16,
+    pub encrypted: bool,
+}
+
+pub fn zip_list(path: &str) -> Result<Vec<ZipItem>> {
+    let mut archive = open_zip(path)?;
+    let mut out = Vec::new();
+    for i in 0..archive.len() {
+        let Ok(item) = archive.by_index_raw(i) else { continue };
+        if item.is_dir() {
+            continue;
+        }
+        #[allow(deprecated)]
+        let method = item.compression().to_u16();
+        out.push(ZipItem { index: i, raw: item.name_raw().to_vec(), size: item.size(), method, encrypted: item.encrypted() });
+    }
+    Ok(out)
+}
+
+/// zip 항목 하나를 `target` 에 푼다. 결과: "written"(새로 씀) · "same"(같은 내용이 이미 있음) · "exists"(다른 내용이 있고 overwrite 아님).
+pub fn zip_extract(path: &str, index: usize, target: &str, overwrite: bool) -> Result<&'static str> {
+    let mut archive = open_zip(path)?;
+    let mut item = archive.by_index(index).map_err(|e| Error::Game(crate::i18n::tr1("rs.zipRead", e)))?;
+    let lower = target.to_ascii_lowercase();
+    let max = if lower.ends_with(".wgba") || lower.ends_with(".wasm") { ZIP_WEB_MAX } else { ZIP_ROM_MAX };
+    if item.size() > max {
+        return Err(Error::Game(crate::i18n::tr("rs.zipTooBig")));
+    }
+    let mut bytes = Vec::with_capacity(item.size() as usize);
+    item.read_to_end(&mut bytes).map_err(|e| Error::Game(crate::i18n::tr1("rs.zipRead", e)))?;
+    let full = Path::new(target);
+    if full.exists() {
+        if std::fs::read(full).map(|old| old == bytes).unwrap_or(false) {
+            return Ok("same");
+        }
+        if !overwrite {
+            return Ok("exists");
+        }
+    }
+    write_atomic(full, &bytes)?;
+    Ok("written")
+}
+
+fn link_ok(url: &str) -> Option<tauri::Url> {
+    let parsed: tauri::Url = url.parse().ok()?;
+    (parsed.scheme() == "https" && parsed.host_str().is_some() && parsed.username().is_empty() && parsed.password().is_none()).then_some(parsed)
+}
+
+/// 기본 브라우저로 https 주소를 연다(본 창은 앱 화면 밖으로 가지 않으므로).
+pub fn open_link(url: &str) -> Result<()> {
+    let parsed = link_ok(url).ok_or_else(|| Error::File(crate::i18n::tr1("rs.badLink", url)))?;
+    std::process::Command::new("explorer")
+        .arg(parsed.as_str())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| Error::File(crate::i18n::tr1("rs.explorer", e)))
+}
+
 /// 롬 바이트. `.zip` 이면 안의 첫 `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` 을 꺼낸다(GB·GBC 는 코어가 롬 머리로 고른다).
 pub fn read_rom(path: &str) -> Result<Vec<u8>> {
     let full = Path::new(path);
@@ -77,13 +159,12 @@ pub fn read_rom(path: &str) -> Result<Vec<u8>> {
     if !is_zip {
         return std::fs::read(full).map_err(io_at(full));
     }
-    let file = std::fs::File::open(full).map_err(io_at(full))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| Error::Game(crate::i18n::tr1("rs.zipOpen", e)))?;
+    let mut archive = open_zip(path)?;
     let mut pick: Option<usize> = None;
     for i in 0..archive.len() {
         let Ok(item) = archive.by_index(i) else { continue };
         let name = item.name().to_ascii_lowercase();
-        if item.is_file() && [".gba", ".agb", ".gb", ".gbc", ".bin"].iter().any(|ext| name.ends_with(ext)) {
+        if item.is_file() && !hidden_entry(&name) && [".gba", ".agb", ".gb", ".gbc", ".bin"].iter().any(|ext| name.ends_with(ext)) {
             pick = Some(i);
             break;
         }
@@ -92,7 +173,7 @@ pub fn read_rom(path: &str) -> Result<Vec<u8>> {
         return Err(Error::Game(crate::i18n::tr("rs.zipNoRom")));
     };
     let mut item = archive.by_index(index).map_err(|e| Error::Game(crate::i18n::tr1("rs.zipOpen", e)))?;
-    if item.size() > 64 * 1024 * 1024 {
+    if item.size() > ZIP_ROM_MAX {
         return Err(Error::Game(crate::i18n::tr("rs.zipTooBig")));
     }
     let mut out = Vec::with_capacity(item.size() as usize);
@@ -163,4 +244,59 @@ pub fn reveal(path: &str) -> Result<()> {
         command.arg(full);
     }
     command.spawn().map(|_| ()).map_err(|e| Error::File(crate::i18n::tr1("rs.explorer", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_entries() {
+        assert!(hidden_entry("__MACOSX/a.gba"));
+        assert!(hidden_entry("x/__MACOSX/a.gba"));
+        assert!(hidden_entry("롬/._a.gba"));
+        assert!(hidden_entry("dir/"));
+        assert!(!hidden_entry("롬/a.gba"));
+    }
+
+    #[test]
+    fn links() {
+        assert!(link_ok("https://flightrabbit.tistory.com").is_some());
+        assert!(link_ok("http://flightrabbit.tistory.com").is_none());
+        assert!(link_ok("file:///C:/Windows/notepad.exe").is_none());
+        assert!(link_ok("https://user:pw@example.com").is_none());
+        assert!(link_ok("C:\\Windows\\notepad.exe").is_none());
+    }
+
+    #[test]
+    fn extract_states() {
+        let dir = std::env::temp_dir().join(format!("webgba-zip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("t.zip");
+        {
+            use std::io::Write;
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            w.start_file("__MACOSX/a/._game.gba", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"x").unwrap();
+            w.start_file("a/game.gba", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"GAME").unwrap();
+            w.finish().unwrap();
+        }
+        let zip_str = zip_path.to_str().unwrap();
+        let items = zip_list(zip_str).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].raw, b"a/game.gba");
+        let index = items[1].index;
+        let target = dir.join("out").join("game.gba");
+        let target_str = target.to_str().unwrap();
+        assert_eq!(zip_extract(zip_str, index, target_str, false).unwrap(), "written");
+        assert_eq!(zip_extract(zip_str, index, target_str, false).unwrap(), "same");
+        std::fs::write(&target, b"OTHER").unwrap();
+        assert_eq!(zip_extract(zip_str, index, target_str, false).unwrap(), "exists");
+        assert_eq!(std::fs::read(&target).unwrap(), b"OTHER");
+        assert_eq!(zip_extract(zip_str, index, target_str, true).unwrap(), "written");
+        assert_eq!(std::fs::read(&target).unwrap(), b"GAME");
+        assert_eq!(read_rom(zip_str).unwrap(), b"GAME");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -150,6 +150,21 @@ pub async fn rom_read(path: String) -> Result<Response> {
     offload(move || files::read_rom(&path).map(Response::new)).await
 }
 
+#[tauri::command]
+pub async fn zip_list(path: String) -> Result<Vec<files::ZipItem>> {
+    offload(move || files::zip_list(&path)).await
+}
+
+#[tauri::command]
+pub async fn zip_extract(path: String, index: usize, target: String, overwrite: bool) -> Result<String> {
+    offload(move || files::zip_extract(&path, index, &target, overwrite).map(str::to_owned)).await
+}
+
+#[tauri::command]
+pub async fn open_link(url: String) -> Result<()> {
+    offload(move || files::open_link(&url)).await
+}
+
 /// 코어 바이트. `bin/core/mgba_core.wasm`(앱 폴더에서 관리), 없으면 exe 내장본.
 #[tauri::command]
 pub async fn core_read<R: Runtime>(app: AppHandle<R>) -> Result<Response> {

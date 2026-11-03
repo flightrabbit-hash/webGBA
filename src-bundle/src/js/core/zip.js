@@ -1,9 +1,13 @@
 import { Inflate } from "../vendor/pako.js";
-import { crc32, MAX_ROM, WgbpError } from "./wgbp.js";
+import { crc32, crc32Step, MAX_ROM, WgbpError } from "./wgbp.js";
 
 export const ZIP_MAX = 0x10000000;
 const ROM_NAME = /\.(gba|agb|bin)$/i;
 const GAME_NAME = /\.(gba|agb|bin|gb|gbc)$/i;
+const GAME_FILE = /\.(wgba|wasm|gba|agb|gb|gbc|bin)$/i;
+const WEB_FILE = /\.(wgba|wasm)$/i;
+const SLICE = 0x40000;
+const SLICE_MS = 12;
 const BIN_NAME = /\.bin$/i;
 const METHOD_NAMES = { 1: "Shrink", 6: "Implode", 9: "Deflate64", 12: "BZIP2", 14: "LZMA", 93: "Zstandard", 95: "XZ", 96: "JPEG", 97: "WavPack", 98: "PPMd" };
 const LOCAL = 0x04034b50;
@@ -138,18 +142,95 @@ function inflated(raw, size) {
   return out;
 }
 
-export function zipRead(bytes, entry) {
-  if (entry.flags & 1 || entry.method === 99) throw new ZipError("zipEncrypted");
-  if (entry.method !== 0 && entry.method !== 8) throw new ZipError("zipMethod", { method: METHOD_NAMES[entry.method] ?? `#${entry.method}` });
-  if (entry.size > MAX_ROM) throw new ZipError("romTooBig", { size: entry.size });
+function problemOf(entry, max) {
+  if (entry.flags & 1 || entry.method === 99) return new ZipError("zipEncrypted");
+  if (entry.method !== 0 && entry.method !== 8) return new ZipError("zipMethod", { method: METHOD_NAMES[entry.method] ?? `#${entry.method}` });
+  if (entry.size > max) return new ZipError("romTooBig", { size: entry.size, max });
+  return null;
+}
+
+function packedOf(bytes, entry) {
   const at = entry.local;
   if (at + 30 > bytes.length || u32(bytes, at) !== LOCAL) throw corrupt("local");
   const start = at + 30 + u16(bytes, at + 26) + u16(bytes, at + 28);
   if (start + entry.packed > bytes.length) throw corrupt("local");
   const raw = bytes.subarray(start, start + entry.packed);
   if (entry.method === 0 && raw.length !== entry.size) throw corrupt("size");
+  return raw;
+}
+
+export function zipRead(bytes, entry) {
+  const problem = problemOf(entry, MAX_ROM);
+  if (problem) throw problem;
+  const raw = packedOf(bytes, entry);
   const out = entry.method === 0 ? raw.slice() : inflated(raw, entry.size);
   if (crc32(out) !== entry.crc) throw corrupt("crc");
+  return out;
+}
+
+export const zipName = (raw, flags = 0) => nameOf(raw, flags);
+
+export const entryMax = (name, romMax = MAX_ROM) => (WEB_FILE.test(name) ? ZIP_MAX : romMax);
+
+const order = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+const byPath = (a, b) => order(a.name, b.name) || order(a.path, b.path);
+
+export function zipGames(entries, { romMax = MAX_ROM } = {}) {
+  return entries
+    .filter((entry) => GAME_FILE.test(entry.name) && !hidden(entry.name))
+    .map((entry) => {
+      const name = baseName(entry.name);
+      const max = entryMax(name, romMax);
+      return { entry, path: entry.name, name, ext: name.slice(name.lastIndexOf(".") + 1).toLowerCase(), size: entry.size, max, problem: problemOf(entry, max) };
+    })
+    .sort(byPath);
+}
+
+const pauseNow = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+export async function zipReadAsync(bytes, entry, { max = entryMax(entry.name), onProgress = () => {}, pause = pauseNow, signal = null } = {}) {
+  const problem = problemOf(entry, max);
+  if (problem) throw problem;
+  const raw = packedOf(bytes, entry);
+  const out = new Uint8Array(entry.size);
+  let filled = 0;
+  let crc = 0xffffffff;
+  let last = performance.now();
+  const breathe = async (fraction) => {
+    if (signal?.aborted) throw new ZipError("zipCancelled");
+    if (performance.now() - last < SLICE_MS) return;
+    onProgress(fraction);
+    await pause();
+    if (signal?.aborted) throw new ZipError("zipCancelled");
+    last = performance.now();
+  };
+  if (entry.method === 0) {
+    for (let at = 0; at < raw.length; at += SLICE) {
+      const end = Math.min(raw.length, at + SLICE);
+      out.set(raw.subarray(at, end), at);
+      crc = crc32Step(crc, raw, at, end);
+      await breathe(end / raw.length);
+    }
+    filled = raw.length;
+  } else {
+    const inflator = new Inflate({ raw: true, chunkSize: 0x10000 });
+    inflator.onData = (chunk) => {
+      if (filled + chunk.length > entry.size) throw corrupt("size");
+      out.set(chunk, filled);
+      crc = crc32Step(crc, chunk);
+      filled += chunk.length;
+    };
+    if (!raw.length) inflator.push(raw, true);
+    for (let at = 0; at < raw.length && !inflator.ended; at += SLICE) {
+      const end = Math.min(raw.length, at + SLICE);
+      inflator.push(raw.subarray(at, end), end === raw.length);
+      if (inflator.err) throw corrupt("inflate");
+      await breathe(end / raw.length);
+    }
+    if (!inflator.ended || inflator.err || filled !== entry.size) throw corrupt("inflate");
+  }
+  if (((crc ^ 0xffffffff) >>> 0) !== entry.crc) throw corrupt("crc");
+  onProgress(1);
   return out;
 }
 

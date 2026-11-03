@@ -273,8 +273,7 @@ function glyphInk(font, text) {
   return result;
 }
 
-export function measureInk(node) {
-  const text = node.textContent.trim();
+export function measureInk(node, text = node.textContent.trim()) {
   if (!text) return null;
   const style = getComputedStyle(node);
   const box = node.getBoundingClientRect();

@@ -38,6 +38,11 @@ export function crc32(bytes, start = 0, end = bytes.length) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+export function crc32Step(c, bytes, start = 0, end = bytes.length) {
+  for (let i = start; i < end; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return c;
+}
+
 const hexOf = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 export async function sha1Bytes(bytes) {
