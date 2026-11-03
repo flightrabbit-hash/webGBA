@@ -79,7 +79,7 @@ export function noticeText(info) {
 
 export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" ? "warn" : "info";
 
-const HINTS = { wanOff: "net.err.wanOff", peerLan: "net.err.peerLan", wanFailed: "net.err.wanFailed", lanFailed: "net.err.lanFailed", notLan: "net.err.notLan" };
+const HINTS = { wanOff: "net.err.wanOff", peerLan: "net.err.peerLan", wanFailed: "net.err.wanFailed", wanSym: "net.err.wanSym", peerSym: "net.err.peerSym", lanFailed: "net.err.lanFailed", notLan: "net.err.notLan" };
 const HELP_HINTS = ["lanFailed", "notLan"];
 const HELP_CODES = ["timeout", "failed", "noLan", "rtc", ...HELP_HINTS];
 
@@ -89,9 +89,11 @@ export function hintText(code) {
 
 const helpFor = (hint) => !HINTS[hint] || HELP_HINTS.includes(hint);
 
-export function hintOf(wan, peerWan, skipped = 0) {
+export function hintOf(wan, peerWan, skipped = 0, sym = false, peerSym = false) {
   if (!wan && (peerWan || skipped)) return "wanOff";
   if (wan && !peerWan) return "peerLan";
+  if (wan && sym) return "wanSym";
+  if (wan && peerSym) return "peerSym";
   return wan ? "wanFailed" : "lanFailed";
 }
 
@@ -268,6 +270,8 @@ export class NetWindow {
       this.roomHost.close();
       this.roomHost = null;
     } else if (this.roomHost && snap.count < snap.max) this.roomHost.resume();
+    this.roomHost?.refresh();
+    this.refreshInvite();
     if (!snap.active && this.joinInfo && !this.busy) this.clearJoin();
     if (!snap.active) {
       this.joinedRoom = "";
@@ -840,7 +844,7 @@ export class NetWindow {
     this.fallback = false;
     let session;
     try {
-      session = await this.net.open("make");
+      session = await this.freshSession("make");
     } catch {
       this.setError(t("net.err.failed"));
       return;
@@ -887,6 +891,25 @@ export class NetWindow {
     this.joinInfo = null;
   }
 
+  async freshSession(role) {
+    const s = this.net.session;
+    if (s && !s.closed && !s.opened && s.role === "join") {
+      this.clearJoin();
+      this.net.discard();
+    }
+    return this.net.open(role);
+  }
+
+  refreshInvite() {
+    const s = this.net.session;
+    const inv = this.invite;
+    if (this.roomHost || !s?.host || s.closed || !inv?.id || inv.busy || inv.cfg === undefined || inv.cfg === s.cfg) return;
+    this.invite = null;
+    this.answerText = "";
+    s.cancelInvite(inv.id);
+    if (this.open && this.screen === "host") this.render();
+  }
+
   async joinRoom(text) {
     if (this.busy) return;
     const room = String(text ?? "").replace(/\D/g, "");
@@ -916,11 +939,11 @@ export class NetWindow {
         if (st.q > got.q) got = await this.signal.join(info);
       }
       if (seq !== this.joinSeq) return;
-      session = await this.net.open("join");
+      session = await this.freshSession("join");
       const made = await session.answer(got.o);
       if (seq !== this.joinSeq) throw new SessionError("closed");
       await this.signal.answer({ x: got.x, q: got.q, t: got.t, d: made.code });
-      this.joinHint = hintOf(session.wan, made.peerWan, made.skipped);
+      this.joinHint = hintOf(session.wan, made.peerWan, made.skipped, made.sym, made.peerSym);
       if (got.rt && session.rejoinGame) this.roomGuest = new RoomGuest({ signal: this.signal, session, room, x: got.x, rt: got.rt, log: this.net.log ?? (() => {}) });
       this.joinInfo = got;
       this.joinedRoom = room;
@@ -1014,7 +1037,7 @@ export class NetWindow {
     this.busy = true;
     this.setError(t("net.makingAnswer"));
     try {
-      const session = await this.net.open("join");
+      const session = await this.freshSession("join");
       const { code } = await session.answer(this.offerText);
       this.guestCode = code;
       this.busy = false;

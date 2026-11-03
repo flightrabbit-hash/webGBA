@@ -1633,6 +1633,7 @@ async function applySettings(next) {
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
   player.net.syncEnabled();
+  player.net.wanChanged();
 
   const ini = state.info?.settings ?? {};
   const iniPatch = {};

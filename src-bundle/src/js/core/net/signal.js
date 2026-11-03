@@ -262,6 +262,9 @@ export class RoomHost {
         if (!this.invite) {
           if (this.full) this.parked = true;
           else await this.reoffer();
+        } else if (this.stale) {
+          this.log("info", `방 ${this.room}: 인터넷 연결 설정이 바뀌어 새 연결 코드로 바꿈(방 코드 그대로)`);
+          await this.reoffer();
         } else {
           const got = await this.signal.poll(this.auth, this.q);
           if (got.a) await this.take(got.a);
@@ -283,7 +286,18 @@ export class RoomHost {
       if (this.failures === FAIL_LIMIT) this.onError(error);
     }
     this.ticking = false;
+    this.refreshing = false;
     this.schedule();
+  }
+
+  get stale() {
+    return Boolean(this.invite) && this.invite.cfg !== undefined && this.invite.cfg !== this.session.cfg;
+  }
+
+  refresh() {
+    if (!this.stale || !this.running || this.ticking || this.renewing || this.refreshing) return;
+    this.refreshing = true;
+    this.schedule(200);
   }
 
   async rejoinTick() {

@@ -116,12 +116,16 @@ export function encodeCode(sdp, ref = "", { wan = false } = {}) {
   const pub = [];
   const seen = new Set();
   let dropped = 0;
+  let hosts = 0;
+  let reflexive = 0;
   for (const line of sdp.split(/\r?\n/)) {
     if (!line.startsWith("a=candidate:")) continue;
     const c = parseCandidate(line);
     const key = c ? `${c.type}|${c.address}|${c.port}` : "";
     if (c && seen.has(key)) continue;
     seen.add(key);
+    if (c?.protocol === "udp" && c.type === "host") hosts++;
+    else if (wanCandidateOk(c) && c.type === "srflx") reflexive++;
     if (lanCandidateOk(c) && lan.length < CANDS_MAX) lan.push(c);
     else if (wan && wanCandidateOk(c) && c.type !== "prflx" && pub.length < PUBLIC_MAX) pub.push(c);
     else dropped++;
@@ -146,8 +150,10 @@ export function encodeCode(sdp, ref = "", { wan = false } = {}) {
     bytes.push(c.port >> 8, c.port & 0xff);
   }
   if (ref) ascii(String(ref).slice(0, 64));
-  return { code: b64url(Uint8Array.from(bytes)), bytes: bytes.length, kept: cands.length, lan: lanKeep, public: pub.length, dropped, ufrag };
+  return { code: b64url(Uint8Array.from(bytes)), bytes: bytes.length, kept: cands.length, lan: lanKeep, public: pub.length, dropped, ufrag, sym: symmetric(hosts, reflexive) };
 }
+
+export const symmetric = (hosts, reflexive) => reflexive > Math.max(1, hosts);
 
 const PRIORITY = { host: 2122260223, srflx: 1686052607, relay: 41885439 };
 
@@ -197,10 +203,16 @@ export function decodeCode(text, expect, { wan = false } = {}) {
   const n = b[p++];
   const lines = [];
   let skipped = 0;
+  let hosts = 0;
+  let reflexive = 0;
+  let relays = 0;
   for (let i = 0; i < n; i++) {
     need(1);
     const kind = b[p++];
     const type = kind & KIND_RELAY ? "relay" : kind & KIND_SRFLX ? "srflx" : "host";
+    if (type === "host") hosts++;
+    else if (type === "srflx") reflexive++;
+    else relays++;
     const base = kind & 0x0f;
     let addr;
     if (base === 1 && type === "host" && kind === 1) {
@@ -248,7 +260,7 @@ export function decodeCode(text, expect, { wan = false } = {}) {
     "a=max-message-size:262144",
     "",
   ].join("\r\n");
-  return { type, sdp, ufrag, ref, kept: lines.length, wan: peerWan, skipped };
+  return { type, sdp, ufrag, ref, kept: lines.length, wan: peerWan, skipped, total: n, public: reflexive + relays, sym: peerWan && symmetric(hosts, reflexive) };
 }
 export function waitGathering(pc, { wan = false, turn = false, fresh = false, ms = turn ? 6000 : wan ? 4000 : 3000 } = {}) {
   if (pc.iceGatheringState === "complete" && !fresh) return Promise.resolve(true);

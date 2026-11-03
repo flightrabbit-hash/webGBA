@@ -398,6 +398,7 @@ export class NetHost {
 
   snapshot() {
     const s = this.session;
+    const wan = s && !s.closed ? s.wan : Boolean(this.wan());
     return {
       supported: this.supported,
       request: this.request,
@@ -416,10 +417,24 @@ export class NetHost {
       rejoinable: Boolean(s?.rejoinable),
       rejoining: Boolean(s && !s.closed && s.rejoining),
       rejoinState: s && !s.closed && s.rejoining ? s.helper?.state ?? "" : "",
-      wan: Boolean(this.wan()),
-      iceHosts: this.wan() && this.icePlan?.custom ? this.icePlan.hosts : [],
+      wan,
+      iceHosts: wan && this.icePlan?.custom ? this.icePlan.hosts : [],
       iceFailed: this.iceFailed,
     };
+  }
+
+  iceFor(wan) {
+    return { wan, turn: wan && Boolean(this.icePlan?.turn), ice: wan && this.icePlan ? () => this.iceList() : null };
+  }
+
+  wanChanged() {
+    const s = this.session;
+    const wan = Boolean(this.wan());
+    if (s && !s.closed && s.wan !== wan) {
+      if (s.setWan(this.iceFor(wan))) this.log("info", `인터넷 연결 ${wan ? "켬" : "끔"} — 아무도 들어오지 않은 방에 바로 적용`);
+      else this.log("info", `인터넷 연결 ${wan ? "켬" : "끔"} — 진행 중인 연결은 그대로, 다음 방부터 적용`);
+    }
+    this.changed();
   }
 
   async iceList() {
@@ -661,9 +676,7 @@ export class NetHost {
       purpose: this.request.purpose.id,
       log: this.log,
       makePeer: this.makePeer,
-      wan,
-      turn: wan && Boolean(this.icePlan?.turn),
-      ice: wan && this.icePlan ? () => this.iceList() : null,
+      ...this.iceFor(wan),
       rejoinGame: Boolean(this.config?.rejoin),
     });
     this.session = session;
