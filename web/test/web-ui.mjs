@@ -1539,12 +1539,23 @@ async function lineUp(page, key, scope, selector) {
     }
     return out;
   }, [scope, selector]);
-  for (const items of info) {
-    const tops = items.map((i) => i.top);
-    const bottoms = items.map((i) => i.bottom);
-    const dt = +(Math.max(...tops) - Math.min(...tops)).toFixed(2);
-    const db = +(Math.max(...bottoms) - Math.min(...bottoms)).toFixed(2);
-    ok(`${key} 같은 줄 위·아래 차이 0(${items.map((i) => i.id).join(",")})`, dt === 0 && db === 0, `위 ${dt} · 아래 ${db}`);
+  // 좁은 화면에서 다음 줄로 넘어간 요소(flex-wrap)는 그 줄끼리 비교한다
+  for (const all of info) {
+    const lines = [];
+    for (const item of [...all].sort((a, b) => a.top - b.top)) {
+      const mid = (item.top + item.bottom) / 2;
+      const line = lines.find((l) => mid > l[0].top && mid < l[0].bottom);
+      if (line) line.push(item);
+      else lines.push([item]);
+    }
+    for (const items of lines) {
+      if (items.length < 2) continue;
+      const tops = items.map((i) => i.top);
+      const bottoms = items.map((i) => i.bottom);
+      const dt = +(Math.max(...tops) - Math.min(...tops)).toFixed(2);
+      const db = +(Math.max(...bottoms) - Math.min(...bottoms)).toFixed(2);
+      ok(`${key} 같은 줄 위·아래 차이 0(${items.map((i) => i.id).join(",")})`, dt === 0 && db === 0, `위 ${dt} · 아래 ${db}`);
+    }
   }
   return info;
 }
@@ -1606,7 +1617,7 @@ async function netChecks() {
       await page.waitForFunction(() => !document.querySelector(".net-near-box")?.textContent.includes("…"), null, { timeout: 8000 }).catch(() => {});
       await page.waitForTimeout(400);
       const base = `${view.name}|${lang}`;
-      await measure(page, `${base}|net-choose`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field", ".net-offline__label"]);
+      await measure(page, `${base}|net-choose`, [".sheet__head", ".seg__btn", ".net-sech", ".net-cell", ".net-coderow > .btn", ".net-nickline", "#sheetFoot .btn"]);
       await page.evaluate(() => {
         const win = window.webgba.net.win;
         win.stopNear();
@@ -1618,16 +1629,20 @@ async function netChecks() {
       await rows(page, `${base}|net-near`, ".net-near__row");
       await lineUp(page, `${base}|net-near`, ".net-near__row", ":scope > button");
       await fits(page, `${base}|net-choose`, ".sheet__panel");
-      await lineUp(page, `${base}|net-choose`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button, :scope > input");
+      await lineUp(page, `${base}|net-choose`, "#sheetFoot .net-actions", ":scope > button, :scope > .net-nickline > button");
       if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_첫화면.png`) });
+      await page.click('[data-action="net-tab-make"]');
+      await page.waitForTimeout(300);
+      await measure(page, `${base}|net-make`, [".net-info__row", "#sheetBody .btn"]);
       await page.click('[data-action="net-room-make"]');
       const room = await page.waitForFunction(() => /^\d{6}$/.test(document.querySelector(".net-room-code")?.textContent ?? "") || Boolean(document.querySelector('[data-action="net-offer"]')?.value), null, { timeout: 10000 }).then(() => page.evaluate(() => document.querySelector(".net-room-code")?.textContent ?? ""));
       await page.waitForTimeout(400);
       if (room) {
-        await measure(page, `${base}|net-room`, [".sheet__head", ".net-room-code", ".net-member", ".net-actions"]);
-        await rows(page, `${base}|net-room`, ".net-member");
+        await measure(page, `${base}|net-room`, [".sheet__head", ".net-room", ".net-seats .mpb__l1", ".net-seats .mpb__seat", "#sheetFoot .btn"]);
+        await rows(page, `${base}|net-room`, ".net-seats .mpb__row");
         await fits(page, `${base}|net-room`, ".sheet__panel");
-        await lineUp(page, `${base}|net-room`, "#sheetBody .net-actions", ":scope > button");
+        await lineUp(page, `${base}|net-room`, "#sheetFoot .net-actions", ":scope > button");
+        await lineUp(page, `${base}|net-room`, "#sheetBody .net-btnrow", ":scope > button");
         if (lang === "ko") await page.screenshot({ path: path.join(SHOTS, `멀티_${view.name}_방코드.png`) });
       } else ok(`${base}|net-room 서버 없음 → 연결 코드 화면으로 자동 안내`, Boolean(await page.$('[data-action="net-offer"]')));
       await barLineUp(page, `${base}|bar`);
@@ -1636,21 +1651,19 @@ async function netChecks() {
       await openNet(page);
       await page.click('[data-action="net-room-join"]');
       await page.waitForTimeout(300);
-      await measure(page, `${base}|net-code`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await measure(page, `${base}|net-code`, [".sheet__head", ".net-cell", ".net-coderow > .btn", ".net-nickline", "#sheetFoot .btn"]);
       await fits(page, `${base}|net-code`, ".sheet__panel");
-      await lineUp(page, `${base}|net-code`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button, :scope > input");
-      await page.click('[data-action="net-back"]');
-      await page.waitForTimeout(300);
+      await lineUp(page, `${base}|net-code`, ".net-coderow", ":scope > button, .net-cell");
       await page.click('[data-action="net-offline"]');
       await page.waitForTimeout(300);
-      await measure(page, `${base}|net-lan`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await measure(page, `${base}|net-lan`, [".sheet__head", ".net-line", "#sheetFoot .btn"]);
       await fits(page, `${base}|net-lan`, ".sheet__panel");
       await page.click('[data-action="net-make"]');
       await page.waitForFunction(() => document.querySelector('[data-action="net-offer"]')?.value, null, { timeout: 10000 });
       await page.waitForTimeout(500);
-      await measure(page, `${base}|net-host`, [".sheet__head", ".net-member", ".net-line", ".net-actions"]);
-      await rows(page, `${base}|net-host`, ".net-member");
-      await lineUp(page, `${base}|net-host`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button");
+      await measure(page, `${base}|net-host`, [".sheet__head", ".net-seats .mpb__l1", ".net-line", "#sheetFoot .btn"]);
+      await rows(page, `${base}|net-host`, ".net-seats .mpb__row");
+      await lineUp(page, `${base}|net-host`, "#sheetBody .net-line, #sheetFoot .net-actions", ":scope > button");
       await page.click('[data-action="net-offer-qr"]');
       await page.waitForTimeout(400);
       const qr = await page.evaluate(() => {
@@ -1665,10 +1678,10 @@ async function netChecks() {
         const b = body.getBoundingClientRect();
         const head = document.querySelector(".sheet__head").getBoundingClientRect();
         const kids = [...body.children].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
-        const deep = [...body.querySelectorAll(".net-invite > *, .net-line > *, .net-member")].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
+        const deep = [...body.querySelectorAll(".net-invite > *, .net-line > *, .mpb__row")].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
         let overlap = 0;
         for (let i = 1; i < kids.length; i++) if (kids[i].top < kids[i - 1].bottom - 0.5) overlap++;
-        return { overlap, wide: deep.filter((r) => r.right > b.right + 0.5 || r.left < b.left - 0.5).length, hScroll: body.scrollWidth > body.clientWidth + 1, top: Math.round((kids[0].top - head.bottom) * 10) / 10 };
+        return { overlap, wide: deep.filter((r) => r.right > b.right + 0.5 || r.left < b.left - 0.5).length, hScroll: body.scrollWidth > body.clientWidth + 1, top: Math.round((kids[0].top + body.scrollTop - head.bottom) * 10) / 10 };
       });
       ok(`${base}|net-qr 겹침·가로 넘침 없음, 제목 위 여백 16`, lay.overlap === 0 && lay.wide === 0 && !lay.hScroll && lay.top === 16, JSON.stringify(lay));
       await page.click('[data-action="net-cancel"]');
@@ -1677,9 +1690,9 @@ async function netChecks() {
       await page.click('[data-action="net-offline"]');
       await page.click('[data-action="net-join"]');
       await page.waitForTimeout(400);
-      await measure(page, `${base}|net-join`, [".sheet__head", ".net-line", ".net-actions", "#sheetBody .field"]);
+      await measure(page, `${base}|net-join`, [".sheet__head", ".net-line", "#sheetFoot .btn"]);
       await fits(page, `${base}|net-join`, ".sheet__panel");
-      await lineUp(page, `${base}|net-join`, "#sheetBody .net-line, #sheetBody .net-actions", ":scope > button");
+      await lineUp(page, `${base}|net-join`, "#sheetBody .net-line, #sheetFoot .net-actions", ":scope > button");
       const overlapAll = await page.evaluate(() => {
         const kids = [...document.getElementById("sheetBody").children].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
         let overlap = 0;
@@ -1774,8 +1787,8 @@ async function boardChecks() {
         const info = await page.evaluate(() => {
           const root = window.webgba.net.board.root;
           const panel = root.querySelector(".mpb__panel").getBoundingClientRect();
-          const screen = document.getElementById("screen").getBoundingClientRect();
-          const rows = [...root.querySelectorAll(".mpb__row")];
+          const screen = document.getElementById("frame").getBoundingClientRect();
+          const rows = [...root.querySelectorAll(".mpb__row:not(.is-empty)")];
           let overlap = 0;
           for (const line of root.querySelectorAll(".mpb__l1, .mpb__head, .mpb__foot")) {
             const kids = [...line.children].filter((n) => !n.hidden && n.getBoundingClientRect().width > 0).map((n) => n.getBoundingClientRect()).sort((a, b) => a.left - b.left);
@@ -1786,10 +1799,10 @@ async function boardChecks() {
             for (let i = 1; i < kids.length; i++) if (kids[i].left < kids[i - 1].right - 0.5) overlap++;
           }
           const clipped = [...root.querySelectorAll(".mpb__text, .mpb__tagtext")].filter((n) => !n.closest("[hidden]") && n.scrollWidth > n.clientWidth + 1 && !n.matches(".mpb__name, .mpb__title")).map((n) => n.textContent);
-          return { landscape: document.body.dataset.layout === "landscape", panel: { top: panel.top, left: panel.left, right: panel.right, width: panel.width }, screenBottom: screen.bottom, rows: rows.length, overlap, clipped, tools: [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).length, plain: root.querySelector(".mpb__panel").hasAttribute("data-plain"), fast: getComputedStyle(document.getElementById("btnFast")).display };
+          return { landscape: document.body.dataset.layout === "landscape", panel: { top: panel.top, left: panel.left, right: panel.right, width: panel.width }, screenBottom: screen.bottom, screenRight: screen.right, rows: rows.length, empty: root.querySelectorAll(".mpb__row.is-empty").length, overlap, clipped, tools: [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).length, plain: root.querySelector(".mpb__rows").hasAttribute("data-plain"), fast: getComputedStyle(document.getElementById("btnFast")).display };
         });
-        ok(`${key} 상태 메뉴 줄 수(${plain ? "사람 3" : "사람 4 + AI 4"})·게임 값 ${plain ? "없음" : "있음"}`, info.rows === (plain ? 3 : 8) && info.plain === plain, JSON.stringify({ rows: info.rows, plain: info.plain }));
-        ok(`${key} 상태 메뉴 자리: ${info.landscape ? "좌측 316px" : "게임 화면 아래(게임 화면 가리지 않음)"}`, info.landscape ? Math.abs(info.panel.width - 316) < 1 : info.panel.top >= info.screenBottom - 0.5, `${JSON.stringify(info.panel)} 화면 아래 ${info.screenBottom}`);
+        ok(`${key} 상태 메뉴 줄 수(${plain ? "사람 3 + 빈자리 1" : "사람 4 + AI 4, 빈자리 없음"})·게임 값 ${plain ? "없음" : "있음"}`, info.rows === (plain ? 3 : 8) && info.empty === (plain ? 1 : 0) && info.plain === plain, JSON.stringify({ rows: info.rows, empty: info.empty, plain: info.plain }));
+        ok(`${key} 상태 메뉴 자리: ${info.landscape ? "게임 화면 우측(겹침 0)" : "게임 화면 아래(게임 화면 가리지 않음)"}`, info.landscape ? info.panel.left >= info.screenRight - 0.5 : info.panel.top >= info.screenBottom - 0.5, `${JSON.stringify(info.panel)} 화면 아래 ${info.screenBottom} · 우측 ${info.screenRight}`);
         ok(`${key} 상단 버튼 수 그대로·빨리 감기 자리에 멀티플레이`, info.tools === toolsBefore && info.fast === "none", `${toolsBefore} → ${info.tools} · 빨리 감기 ${info.fast}`);
         ok(`${key} 상태 메뉴 겹침 없음·잘린 글 없음(이름·제목 제외)`, info.overlap === 0 && info.clipped.length === 0, `겹침 ${info.overlap} · 잘림 ${info.clipped.join(",")}`);
         const held = await page.evaluate(() => ({ chips: [...window.webgba.net.board.root.querySelectorAll(".mpb__tag--warn")].map((n) => n.textContent), bar: !window.webgba.net.board.root.querySelector(".mpb__rejoin")?.hidden }));
@@ -1875,16 +1888,17 @@ async function anytimeChecks() {
       await page.waitForTimeout(1200);
       ok(`${key} 요청해도 창 자동 열림 없음`, (await page.evaluate(() => window.webgba.state.sheet)) === "" && (await page.evaluate(() => !document.getElementById("btnNet").hidden)));
       await page.click("#btnNet");
-      await page.waitForFunction(() => Boolean(document.querySelector('[data-action="net-room-make"]')), null, { timeout: 8000 });
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-action="net-tab-make"]')), null, { timeout: 8000 });
+      await page.click('[data-action="net-tab-make"]');
       await page.click('[data-action="net-room-make"]');
       const room = await page.waitForFunction(() => /^\d{6}$/.test(document.querySelector(".net-room-code")?.textContent ?? ""), null, { timeout: 10000 }).then(() => true, () => false);
       await page.waitForTimeout(400);
       if (room) {
-        await measure(page, `${key}|net-room`, [".sheet__head", ".net-room-code", ".net-member", ".net-actions"]);
-        await rows(page, `${key}|net-room`, ".net-member");
+        await measure(page, `${key}|net-room`, [".sheet__head", ".net-room", ".net-seats .mpb__l1", "#sheetFoot .btn"]);
+        await rows(page, `${key}|net-room`, ".net-seats .mpb__row");
         await fits(page, `${key}|net-room`, ".sheet__panel");
-        const acts = await lineUp(page, `${key}|net-room`, "#sheetBody .net-actions", ":scope > button");
-        ok(`${key}|net-room 하단 버튼 = 방 나가기·닫기`, acts[0]?.map((i) => i.id).join() === "net-leave,net-close", JSON.stringify(acts));
+        const acts = await lineUp(page, `${key}|net-room`, "#sheetFoot .net-actions", ":scope > button");
+        ok(`${key}|net-room 하단 버튼 = 방 닫기·갱신·게임으로`, acts[0]?.map((i) => i.id).join() === "net-leave,net-renew,net-close", JSON.stringify(acts));
         const renew = await page.evaluate(() => {
           const btn = document.querySelector('[data-action="net-renew"]');
           const accept = document.querySelector("#sheetBody .net-accept");

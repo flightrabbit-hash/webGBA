@@ -168,26 +168,62 @@ const node = (tag, className, text) => {
   return n;
 };
 
+const NET_ICONS = { people: "users", info: "info-circle", warn: "alert-triangle", refresh: "refresh", copy: "copy", plus: "plus" };
+const NET_EXE_TEXT = new Set(["net.anytimeNote", "net.accept.off", "net.notice.paused", "net.err.paused", "net.nearFail", "net.nearOffline", "net.err.server", "net.err.limit", "net.join.step1"]);
+
+function netIcon(name) {
+  const glyph = node("span", "icon");
+  glyph.style.setProperty("--icon", `url("/icons/${NET_ICONS[name] ?? name}.svg")`);
+  return glyph;
+}
+
+function netButton({ label, kind = "", big = false, block = false, grow = false, small = false, onClick, disabled = false, action = "" }) {
+  const b = node("button", `${kind === "primary" ? "btn btn--go" : kind === "danger" ? "btn btn--danger" : "btn"} net-btn${big ? " net-btn--big" : ""}${block ? " net-btn--block" : ""}${grow ? " net-btn--grow" : ""}${small ? " net-btn--small" : ""}`, label);
+  b.type = "button";
+  b.disabled = disabled;
+  if (action) b.dataset.action = action;
+  if (onClick) b.addEventListener("click", onClick);
+  return b;
+}
+
 const netKit = {
   touch: false,
   qrSize: 200,
   make: node,
-  button: ({ label, kind = "", onClick, disabled = false, action = "" }) => {
-    const b = node("button", kind === "primary" ? "btn btn--go net-btn" : kind === "danger" ? "btn btn--danger net-btn" : "btn net-btn", label);
+  button: netButton,
+  iconButton: ({ icon, title, action, onClick }) => {
+    const b = node("button", "iconbtn iconbtn--xs");
     b.type = "button";
-    b.disabled = disabled;
-    if (action) b.dataset.action = action;
-    if (onClick) b.addEventListener("click", onClick);
+    b.dataset.action = action;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.append(netIcon(icon));
+    b.addEventListener("click", onClick);
     return b;
   },
+  icon: netIcon,
   signal: new Signal({ base: APP_API }),
-  label: (code) => ({ copy: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", make: "HOST", makeCode: "HOST", join: "JOIN", codeJoin: "CODE", enter: "JOIN", offline: "OPEN", rejoin: "RETRY", solo: "SOLO", renew: "RENEW" })[code] ?? code.toUpperCase(),
-  action: ({ id, primary = false, onClick }) => {
-    const b = node("button", primary ? "btn btn--go" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK" }[id] ?? id.toUpperCase());
+  label: (code) => ({ copy: "COPY", copyCode: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", create: "CREATE", makeCode: "CREATE", join: "JOIN", enter: "JOIN", enterCode: "ENTER", offline: "OFFLINE", offlineLong: "OFFLINE", rejoin: "RETRY", solo: "SOLO", renew: "RENEW", nickEdit: "EDIT", nickDone: "OK", retry: "RETRY", home: "BACK" })[code] ?? code.toUpperCase(),
+  action: ({ id, label: name = id, primary = false, danger = false, onClick }) => {
+    const b = node("button", primary ? "btn btn--go" : danger ? "btn btn--danger" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK", closeRoom: "CLOSE ROOM", toGame: "DONE" }[name] ?? name.toUpperCase());
     b.type = "button";
     b.dataset.action = `net-${id}`;
     b.addEventListener("click", onClick);
     return b;
+  },
+  tabs: (items, active, onPick) => {
+    const box = node("div", "net-tabset");
+    box.setAttribute("role", "tablist");
+    for (const { id, label, action } of items) {
+      const b = node("button", "net-tab", label);
+      b.type = "button";
+      b.dataset.action = action;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(id === active));
+      b.addEventListener("click", () => onPick(id));
+      box.append(b);
+    }
+    return box;
   },
   textArea: ({ value = "", readOnly = false, rows = 3, label = "", placeholder = "", action = "", onInput }) => {
     const area = node("textarea", "net-code");
@@ -203,7 +239,7 @@ const netKit = {
     return area;
   },
   textInput: ({ value = "", maxLength = 16, label = "", action = "", numeric = false, onInput, onEnter }) => {
-    const input = node("input", numeric ? "cfg__input net-room-in" : "cfg__input net-nick");
+    const input = node("input", numeric ? "cfg__input" : "cfg__input net-nick");
     input.type = "text";
     input.value = value;
     input.maxLength = maxLength;
@@ -215,24 +251,15 @@ const netKit = {
     if (onEnter) input.addEventListener("keydown", (event) => event.key === "Enter" && onEnter());
     return input;
   },
-  field: ({ label, control }) => {
-    const row = node("label", "net-field");
-    row.append(node("span", "net-field__label", label), control);
-    return row;
-  },
-  row: ({ tag, name, meta, current }) => {
-    const li = node("li", `net-member${current ? " is-current" : ""}`);
-    const text = node("span", "net-member__text");
-    text.append(node("span", "net-member__name", name), node("span", "net-member__meta", meta));
-    li.append(node("span", "net-slot", tag), text);
-    return li;
-  },
-  nearRow: ({ name, meta, dim = false, button = null }) => {
+  nearRow: ({ name, meta, pips = null, dim = false, side = null }) => {
     const li = node("li", `net-near__row${dim ? " is-dim" : ""}`);
-    const text = node("span", "net-member__text");
-    text.append(node("span", "net-member__name", name), node("span", "net-member__meta", meta));
+    const text = node("span", "net-near__text");
+    const line = node("span", "net-near__meta");
+    if (pips) line.append(pips);
+    line.append(node("span", "", meta));
+    text.append(node("span", "net-near__name", name), line);
     li.append(text);
-    if (button) li.append(button);
+    if (side) li.append(side);
     return li;
   },
   line: (...nodes) => {
@@ -252,18 +279,15 @@ const netKit = {
   },
   note: (text) => node("p", "net-note", text),
   step: (text) => node("p", "net-step", text),
-  group: (title, ...children) => {
-    const box = node("section", "net-group");
-    if (title) box.append(node("h3", "net-group__title", title));
-    box.append(...children.filter(Boolean));
-    return box;
-  },
-  title: (text) => {
-    el.dialogTitle.textContent = text;
+  title: (text, chip = "") => {
+    const full = chip ? `${text} · ${chip}` : text;
+    if (el.dialogTitle.textContent !== full) el.dialogTitle.textContent = full;
   },
   mount: (body, actions) => {
     el.dialogBody.replaceChildren(...body);
     el.dialogActions.replaceChildren(...actions);
+    el.dialogActions.hidden = !actions.length;
+    centerBoardInk(el.dialogBody);
   },
   notice: (text, level) => status(text, level === "warn" ? "warn" : "info"),
   done: () => closeNetLayer(),
@@ -272,6 +296,9 @@ const netKit = {
     state.prefs.netNick = [...String(value)].slice(0, 12).join("");
     savePrefs({ netNick: state.prefs.netNick });
   },
+  tab: () => state.prefs.netTab,
+  setTab: (tab) => savePrefs({ netTab: tab }),
+  textKey: (key) => (NET_EXE_TEXT.has(key) ? key.replace(/^net\./, "net.exe.") : key),
 };
 
 const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls(), onState: () => syncControls() });
@@ -302,14 +329,22 @@ function mpText(key, className, action, onClick) {
   return b;
 }
 
+const netClose = mpButton("x", "win.close", "net-x", () => netWin.requestClose());
+netClose.classList.add("net-x");
+netClose.hidden = true;
+el.dialog.append(netClose);
+
 const mpTabKey = node("span", "mpb__key");
 mpTabKey.append(node("span", "mpb__tagtext", "Tab"));
 const mpTabHint = node("span", "mpb__text mpb__hint");
 mpTabHint.dataset.i18n = "board.tabHint";
+const mpLeave = netButton({ label: "LEAVE", kind: "danger", grow: true, action: "board-leave", onClick: () => player.net.leave() });
+const mpInvite = netButton({ label: "INVITE", grow: true, action: "board-invite", onClick: () => mpToWindow() });
 const mpBoard = new BoardPanel({
   root: el.mpPanel,
-  roomLine: true,
-  head: [mpButton("world", "board.window", "board-window", () => mpToWindow()), mpButton("x", "win.close", "board-close", () => closeMp())],
+  head: [mpButton("x", "win.close", "board-close", () => closeMp())],
+  actions: [mpLeave, mpInvite],
+  invite: mpInvite,
   footHint: [mpTabKey, mpTabHint],
   rejoinButtons: [mpText("net.rejoinNow", "btn btn--go", "board-rejoin", () => player.net.rejoinNow()), mpText("net.solo", "btn btn--danger", "board-solo", () => player.net.solo())],
   textWidth: (text) => {
@@ -331,7 +366,8 @@ function renderMp() {
   mpTabHint.textContent = t("board.tabHint");
   for (const b of el.mpPanel.querySelectorAll(".mpb__rejoinActions [data-i18n]")) if (b.textContent !== t(b.dataset.i18n)) b.textContent = t(b.dataset.i18n);
   const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
-  const changed = mpBoard.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
+  const snap = player.net.snapshot();
+  const changed = mpBoard.render({ snap, data: player.net.boardData(), room: netWin.roomCode, title, invite: netWin.canInvite(snap) });
   if (changed?.nodes.length) centerBoardNodes(changed.nodes);
 }
 
@@ -419,6 +455,7 @@ function openNet(request = player.net.request) {
   dialogDone = () => netWin.requestClose();
   el.dialog.classList.remove("dialog--wide");
   el.dialog.classList.add("dialog--net");
+  netClose.hidden = false;
   el.layer.hidden = false;
   netWin.show(request);
 }
@@ -429,6 +466,8 @@ function closeNetLayer() {
   dialogDone = null;
   el.layer.hidden = true;
   el.dialog.classList.remove("dialog--net");
+  el.dialogActions.hidden = false;
+  netClose.hidden = true;
   if (state.game?.kind === "frame") focusFrame();
   else el.stage.focus();
 }

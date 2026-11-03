@@ -16,40 +16,134 @@ const chip = (tone, text, extra = "") => {
   return node;
 };
 
+export function seatRows({ members = [], slot = -1, max = 0, showMs = true }) {
+  const view = boardView({ members, slot, lang: lang() });
+  return withEmpty(view.rows.map((row) => seatRow(row, view, "", showMs)), view, max);
+}
+
+function emptySeat(slot) {
+  const li = make("li", "mpb__row is-empty");
+  li.dataset.key = `e${slot}`;
+  const seat = make("div", "mpb__seat");
+  seat.append(chip("", `${slot + 1}P`, " mpb__tag--seat"));
+  const l1 = make("div", "mpb__l1");
+  l1.append(make("span", "mpb__text mpb__name", t("board.empty")));
+  li.append(seat, l1);
+  return li;
+}
+
+function withEmpty(nodes, view, max) {
+  if (view.ai || !max) return nodes;
+  const taken = new Set(view.rows.map((r) => r.slot));
+  const bySlot = view.rows.every((r, i, all) => i === 0 || all[i - 1].slot < r.slot);
+  const out = [...nodes];
+  for (let s = 0; s < max; s++) {
+    if (taken.has(s)) continue;
+    const at = bySlot ? view.rows.findIndex((r) => r.slot > s) : -1;
+    out.splice(at < 0 ? out.length : at + out.length - nodes.length, 0, emptySeat(s));
+  }
+  return out;
+}
+
+function seatRow(row, view, template, showMs) {
+  const li = make("li", "mpb__row");
+  li.dataset.key = row.key;
+  if (row.me) li.classList.add("is-me");
+  if (row.dim) li.classList.add("is-out");
+  const warn = ["hold", "rejoin", "stall"].includes(row.conn?.kind);
+  if (warn) li.classList.add("is-warn");
+  const seat = make("div", "mpb__seat");
+  seat.append(chip(row.human ? (row.me ? "me" : warn ? "warn" : "") : "ai", row.human ? row.seat : t("board.aiTag"), " mpb__tag--seat"));
+  const l1 = make("div", "mpb__l1");
+  if (row.mark) l1.append(make("span", "mpb__mark"));
+  l1.append(make("span", "mpb__text mpb__name", row.name));
+  if (row.host) l1.append(chip("host", t("board.host")));
+  if (row.me) l1.append(chip("me", t("board.me")));
+  const tail = connNodes(row.conn, showMs);
+  if (tail.length) tail[0].classList.add("mpb__push");
+  l1.append(...tail);
+  li.append(seat, l1);
+  if (!view.plain) {
+    const l2 = make("div", "mpb__l2");
+    l2.style.gridTemplateColumns = template;
+    view.columns.forEach((col, c) => {
+      if (!col.shown) return;
+      const cell = row.cells[c];
+      if (!cell || cell.type === "empty") {
+        if (col.type === "bar") l2.append(make("span", "mpb__slot"), make("span", "mpb__slot"));
+        else l2.append(make("span", "mpb__slot"));
+        return;
+      }
+      if (cell.type === "bar") {
+        const meter = make("span", "mpb__meter");
+        meter.dataset.tone = cell.tone;
+        meter.dataset.ratio = String(cell.ratio);
+        meter.append(make("i"));
+        l2.append(meter, make("span", "mpb__text mpb__small mpb__num", String(cell.value)));
+      } else if (cell.type === "number") {
+        l2.append(make("span", "mpb__text mpb__small mpb__dim", cell.label ? `${cell.label} ${cell.text}` : cell.text));
+      } else if (cell.type === "rank") {
+        l2.append(cell.text ? make("span", "mpb__text mpb__small", cell.text) : make("span", "mpb__slot"));
+      } else if (cell.type === "status") {
+        l2.append(cell.text ? chip(cell.tone, cell.text, " mpb__state") : make("span", "mpb__slot"));
+      }
+    });
+    li.append(l2);
+  }
+  return li;
+}
+
+function connNodes(conn, showMs) {
+  if (!conn) return [];
+  if (conn.kind === "stall") return [chip("warn", t("board.stall"))];
+  if (conn.kind === "hold") return [chip("warn", t("board.hold"))];
+  if (conn.kind === "rejoin") return [chip("warn", t("board.rejoining"))];
+  if (conn.kind === "joining") return [chip("dim", t("board.joining"))];
+  if (conn.kind === "lost") return [chip("bad", t("board.lost"))];
+  if (conn.kind === "left") return [chip("dim", t("board.left"))];
+  if (!conn.q) return [];
+  const sig = make("span", "mpb__sig");
+  sig.dataset.q = conn.q;
+  sig.append(make("i"), make("i"), make("i"));
+  return showMs ? [sig, make("span", "mpb__text mpb__small mpb__dim mpb__ms", t("board.ms", { ms: conn.ms }))] : [sig];
+}
+
 export class BoardPanel {
-  constructor({ root, head = [], roomLine = false, bar = (meter, ratio) => (meter.firstChild.style.width = `${(ratio * 100).toFixed(2)}%`), widths = { bar: 22, number: 30, rank: 26, status: 12 }, textWidth = () => 40, showMs = () => true, footHint = null, rejoinButtons = null }) {
+  constructor({ root, head = [], actions = [], invite = null, bar = (meter, ratio) => (meter.firstChild.style.width = `${(ratio * 100).toFixed(2)}%`), widths = { bar: 22, number: 30, rank: 26, status: 12 }, textWidth = () => 40, showMs = () => true, footHint = null, rejoinButtons = null }) {
     this.root = root;
     this.bar = bar;
     this.widths = widths;
     this.textWidth = textWidth;
     this.showMs = showMs;
+    this.invite = invite;
     this.sig = "";
     this.panel = make("div", "mpb__panel");
     this.panel.setAttribute("role", "dialog");
     this.headNode = make("header", "mpb__head");
     this.title = make("h2", "mpb__title");
-    this.caption = chip("dim", "", " mpb__caption");
-    this.headNode.append(this.title, this.caption, ...head);
+    this.people = chip("good", "", " mpb__people");
+    this.headNode.append(this.title, this.people, ...head);
     this.list = make("ol", "mpb__rows");
+    this.legend = make("div", "mpb__legendLine");
+    this.caption = make("span", "mpb__text mpb__caption");
+    this.legendMark = make("span", "mpb__mark");
+    this.legendText = make("span", "mpb__text mpb__legend");
+    this.legend.append(this.caption, this.legendMark, this.legendText);
+    this.fixedLegend = Boolean(footHint);
+    if (footHint) this.legend.append(...footHint);
+    else this.legend.hidden = true;
     this.footNode = make("footer", "mpb__foot");
-    this.footText = make("span", "mpb__text mpb__room");
-    this.footMark = make("span", "mpb__mark mpb__legendMark");
-    this.footLegend = make("span", "mpb__text mpb__legend");
-    if (roomLine) {
-      this.capNode = make("div", "mpb__cap");
-      this.capNode.append(this.footText);
-      this.footNode.append(this.footMark, this.footLegend);
-    } else this.footNode.append(this.footText, this.footMark, this.footLegend);
-    if (footHint) this.footNode.append(...footHint);
+    this.footNode.append(...actions);
+    this.footNode.hidden = !actions.length;
     if (rejoinButtons) {
       this.rejoinNode = make("div", "mpb__rejoin");
       this.rejoinText = make("span", "mpb__text mpb__rejoinText");
-      const actions = make("div", "mpb__rejoinActions");
-      actions.append(...rejoinButtons);
-      this.rejoinNode.append(this.rejoinText, actions);
+      const box = make("div", "mpb__rejoinActions");
+      box.append(...rejoinButtons);
+      this.rejoinNode.append(this.rejoinText, box);
       this.rejoinNode.hidden = true;
     }
-    this.panel.append(...[this.headNode, this.capNode, this.rejoinNode, this.list, this.footNode].filter(Boolean));
+    this.panel.append(...[this.headNode, this.rejoinNode, this.list, this.legend, this.footNode].filter(Boolean));
     root.replaceChildren(this.panel);
   }
 
@@ -58,17 +152,15 @@ export class BoardPanel {
     this.shape = "";
   }
 
-  render({ snap, data, room = "", title = "" }) {
+  render({ snap, data, room = "", title = "", invite = false }) {
     const view = boardView({ config: data.config, board: data.board, selfRows: data.selfRows, members: snap.members, gone: data.gone, slot: snap.slot, lang: lang() });
-    const people = snap.max > 1 && !view.ai ? `${view.people}/${snap.max}` : String(view.people);
-    const parts = [];
-    if (room) parts.push(t("board.room", { code: room }));
-    parts.push(t("board.people", { n: people }));
+    const parts = [t("board.people", { n: snap.max > 1 && !view.ai ? `${view.people}/${snap.max}` : String(view.people) })];
     if (view.ai) parts.push(t("board.ai", { n: view.ai }));
-    const foot = parts.join(" · ");
+    const people = parts.join(" · ");
+    const head = room ? t("board.room", { code: room }) : title;
     const showMs = this.showMs();
     const rejoin = this.rejoinNode && snap.rejoining ? t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying") : "";
-    const sig = JSON.stringify([lang(), title, view, foot, showMs, rejoin]);
+    const sig = JSON.stringify([lang(), head, view, people, showMs, rejoin, invite, snap.max]);
     if (sig === this.sig) return null;
     this.sig = sig;
     const changed = [];
@@ -81,18 +173,20 @@ export class BoardPanel {
       this.rejoinNode.hidden = !rejoin;
       if (rejoin) put(this.rejoinText, rejoin);
     }
-    put(this.title, title);
-    put(this.caption.firstChild, view.caption);
+    if (this.invite) this.invite.hidden = !invite;
+    put(this.title, head);
+    put(this.caption, view.caption);
     this.caption.hidden = !view.caption;
-    if (view.plain) this.panel.dataset.plain = "";
-    else delete this.panel.dataset.plain;
-    put(this.footText, foot);
-    this.footMark.hidden = !view.mark;
-    put(this.footLegend, view.mark);
-    this.footLegend.hidden = !view.mark;
+    put(this.people.firstChild, people);
+    if (view.plain) this.list.dataset.plain = "";
+    else delete this.list.dataset.plain;
+    this.legendMark.hidden = !view.mark;
+    put(this.legendText, view.mark);
+    this.legendText.hidden = !view.mark;
+    if (!this.fixedLegend) this.legend.hidden = !view.mark && !view.caption;
     const template = this.template(view);
-    const shape = JSON.stringify([lang(), view.plain, template, showMs, view.rows.map((r) => r.key)]);
-    const fresh = view.rows.map((row) => this.rowNode(row, view, template, showMs));
+    const shape = JSON.stringify([lang(), view.plain, template, showMs, view.rows.map((r) => r.key), snap.max]);
+    const fresh = withEmpty(view.rows.map((row) => seatRow(row, view, template, showMs)), view, snap.max);
     const meters = [];
     if (shape !== this.shape) {
       this.shape = shape;
@@ -139,67 +233,6 @@ export class BoardPanel {
       })
       .filter(Boolean)
       .join(" ");
-  }
-
-  rowNode(row, view, template, showMs) {
-    const li = make("li", "mpb__row");
-    li.dataset.key = row.key;
-    if (row.me) li.classList.add("is-me");
-    if (row.dim) li.classList.add("is-out");
-    const seat = make("div", "mpb__seat");
-    seat.append(chip(row.human ? "" : "ai", row.human ? row.seat : t("board.aiTag"), " mpb__tag--seat"));
-    const l1 = make("div", "mpb__l1");
-    if (row.mark) l1.append(make("span", "mpb__mark"));
-    l1.append(make("span", "mpb__text mpb__name", row.name));
-    if (row.me) l1.append(chip("me", t("board.me")));
-    if (row.host) l1.append(chip("host", t("board.host")));
-    const tail = this.connNodes(row.conn, showMs);
-    if (tail.length) tail[0].classList.add("mpb__push");
-    l1.append(...tail);
-    li.append(seat, l1);
-    if (!view.plain) {
-      const l2 = make("div", "mpb__l2");
-      l2.style.gridTemplateColumns = template;
-      view.columns.forEach((col, c) => {
-        if (!col.shown) return;
-        const cell = row.cells[c];
-        if (!cell || cell.type === "empty") {
-          if (col.type === "bar") l2.append(make("span", "mpb__slot"), make("span", "mpb__slot"));
-          else l2.append(make("span", "mpb__slot"));
-          return;
-        }
-        if (cell.type === "bar") {
-          const meter = make("span", "mpb__meter");
-          meter.dataset.tone = cell.tone;
-          meter.dataset.ratio = String(cell.ratio);
-          meter.append(make("i"));
-          l2.append(meter, make("span", "mpb__text mpb__small mpb__num", String(cell.value)));
-        } else if (cell.type === "number") {
-          l2.append(make("span", "mpb__text mpb__small mpb__dim", cell.label ? `${cell.label} ${cell.text}` : cell.text));
-        } else if (cell.type === "rank") {
-          l2.append(cell.text ? make("span", "mpb__text mpb__small", cell.text) : make("span", "mpb__slot"));
-        } else if (cell.type === "status") {
-          l2.append(cell.text ? chip(cell.tone, cell.text, " mpb__state") : make("span", "mpb__slot"));
-        }
-      });
-      li.append(l2);
-    }
-    return li;
-  }
-
-  connNodes(conn, showMs) {
-    if (!conn) return [];
-    if (conn.kind === "stall") return [chip("warn", t("board.stall"))];
-    if (conn.kind === "hold") return [chip("warn", t("board.hold"))];
-    if (conn.kind === "rejoin") return [chip("warn", t("board.rejoining"))];
-    if (conn.kind === "joining") return [chip("dim", t("board.joining"))];
-    if (conn.kind === "lost") return [chip("bad", t("board.lost"))];
-    if (conn.kind === "left") return [chip("dim", t("board.left"))];
-    if (!conn.q) return [];
-    const sig = make("span", "mpb__sig");
-    sig.dataset.q = conn.q;
-    sig.append(make("i"), make("i"), make("i"));
-    return showMs ? [sig, make("span", "mpb__text mpb__small mpb__dim mpb__ms", t("board.ms", { ms: conn.ms }))] : [sig];
   }
 }
 

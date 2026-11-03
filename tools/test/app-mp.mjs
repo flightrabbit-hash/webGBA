@@ -145,24 +145,23 @@ process.exit(failed.length ? 1 : 0);
 
 async function baseFlow() {
   await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
-  const layer = await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-room-make]'))"), 8000);
-  check("exe: 연결 창 첫 화면(방 만들기·코드로 들어가기·근처 방·인터넷 없이 연결)", layer && (await app.evaluate("Boolean(document.querySelector('[data-action=net-room-join]') && document.querySelector('[data-action=net-offline]') && document.querySelector('.net-near-box'))")));
-  const entries = await app.evaluate(ENTRIES);
-  check("exe: 첫 화면 버튼마다 현재 언어 이름 줄(방 만들기 HOST · 코드로 들어가기 CODE)", entries.map((e) => `${e.label}|${e.button}`).join(",") === `${ko["net.make"]}|HOST,${ko["net.codeJoin"]}|CODE`, JSON.stringify(entries.map((e) => `${e.label}|${e.button}`)));
+  const layer = await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body .net-tabset'))"), 8000);
+  check("exe: 연결 창 첫 화면(참가하기·방 만들기 탭 · 열린 방 · 방 코드 6칸 · 인터넷 없이 연결)", layer && (await app.evaluate("Boolean(document.querySelector('[data-action=net-room-join]') && document.querySelector('[data-action=net-tab-make]') && document.querySelector('[data-action=net-offline]') && document.querySelector('.net-near-box') && document.querySelectorAll('.net-cell').length === 6)")));
+  const labels = await app.evaluate(`[...document.querySelectorAll("#dialog-body .net-tab, #dialog-actions .btn, #dialog-body .net-coderow .btn")].map((n) => n.textContent).join(",")`);
+  check("exe: 탭 글자(현재 언어) · 버튼 대문자 영어(EDIT·OFFLINE·ENTER)", labels === `${ko["net.join"]},${ko["net.make"]},ENTER,EDIT,OFFLINE`, labels);
   const near = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-near-box')?.textContent ?? ''; return /…/.test(t) ? '' : t; })()"), 10000);
-  check("exe: 근처 방 영역 서버 응답(목록 또는 없음 안내)", near && !/불러오지 못했/.test(near), near);
+  check("exe: 열린 방 영역 서버 응답(목록 또는 없음 안내)", near && !/불러오지 못했/.test(near), near);
   await sleep(300);
-  const inks = await entryInks();
-  check("exe: 첫 화면 이름 줄 잉크 세로 가운데(이름 위·아래 차이 ≤ 2 기기 픽셀, 버튼 위·아래 = 줄 위·아래)", inks.length === 3 && inks.every((i) => i.ok), JSON.stringify(inks));
+  const codeRow = await app.evaluate(`(() => [...document.querySelectorAll(".net-coderow .net-cell, .net-coderow > .btn")].map((n) => { const r = n.getBoundingClientRect(); return { a: n.className, top: r.top, bottom: r.bottom }; }))()`);
+  check("exe: 코드 칸·ENTER 위·아래 차이 0", codeRow.length === 7 && spread(codeRow, "top") === 0 && spread(codeRow, "bottom") === 0, JSON.stringify(codeRow.map((c) => `${c.top}-${c.bottom}`)));
   await app.screenshot(path.join(shots, "exe_mp_첫화면.png"));
   await app.evaluate("document.querySelector('[data-action=net-offline]').click()");
   await sleep(300);
   const lan = await app.evaluate(ENTRIES);
   const lanInks = await entryInks();
-  check("exe: 인터넷 없이 연결 화면 이름 줄(방 만들기 HOST · 참가하기 JOIN)·잉크 세로 가운데", lan.map((e) => `${e.label}|${e.button}`).join(",") === `${ko["net.make"]}|HOST,${ko["net.join"]}|JOIN` && lanInks.length === 2 && lanInks.every((i) => i.ok), JSON.stringify({ lan, lanInks }));
+  check("exe: 인터넷 없이 연결 화면 이름 줄(방 만들기 CREATE · 참가하기 JOIN)·잉크 세로 가운데", lan.map((e) => `${e.label}|${e.button}`).join(",") === `${ko["net.make"]}|CREATE,${ko["net.join"]}|JOIN` && lanInks.length === 2 && lanInks.every((i) => i.ok), JSON.stringify({ lan, lanInks }));
   await app.evaluate("document.querySelector('[data-action=net-back]').click()");
-  await waitFor(() => app.evaluate("Boolean(document.querySelector('#dialog-body [data-action=net-room-make]'))"), 3000);
-  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  await appMake();
   const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
   check("exe: 서버로 방 만들기 → 방 코드 6자리", /^\d{6}$/.test(code ?? ""), code);
   await sleep(300);
@@ -208,13 +207,20 @@ function appDialog(action) {
   return waitFor(() => app.evaluate(`!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=${action}]'))`), 10000);
 }
 
+// 연결 창 탭 B: 방 만들기 탭 → 방 만들기(마지막 탭 기억이라 이미 그 탭일 수 있음)
+async function appMake() {
+  await appDialog("net-tab-make");
+  await app.evaluate("document.querySelector('[data-action=net-tab-make]').click()");
+  await appDialog("net-room-make");
+  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+}
+
 async function wanFlow() {
   await app.evaluate(`${T}.state.prefs.netWan = true`);
   await app.evaluate(`${T}.openPath(${JSON.stringify(gameFile)})`);
   await waitFor(() => app.evaluate(`${T}.player.running === true && !${T}.player.net.active`), 15000);
   await appWant();
-  await appDialog("net-room-make");
-  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  await appMake();
   const info = await waitFor(() => app.evaluate(`(async () => { const inv = ${T}.netWin.roomHost?.invite; if (!inv?.code) return null; const lan = await import("/js/core/net/lan.js"); const d = lan.decodeCode(inv.code, "offer", { wan: true }); return { public: inv.public, types: d.sdp.split("\\r\\n").filter((l) => l.startsWith("a=candidate")).map((l) => l.split(" ")[7]), flag: d.wan }; })()`), 15000);
   check("exe 인터넷 연결 켬: WebView2 에서 STUN 막힘 없음(공인 후보 srflx 수집 · 코드에 포함)", info && info.public > 0 && info.types.includes("srflx") && info.flag, JSON.stringify(info));
   await app.evaluate("document.querySelector('[data-action=net-cancel]')?.click()");
@@ -288,6 +294,7 @@ async function rejoinFlow() {
     setTimeout(() => window.webgba.player.keyUp("KeyZ"), 150);
   });
   await H.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await H.click('[data-action="net-tab-make"]');
   await H.click('[data-action="net-room-make"]');
   const code = await waitFor(async () => {
     const t = await H.evaluate(() => document.querySelector(".net-room-code")?.textContent ?? "");
@@ -351,16 +358,12 @@ async function anytimeFlow() {
   const quiet = await app.evaluate(`({ layer: !document.getElementById('layer').hidden, btn: !document.getElementById('btn-net').hidden, request: Boolean(${T}.player.net.request), timer: Boolean(${T}.player.net.windowTimer) })`);
   check("exe 중간 참가 게임: 요청해도 연결 창 자동 열림 없음 · 시간 초과 타이머 없음 · 레일 멀티플레이 버튼 표시", !quiet.layer && quiet.btn && quiet.request && !quiet.timer, JSON.stringify(quiet));
   await app.evaluate("document.getElementById('btn-net').click()");
-  await appDialog("net-room-make");
-  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  await appMake();
   const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
   await sleep(300);
   const acts = await app.evaluate("[...document.querySelectorAll('#dialog-actions > button')].map((n) => { const r = n.getBoundingClientRect(); return { a: n.dataset.action, t: n.textContent, top: r.top, bottom: r.bottom }; })");
-  const view = await app.evaluate("({ note: [...document.querySelectorAll('#dialog-body .net-note')].map((n) => n.textContent).join(' | '), accept: document.querySelector('#dialog-body .net-accept')?.textContent ?? '', entries: [...document.querySelectorAll('#dialog-body .net-entry')].map((n) => (n.querySelector('.net-entry__label')?.textContent ?? '') + '|' + (n.querySelector('button')?.textContent ?? '')) })");
-  check("exe 방장 혼자 방 코드 화면: 받는 중·남은 시간 · 이름 줄(갱신 RENEW) · 하단 LEAVE·CLOSE(위·아래 차이 0)", /^\d{6}$/.test(code ?? "") && acts.map((b) => `${b.a}:${b.t}`).join() === "net-leave:LEAVE,net-close:CLOSE" && spread(acts, "top") === 0 && spread(acts, "bottom") === 0 && view.note.includes(ko["net.anytimeNote"]) && /2:[0-9]{2}/.test(view.accept) && view.entries.includes(`${ko["net.renew"]}|RENEW`), JSON.stringify({ code, acts, view }));
-  await sleep(300);
-  const inks = await entryInks();
-  check("exe 갱신 이름 줄 잉크 세로 가운데(이름 위·아래 차이 ≤ 2 기기 픽셀, 버튼 = 줄 높이)", inks.length >= 1 && inks.every((i) => i.ok), JSON.stringify(inks));
+  const view = await app.evaluate("({ note: [...document.querySelectorAll('#dialog-body .net-note')].map((n) => n.textContent).join(' | '), accept: document.querySelector('#dialog-body .net-accept')?.textContent ?? '', seats: [...document.querySelectorAll('#dialog-body .net-seats .mpb__row')].map((n) => n.textContent).join(' | '), copy: document.querySelector('[data-action=net-room-copy]')?.textContent ?? '' })");
+  check("exe 방장 혼자 방 코드 화면: 받는 중·남은 시간 · COPY·QR · 유저 칸(빈자리) · 하단 CLOSE ROOM·RENEW·DONE(위·아래 차이 0) · 안내 글 버튼 이름 RENEW", /^\d{6}$/.test(code ?? "") && acts.map((b) => `${b.a}:${b.t}`).join() === "net-leave:CLOSE ROOM,net-renew:RENEW,net-close:DONE" && spread(acts, "top") === 0 && spread(acts, "bottom") === 0 && view.note.includes(ko["net.exe.anytimeNote"]) && !/갱신/.test(view.note) && /2:[0-9]{2}/.test(view.accept) && view.copy === "COPY" && /2P.*기다리는 중/.test(view.seats), JSON.stringify({ code, acts, view }));
   await app.screenshot(path.join(shots, "exe_mp_중간참가_방코드.png"));
   await app.evaluate(`(() => { const rh = ${T}.netWin.roomHost; rh.limit = 25000; rh.acceptUntil = Date.now() + 25000; rh.keepAt = rh.acceptUntil + 1; rh.schedule(); })()`);
   await app.evaluate("document.querySelector('[data-action=net-close]').click()");
@@ -414,7 +417,7 @@ async function anytimeFlow() {
   if (CAPTURE) await app.screenshot(path.join(CAPTURE, "exe_멈춤_레일버튼.png"));
   await app.evaluate("document.getElementById('btn-net').click()");
   await sleep(700);
-  await app.evaluate("document.querySelector('#mppanel [data-action=board-window]')?.click()");
+  await app.evaluate("document.querySelector('#mppanel [data-action=board-invite]')?.click()");
   await appDialog("net-renew");
   await app.evaluate("document.querySelector('[data-action=net-renew]').click()");
   const renewed = await waitFor(() => app.evaluate(`${T}.netWin.roomHost?.inviting === true && !${T}.netWin.roomHost.renewing && document.querySelector('.net-room-code')?.textContent`), 10000);
@@ -466,8 +469,7 @@ async function nosaveFlow() {
   check("exe 혼자 실행: 레일 상태 저장·불러오기 켜짐 · 클릭 저장 · F1 불러오기 그대로", solo.every((b) => b.aria === null && !b.disabled) && solo[0].key === "rail.stateSave" && soloSave.text === slotText("status.stateSaved") && soloLoad.text === slotText("status.stateLoaded"), JSON.stringify({ solo: solo.map((b) => `${b.id}:${b.aria}/${b.key}`), soloSave, soloLoad }));
 
   await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
-  await waitFor(() => app.evaluate("!document.getElementById('layer').hidden && Boolean(document.querySelector('#dialog-body [data-action=net-room-make]'))"), 8000);
-  await app.evaluate("document.querySelector('[data-action=net-room-make]').click()");
+  await appMake();
   const code = await waitFor(() => app.evaluate("(() => { const t = document.querySelector('.net-room-code')?.textContent ?? ''; return /^\\d{6}$/.test(t) ? t : ''; })()"), 15000);
   const lobby = await app.evaluate(RAILSTATE);
   await clear();

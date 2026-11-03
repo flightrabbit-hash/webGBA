@@ -2,13 +2,19 @@ import { CodeError, cleanCode } from "../core/net/lan.js";
 import { SessionError } from "../core/net/session.js";
 import { CONNECTED_CLOSE_MS, WHY } from "../core/net/net-host.js";
 import { drawQr } from "../core/net/qr.js";
-import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, serverDown, signalCompat, signalPurpose } from "../core/net/signal.js";
+import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, signalCompat, signalPurpose } from "../core/net/signal.js";
 import { pickText } from "../core/wgba-read.js";
 import { lang, t } from "../shell/i18n.js";
+import { seatRows } from "./board-panel.js";
+
+let textKey = (key) => key;
+const tb = (key, vars) => t(textKey(key), vars);
 
 const SCAN_MS = 200;
 const PASTE_WAIT_MS = 1500;
 const NICK_MAX = 12;
+const CODE_LEN = 6;
+const PIPS_MAX = 8;
 
 const SCAN_EDGE = 640;
 
@@ -116,11 +122,11 @@ export function errorText(error, field) {
   }
   if (error instanceof SignalError) {
     if (error.code === "none") return t("net.err.noRoom");
-    if (error.code === "paused") return t("net.err.paused");
+    if (error.code === "paused") return tb("net.err.paused");
     if (error.code === "full") return t("net.why.full");
     if (error.code === "version" || error.code === "purpose") return t("net.why.incompatible");
-    if (error.code === "limit") return t("net.err.limit");
-    return t("net.err.server");
+    if (error.code === "limit") return tb("net.err.limit");
+    return tb("net.err.server");
   }
   return t("net.err.failed");
 }
@@ -135,12 +141,14 @@ export class NetWindow {
   constructor({ net, kit, onClosed = () => {}, onState = () => {} }) {
     this.net = net;
     this.kit = kit;
+    if (kit.textKey) textKey = kit.textKey;
     this.signal = kit.signal ?? null;
     this.onClosed = onClosed;
     this.onState = onState;
     this.clock = 0;
     this.open = false;
     this.screen = "";
+    this.tab = "join";
     this.request = null;
     this.refs = {};
     this.invite = null;
@@ -148,8 +156,13 @@ export class NetWindow {
     this.offerText = "";
     this.guestCode = "";
     this.roomText = "";
+    this.lastRoom = "";
     this.error = "";
+    this.errorTitle = "";
     this.errorHelp = false;
+    this.codeBad = false;
+    this.progress = "";
+    this.nickEdit = false;
     this.busy = false;
     this.qrOn = false;
     this.scanner = null;
@@ -157,7 +170,6 @@ export class NetWindow {
     this.endedWhy = 0;
     this.roomHost = null;
     this.fallback = false;
-    this.offerLan = false;
     this.near = { state: "idle", rooms: [] };
     this.nearTimer = 0;
     this.nearSeq = 0;
@@ -175,9 +187,9 @@ export class NetWindow {
     const snap = this.net.snapshot();
     this.open = true;
     this.stay = Boolean(snap.active && snap.reached);
-    this.error = "";
-    this.errorHelp = false;
-    this.offerLan = false;
+    this.clearError();
+    this.nickEdit = false;
+    this.tab = this.canMake() && this.kit.tab?.() === "make" ? "make" : "join";
     if (snap.active) {
       if (snap.rejoining) this.go("rejoin");
       else if (snap.role === "make") {
@@ -188,11 +200,20 @@ export class NetWindow {
     else this.go("choose");
   }
 
-  title() {
+  canMake() {
+    return this.request?.role !== "join";
+  }
+
+  chipText() {
     const r = this.request;
-    if (!r) return t("net.titlePlain");
+    if (!r) return "";
     const range = r.min === r.max ? t("net.players", { n: r.max }) : t("net.playersRange", { min: r.min, max: r.max });
-    return t("net.title", { purpose: purposeName(r.purpose), players: range });
+    return t("net.chip", { purpose: purposeName(r.purpose), players: range });
+  }
+
+  paintTitle(snap = this.net.snapshot()) {
+    if (this.screen === "room" || this.screen === "host") this.kit.title(t("net.myRoom"), t("net.countChip", { n: snap.count, max: snap.max }), "ok");
+    else this.kit.title(t("net.titlePlain"), this.chipText(), "");
   }
 
   go(screen) {
@@ -200,11 +221,24 @@ export class NetWindow {
     this.stopClock();
     clearTimeout(this.closeTimer);
     this.closeTimer = 0;
-    if (screen !== "choose") this.stopNear();
+    this.stopNear();
     this.screen = screen;
     this.qrOn = screen === "join2" && this.kit.touch;
     this.render();
-    if (screen === "choose") this.startNear();
+    if (this.nearWanted()) this.startNear();
+  }
+
+  nearWanted() {
+    return this.open && this.screen === "choose" && this.tab === "join";
+  }
+
+  pickTab(tab) {
+    if (this.tab === tab || this.busy) return;
+    this.tab = tab;
+    this.kit.setTab?.(tab);
+    this.clearError();
+    this.nickEdit = false;
+    this.go("choose");
   }
 
   close({ cancel = false } = {}) {
@@ -253,6 +287,10 @@ export class NetWindow {
     return this.roomHost?.room || (this.net.active ? this.joinedRoom : "");
   }
 
+  canInvite(snap = this.net.snapshot()) {
+    return snap.active && snap.role === "make" && snap.count < snap.max;
+  }
+
   pageHide() {
     this.roomHost?.beacon();
   }
@@ -282,7 +320,7 @@ export class NetWindow {
       this.close();
       return;
     }
-    if (snap.ended && !["ended", "choose", "lan", "code"].includes(this.screen)) {
+    if (snap.ended && !["ended", "choose", "lan", "fail"].includes(this.screen)) {
       this.endedWhy = snap.ended.why;
       this.go("ended");
       return;
@@ -301,12 +339,16 @@ export class NetWindow {
       return;
     }
     if ((this.screen === "join2" || this.screen === "wait") && !snap.active && snap.failed) {
-      this.error = hintText(snap.failed.hint) || whyText(snap.failed.why);
-      this.errorHelp = helpFor(snap.failed.hint);
+      const text = hintText(snap.failed.hint) || whyText(snap.failed.why);
+      const help = helpFor(snap.failed.hint);
+      const wait = this.screen === "wait";
       this.offerText = "";
-      const back = this.screen === "wait" ? "choose" : "join1";
       this.clearJoin();
-      this.go(back);
+      if (wait) return this.fail(text, help);
+      this.clearError();
+      this.error = text;
+      this.errorHelp = help;
+      this.go("join1");
       return;
     }
     if (this.screen === "joined" && snap.connected && !this.closeTimer) this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
@@ -314,8 +356,7 @@ export class NetWindow {
     if ((this.screen === "host" || this.screen === "room") && snap.active) {
       const canInvite = snap.count < snap.max;
       const shownInvite = this.screen === "host" ? Boolean(this.refs.inviteBox) : Boolean(this.refs.roomBox);
-      if (snap.reached !== Boolean(this.reachedShown) || canInvite !== shownInvite) {
-        this.reachedShown = snap.reached;
+      if (snap.reached !== Boolean(this.reachedShown) || canInvite !== shownInvite || Boolean(snap.anytime) !== Boolean(this.anytimeShown)) {
         this.render();
         return;
       }
@@ -325,14 +366,24 @@ export class NetWindow {
 
   refreshDynamic(snap = this.net.snapshot()) {
     const r = this.refs;
-    if (r.members) r.members.replaceChildren(...this.memberRows(snap));
+    if (r.members) r.members.replaceChildren(...this.seatNodes(snap));
     if (r.count) r.count.textContent = t("net.count", { n: snap.count, max: snap.max, min: this.request?.min ?? 2 });
-    if (r.error) {
-      r.error.textContent = this.error;
-      r.error.hidden = !this.error;
+    if (this.screen === "room" || this.screen === "host") this.paintTitle(snap);
+    if (r.banner) {
+      r.bannerTitle.textContent = this.errorTitle;
+      r.bannerTitle.hidden = !this.errorTitle;
+      r.bannerText.textContent = this.error;
+      r.bannerText.hidden = !this.error;
+      r.banner.hidden = !this.error && !this.errorTitle;
     }
     if (r.help) r.help.hidden = !this.errorHelp;
-    if (r.offline) r.offline.hidden = !this.offerLan;
+    if (r.progress) {
+      r.progress.textContent = this.progress;
+      r.progress.hidden = !this.progress;
+    }
+    if (r.cells) r.cells.classList.toggle("is-bad", this.codeBad);
+    if (r.codeGo) r.codeGo.disabled = this.busy;
+    if (r.makeGo) r.makeGo.disabled = this.busy;
     if (r.rejoinState) r.rejoinState.textContent = this.rejoinText(snap);
     if (r.accept) r.accept.textContent = this.acceptText();
     if (r.renew) r.renew.disabled = Boolean(this.roomHost?.renewing);
@@ -347,7 +398,7 @@ export class NetWindow {
   acceptText() {
     const state = this.acceptState();
     if (!state) return "";
-    if (!state.on) return t("net.accept.off");
+    if (!state.on) return tb("net.accept.off");
     const s = Math.ceil(state.left / 1000);
     return t("net.accept.on", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` });
   }
@@ -366,15 +417,14 @@ export class NetWindow {
   }
 
   paused() {
-    this.kit.notice(t("net.notice.paused"), "info");
+    this.kit.notice(tb("net.notice.paused"), "info");
     if (this.open && this.screen === "room") this.render();
   }
 
   async renewRoom() {
     const host = this.roomHost;
     if (!host || host.renewing) return;
-    this.error = "";
-    this.errorHelp = false;
+    this.clearError();
     this.refreshDynamic();
     try {
       await host.renew();
@@ -383,16 +433,6 @@ export class NetWindow {
       return;
     }
     if (this.open && this.screen === "room") this.render();
-  }
-
-  acceptNodes() {
-    const k = this.kit;
-    const state = k.note(this.acceptText());
-    state.classList.add("net-accept");
-    this.refs.accept = state;
-    const renew = k.button({ label: k.label("renew"), kind: "primary", action: "net-renew", onClick: () => this.renewRoom(), disabled: Boolean(this.roomHost?.renewing) });
-    this.refs.renew = renew;
-    return [state, ...this.choices([{ text: t("net.renew"), button: renew }])];
   }
 
   rejoinText(snap) {
@@ -411,29 +451,164 @@ export class NetWindow {
     this.close();
   }
 
-  memberRows(snap) {
-    return snap.members.map((m) => {
-      const tags = [];
-      if (m.me) tags.push(t("net.me"));
-      if (m.host) tags.push(t("net.hostTag"));
-      tags.push(m.held ? t("net.state.hold") : m.rejoining ? t("net.state.rejoining") : m.stalled ? t("net.state.stall") : t("net.state.ok"));
-      if (!m.host && !m.held && !m.rejoining && Number.isFinite(m.rtt)) tags.push(t("net.rtt", { ms: Math.round(m.rtt) }));
-      return this.kit.row({ tag: `${m.slot + 1}P`, name: m.nick, meta: tags.join(" · "), current: m.me });
-    });
+  seatNodes(snap) {
+    return seatRows({ members: snap.members, slot: snap.slot, max: snap.max });
   }
 
-  setError(text, help = false) {
+  seatSection(snap, { count = true } = {}) {
+    const k = this.kit;
+    const list = k.make("ol", "mpb__rows net-seats");
+    list.dataset.plain = "";
+    list.append(...this.seatNodes(snap));
+    this.refs.members = list;
+    let sub = null;
+    if (count) {
+      sub = t("net.count", { n: snap.count, max: snap.max, min: this.request?.min ?? 2 });
+    }
+    const sec = this.section(t("net.users"), { sub, children: [list] });
+    if (count) this.refs.count = sec.querySelector(".net-sech__sub");
+    return sec;
+  }
+
+  section(title, { sub = null, tool = null, children = [], kind = "" } = {}) {
+    const k = this.kit;
+    const sec = k.make("section", `net-sec${kind ? ` net-sec--${kind}` : ""}`);
+    if (title) {
+      const head = k.make("div", "net-sech");
+      const name = k.make("h3", "net-sech__title");
+      name.append(k.make("span", "net-sech__name", title));
+      if (sub !== null) name.append(k.make("span", "net-sech__sub", sub));
+      head.append(name);
+      if (tool) head.append(tool);
+      sec.append(head);
+    }
+    sec.append(...children.filter(Boolean));
+    return sec;
+  }
+
+  cols(a, b) {
+    const k = this.kit;
+    const box = k.make("div", "net-cols");
+    const left = k.make("div", "net-col net-col--a");
+    const right = k.make("div", "net-col net-col--b");
+    left.append(...a.filter(Boolean));
+    right.append(...b.filter(Boolean));
+    box.append(left, right);
+    return box;
+  }
+
+  clearError() {
+    this.error = "";
+    this.errorTitle = "";
+    this.errorHelp = false;
+    this.codeBad = false;
+    this.progress = "";
+  }
+
+  setError(text, help = false, { title = "", code = false } = {}) {
     this.error = text;
+    this.errorTitle = title;
     this.errorHelp = help;
+    this.codeBad = code;
+    this.progress = "";
     this.refreshDynamic();
   }
 
-  nickField() {
+  setProgress(text) {
+    this.error = "";
+    this.errorTitle = "";
+    this.errorHelp = false;
+    this.codeBad = false;
+    this.progress = text;
+    this.refreshDynamic();
+  }
+
+  fail(text, help) {
+    const title = t("net.err.failed");
+    this.error = text === title ? "" : text;
+    this.errorTitle = title;
+    this.errorHelp = help;
+    this.codeBad = false;
+    this.progress = "";
+    this.go("fail");
+  }
+
+  bannerNode() {
     const k = this.kit;
-    return k.field({
-      label: t("net.nick"),
-      control: k.textInput({ value: [...k.nick()].slice(0, NICK_MAX).join(""), maxLength: NICK_MAX, label: t("net.nick"), action: "net-nick", onInput: (value) => k.setNick(value) }),
-    });
+    const banner = k.make("div", "net-banner net-banner--err");
+    banner.setAttribute("role", "alert");
+    const text = k.make("div", "net-banner__text");
+    const title = k.make("p", "net-banner__title", this.errorTitle);
+    const detail = k.make("p", "net-banner__detail", this.error);
+    title.hidden = !this.errorTitle;
+    detail.hidden = !this.error;
+    text.append(title, detail);
+    banner.append(k.icon("warn"), text);
+    banner.hidden = !this.error && !this.errorTitle;
+    Object.assign(this.refs, { banner, bannerTitle: title, bannerText: detail });
+    return banner;
+  }
+
+  helpNode() {
+    const k = this.kit;
+    const sec = this.section(t("net.helpTitle"), { children: [k.list(HELP_KEYS.map((key) => t(key)), "net-help")] });
+    sec.hidden = !this.errorHelp;
+    this.refs.help = sec;
+    return sec;
+  }
+
+  progressNode() {
+    const node = this.kit.note(this.progress);
+    node.classList.add("net-progress");
+    node.hidden = !this.progress;
+    this.refs.progress = node;
+    return node;
+  }
+
+  errorNodes() {
+    return [this.progressNode(), this.bannerNode(), this.helpNode()];
+  }
+
+  nickFoot() {
+    const k = this.kit;
+    const box = k.make("div", "net-nickline");
+    if (this.nickEdit) {
+      const done = () => {
+        this.nickEdit = false;
+        this.render();
+      };
+      const input = k.textInput({ value: [...k.nick()].slice(0, NICK_MAX).join(""), maxLength: NICK_MAX, label: t("net.nick"), action: "net-nick", onInput: (value) => k.setNick(value), onEnter: done });
+      box.append(input, k.button({ label: k.label("nickDone"), small: true, action: "net-nick-done", onClick: done }));
+      this.refs.nickInput = input;
+    } else {
+      const label = k.make("span", "net-nickline__label", t("net.nickMine"));
+      const name = k.make("span", "net-nickline__name", k.nick());
+      box.append(
+        label,
+        name,
+        k.button({
+          label: k.label("nickEdit"),
+          small: true,
+          action: "net-nick-edit",
+          onClick: () => {
+            this.nickEdit = true;
+            this.render();
+            this.refs.nickInput?.focus();
+            if (!k.touch) this.refs.nickInput?.select();
+          },
+        }),
+      );
+    }
+    return box;
+  }
+
+  spacer() {
+    return this.kit.make("span", "net-spacer");
+  }
+
+  offlineButton({ small = true, block = false } = {}) {
+    const k = this.kit;
+    return k.button({ label: small ? k.label("offline") : k.label("offlineLong"), icon: small ? "chevron" : "", small, block, action: "net-offline", onClick: () => this.toLan() });
   }
 
   codeBox(code, { action }) {
@@ -441,12 +616,16 @@ export class NetWindow {
     const area = k.textArea({ value: code, readOnly: true, rows: 4, label: t("net.codeLabel"), action });
     const copy = k.button({ label: k.label("copy"), action: `${action}-copy`, onClick: () => this.copy(code) });
     const qrBtn = k.button({ label: k.label("qr"), action: `${action}-qr`, onClick: () => this.toggleQr() });
-    const qr = k.make("div", "net-qr");
+    return [area, k.line(copy, qrBtn), this.qrBox(code)];
+  }
+
+  qrBox(code) {
+    const qr = this.kit.make("div", "net-qr");
     qr.hidden = !this.qrOn;
-    if (this.qrOn) qr.append(this.qrCanvas(code));
+    if (this.qrOn && code) qr.append(this.qrCanvas(code));
     this.refs.qr = qr;
     this.refs.qrCode = code;
-    return [area, k.line(copy, qrBtn), qr];
+    return qr;
   }
 
   qrCanvas(code) {
@@ -469,13 +648,13 @@ export class NetWindow {
     if (this.qrOn && !qr.firstChild && this.refs.qrCode) qr.append(this.qrCanvas(this.refs.qrCode));
   }
 
-  async copy(code) {
+  async copy(code, what = "code") {
     let ok = false;
     try {
       await navigator.clipboard.writeText(code);
       ok = true;
     } catch {}
-    this.kit.notice(t(ok ? "net.copied" : "net.copyFailed"), ok ? "info" : "warn");
+    this.kit.notice(t(ok ? (what === "room" ? "net.copiedRoom" : "net.copied") : "net.copyFailed"), ok ? "info" : "warn");
   }
 
   pasteField({ field, action, value, onInput, onGo }) {
@@ -578,24 +757,64 @@ export class NetWindow {
     }
   }
 
-  errorNodes() {
+  codeCells() {
     const k = this.kit;
-    const error = k.make("p", "net-error", this.error);
-    error.hidden = !this.error;
-    error.setAttribute("role", "alert");
-    this.refs.error = error;
-    const help = k.list(HELP_KEYS.map((key) => t(key)), "net-help");
-    help.hidden = !this.errorHelp;
-    this.refs.help = help;
-    return [error, help];
+    const box = k.make("div", "net-cells");
+    const cells = [];
+    for (let i = 0; i < CODE_LEN; i++) {
+      const cell = k.make("span", "net-cell");
+      cell.append(k.make("span", "net-cell__digit", ""));
+      cells.push(cell);
+      box.append(cell);
+    }
+    const paint = () => {
+      const digits = this.roomText;
+      const at = Math.min(digits.length, CODE_LEN - 1);
+      cells.forEach((cell, i) => {
+        const glyph = cell.firstChild;
+        if (glyph.textContent !== (digits[i] ?? "")) glyph.textContent = digits[i] ?? "";
+        cell.classList.toggle("is-cur", i === at);
+      });
+    };
+    const input = k.textInput({
+      value: this.roomText,
+      maxLength: 64,
+      numeric: true,
+      label: t("net.roomCode"),
+      action: "net-code-in",
+      onInput: (value) => {
+        const digits = String(value).replace(/\D/g, "").slice(0, CODE_LEN);
+        if (input.value !== digits) input.value = digits;
+        this.roomText = digits;
+        if (this.codeBad || this.error) {
+          this.clearError();
+          this.refreshDynamic();
+        }
+        paint();
+      },
+      onEnter: () => this.joinRoom(this.roomText),
+    });
+    input.classList.add("net-cells__in");
+    input.setAttribute("autocomplete", "one-time-code");
+    const end = () => input.setSelectionRange?.(input.value.length, input.value.length);
+    input.addEventListener("focus", () => box.classList.add("is-focus"));
+    input.addEventListener("blur", () => box.classList.remove("is-focus"));
+    input.addEventListener("click", end);
+    input.addEventListener("keyup", end);
+    box.append(input);
+    box.classList.toggle("is-bad", this.codeBad);
+    this.refs.cells = box;
+    this.refs.codeInput = input;
+    paint();
+    return box;
   }
 
-  offlineLine() {
+  pips(n, max) {
     const k = this.kit;
-    const label = k.make("span", "net-offline__label", t("net.offline"));
-    const line = k.line(label, k.button({ label: k.label("offline"), action: "net-offline", onClick: () => this.toLan() }));
-    line.classList.add("net-offline");
-    return line;
+    if (!(max > 0) || max > PIPS_MAX) return null;
+    const box = k.make("span", "net-pips");
+    for (let i = 0; i < max; i++) box.append(k.make("i", i < n ? "is-on" : ""));
+    return box;
   }
 
   choices(items) {
@@ -606,30 +825,46 @@ export class NetWindow {
 
   toLan() {
     this.joinSeq++;
-    this.error = "";
-    this.errorHelp = false;
+    this.busy = false;
+    this.clearError();
+    this.nickEdit = false;
     this.go("lan");
+  }
+
+  home() {
+    this.clearError();
+    this.go("choose");
+  }
+
+  retry() {
+    if (!this.lastRoom) return this.home();
+    this.tab = "join";
+    this.clearError();
+    this.go("choose");
+    this.joinRoom(this.lastRoom);
   }
 
   nearNodes() {
     const k = this.kit;
     const n = this.near;
     if (n.state === "loading" || n.state === "idle") return [k.note(t("net.nearLoading"))];
-    if (n.state === "offline") return [k.note(t("net.nearOffline"))];
-    if (n.state === "fail") return [k.note(t("net.nearFail"))];
+    if (n.state === "offline") return [k.note(tb("net.nearOffline"))];
+    if (n.state === "fail") return [k.note(tb("net.nearFail"))];
     const purpose = signalPurpose(this.request?.purpose?.id);
     const rows = [];
     for (const room of n.rooms) {
       const same = room.c === n.compat;
       if (same && room.p !== purpose) continue;
       if (!same) {
-        rows.push(k.nearRow({ name: room.nick, meta: t("net.nearOther"), dim: true }));
+        const cant = k.make("span", "net-cant");
+        cant.append(k.make("span", "net-cant__text", t("net.nearCant")));
+        rows.push(k.nearRow({ name: room.nick, meta: t("net.nearMetaOther", { n: room.k, max: room.m }), pips: this.pips(room.k, room.m), dim: true, side: cant }));
         continue;
       }
       const button = k.button({ label: k.label("enter"), action: "net-near-join", onClick: () => this.joinRoom(room.room) });
       button.dataset.room = room.room;
       button.disabled = this.busy;
-      rows.push(k.nearRow({ name: room.nick, meta: t("net.nearMeta", { purpose: purposeName(this.request?.purpose), n: room.k, max: room.m }), button }));
+      rows.push(k.nearRow({ name: room.nick, meta: t("net.nearMeta", { n: room.k, max: room.m }), pips: this.pips(room.k, room.m), side: button }));
     }
     if (!rows.length) return [k.note(t("net.nearEmpty"))];
     const list = k.make("ul", "net-near");
@@ -650,7 +885,7 @@ export class NetWindow {
     }
     const seq = ++this.nearSeq;
     const run = async () => {
-      if (seq !== this.nearSeq || !this.open || this.screen !== "choose") return;
+      if (seq !== this.nearSeq || !this.nearWanted()) return;
       let wait = NEAR_MS;
       try {
         const compat = await signalCompat(this.net.compat);
@@ -683,79 +918,116 @@ export class NetWindow {
     return node;
   }
 
+  joinTab(snap) {
+    const k = this.kit;
+    const near = k.make("div", "net-near-box");
+    this.refs.near = near;
+    near.append(...this.nearNodes());
+    const refresh = k.iconButton({ icon: "refresh", title: t("net.nearRefresh"), action: "net-near-refresh", onClick: () => this.startNear() });
+    const nearSec = this.section(t("net.near"), { sub: t("net.nearAuto"), tool: refresh, children: [near], kind: "near" });
+    const go = k.button({ label: k.label("enterCode"), icon: "chevron", kind: "primary", action: "net-code-go", onClick: () => this.joinRoom(this.roomText), disabled: this.busy });
+    this.refs.codeGo = go;
+    const row = k.make("div", "net-coderow");
+    row.append(this.codeCells(), go);
+    const codeSec = this.section(t("net.codeJoin"), { children: [row, ...this.errorNodes()], kind: "code" });
+    return { a: [...this.iceNodes(snap), codeSec], b: [nearSec] };
+  }
+
+  makeTab(snap) {
+    const k = this.kit;
+    const info = k.make("ul", "net-info");
+    for (const [icon, text] of [
+      ["people", this.chipText()],
+      ["info", t(snap.wan ? "net.modeWan" : "net.modeLan")],
+    ]) {
+      const li = k.make("li", "net-info__row");
+      const mark = k.make("span", "net-info__icon");
+      mark.append(k.icon(icon));
+      li.append(mark, k.make("span", "net-info__text", text));
+      info.append(li);
+    }
+    const go = k.button({ label: k.label("create"), icon: "plus", kind: "primary", big: true, block: true, action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy });
+    this.refs.makeGo = go;
+    return { a: [k.note(t("net.makeLead")), ...this.iceNodes(snap)], b: [info, go, ...this.errorNodes()] };
+  }
+
   render() {
     const k = this.kit;
     this.refs = {};
     const snap = this.net.snapshot();
-    k.title(this.title());
+    this.paintTitle(snap);
     let body = [];
-    let actions = [];
+    let foot = [];
     const cancel = k.action({ id: "cancel", onClick: () => this.close({ cancel: true }) });
     if (this.screen === "choose") {
-      const near = k.make("div", "net-near-box");
-      this.refs.near = near;
-      near.append(...this.nearNodes());
-      const items = [];
-      if (this.request?.role !== "join") items.push({ text: t("net.make"), button: k.button({ label: k.label("make"), kind: "primary", action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy }) });
-      items.push({ text: t("net.codeJoin"), button: k.button({ label: k.label("codeJoin"), action: "net-room-join", onClick: () => this.toCode(), disabled: this.busy }) });
-      body = [k.note(t(snap.wan ? "net.leadWan" : "net.lead")), ...this.iceNodes(snap), this.nickField(), ...this.choices(items), k.group(t("net.near"), near), this.offlineLine(), ...this.errorNodes()];
-      actions = [cancel];
+      const make = this.canMake();
+      const tab = make ? this.tab : "join";
+      const tabs = make
+        ? k.tabs(
+            [
+              { id: "join", label: t("net.join"), action: "net-room-join" },
+              { id: "make", label: t("net.make"), action: "net-tab-make" },
+            ],
+            tab,
+            (id) => this.pickTab(id),
+          )
+        : null;
+      if (tabs) tabs.classList.add("net-tabs");
+      const part = tab === "make" ? this.makeTab(snap) : this.joinTab(snap);
+      body = [this.cols([tabs, ...part.a], part.b)];
+      foot = [this.nickFoot(), this.spacer(), this.offlineButton()];
     } else if (this.screen === "lan") {
       body = [];
       if (this.fallback) body.push(k.note(t("net.fallback")));
       body.push(
         k.note(t("net.lead")),
-        this.nickField(),
         ...this.choices([
           { text: t("net.make"), button: k.button({ label: k.label("makeCode"), kind: "primary", action: "net-make", onClick: () => this.startHost() }) },
           { text: t("net.join"), button: k.button({ label: k.label("join"), action: "net-join", onClick: () => this.go("join1") }) },
         ]),
         k.note(t("net.codeNote")),
+        ...this.errorNodes(),
       );
-      actions = [k.action({ id: "back", onClick: () => this.go("choose") }), cancel];
-    } else if (this.screen === "code") {
-      const input = k.textInput({ value: this.roomText, maxLength: 6, numeric: true, label: t("net.roomCode"), action: "net-code-in", onInput: (v) => (this.roomText = v), onEnter: () => this.joinRoom(this.roomText) });
-      const go = k.button({ label: k.label("enter"), kind: "primary", action: "net-code-go", onClick: () => this.joinRoom(this.roomText), disabled: this.busy });
-      const off = this.offlineLine();
-      off.hidden = !this.offerLan;
-      this.refs.offline = off;
-      body = [this.nickField(), k.step(t("net.code.step")), k.line(input, go), ...this.errorNodes(), off];
-      actions = [k.action({ id: "back", onClick: () => this.go("choose") }), cancel];
+      foot = [this.nickFoot(), this.spacer(), k.action({ id: "back", onClick: () => this.home() })];
     } else if (this.screen === "room") {
       this.reachedShown = snap.reached;
-      const count = k.make("p", "net-count", t("net.count", { n: snap.count, max: snap.max, min: this.request?.min ?? 2 }));
-      this.refs.count = count;
-      const members = k.make("ul", "net-members");
-      members.append(...this.memberRows(snap));
-      this.refs.members = members;
-      body = snap.reached && !this.stay ? [k.note(t("net.reachedNote", { n: snap.count, max: snap.max }))] : [];
+      this.anytimeShown = snap.anytime;
+      const a = [];
+      if (snap.reached && !this.stay) a.push(k.note(t("net.reachedNote", { n: snap.count, max: snap.max })));
       const timed = Boolean(this.roomHost?.limit && this.roomHost.running);
-      if (snap.anytime && snap.count < snap.max) body.push(k.note(t("net.anytimeNote")));
       if (snap.count < snap.max) {
+        const code = this.roomHost?.room ?? "";
         const box = k.make("div", "net-room");
         this.refs.roomBox = box;
-        box.append(this.roomCodeNode(this.roomHost?.room ?? ""), k.note(this.roomHost?.room ? t(snap.wan ? "net.roomHintWan" : "net.roomHint") : t("net.roomMaking")));
-        body.push(k.group(t("net.roomCode"), box));
-        if (timed) body.push(...this.acceptNodes());
+        box.append(this.roomCodeNode(code));
+        const copy = k.button({ label: k.label("copyCode"), icon: "copy", grow: true, action: "net-room-copy", onClick: () => this.copy(code, "room"), disabled: !code });
+        const qrBtn = k.button({ label: k.label("qr"), grow: true, action: "net-room-qr", onClick: () => this.toggleQr(), disabled: !code });
+        const buttons = k.line(copy, qrBtn);
+        buttons.classList.add("net-btnrow");
+        const hint = k.note(code ? t(snap.wan ? "net.roomHintWan" : "net.roomHint") : t("net.roomMaking"));
+        if (timed) {
+          const accept = k.make("span", "net-accept", this.acceptText());
+          this.refs.accept = accept;
+          hint.append(" ", accept);
+        }
+        const parts = [box, buttons, this.qrBox(code), hint];
+        if (snap.anytime) parts.push(k.note(tb("net.anytimeNote")));
+        a.push(this.section(t("net.roomCode"), { children: parts }));
       }
-      body.push(...this.iceNodes(snap));
-      body.push(k.group(t("net.room"), count, members), ...this.errorNodes());
-      actions = this.hostActions(snap, cancel);
+      a.push(...this.iceNodes(snap));
+      body = [this.cols(a, [this.seatSection(snap)]), ...this.errorNodes()];
+      foot = this.hostFoot(snap, timed);
       if (this.refs.accept && this.roomHost?.inviting) this.startClock();
     } else if (this.screen === "wait") {
       body = [k.note(t("net.joinWait", { nick: this.joinInfo?.hn ?? "" })), ...this.errorNodes()];
-      actions = [cancel];
+      foot = [this.spacer(), cancel];
     } else if (this.screen === "host") {
       this.reachedShown = snap.reached;
-      const count = k.make("p", "net-count", t("net.count", { n: snap.count, max: snap.max, min: this.request?.min ?? 2 }));
-      this.refs.count = count;
-      const members = k.make("ul", "net-members");
-      members.append(...this.memberRows(snap));
-      this.refs.members = members;
+      this.anytimeShown = snap.anytime;
       body = this.fallback ? [k.note(t("net.fallback"))] : [];
       if (snap.reached && !this.stay) body.push(k.note(t("net.reachedNote", { n: snap.count, max: snap.max })));
-      if (snap.anytime && !snap.reached) body.push(k.note(t("net.anytimeNote")));
-      body.push(k.group(t("net.room"), count, members));
+      if (snap.anytime && !snap.reached) body.push(k.note(tb("net.anytimeNote")));
+      body.push(this.seatSection(snap));
       if (snap.count < snap.max) {
         const box = k.make("div", "net-invite");
         this.refs.inviteBox = box;
@@ -767,32 +1039,26 @@ export class NetWindow {
             ...this.pasteField({ field: "answer", action: "net-answer", value: this.answerText, onInput: (v) => (this.answerText = v), onGo: () => this.acceptAnswer() }),
           );
         } else box.append(k.note(t("net.making")));
-        body.push(k.group(t(snap.count > 1 ? "net.inviteMore" : "net.invite"), box));
+        body.push(this.section(t(snap.count > 1 ? "net.inviteMore" : "net.invite"), { children: [box] }));
       }
       body.push(...this.errorNodes());
-      actions = this.hostActions(snap, cancel);
+      foot = this.hostFoot(snap, false);
       if (!this.invite && snap.count < snap.max) this.makeInvite();
     } else if (this.screen === "join1") {
-      body = [this.nickField(), k.step(t("net.join.step1")), ...this.pasteField({ field: "offer", action: "net-offer-in", value: this.offerText, onInput: (v) => (this.offerText = v), onGo: () => this.joinWithOffer() }), ...this.errorNodes()];
-      actions = [k.action({ id: "back", onClick: () => this.go("lan") }), cancel];
+      body = [k.step(tb("net.join.step1")), ...this.pasteField({ field: "offer", action: "net-offer-in", value: this.offerText, onInput: (v) => (this.offerText = v), onGo: () => this.joinWithOffer() }), ...this.errorNodes()];
+      foot = [this.spacer(), k.action({ id: "back", onClick: () => this.go("lan") })];
     } else if (this.screen === "join2") {
       const wait = k.note(t("net.join.waiting"));
       body = [k.step(t("net.join.step2")), ...this.codeBox(this.guestCode, { action: "net-answer-out" }), wait, ...this.errorNodes()];
-      actions = [cancel];
+      foot = [this.spacer(), cancel];
     } else if (this.screen === "joined" || this.screen === "back") {
-      const members = k.make("ul", "net-members");
-      members.append(...this.memberRows(snap));
-      this.refs.members = members;
-      body = [k.note(t(this.screen === "back" ? "net.rejoined" : "net.joined", { slot: snap.slot + 1 })), members];
-      actions = [k.action({ id: "done", primary: true, onClick: () => this.close() })];
+      body = [k.note(t(this.screen === "back" ? "net.rejoined" : "net.joined", { slot: snap.slot + 1 })), this.seatSection(snap, { count: false })];
+      foot = [this.spacer(), k.action({ id: "done", primary: true, onClick: () => this.close() })];
       this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
     } else if (this.screen === "rejoin") {
       const state = k.note(this.rejoinText(snap));
       state.classList.add("net-rejoin-state");
       this.refs.rejoinState = state;
-      const members = k.make("ul", "net-members");
-      members.append(...this.memberRows(snap));
-      this.refs.members = members;
       body = [
         k.note(t("net.rejoin.lead")),
         state,
@@ -801,36 +1067,42 @@ export class NetWindow {
           { text: t("net.solo"), button: k.button({ label: k.label("solo"), kind: "danger", action: "net-solo", onClick: () => this.goSolo() }) },
         ]),
         k.note(t("net.rejoin.note")),
-        k.group(t("net.room"), members),
+        this.seatSection(snap, { count: false }),
       ];
-      actions = [k.action({ id: "close", onClick: () => this.close() })];
+      foot = [this.spacer(), k.action({ id: "close", onClick: () => this.close() })];
     } else if (this.screen === "ended") {
       const why = this.endedWhy;
+      this.errorTitle = t("net.err.closed");
       this.error = whyText(why);
       this.errorHelp = [WHY.NO_NETWORK, WHY.TIMEOUT, WHY.LOST].includes(why);
-      body = [...this.errorNodes()];
-      actions = [k.action({ id: "close", primary: true, onClick: () => this.close() })];
+      body = [this.bannerNode(), this.helpNode()];
+      foot = [this.spacer(), k.action({ id: "close", primary: true, onClick: () => this.close() })];
+    } else if (this.screen === "fail") {
+      const stack = (...nodes) => {
+        const box = k.make("div", "net-stack");
+        box.append(...nodes);
+        return box;
+      };
+      const retry = k.button({ label: k.label("retry"), kind: "primary", block: true, action: "net-retry", onClick: () => this.retry() });
+      const home = k.button({ label: k.label("home"), block: true, action: "net-home", onClick: () => this.home() });
+      body = [this.cols([this.bannerNode(), stack(retry)], [stack(this.offlineButton({ small: false, block: true }), home), this.helpNode()])];
+      foot = [];
     }
-    k.mount(body, actions);
+    k.mount(body, foot);
   }
 
-  hostActions(snap, cancel) {
+  hostFoot(snap, timed) {
     const k = this.kit;
-    if (!snap.reached && !snap.anytime) return [cancel];
-    const leave = k.action({ id: "leave", onClick: () => (this.net.leave(), this.close()) });
-    return [leave, k.action({ id: snap.reached ? "done" : "close", primary: true, onClick: () => this.close() })];
-  }
-
-  toCode() {
-    this.error = "";
-    this.errorHelp = false;
-    this.offerLan = false;
-    this.go("code");
-  }
-
-  serverFailed(error) {
-    this.offerLan = serverDown(error);
-    this.setError(errorText(error), false);
+    const keep = snap.reached || snap.anytime;
+    const out = [keep ? k.action({ id: "leave", label: "closeRoom", danger: true, onClick: () => (this.net.leave(), this.close()) }) : k.action({ id: "cancel", label: "closeRoom", danger: true, onClick: () => this.close({ cancel: true }) })];
+    if (timed) {
+      const renew = k.button({ label: k.label("renew"), icon: "refresh", action: "net-renew", onClick: () => this.renewRoom(), disabled: Boolean(this.roomHost?.renewing) });
+      this.refs.renew = renew;
+      out.push(renew);
+    }
+    out.push(this.spacer());
+    if (keep) out.push(k.action({ id: snap.reached ? "done" : "close", label: "toGame", primary: true, onClick: () => this.close() }));
+    return out;
   }
 
   async startRoom() {
@@ -839,8 +1111,7 @@ export class NetWindow {
     this.invite = null;
     this.answerText = "";
     this.reachedShown = false;
-    this.error = "";
-    this.errorHelp = false;
+    this.clearError();
     this.fallback = false;
     let session;
     try {
@@ -913,16 +1184,19 @@ export class NetWindow {
   async joinRoom(text) {
     if (this.busy) return;
     const room = String(text ?? "").replace(/\D/g, "");
-    if (room.length !== 6) {
-      if (this.screen !== "code") this.go("code");
-      this.setError(t("net.err.roomCode"));
+    if (this.screen !== "choose" || this.tab !== "join") {
+      this.tab = "join";
+      this.go("choose");
+    }
+    if (room.length !== CODE_LEN) {
+      this.setError(t("net.err.roomCode"), false, { code: true });
       return;
     }
-    if (!this.signal) return this.serverFailed(new SignalError("offline"));
+    if (!this.signal) return this.setError(errorText(new SignalError("offline")));
     const seq = ++this.joinSeq;
+    this.lastRoom = room;
     this.busy = true;
-    this.offerLan = false;
-    this.setError(t("net.joiningRoom"));
+    this.setProgress(t("net.joiningRoom"));
     this.paintNear();
     let session = null;
     try {
@@ -931,7 +1205,7 @@ export class NetWindow {
       const until = Date.now() + JOIN_WAIT_MS;
       while (got.wait) {
         if (seq !== this.joinSeq) return;
-        this.setError(t("net.roomBusy"));
+        this.setProgress(t("net.roomBusy"));
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         if (seq !== this.joinSeq) return;
         if (Date.now() > until) throw new SessionError("timeout");
@@ -948,27 +1222,25 @@ export class NetWindow {
       this.joinInfo = got;
       this.joinedRoom = room;
       this.busy = false;
-      this.error = "";
-      this.errorHelp = false;
+      this.clearError();
       this.joinTimer = setTimeout(() => {
         if (this.joinInfo !== got || this.net.connected) return;
         this.clearJoin();
         this.net.discard();
-        if (this.open && this.screen === "wait") {
-          this.error = hintText(this.joinHint) || t("net.err.failed");
-          this.errorHelp = helpFor(this.joinHint);
-          this.go("choose");
-        }
+        if (this.open && this.screen === "wait") this.fail(hintText(this.joinHint) || t("net.err.failed"), helpFor(this.joinHint));
       }, JOIN_WAIT_MS);
       if (this.open) this.go("wait");
     } catch (error) {
       this.busy = false;
       if (session) this.net.discard();
       if (seq !== this.joinSeq) return;
-      if (this.screen === "choose" && error instanceof SignalError && ["none", "full", "version", "purpose", "paused"].includes(error.code)) this.startNear();
-      if (this.open && this.screen !== "choose" && this.screen !== "code") this.go("code");
-      this.offerLan = serverDown(error);
-      this.setError(errorText(error), error instanceof SessionError && HELP_CODES.includes(error.code));
+      if (error instanceof SessionError) {
+        if (this.open) this.fail(errorText(error), HELP_CODES.includes(error.code));
+        return;
+      }
+      if (error instanceof SignalError && ["none", "full", "version", "purpose", "paused"].includes(error.code)) this.startNear();
+      const missing = error instanceof SignalError && error.code === "none";
+      this.setError(missing ? t("net.err.noRoomHint") : errorText(error), false, { title: missing ? t("net.err.noRoom") : "", code: missing });
       this.paintNear();
     }
   }
@@ -977,8 +1249,7 @@ export class NetWindow {
     this.invite = null;
     this.answerText = "";
     this.reachedShown = false;
-    this.error = "";
-    this.errorHelp = false;
+    this.clearError();
     try {
       await this.net.open("make");
     } catch {
@@ -1011,11 +1282,11 @@ export class NetWindow {
     const invite = this.invite;
     if (!session || !invite?.id || this.busy) return;
     this.busy = true;
-    this.setError(t("net.connecting"));
+    this.setProgress(t("net.connecting"));
     try {
       await session.accept(invite.id, this.answerText);
       this.busy = false;
-      this.error = "";
+      this.clearError();
       this.invite = null;
       this.answerText = "";
       if (this.screen === "host") this.render();
@@ -1023,6 +1294,7 @@ export class NetWindow {
       this.busy = false;
       const field = error instanceof CodeError || (error instanceof SessionError && ["used", "mismatch", "noLan"].includes(error.code));
       if (!field && this.invite === invite) this.invite = null;
+      this.clearError();
       this.error = errorText(error, "answer");
       this.errorHelp = error instanceof SessionError && HELP_CODES.includes(error.code);
       if (this.screen === "host") {
@@ -1035,13 +1307,13 @@ export class NetWindow {
   async joinWithOffer() {
     if (this.busy) return;
     this.busy = true;
-    this.setError(t("net.makingAnswer"));
+    this.setProgress(t("net.makingAnswer"));
     try {
       const session = await this.freshSession("join");
       const { code } = await session.answer(this.offerText);
       this.guestCode = code;
       this.busy = false;
-      this.error = "";
+      this.clearError();
       this.go("join2");
     } catch (error) {
       this.busy = false;

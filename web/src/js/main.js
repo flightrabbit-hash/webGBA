@@ -69,7 +69,9 @@ const el = {
   dpad: document.querySelector("[data-dpad]"),
   sheet: $("sheet"),
   sheetTitle: $("sheetTitle"),
+  sheetChip: $("sheetChip"),
   sheetBody: $("sheetBody"),
+  sheetFoot: $("sheetFoot"),
   sheetClose: $("sheetClose"),
   choice: $("choice"),
   choiceTitle: $("choiceTitle"),
@@ -241,16 +243,42 @@ function netNick() {
   return String(state.prefs.netNick ?? "").trim() || defaultNick(no);
 }
 
+function netButton({ label, icon = "", kind = "", small = false, big = false, block = false, grow = false, onClick, disabled = false, action = "" }) {
+  const node = button({ label, icon, kind: kind || (small ? "small" : ""), onClick, disabled, action });
+  if (kind && small) node.classList.add("btn--small");
+  if (big) node.classList.add("btn--big");
+  if (block) node.classList.add("btn--block");
+  if (grow) node.classList.add("btn--grow");
+  return node;
+}
+
 const netKit = {
   touch: window.matchMedia("(pointer: coarse)").matches,
   qrSize: 220,
   make: (tag, className, text) => make(tag, className, text),
-  button: ({ label, kind = "", onClick, disabled = false, action = "" }) => button({ label, kind, onClick, disabled, action }),
+  button: netButton,
+  iconButton: ({ icon, title, action, onClick }) => button({ icon, title, kind: "tool", action, onClick }),
+  icon: (name) => iconNode(name),
   signal: new Signal({ base: new URL(API_PATH, location.origin).href }),
-  label: (code) => ({ copy: t("net.copy"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), make: t("net.make"), makeCode: t("net.make"), join: t("net.join"), codeJoin: t("net.codeJoin"), enter: t("net.enter"), offline: t("net.offlineGo"), rejoin: t("net.rejoinNow"), solo: t("net.solo"), renew: t("net.renew") })[code] ?? code,
-  action: ({ id, primary = false, onClick }) => {
-    const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back") }[id] ?? id;
-    return button({ label, kind: primary ? "primary" : id === "leave" ? "danger" : "", onClick, action: `net-${id}` });
+  label: (code) => ({ copy: t("net.copy"), copyCode: t("net.copyCode"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), create: t("net.make"), makeCode: t("net.make"), join: t("net.join"), enter: t("net.enter"), enterCode: t("net.enter"), offline: t("net.offlineShort"), offlineLong: t("net.offline"), rejoin: t("net.rejoinNow"), solo: t("net.solo"), renew: t("net.renew"), nickEdit: t("net.nickEdit"), nickDone: t("net.nickDone"), retry: t("net.retry"), home: t("net.home") })[code] ?? code,
+  action: ({ id, label: name = id, primary = false, danger = false, onClick }) => {
+    const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back"), closeRoom: t("net.act.closeRoom"), toGame: t("net.act.toGame") }[name] ?? name;
+    return button({ label, kind: primary ? "primary" : danger ? "danger" : "", onClick, action: `net-${id}` });
+  },
+  tabs: (items, active, onPick) => {
+    const box = make("div", "seg");
+    box.setAttribute("role", "tablist");
+    for (const { id, label, action } of items) {
+      const node = make("button", "seg__btn");
+      node.type = "button";
+      node.dataset.action = action;
+      node.setAttribute("role", "tab");
+      node.setAttribute("aria-selected", String(id === active));
+      node.append(make("span", "seg__label", label));
+      node.addEventListener("click", () => onPick(id));
+      box.append(node);
+    }
+    return box;
   },
   textArea: ({ value = "", readOnly = false, rows = 3, label = "", placeholder = "", action = "", onInput }) => {
     const area = make("textarea", "net-code");
@@ -268,7 +296,7 @@ const netKit = {
     return area;
   },
   textInput: ({ value = "", maxLength = 16, label = "", action = "", numeric = false, onInput, onEnter }) => {
-    const input = make("input", numeric ? "dialog__input net-room-in" : "dialog__input net-nick");
+    const input = make("input", numeric ? "dialog__input" : "dialog__input net-nick");
     input.type = "text";
     input.value = value;
     input.maxLength = maxLength;
@@ -284,20 +312,15 @@ const netKit = {
     if (onEnter) input.addEventListener("keydown", (event) => event.key === "Enter" && onEnter());
     return input;
   },
-  field: ({ label, control }) => field(label, "", control),
-  row: ({ tag, name, meta, current }) => {
-    const li = make("li", `item net-member${current ? " is-current" : ""}`);
-    const main = make("div", "item__main");
-    main.append(make("span", "item__name", name), make("span", "item__meta", meta));
-    li.append(make("span", "net-slot", tag), main);
-    return li;
-  },
-  nearRow: ({ name, meta, dim = false, button: action = null }) => {
+  nearRow: ({ name, meta, pips = null, dim = false, side = null }) => {
     const li = make("li", `item net-near__row${dim ? " is-dim" : ""}`);
     const main = make("div", "item__main");
-    main.append(make("span", "item__name", name), make("span", "item__meta", meta));
+    const line = make("span", "item__meta");
+    if (pips) line.append(pips);
+    line.append(make("span", "net-near__meta", meta));
+    main.append(make("span", "item__name", name), line);
     li.append(main);
-    if (action) li.append(action);
+    if (side) li.append(side);
     return li;
   },
   line: (...nodes) => {
@@ -312,14 +335,19 @@ const netKit = {
   },
   note: (text) => make("p", "note net-note", text),
   step: (text) => make("p", "net-step", text),
-  group: (title, ...children) => group(title, ...children),
-  title: (text) => {
-    el.sheetTitle.textContent = text;
+  title: (text, chip = "", tone = "") => {
+    if (el.sheetTitle.textContent !== text) el.sheetTitle.textContent = text;
+    const label = el.sheetChip.firstChild;
+    if (label.textContent !== chip) label.textContent = chip;
+    if (el.sheetChip.dataset.tone !== tone) el.sheetChip.dataset.tone = tone;
+    el.sheetChip.hidden = !chip;
   },
   mount: (body, actions) => {
     const row = make("div", "net-actions");
     row.append(...actions);
-    el.sheetBody.replaceChildren(...body, row);
+    el.sheetBody.replaceChildren(...body);
+    el.sheetFoot.replaceChildren(row);
+    el.sheetFoot.hidden = !actions.length;
   },
   notice: (text, level) => toast(text, level),
   done: () => {
@@ -327,6 +355,8 @@ const netKit = {
   },
   nick: () => netNick(),
   setNick: (value) => savePrefs({ netNick: [...String(value)].slice(0, 12).join("") }),
+  tab: () => state.prefs.netTab,
+  setTab: (tab) => savePrefs({ netTab: tab }),
 };
 
 const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls(), onState: () => syncControls() });
@@ -350,6 +380,11 @@ function openNet(request = player.net.request) {
 }
 
 const BOARD_WIDTHS = { portrait: { bar: 22, number: 30, rank: 26, status: 12 }, landscape: { bar: 20, number: 28, rank: 26, status: 12 } };
+const BOARD_SIDE_MAX = 380;
+const BOARD_SIDE_SHARE = 0.48;
+const BOARD_INLINE_SHARE = 0.55;
+const BOARD_INLINE_MIN = 260;
+const BOARD_GAP = 8;
 const boardState = { open: false, frame: 0, timer: 0, end: null };
 const boardRoot = make("div", "mpb");
 boardRoot.id = "board";
@@ -362,9 +397,14 @@ function boardButton(icon, key, action, onClick) {
   return node;
 }
 
+state.boardLeave = button({ label: t("net.act.leave"), kind: "danger", action: "board-leave", onClick: () => player.net.leave() });
+state.boardInvite = button({ label: t("board.invite"), icon: "copy", action: "board-invite", onClick: () => boardToWindow() });
+
 const boardPanel = new BoardPanel({
   root: boardRoot,
-  head: [boardButton("dots", "board.window", "board-window", () => boardToWindow()), boardButton("x", "win.close", "board-close", () => closeBoard())],
+  head: [boardButton("x", "win.close", "board-close", () => closeBoard())],
+  actions: [state.boardLeave, make("span", "net-spacer"), state.boardInvite],
+  invite: state.boardInvite,
   widths: BOARD_WIDTHS.portrait,
   bar: (meter, ratio, width) => {
     const unit = (state.boardUnit ??= parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--px")) || 2);
@@ -375,7 +415,6 @@ const boardPanel = new BoardPanel({
     ctx.font = (state.boardFont ??= `12px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small")}`);
     return ctx.measureText(text).width;
   },
-  showMs: () => document.body.dataset.layout !== "landscape",
   rejoinButtons: [
     (state.boardRejoin = button({ label: t("net.rejoinNow"), kind: "primary", action: "board-rejoin", onClick: () => player.net.rejoinNow() })),
     (state.boardSolo = button({ label: t("net.solo"), kind: "danger", action: "board-solo", onClick: () => player.net.solo() })),
@@ -386,7 +425,14 @@ const boardWanted =() => player.net.connected && (player.net.reached || player.n
 
 function boardLayout() {
   const landscape = document.body.dataset.layout === "landscape";
-  document.documentElement.style.setProperty("--mpb-top", `${Math.round(el.stage.getBoundingClientRect().bottom)}px`);
+  const root = document.documentElement.style;
+  const stage = el.stage.getBoundingClientRect();
+  root.setProperty("--mpb-top", `${Math.round(stage.bottom)}px`);
+  if (document.body.dataset.board === "inline") {
+    root.setProperty("--mpb-left", `${Math.round(stage.right)}px`);
+    root.setProperty("--mpb-y", `${Math.round(stage.top)}px`);
+    root.setProperty("--mpb-h", `${Math.round(stage.height) - BOARD_GAP}px`);
+  }
   boardPanel.widths = landscape ? BOARD_WIDTHS.landscape : BOARD_WIDTHS.portrait;
   state.boardUnit = null;
   state.boardFont = null;
@@ -410,12 +456,14 @@ function renderBoard() {
     return;
   }
   const title = t("board.titleOf", { purpose: purposeName(player.net.request?.purpose) });
-  for (const [node, key] of [[state.boardRejoin, "net.rejoinNow"], [state.boardSolo, "net.solo"]]) {
+  const snap = player.net.snapshot();
+  for (const [node, key] of [[state.boardRejoin, "net.rejoinNow"], [state.boardSolo, "net.solo"], [state.boardLeave, snap.role === "make" ? "net.act.closeRoom" : "net.act.leave"], [state.boardInvite, "board.invite"]]) {
     const label = node.querySelector(".btn__label");
     if (label.textContent !== t(key)) label.textContent = t(key);
   }
-  const changed = boardPanel.render({ snap: player.net.snapshot(), data: player.net.boardData(), room: netWin.roomCode, title });
+  const changed = boardPanel.render({ snap, data: player.net.boardData(), room: netWin.roomCode, title, invite: netWin.canInvite(snap) });
   if (changed?.nodes.length) centerBoardNodes(changed.nodes);
+  if (changed) centerBoardNodes(boardPanel.footNode.querySelectorAll(".btn__label"));
 }
 
 function queueBoard() {
@@ -434,9 +482,11 @@ function openBoard() {
   stopBoardHide();
   boardState.open = true;
   boardRoot.hidden = false;
+  if (document.body.dataset.layout === "landscape") layout();
   boardLayout();
   player.net.watchBoard(true);
   renderBoard();
+  centerInk(boardRoot);
   void boardRoot.offsetWidth;
   boardRoot.dataset.open = "";
   syncControls();
@@ -449,6 +499,7 @@ function closeBoard({ instant = false } = {}) {
   boardState.frame = 0;
   player.net.watchBoard(false);
   delete boardRoot.dataset.open;
+  if (document.body.dataset.board) layout();
   stopBoardHide();
   const finish = () => {
     stopBoardHide();
@@ -670,15 +721,23 @@ const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, 
 const FACE_UP_LANDSCAPE = 25 + 6;
 const faceUp = (face, landscape) => (landscape ? FACE_UP_LANDSCAPE : 2 * (face.h - ART.roundH));
 
+const boardSide = (width) => Math.min(BOARD_SIDE_MAX, Math.floor(width * BOARD_SIDE_SHARE));
+
 function layout() {
-  const width = window.innerWidth;
   const height = window.innerHeight;
-  const landscape = width > height;
+  const landscape = window.innerWidth > height;
   const mode = padMode();
   const padOn = mode !== "off";
   const overlay = padOn && landscape && mode === "overlay";
+  const boardOpen = landscape && boardState.open;
+  const inline = boardOpen && padOn && !overlay;
+  const side = boardOpen && !inline ? boardSide(window.innerWidth) : 0;
+  const width = window.innerWidth - side;
   const body = document.body;
   body.dataset.layout = landscape ? "landscape" : "portrait";
+  if (boardOpen) body.dataset.board = inline ? "inline" : "side";
+  else delete body.dataset.board;
+  document.documentElement.style.setProperty("--mpb-w", `${side}px`);
   body.dataset.pad = overlay ? "overlay" : padOn ? "on" : "off";
   if (landscape && (state.menuOpen || el.menuPanel.dataset.open)) setMenu(false, { instant: true });
   const dpr = window.devicePixelRatio || 1;
@@ -744,11 +803,14 @@ function layout() {
     }
     const rowH = Math.max(el.bar.offsetHeight + 4, ART.shoulderH * art + 12);
     const sideMin = Math.ceil(Math.max(face.w, ART.stick) * art + 16);
-    const availW = innerW - sideMin * 2 - sideEdge;
+    const board = inline ? clamp(Math.floor((innerW - sideMin * 2) * BOARD_INLINE_SHARE), BOARD_INLINE_MIN, BOARD_SIDE_MAX) : 0;
+    const gap = inline ? BOARD_GAP : 0;
+    const availW = innerW - sideMin * 2 - sideEdge - board - gap;
     const availH = innerH - rowH - 8 - edge * 2;
     sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
-    root.setProperty("--side", `${Math.floor((innerW - sw) / 2)}px`);
+    root.setProperty("--side", `${Math.floor((innerW - sw - (inline ? board + sideEdge + gap : 0)) / 2)}px`);
+    if (inline) root.setProperty("--mpb-w", `${board}px`);
   } else {
     const availW = innerW - 16 - sideEdge;
     const availH = innerH - el.bar.offsetHeight - 16 - edge * 2;
@@ -1046,7 +1108,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-slot, .net-room-code,.net-offline__label, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
 const INK_BLOCK = ".item__main, .field__text, .pack__label";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -2466,6 +2528,11 @@ function openSheet(name) {
   state.sheet = name;
   if (leaveNet) netWin.close();
   if (name !== "saves") state.lib.savesFor = null;
+  if (name !== "net") {
+    el.sheetChip.hidden = true;
+    el.sheetFoot.hidden = true;
+    el.sheetFoot.replaceChildren();
+  }
   el.sheet.dataset.sheet = name;
   showNow(el.sheet);
   if (!state.sheetHistory) {
@@ -2491,6 +2558,9 @@ function closeSheet({ fromHistory = false, force = false } = {}) {
     if (state.sheet) return;
     if (state.lib.refs) stopFlights(state.lib.refs);
     el.sheetBody.replaceChildren();
+    el.sheetFoot.replaceChildren();
+    el.sheetFoot.hidden = true;
+    el.sheetChip.hidden = true;
     state.lib.refs = null;
     revokeQuickUrls();
   });

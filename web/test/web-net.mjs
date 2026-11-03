@@ -132,7 +132,7 @@ const boardOf = (p) =>
       cells: [...r.querySelectorAll(".mpb__l2 > *")].map((c) => c.textContent).join("|"),
       meter: r.querySelector(".mpb__meter")?.dataset.ratio ?? null,
     }));
-    return { open: b.state.open, plain: b.root.querySelector(".mpb__panel").hasAttribute("data-plain"), rows, caption: cap.hidden ? "" : cap.textContent, room: b.root.querySelector(".mpb__room").textContent, paused: window.webgba.player.paused, sheet: window.webgba.state.sheet };
+    return { open: b.state.open, plain: b.root.querySelector(".mpb__rows").hasAttribute("data-plain"), rows: rows.filter((r) => !r.key.startsWith("e")), caption: cap.hidden ? "" : cap.textContent, room: `${b.root.querySelector(".mpb__title").textContent} · ${b.root.querySelector(".mpb__people").textContent}`, paused: window.webgba.player.paused, sheet: window.webgba.state.sheet };
   });
 
 const value = (p, action) => p.page.evaluate((a) => document.querySelector(`[data-action="${a}"]`)?.value ?? "", action);
@@ -141,7 +141,7 @@ const offline = async (p) => {
   if (await p.page.$('[data-action="net-offline"]')) await p.page.click('[data-action="net-offline"]');
 };
 const errorText = (p) => p.page.evaluate(() => {
-  const node = document.querySelector("#sheetBody .net-error");
+  const node = document.querySelector("#sheetBody .net-banner");
   return node && !node.hidden ? node.textContent : "";
 });
 
@@ -184,7 +184,7 @@ async function pasteButtons(p, action) {
 async function hostWindow(host) {
   if ((await sheet(host)) === "net") return;
   if (!(await host.page.evaluate(() => window.webgba.net.board.state.open))) await host.page.click("#btnNet");
-  if ((await sheet(host)) !== "net") await host.page.click('[data-action="board-window"]');
+  if ((await sheet(host)) !== "net") await host.page.click('[data-action="board-invite"]');
   await host.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 5000 });
 }
 
@@ -365,9 +365,8 @@ try {
   const variant = await peer("X");
   await open(variant, "variant", "net-demo-other.wgba");
   if (!(await boardOf(H)).open) await H.page.click("#btnNet");
-  await H.page.click('[data-action="board-window"]');
-  await H.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 5000 });
-  ok("상태 메뉴의 연결 창 단추로 창 다시 열기(방장 화면)", (await sheet(H)) === "net" && !(await boardOf(H)).open);
+  const fullInvite = await H.page.evaluate(() => !document.querySelector('[data-action="board-invite"]').hidden);
+  ok("가득 찬 방(4/4): 상태 메뉴에 초대 코드 단추 없음", !fullInvite);
   await G3.context.close();
   const left = await waitFor(async () => {
     const g = await game(H);
@@ -375,6 +374,10 @@ try {
   }, 20000, 300);
   const g1after = await game(G1);
   ok("손님 끊김 → 방장·다른 손님 LEAVE(3)", Boolean(left) && g1after.events.some((e) => e.startsWith("3:3:")), `${left?.events.slice(-3).join(" ")} · G1 ${g1after.events.slice(-2).join(" ")}`);
+  await waitFor(() => H.page.evaluate(() => !document.querySelector('[data-action="board-invite"]').hidden), 5000);
+  await H.page.click('[data-action="board-invite"]');
+  await H.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 5000 });
+  ok("빈자리 생김(3/4) → 상태 메뉴의 초대 코드 단추로 창 다시 열기(방장 화면)", (await sheet(H)) === "net" && !(await boardOf(H)).open);
   const offerNow = await waitFor(() => value(H, "net-offer"), 10000);
   await press(variant, "KeyZ");
   await variant.page.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
@@ -447,7 +450,7 @@ try {
   ok("터치 기기 권한 거부 → 입력 칸 초점 + '길게 눌러' 안내", /길게 눌러/.test(touchHint.hint) && touchHint.focus === "net-offer-in", JSON.stringify(touchHint));
   await M1.context.close();
   await C1.page.bringToFront();
-  await C1.page.click('[data-action="net-cancel"]');
+  await C1.page.click('#sheetClose');
   const cancel = await waitFor(async () => ((await game(C1)).closed ? game(C1) : null), 5000);
   ok("창에서 취소 → CLOSED(CANCEL) · 게임이 요청을 거둠 → 단추 숨김", cancel?.closed === 1 && (await waitFor(() => C1.page.evaluate(() => document.getElementById("btnNet").hidden), 3000)), `이유 ${cancel?.closed}`);
   await C1.context.close();

@@ -143,9 +143,15 @@ const game = (p) =>
 const calls = (p) => p.page.evaluate(() => window.webgba.net.win.signal?.calls ?? 0);
 const text = (p, sel) => p.page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
 const errorText = (p) => p.page.evaluate(() => {
-  const n = document.querySelector("#sheetBody .net-error");
+  const n = document.querySelector("#sheetBody .net-banner");
   return n && !n.hidden ? n.textContent : "";
 });
+// 연결 창 탭 B: 방 만들기 탭(마지막 탭 기억) → 방 만들기
+async function makeRoom(p) {
+  const tab = await p.page.$('[data-action="net-tab-make"]');
+  if (tab && (await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+  await p.page.click('[data-action="net-room-make"]');
+}
 async function shot(p, name) {
   if (!SHOTS) return;
   await sleep(300);
@@ -188,7 +194,7 @@ async function baseTests() {
   const c0 = stats();
   const h0 = await calls(H);
   const t0 = Date.now();
-  await H.page.click('[data-action="net-room-make"]');
+  await makeRoom(H);
   const code = await roomCode(H);
   ok("방 만들기 → 방 코드 6자리", /^\d{6}$/.test(code), code);
   await shot(H, "방코드_390x844.png");
@@ -248,7 +254,7 @@ async function baseTests() {
     const B = await peer("B", { nick: "교환 손님" });
     for (const p of [A, B]) await open(p, "pair");
     await want(A);
-    await A.page.click('[data-action="net-room-make"]');
+    await makeRoom(A);
     const codeP = await roomCode(A);
     await want(B);
     await B.page.click('[data-action="net-room-join"]');
@@ -266,7 +272,7 @@ async function baseTests() {
     const H2 = await peer("H2", { nick: "방장 2" });
     await open(H2);
     await want(H2);
-    await H2.page.click('[data-action="net-room-make"]');
+    await makeRoom(H2);
     const code2 = await roomCode(H2);
     const X = await peer("X", { nick: "다른 버전" });
     await open(X, "variant");
@@ -287,7 +293,7 @@ async function baseTests() {
     ok("없는 방 코드 → '방을 찾지 못했습니다'", Boolean(bad), bad);
     await H2.page.click('[data-action="net-cancel"]');
     const gone = await waitFor(async () => {
-      await X.page.click('[data-action="net-back"]');
+      await X.page.click('[data-action="net-near-refresh"]');
       await sleep(200);
       const t = await X.page.evaluate(() => document.querySelector(".net-near-box")?.textContent ?? "");
       return /다른 버전/.test(t) ? "" : t || " ";
@@ -303,7 +309,7 @@ async function baseTests() {
     await want(F);
     const nearFail = await waitFor(async () => /불러오지 못했/.test(await text(F, ".net-near-box")), 8000);
     ok("서버 한도 초과: 근처 방 영역에 '인터넷 없이 연결' 안내", Boolean(nearFail), await text(F, ".net-near-box"));
-    await F.page.click('[data-action="net-room-make"]');
+    await makeRoom(F);
     const offer = await waitFor(() => F.page.evaluate(() => document.querySelector('[data-action="net-offer"]')?.value ?? ""), 10000);
     const note = await F.page.evaluate(() => [...document.querySelectorAll("#sheetBody .net-note")].map((n) => n.textContent).join(" "));
     ok("서버 한도 초과: 방 만들기 → 연결 코드 화면으로 자동 전환(안내 문구)", Boolean(offer) && /연결 코드로 연결합니다/.test(note), note);
@@ -388,7 +394,7 @@ function kindsOf(list, k, a) {
 async function room(H, guests, kind) {
   await open(H, kind);
   await want(H);
-  await H.page.click('[data-action="net-room-make"]');
+  await makeRoom(H);
   const code = await roomCode(H);
   for (const G of guests) {
     await open(G, kind);
@@ -570,12 +576,13 @@ async function wanTests() {
     });
   await open(W);
   await want(W);
-  const lead = await text(W, "#sheetBody .net-note");
-  await W.page.click('[data-action="net-room-make"]');
+  await W.page.click('[data-action="net-tab-make"]');
+  const lead = await text(W, "#sheetBody .net-info");
+  await makeRoom(W);
   const code = await roomCode(W);
   await waitFor(() => W.page.evaluate(() => Boolean(window.webgba.net.win.roomHost?.invite)), 5000);
   const on = await offerInfo(W);
-  ok("인터넷 연결 켬: 기본 STUN 2곳 · 공인 주소 후보(srflx) 수집 · 방 연결 정보에 포함(인터넷 표시) · 안내 문구", on.public > 0 && on.types.includes("srflx") && on.flag && /stun\.l\.google\.com/.test(on.servers.join()) && /stun\.cloudflare\.com/.test(on.servers.join()) && /다른 곳에 있는 친구/.test(lead), JSON.stringify({ public: on.public, types: on.types, flag: on.flag, servers: on.servers.slice(0, 1) }));
+  ok("인터넷 연결 켬: 기본 STUN 2곳 · 공인 주소 후보(srflx) 수집 · 방 연결 정보에 포함(인터넷 표시) · 안내 문구", on.public > 0 && on.types.includes("srflx") && on.flag && /stun\.l\.google\.com/.test(on.servers.join()) && /stun\.cloudflare\.com/.test(on.servers.join()) && /인터넷 연결 켜짐/.test(lead), JSON.stringify({ public: on.public, types: on.types, flag: on.flag, servers: on.servers.slice(0, 1) }));
   await open(L);
   await want(L);
   await L.page.click('[data-action="net-room-join"]');
@@ -593,7 +600,7 @@ async function wanTests() {
   const O = await peer("O2", { nick: "끔 방장" });
   await open(O);
   await want(O);
-  await O.page.click('[data-action="net-room-make"]');
+  await makeRoom(O);
   await roomCode(O);
   await waitFor(() => O.page.evaluate(() => Boolean(window.webgba.net.win.roomHost?.invite)), 5000);
   const off = await offerInfo(O);
@@ -633,7 +640,7 @@ async function iceTests() {
     await open(p, "iced");
     await want(p);
     const note = await p.page.evaluate(() => [...document.querySelectorAll("#sheetBody .net-note")].map((n) => n.textContent).join(" | "));
-    await p.page.click('[data-action="net-room-make"]');
+    await makeRoom(p);
     await roomCode(p);
     const info = await p.page.evaluate(() => ({ cfg: window.__rtcConfigs.at(-1)?.iceServers ?? [], failed: window.webgba.player.net.snapshot().iceFailed, note: [...document.querySelectorAll("#sheetBody .net-note")].map((n) => n.textContent).join(" | ") }));
     await p.page.click('[data-action="net-cancel"]').catch(() => {});
@@ -705,7 +712,7 @@ function spreadOf(list, k) {
 }
 
 function actionRow(p) {
-  return p.page.evaluate(() => [...document.querySelectorAll("#sheetBody .net-actions > button")].map((n) => {
+  return p.page.evaluate(() => [...document.querySelectorAll("#sheetFoot .net-actions > button")].map((n) => {
     const r = n.getBoundingClientRect();
     return { a: n.dataset.action, top: r.top, bottom: r.bottom };
   }));
@@ -721,14 +728,14 @@ async function anytimeTests() {
   const quiet = await H.page.evaluate(() => ({ sheet: window.webgba.state.sheet, request: Boolean(window.webgba.player.net.request), timer: Boolean(window.webgba.player.net.windowTimer), btn: !document.getElementById("btnNet").hidden }));
   ok("중간 참가 게임: 요청해도 창 자동 열림 없음 · 시간 초과 타이머 없음 · 상단 멀티플레이 버튼 표시", quiet.sheet === "" && quiet.request && !quiet.timer && quiet.btn, JSON.stringify(quiet));
   await H.page.click("#btnNet");
-  await waitFor(async () => (await sheetOf(H)) === "net" && Boolean(await H.page.$('[data-action="net-room-make"]')), 5000);
+  await waitFor(async () => (await sheetOf(H)) === "net" && Boolean(await H.page.$('.net-tabs')), 5000);
   const m0 = stats();
-  await H.page.click('[data-action="net-room-make"]');
+  await makeRoom(H);
   const code = await roomCode(H);
   await sleep(400);
   const acts = await actionRow(H);
   const view = await H.page.evaluate(() => ({ accept: document.querySelector("#sheetBody .net-accept")?.textContent ?? "", renew: Boolean(document.querySelector('[data-action="net-renew"]')), note: [...document.querySelectorAll("#sheetBody .net-note")].map((n) => n.textContent).join(" | ") }));
-  ok("방장 혼자 방 코드 화면: 받는 중·남은 시간 · 갱신 버튼 · 하단 방 나가기·닫기(위·아래 차이 0)", acts.map((b) => b.a).join() === "net-leave,net-close" && spreadOf(acts, "top") === 0 && spreadOf(acts, "bottom") === 0 && /참가 받는 중 · 2:[0-9]{2} 남음/.test(view.accept) && view.renew && /2분 30초/.test(view.note), `${code} · ${JSON.stringify(view)}`);
+  ok("방장 혼자 방 코드 화면: 받는 중·남은 시간 · 하단 방 닫기·갱신·게임으로(위·아래 차이 0)", acts.map((b) => b.a).join() === "net-leave,net-renew,net-close" && spreadOf(acts, "top") === 0 && spreadOf(acts, "bottom") === 0 && /참가 받는 중 · 2:[0-9]{2} 남음/.test(view.accept) && view.renew && /2분 30초/.test(view.note), `${code} · ${JSON.stringify(view)}`);
   await shot(H, "중간참가_방코드_390x844.png");
   const LIMIT = opt.fast ? 20000 : 30000;
   await H.page.evaluate((limit) => {
@@ -810,8 +817,8 @@ async function anytimeTests() {
   await press(D, "KeyZ");
   await sleep(800);
   await D.page.click("#btnNet");
-  await waitFor(() => D.page.$('[data-action="net-cancel"]'), 4000);
-  await D.page.click('[data-action="net-cancel"]');
+  await waitFor(() => D.page.$(".net-tabs"), 4000);
+  await D.page.click("#sheetClose");
   await sleep(600);
   const dState = await D.page.evaluate(() => ({ sheet: window.webgba.state.sheet, request: Boolean(window.webgba.player.net.request), btn: !document.getElementById("btnNet").hidden }));
   ok("중간 참가 게임 창 취소: 게임에 CLOSED 없음 · 요청·버튼 유지", (await game(D))?.closed === 0 && dState.sheet === "" && dState.request && dState.btn, JSON.stringify({ dState, game: await game(D) }));
@@ -831,8 +838,8 @@ async function anytimeTests() {
   await press(RH, "KeyZ");
   await sleep(800);
   await RH.page.click("#btnNet");
-  await waitFor(() => RH.page.$('[data-action="net-room-make"]'), 5000);
-  await RH.page.click('[data-action="net-room-make"]');
+  await waitFor(() => RH.page.$('.net-tabs'), 5000);
+  await makeRoom(RH);
   const rCode = await roomCode(RH);
   await RH.page.click('[data-action="net-close"]');
   await press(RG, "KeyZ");
@@ -982,8 +989,8 @@ async function nosaveTests() {
   await press(H, "KeyZ");
   await sleep(800);
   await H.page.click("#btnNet");
-  await waitFor(async () => (await sheetOf(H)) === "net" && Boolean(await H.page.$('[data-action="net-room-make"]')), 5000);
-  await H.page.click('[data-action="net-room-make"]');
+  await waitFor(async () => (await sheetOf(H)) === "net" && Boolean(await H.page.$('.net-tabs')), 5000);
+  await makeRoom(H);
   const code = await roomCode(H);
   await H.page.click('[data-action="net-close"]');
   await waitFor(async () => (await sheetOf(H)) === "", 4000, 100);
