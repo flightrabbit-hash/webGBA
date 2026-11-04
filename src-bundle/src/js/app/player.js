@@ -1,6 +1,6 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
-import { DPAD_MODES, GBA_PRESET, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { DPAD_MODES, GBA_PRESET, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_STEPS_MAX, normalizeMacro, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
 import { NetHost } from "../core/net/net-host.js";
 import { lang, locale, t } from "../shell/i18n.js";
 
@@ -36,7 +36,37 @@ function sameBytes(a, b) {
 
 export const BUTTONS = ["A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L"];
 
-export { DPAD_MODES };
+export { DPAD_MODES, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_STEPS_MAX, normalizeMacro };
+
+export const PAD_CODE_RE = /^Gamepad:(\d{1,2})$/;
+
+export const MACRO_PRESETS = 5;
+export const MACRO_NAME_MAX = 12;
+
+export function macroBook(input, saved) {
+  if (saved && typeof saved === "object" && Array.isArray(saved.slots)) {
+    const slots = Array.from({ length: MACRO_PRESETS }, (_, i) => {
+      const p = saved.slots[i];
+      return p && typeof p === "object" ? { name: [...String(p.name ?? "").trim()].slice(0, MACRO_NAME_MAX).join(""), steps: normalizeMacro(p.steps) ?? [] } : null;
+    });
+    const active = Number.isInteger(saved.active) && slots[saved.active] ? saved.active : -1;
+    return { active, slots };
+  }
+  const fallback = normalizeMacro(input?.rs);
+  const slots = Array.from({ length: MACRO_PRESETS }, () => null);
+  if (fallback?.length) slots[0] = { name: "", steps: fallback };
+  return { active: fallback?.length ? 0 : -1, slots };
+}
+
+export const macroOf = (book) => (book.active >= 0 ? (book.slots[book.active]?.steps ?? []) : []);
+
+export function macroFor(input, saved) {
+  return macroOf(macroBook(input, saved));
+}
+
+export function macroFrameCount(steps) {
+  return steps.reduce((sum, step, i) => sum + step.hold + (i < steps.length - 1 ? step.gap : 0), 0);
+}
 
 export const DPAD_DEFAULT = "latest";
 
@@ -99,6 +129,7 @@ export const DEFAULT_KEYS = {
   // 여기(앱 전체 키)의 C·D 는 설명서가 C·D 를 정의하지 않은 게임·게임 없음에서 키 설정 칸을 보이려는 자리라 기본이 빈 상태다(결정 102, 사용자 2026-11-01).
   C: [],
   D: [],
+  RS: [],
 };
 
 /**
@@ -110,11 +141,11 @@ export function layoutKeys(layout, global = DEFAULT_KEYS, saved = null) {
   const clone = (list) => (Array.isArray(list) ? list.filter((code) => typeof code === "string" && code) : []);
   if (layout.gba) {
     const out = {};
-    for (const name of [...BUTTONS, "FAST"]) out[name] = clone(global[name] ?? DEFAULT_KEYS[name]);
+    for (const name of [...BUTTONS, "FAST", "RS"]) out[name] = clone(global[name] ?? DEFAULT_KEYS[name]);
     return out;
   }
-  const out = { FAST: clone(global.FAST ?? DEFAULT_KEYS.FAST) };
-  const taken = new Set(out.FAST);
+  const out = { FAST: clone(global.FAST ?? DEFAULT_KEYS.FAST), RS: clone(global.RS ?? DEFAULT_KEYS.RS) };
+  const taken = new Set([...out.FAST, ...out.RS]);
   const take = (list) => list.filter((code) => !taken.has(code) && taken.add(code));
   for (const b of layout.buttons) {
     const own = Array.isArray(saved?.[b.id]) ? saved[b.id] : b.keys;
@@ -251,6 +282,14 @@ export class Player {
     this.layout = GBA_LAYOUT;
     this.bitOf = new Map();
     this.padMap = [];
+    this.padLists = [];
+    this.rsPads = [];
+    this.rsPadDown = false;
+    this.macro = [];
+    this.macroMasks = [];
+    this.macroPlay = null;
+    this.macroOut = 0;
+    this.macroAcc = 0;
     this.dirs = { right: 0, left: 0, up: 0, down: 0 };
     this.dirMask = 0;
     this.dirBits = [];
@@ -374,7 +413,7 @@ export class Player {
   setLayout(layout, keys = null) {
     this.layout = layout ?? GBA_LAYOUT;
     this.bitOf = new Map();
-    this.padMap = [];
+    this.padLists = [];
     const dirs = { right: 0, left: 0, up: 0, down: 0 };
     let fire = 0;
     for (const [index, b] of this.layout.buttons.entries()) {
@@ -385,7 +424,7 @@ export class Player {
       this.bitOf.set(b.id, mask);
       if (b.role in dirs && !dirs[b.role]) dirs[b.role] = mask;
       if (AUTO_FIRE_ROLES.includes(b.role)) fire |= mask;
-      if (b.pad?.length) this.padMap.push([mask, padTest(b.pad)]);
+      if (b.pad?.length) this.padLists.push([mask, b.pad]);
     }
     this.fireMask = fire >>> 0;
     this.fireHeld = 0;
@@ -395,7 +434,83 @@ export class Player {
     this.dirStamp = Object.fromEntries(this.dirBits.map((bit) => [bit, 0]));
     this.padPrev = 0;
     this.setKeys(keys ?? this.keys ?? {});
+    this.resolveMacro();
     this.pushAutoFire();
+  }
+
+  setMacro(steps) {
+    this.macro = normalizeMacro(steps) ?? [];
+    this.resolveMacro();
+  }
+
+  resolveMacro() {
+    const slot = new Map();
+    for (const b of this.layout.buttons) {
+      const mask = b.role ? this.bitOf.get(b.id) : 0;
+      if (mask && !slot.has(b.role.toUpperCase())) slot.set(b.role.toUpperCase(), mask);
+    }
+    this.macroMasks = this.macro.map((step) => step.keys.reduce((mask, key) => mask | (slot.get(key) ?? 0), 0) >>> 0);
+    this.macroStop();
+  }
+
+  get macroPlaying() {
+    return Boolean(this.macroPlay);
+  }
+
+  macroPress() {
+    if (!this.macro.length || !this.host || !this.running || this.paused) return false;
+    this.macroPlay = { at: 0, held: true };
+    this.macroAcc = 0;
+    if (this.host.script) {
+      this.macroStep();
+      this.pushScript();
+    }
+    return true;
+  }
+
+  macroRelease() {
+    if (this.macroPlay) this.macroPlay.held = false;
+  }
+
+  macroStop() {
+    const was = Boolean(this.macroPlay) || this.macroOut !== 0;
+    this.macroPlay = null;
+    this.macroOut = 0;
+    this.macroAcc = 0;
+    if (was) this.pushScript();
+  }
+
+  macroStep() {
+    const play = this.macroPlay;
+    if (!play) return (this.macroOut = 0);
+    let t = play.at++;
+    const last = this.macro.length - 1;
+    for (let i = 0; i <= last; i++) {
+      const { hold, gap } = this.macro[i];
+      if (t < hold) return (this.macroOut = this.macroMasks[i]);
+      t -= hold;
+      if (i === last) break;
+      if (t < gap) return (this.macroOut = 0);
+      t -= gap;
+    }
+    if (play.held) return (this.macroOut = this.macroMasks[last]);
+    this.macroPlay = null;
+    return (this.macroOut = 0);
+  }
+
+  withMacro(keys, macro) {
+    if (!macro) return keys;
+    return ((macro & this.dirMask ? keys & ~this.dirMask : keys) | macro) >>> 0;
+  }
+
+  rsPadTick() {
+    if (!this.rsPads.length) return;
+    let down = false;
+    for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) if (gp && this.rsPads.some((i) => gp.buttons[i]?.pressed)) down = true;
+    if (down === this.rsPadDown) return;
+    this.rsPadDown = down;
+    if (down) this.macroPress();
+    else this.macroRelease();
   }
 
   setAutoFire({ on = false, level = AUTO_FIRE_LEVEL } = {}) {
@@ -442,6 +557,14 @@ export class Player {
       for (const code of keys[id] ?? []) this.keymap.set(code, mask);
     }
     for (const code of keys.FAST ?? []) this.keymap.set(code, "FAST");
+    this.rsPads = [];
+    for (const code of keys.RS ?? []) {
+      const pad = PAD_CODE_RE.exec(code);
+      if (pad) this.rsPads.push(Number(pad[1]));
+      else this.keymap.set(code, "RS");
+    }
+    this.rsPadDown = false;
+    this.padMap = this.padLists.map(([mask, list]) => [mask, list.filter((p) => !this.rsPads.includes(p))]).filter(([, list]) => list.length).map(([mask, list]) => [mask, padTest(list)]);
     this.releaseAll();
   }
 
@@ -468,7 +591,7 @@ export class Player {
     let fast = false;
     for (const hit of this.down.values()) {
       if (hit === "FAST") fast = true;
-      else bits |= hit;
+      else if (hit !== "RS") bits |= hit;
     }
     this.fastHeld = fast;
     return bits;
@@ -476,7 +599,7 @@ export class Player {
 
   // ② keyboard "raw" 게임은 실제 키보드(event 가 있음)를 그대로 넘긴다 — 빨리 감기 키만 호스트 몫, 터치·게임패드는 버튼으로.
   rawKey(code, event, down) {
-    if (!event || !this.host?.script || !this.host.raw || this.keymap.get(code) === "FAST") return false;
+    if (!event || !this.host?.script || !this.host.raw || this.keymap.get(code) === "FAST" || this.keymap.get(code) === "RS") return false;
     if (this.running && !this.paused) this.host.rawKey(event, down);
     return true;
   }
@@ -487,6 +610,11 @@ export class Player {
     if (hit === undefined) return false;
     if (this.down.has(code)) return true;
     this.down.set(code, hit);
+    if (hit === "RS") {
+      this.macroPress();
+      return true;
+    }
+    if (hit !== "FAST") this.macroStop();
     const before = this.held;
     this.held = this.heldBits();
     if (hit !== "FAST" && !(before & hit)) {
@@ -503,6 +631,10 @@ export class Player {
     const hit = this.down.get(code);
     if (hit === undefined) return this.keymap.has(code);
     this.down.delete(code);
+    if (hit === "RS") {
+      if (![...this.down.values()].includes("RS")) this.macroRelease();
+      return true;
+    }
     this.held = this.heldBits();
     if (hit !== "FAST" && !(this.held & hit)) this.released |= hit;
     this.pushScript();
@@ -510,6 +642,7 @@ export class Player {
   }
 
   releaseAll() {
+    this.macroRelease();
     this.down.clear();
     this.held = 0;
     this.fastHeld = false;
@@ -524,7 +657,7 @@ export class Player {
   pushScript() {
     const host = this.host;
     if (!host?.script || !this.running) return;
-    host.setInput(this.paused ? 0 : this.resolveDpad(this.held | this.padNow));
+    host.setInput(this.paused ? 0 : this.withMacro(this.resolveDpad(this.held | this.padNow), this.macroOut));
     host.setSpeed(this.runSpeed);
   }
 
@@ -768,6 +901,7 @@ export class Player {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.running = false;
+    this.macroStop();
     this.net.detach();
     this.syncClock();
     if (this.host?.script) await this.host.flush();
@@ -787,6 +921,7 @@ export class Player {
     this.pressed = 0;
     this.dropped = 0;
     this.released = 0;
+    this.macroStop();
     this.pointerRelease();
     if (paused) this.audio?.node.port.postMessage("clear");
     this.last = performance.now();
@@ -888,8 +1023,17 @@ export class Player {
     if (this.host.script) {
       // ② 는 게임이 스스로 돈다 — 게임패드만 읽어 바뀐 버튼을 넘기고, 세이브가 오면 모아 쓴다(프레임 수는 틀이 셈)
       const padBits = this.padBits();
+      if (padBits & ~this.padPrev) this.macroStop();
       this.notePad(padBits);
       this.padNow = padBits;
+      this.rsPadTick();
+      if (this.macroPlay) {
+        this.macroAcc += dt * this.runSpeed;
+        while (this.macroPlay && this.macroAcc >= FRAME_MS) {
+          this.macroAcc -= FRAME_MS;
+          this.macroStep();
+        }
+      }
       this.pushScript();
       if (this.host.takeSaveDirty()) this.queueSave();
       return;
@@ -897,7 +1041,9 @@ export class Player {
     const speed = this.runSpeed;
     this.acc += dt * speed;
     const padBits = this.padBits();
+    if (padBits & ~this.padPrev) this.macroStop();
     this.notePad(padBits);
+    this.rsPadTick();
     const squeeze = this.audioFactor(speed);
     let ran = 0;
     while (this.acc >= FRAME_MS && ran < MAX_FRAMES_PER_TICK) {
@@ -910,7 +1056,7 @@ export class Player {
       }
       this.sent = input;
       this.net.beforeFrame();
-      if (!this.host.runFrame(this.fireKeys(input))) {
+      if (!this.host.runFrame(this.withMacro(this.fireKeys(input), this.macroStep()))) {
         this.running = false;
         this.net.leave();
         this.onHalt(this.host.halted);

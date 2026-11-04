@@ -1,6 +1,6 @@
 import * as theme from "../shell/theme.js";
 import { CHANGED as LANG_CHANGED, LANGS, lang, t } from "../shell/i18n.js";
-import { AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, codeOf, DPAD_DEFAULT } from "./player.js";
+import { AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, codeOf, DPAD_DEFAULT, FRAME_MS, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_NAME_MAX, MACRO_STEPS_MAX, macroFrameCount } from "./player.js";
 
 const el = {};
 
@@ -9,6 +9,7 @@ const hooks = {
   apply: async () => {},
   setTheme: async () => {},
   setLang: async () => {},
+  confirm: async () => false,
   keyName: (code) => code,
   keyOrder: [],
   defaultKeys: {},
@@ -20,6 +21,14 @@ let draft = null;
 let keys = null;
 
 let waiting = null;
+
+let padWait = 0;
+
+let rs = null;
+
+const RS_ORDER = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "D", "L", "R", "SELECT", "START"];
+const RS_ARROWS = { UP: "↑", DOWN: "↓", LEFT: "←", RIGHT: "→" };
+const RS_GROUP = { A: "ab", B: "ab", C: "cd", D: "cd", L: "ss", R: "ss", SELECT: "ss", START: "ss", UP: "dir", DOWN: "dir", LEFT: "dir", RIGHT: "dir" };
 
 let shown = "general";
 
@@ -121,6 +130,7 @@ export function setup(options = {}) {
     headTitle: pick("settings-head-title"),
     headNote: pick("settings-head-note"),
     keysReset: pick("settings-keys-reset"),
+    rs: pick("settings-rs"),
     note: pick("settings-note"),
     saveBtn: pick("settings-save"),
     closeBtn: pick("settings-close"),
@@ -148,7 +158,8 @@ export async function open(tab = "general") {
   }
   keys = cloneKeys(draft.keys ?? defaultKeys());
   waiting = null;
-  picked = { mode: draft.theme?.mode ?? "dark", colors: { ...(draft.theme?.colors ?? {}) } };
+  rs = cloneRs(draft.rs);
+  picked ={ mode: draft.theme?.mode ?? "dark", colors: { ...(draft.theme?.colors ?? {}) } };
   redraw();
   showTab(TABS.includes(tab) ? tab : "general");
   el.modal.hidden = false;
@@ -159,6 +170,7 @@ export async function open(tab = "general") {
 export function close() {
   if (!isOpen()) return;
   waiting = null;
+  stopPadWait();
   el.modal.classList.remove("is-open");
   el.modal.hidden = true;
   hooks.onClose();
@@ -175,12 +187,7 @@ function onKey(event) {
     event.preventDefault();
     event.stopPropagation();
     const pressed = codeOf(event);
-    if (pressed !== "Escape" && pressed) {
-      for (const name of keyOrder()) keys[name] = keys[name].filter((code) => code !== pressed);
-      const list = keys[waiting.name];
-      list[waiting.index] = pressed;
-      keys[waiting.name] = list.filter(Boolean);
-    }
+    if (pressed !== "Escape" && pressed) assignKey(pressed);
     waiting = null;
     drawKeys();
     return;
@@ -192,9 +199,49 @@ function onKey(event) {
   }
 }
 
+function assignKey(code) {
+  for (const name of keyOrder()) keys[name] = keys[name].filter((item) => item !== code);
+  const list = keys[waiting.name];
+  list[waiting.index] = code;
+  keys[waiting.name] = list.filter(Boolean);
+}
+
+function stopPadWait() {
+  cancelAnimationFrame(padWait);
+  padWait = 0;
+}
+
+function waitPad() {
+  stopPadWait();
+  const pressedNow = () => {
+    const out = new Set();
+    for (const gp of navigator.getGamepads?.() ?? []) if (gp) gp.buttons.forEach((b, i) => b.pressed && out.add(i));
+    return out;
+  };
+  const before = pressedNow();
+  const tick = () => {
+    if (!waiting || waiting.name !== "RS") return stopPadWait();
+    const now = pressedNow();
+    const fresh = [...now].find((i) => !before.has(i));
+    for (const i of [...before]) if (!now.has(i)) before.delete(i);
+    if (fresh !== undefined) {
+      assignKey(`Gamepad:${fresh}`);
+      waiting = null;
+      padWait = 0;
+      drawKeys();
+      note(t("cfg.pendingSave"));
+      return undefined;
+    }
+    padWait = requestAnimationFrame(tick);
+    return undefined;
+  };
+  padWait = requestAnimationFrame(tick);
+}
+
 function redraw() {
   drawFields();
   drawKeys();
+  drawRs();
   drawTheme();
   drawLangs();
   paintHead();
@@ -460,9 +507,11 @@ async function save() {
   }
   el.saveBtn.disabled = true;
   try {
-    await hooks.apply({ ...draft, keys: cloneKeys(keys) });
+    await hooks.apply({ ...draft, keys: cloneKeys(keys), rs });
     draft = await hooks.snapshot();
+    rs = cloneRs(draft.rs);
     drawFields();
+    drawRs();
     note(t("cfg.saved"));
   } catch (error) {
     note(reason(error), true);
@@ -511,11 +560,13 @@ function drawKeys() {
       slot.className = "keys__slot";
       const isWaiting = waiting && waiting.name === name && waiting.index === index;
       slot.classList.toggle("is-waiting", Boolean(isWaiting));
-      slot.textContent = isWaiting ? t("cfg.keys.press") : hooks.keyName(keys[name][index]);
+      slot.textContent = isWaiting ? t(name === "RS" ? "cfg.keys.pressPad" : "cfg.keys.press") : hooks.keyName(keys[name][index]);
       slot.title = t("cfg.keys.slotTitle");
+      slot.dataset.key = name;
       slot.addEventListener("click", () => {
         waiting = { name, index };
         drawKeys();
+        if (name === "RS") waitPad();
       });
       slot.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -527,6 +578,281 @@ function drawKeys() {
       el.keys.append(slot);
     }
   }
+}
+
+/* ── RS 버튼 ── */
+
+function cloneRs(source) {
+  if (!source) return null;
+  const copy = (list) => (list ?? []).map((step) => ({ ...step, keys: [...step.keys] }));
+  return {
+    book: { active: source.book.active, slots: source.book.slots.map((slot) => slot && { name: slot.name, steps: copy(slot.steps) }) },
+    fallback: source.fallback ? copy(source.fallback) : null,
+    slots: source.slots,
+    changed: false,
+    opened: new Set(),
+  };
+}
+
+const msOf = (frames) => Math.round(frames * FRAME_MS);
+const presetName = (slot) => rs.book.slots[slot]?.name || t("macro.presetName", { n: slot + 1 });
+const activeSteps = () => (rs.book.active >= 0 ? rs.book.slots[rs.book.active].steps : null);
+
+function rsNote(text, className = "cfg__note") {
+  const p = document.createElement("p");
+  p.className = className;
+  p.textContent = text;
+  return p;
+}
+
+function rsNumber(label, value, min, onChange) {
+  const row = document.createElement("label");
+  row.className = "cfg__row rsx__row";
+  const text = document.createElement("span");
+  text.className = "cfg__label";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const hint = document.createElement("span");
+  hint.className = "cfg__hint";
+  hint.textContent = t("macro.frames", { n: value, ms: msOf(value) });
+  text.append(name, hint);
+  const input = document.createElement("input");
+  input.className = "cfg__input rsx__num";
+  input.type = "number";
+  input.min = String(min);
+  input.max = String(MACRO_FRAMES_MAX);
+  input.step = "1";
+  input.value = String(value);
+  input.addEventListener("change", () => {
+    const n = Math.min(MACRO_FRAMES_MAX, Math.max(min, Math.round(Number(input.value) || 0)));
+    input.value = String(n);
+    hint.textContent = t("macro.frames", { n, ms: msOf(n) });
+    onChange(n);
+  });
+  row.append(text, input);
+  return row;
+}
+
+function rsChanged() {
+  rs.changed = true;
+  note(t("cfg.pendingSave"));
+  paintRsTotal();
+  rs.paintReset?.();
+}
+
+function paintRsTotal() {
+  const total = el.rs?.querySelector(".rsx__total");
+  const steps = rs && activeSteps();
+  if (!total || !steps) return;
+  const frames = macroFrameCount(steps);
+  total.textContent = steps.length ? t("macro.total", { n: frames, ms: msOf(frames) }) : t("macro.empty");
+}
+
+function presetBar() {
+  const book = rs.book;
+  const bar = document.createElement("div");
+  bar.className = "rsx__bar";
+  bar.setAttribute("role", "radiogroup");
+  bar.setAttribute("aria-label", t("macro.presets"));
+  for (const slot of [-1, ...book.slots.keys()]) {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "keys__slot rsx__slotbtn";
+    node.setAttribute("role", "radio");
+    node.setAttribute("aria-checked", String(book.active === slot));
+    node.dataset.slot = String(slot);
+    const empty = slot >= 0 && !book.slots[slot];
+    if (empty) node.dataset.empty = "";
+    node.title = slot < 0 ? t("macro.off") : empty ? t("macro.newPreset") : presetName(slot);
+    if (slot < 0) {
+      const glyph = document.createElement("span");
+      glyph.className = "icon";
+      glyph.style.setProperty("--icon", 'url("/icons/x.svg")');
+      node.append(glyph);
+    } else node.textContent = String(slot + 1);
+    node.addEventListener("click", () => {
+      if (book.active === slot) return;
+      if (empty) book.slots[slot] = { name: "", steps: [] };
+      book.active = slot;
+      rs.opened.clear();
+      rsChanged();
+      drawRs();
+    });
+    bar.append(node);
+  }
+  return bar;
+}
+
+function presetNameRow() {
+  const book = rs.book;
+  const slot = book.active;
+  const row = document.createElement("div");
+  row.className = "rsx__namebar";
+  const input = document.createElement("input");
+  input.className = "cfg__input rsx__rename";
+  input.type = "text";
+  input.maxLength = MACRO_NAME_MAX;
+  input.value = presetName(slot);
+  input.title = t("macro.rename");
+  input.setAttribute("aria-label", t("macro.rename"));
+  input.addEventListener("change", () => {
+    const value = [...input.value.trim()].slice(0, MACRO_NAME_MAX).join("");
+    book.slots[slot].name = value === t("macro.presetName", { n: slot + 1 }) ? "" : value;
+    input.value = presetName(slot);
+    rsChanged();
+  });
+  const remove = iconButton("trash", t("macro.removePreset"), async () => {
+    if (!(await hooks.confirm(t("macro.removeTitle", { name: presetName(slot) }), t("macro.removeText"), "DELETE"))) return;
+    book.slots[slot] = null;
+    if (book.active === slot) book.active = book.slots.findIndex(Boolean);
+    rsChanged();
+    drawRs();
+  });
+  remove.classList.add("iconbtn--danger");
+  row.append(input, remove);
+  return row;
+}
+
+function drawRs() {
+  const box = el.rs;
+  if (!box) return;
+  const title = document.createElement("h3");
+  title.className = "cfg__title";
+  title.textContent = t("macro.title");
+  if (!rs) {
+    box.replaceChildren(title, rsNote(t("macro.noGame")));
+    return;
+  }
+  const parts = [title, rsNote(t("macro.lead")), rsNote(t("macro.presets"), "cfg__sub"), presetBar()];
+  const steps = activeSteps();
+  if (!steps) {
+    box.replaceChildren(...parts, rsNote(t("macro.offNote")));
+    return;
+  }
+  parts.push(presetNameRow());
+  const slots = RS_ORDER.filter((key) => rs.slots.includes(key));
+  const opened = rs.opened;
+  const list = document.createElement("ol");
+  list.className = "rsx";
+  steps.forEach((step, index) => {
+    const item = document.createElement("li");
+    item.className = "rsx__step";
+    const head = document.createElement("div");
+    head.className = "rsx__head";
+    const last = index === steps.length - 1;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "rsx__toggle";
+    const glyph = document.createElement("span");
+    glyph.className = "icon";
+    glyph.style.setProperty("--icon", 'url("/icons/chevron-down.svg")');
+    const text = document.createElement("span");
+    text.className = "rsx__text";
+    const name = document.createElement("span");
+    name.className = "rsx__name";
+    const time = document.createElement("span");
+    time.className = "cfg__hint";
+    text.append(name, time);
+    toggle.append(glyph, text);
+    name.textContent = t("macro.step", { n: index + 1 });
+    const paintHead = () => {
+      time.textContent = last ? t("macro.timeSumLast", { hold: step.hold }) : t("macro.timeSum", { hold: step.hold, gap: step.gap });
+    };
+    paintHead();
+    const body = document.createElement("div");
+    body.className = "rsx__body";
+    const setOpen = (on) => {
+      if (on) opened.add(step);
+      else opened.delete(step);
+      body.hidden = !on;
+      toggle.setAttribute("aria-expanded", String(on));
+      toggle.title = t(on ? "macro.close" : "macro.open");
+    };
+    toggle.addEventListener("click", () => setOpen(body.hidden));
+    const move = (to) => {
+      const [moved] = steps.splice(index, 1);
+      steps.splice(to, 0, moved);
+      rsChanged();
+      drawRs();
+    };
+    const up = iconButton("arrow-up", t("macro.up"), () => move(index - 1));
+    up.disabled = index === 0;
+    const down = iconButton("arrow-down", t("macro.down"), () => move(index + 1));
+    down.disabled = last;
+    const remove = iconButton("trash", t("macro.remove"), () => {
+      steps.splice(index, 1);
+      rsChanged();
+      drawRs();
+    });
+    remove.classList.add("iconbtn--danger");
+    head.append(toggle, up, down, remove);
+    const keysRow = document.createElement("div");
+    keysRow.className = "rsx__keys";
+    keysRow.setAttribute("role", "group");
+    keysRow.setAttribute("aria-label", t("macro.keys"));
+    for (const key of slots) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `keys__slot rsx__key${key.length > 1 && !RS_ARROWS[key] ? " rsx__key--word" : ""}`;
+      chip.dataset.key = key;
+      chip.dataset.group = RS_GROUP[key];
+      chip.textContent = RS_ARROWS[key] ?? key;
+      chip.title = RS_ARROWS[key] ? t(`key.${key}`) : key;
+      chip.setAttribute("aria-pressed", String(step.keys.includes(key)));
+      chip.addEventListener("click", () => {
+        const on = !step.keys.includes(key);
+        step.keys = MACRO_KEYS.filter((k) => (k === key ? on : step.keys.includes(k)));
+        chip.setAttribute("aria-pressed", String(on));
+        paintHead();
+        rsChanged();
+      });
+      keysRow.append(chip);
+    }
+    body.append(keysRow, rsNumber(t("macro.hold"), step.hold, 1, (n) => {
+      step.hold = n;
+      paintHead();
+      rsChanged();
+    }));
+    if (!last)
+      body.append(rsNumber(t("macro.gap"), step.gap, 0, (n) => {
+        step.gap = n;
+        paintHead();
+        rsChanged();
+      }));
+    setOpen(opened.has(step));
+    item.append(head, body);
+    list.append(item);
+  });
+  const acts = document.createElement("div");
+  acts.className = "rsx__acts";
+  const add = iconButton("plus", t("macro.add"), () => {
+    const fresh = { keys: [], hold: MACRO_HOLD, gap: MACRO_GAP };
+    steps.push(fresh);
+    opened.add(fresh);
+    rsChanged();
+    drawRs();
+  });
+  add.disabled = steps.length >= MACRO_STEPS_MAX;
+  const initial = rs.book.active === 0 && rs.fallback ? rs.fallback : [];
+  const plain = (list) => JSON.stringify(list.map(({ keys, hold, gap }) => ({ keys, hold, gap })));
+  const reset = iconButton("refresh", t("macro.reset"), async () => {
+    if (!(await hooks.confirm(t("macro.resetTitle", { name: presetName(rs.book.active) }), t(initial.length ? "macro.resetTextDefault" : "macro.resetText"), "RESET"))) return;
+    steps.splice(0, steps.length, ...initial.map((step) => ({ ...step, keys: [...step.keys] })));
+    opened.clear();
+    rsChanged();
+    drawRs();
+  });
+  reset.classList.add("iconbtn--danger");
+  rs.paintReset = () => {
+    reset.disabled = plain(initial) === plain(steps);
+  };
+  rs.paintReset();
+  acts.append(add, reset);
+  const total = rsNote("", "cfg__note rsx__total");
+  parts.push(rsNote(t("macro.steps"), "cfg__sub"), list, total, acts);
+  if (steps.length >= MACRO_STEPS_MAX) parts.push(rsNote(t("macro.max", { n: MACRO_STEPS_MAX })));
+  box.replaceChildren(...parts);
+  paintRsTotal();
 }
 
 /* ── 테마 ── */

@@ -105,6 +105,11 @@ node tools/run.cjs   # list all commands
   A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
 - **Auto fire** — Settings › General › Game (web: Settings). When on, holding A · B · C · D · L · R (roles `a`, `b`, `c`, `d`, `l`, `r`) presses it repeatedly (not the directions, START or SELECT).
   Speed levels 1–9 = 1 · 2 · 3 · 4 · 6 · 8 · 12 · 20 · 30 presses per second (default level 5 = 6 per second, level 1 = 30 frames pressed and 30 frames released, level 9 = press and release every 2 frames). It counts game frames, so the pattern is the same while fast-forwarding, and the same setting applies to the keyboard, gamepads and on-screen buttons (one app-wide setting). Off by default.
+- **RS button (sequence input)** — enters a key sequence you set up (for example A → A → ↓ → A+B) in one press. For each step you choose the keys pressed together (A · B · C · D · L · R · START · SELECT · directions; a diagonal is two directions together), how long they are held and the wait before the next step, in frames (1/60 s, shown with ms; default hold 3 and wait 3 frames, up to 32 steps).
+  Each game keeps 5 presets (rename up to 12 characters, delete), and the preset in use is played. Pick it in Settings from the X · 1–5 row (an empty number makes a new preset); X (Off) hides the RS button and the RS key does nothing (a game whose manifest has `input.rs` starts with preset 1, otherwise Off). Presets change only in Settings.
+  Playback rules: one press plays the sequence once from the start · holding RS keeps the last step's keys pressed (release to end) · pressing any other key (keyboard, gamepad, on-screen button) during playback stops RS input from that frame and sends that key · pressing RS again during playback restarts it · auto fire is not applied to RS input · nothing plays while paused.
+  Input goes through the normal input path every game frame, so fast-forward and multiplayer give the same per-frame result (② self-JS games follow screen refresh time).
+  Windows app: assign a keyboard key or gamepad button to the "RS button" row in Settings › Keys (none by default) and edit presets and steps under RS button on the same page. Web version: the RS button on screen (a pill above the right-hand buttons, in its own colour) and Settings › RS button › Edit.
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
@@ -125,6 +130,7 @@ node tools/run.cjs   # list all commands
 | D-pad | Arrow keys |
 | Fast-forward (while held) | Space |
 | Toggle fast-forward | Tab |
+| RS button (sequence input) | Set in Settings › Keys (none by default; a gamepad button also works) |
 | Pause | Pause |
 | Save / load state | Shift+F1–F9 / F1–F9 |
 | Reset | Ctrl+R |
@@ -534,6 +540,7 @@ A game lists only **the buttons it uses** in the manifest. Where they go on the 
 | `buttons` | Button array (up to 32 for ①, 24 for ②). With a `preset`, these are appended after the preset (the same `id` replaces the preset button). **If a ① game uses buttons other than the GBA ones, write `"preset": "none"` and list every button** — the ① default is `"gba"`, so leaving it out appends your buttons after the 10 GBA buttons and bits and roles collide (validation error) |
 | `keyboard` | `"mapped"` (default): the game receives only the listed buttons. `"raw"` (② only): real keys are passed through (text-entry games etc.; host keys excluded) |
 | `dpad` | Default handling of directions pressed together: `"latest"` (last pressed only) · `"opposite"` (latest of an opposite pair only, diagonals pass) · `"both"` (all, like a real GBA). For a game that sets it, this is the default and the user can change it per game (Windows app Settings › General › Two directions at once, web Settings — remembered per game id). Without it, the user's global setting (default `"latest"`). Games that need diagonal movement (arcade etc.) should set `"both"` or `"opposite"` |
+| `rs` | (Optional) default RS button input — an array of steps (5.7). It becomes the user's preset 1 default and the RS button is shown. Without it, RS starts as Off |
 
 One button:
 
@@ -630,6 +637,28 @@ The `code` a game listens for can be anything (the host translates). How simulta
 ```
 
 When the user presses `Z` (default `a` = `KeyZ`), the game receives a key event with `code: "Space"`, `key: " "`, `keyCode: 32`. The touch screen shows a direction pad + "Jump" + "MENU" at the bottom centre.
+
+#### 5.7 Default RS button input `input.rs`
+
+A game can give a default for input that presses several buttons in a set order and timing (a throw with A+B, a command, …). It becomes the user's preset 1 default; the user can change the steps or make other presets in the app (values the user saved win).
+
+```json
+"input": {
+  "preset": "none",
+  "buttons": [ … { "id": "P", "role": "a", "bit": 0 }, { "id": "K", "role": "b", "bit": 1 } … ],
+  "rs": [ { "buttons": ["P", "K"], "hold": 6 } ]
+}
+```
+
+| Step field | Description |
+| --- | --- |
+| `buttons` | **Required**. Button `id`s pressed together in this step (at least one, no duplicates). Only buttons whose role is `up` `down` `left` `right` `a` `b` `c` `d` `l` `r` `start` `select` (not `extra`, `l2`, `r2`). A diagonal is two directions together |
+| `hold` | How long to hold (frames, 1–600, default 3) |
+| `gap` | Wait before the next step (frames, 0–600, default 3). Ignored for the last step |
+
+- 1–32 steps. Every `Web_RunFrame(keys)` (①) frame the host sends the step's button bits together with the user's input. In frames where the RS step has a direction, the RS direction replaces the user's direction (a diagonal passes as is, whatever the two-directions setting), and auto fire is not applied.
+- The playback rules (one press = one playback, holding keeps the last step, any other key stops it from that frame) are host behaviour (Main features › RS button).
+- `check` validates the format, ranges, button ids and roles.
 
 ---
 
@@ -1269,6 +1298,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - Button = {id (letters, digits, _, -, 16 characters), role, label, bit (webapi) or code (script), keys (default keys, up to 4 KeyboardEvent.code values), pad (gamepad button numbers, "+axis1" etc.), touch ("auto"·"hide")}. Up to 32 for webapi, 24 for script.
 - role: up down left right, face a b c d (at most 4), l r l2 r2, start select, extra. Except extra, one button per role. To use C·D, define buttons with role c·d — only then do they appear in the touch row right above A·B. Without them only A·B appear.
 - Default keys come from the role (a=Z·K, b=X·J, c=C·I, d=V·U, l=A, r=S, l2=Q, r2=W, start=Enter, select=Backspace·right Shift, directions=arrow keys). Do not put host keys (Space, Tab, Escape, Pause, F1–F12, P) in keys.
+- (Optional) input.rs = default RS button input: an array of 1–32 steps [{buttons:[button id…] (pressed together; only buttons whose role is a direction, a, b, c, d, l, r, start or select), hold (frames held, 1–600, default 3), gap (frames before the next step, 0–600, default 3)}]. Example: a throw with A+B = [{"buttons":["P","K"],"hold":6}].
 
 [Multiplayer — draft protocol; the current webGBA does not connect players]
 - Manifest multiplayer{protocol:1, players{min,max}, purposes[{id,name,players}], compat, sync}. webapi exports the seven Web_NetWanted·Web_NetEvent·Web_NetOut·Web_NetOutLen·Web_NetOutClear·Web_NetInBuffer·Web_NetIn; script uses webgba.net (null for now). If the host never calls Web_NetHost or webgba.net is null, hide the link menus. Game JS never opens network connections itself.

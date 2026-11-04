@@ -8,7 +8,7 @@ import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { audioSessionType, AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "./app/player.js";
+import { audioSessionType, AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, FRAME_MS, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_NAME_MAX, MACRO_STEPS_MAX, macroBook, macroFrameCount, macroOf, normalizeMacro, Player } from "./app/player.js";
 import { GB_SCREEN, kindKey, romKind, romType, systemKind } from "./core/rom-kind.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
@@ -173,7 +173,7 @@ function make(tag, className, text) {
 }
 
 function button({ label = "", icon = "", title = "", kind = "", onClick, disabled = false, action = "" }) {
-  const node = make("button", kind === "tool" ? "tool tool--small" : `btn${kind ? ` btn--${kind}` : ""}`);
+  const node = make("button", kind === "tool" ? "tool tool--small" : kind === "tool-danger" ? "tool tool--small tool--danger" : `btn${kind ? ` btn--${kind}` : ""}`);
   node.type = "button";
   if (icon) node.append(iconNode(icon));
   if (label) node.append(make("span", "btn__label", label));
@@ -538,7 +538,41 @@ function keyTable() {
     const slot = TOUCH_SLOT[b.role];
     if (slot && b.touch !== "hide") keys[b.id] = [...(keys[b.id] ?? []), padCode(slot)];
   }
+  keys.RS = [...(keys.RS ?? []), padCode("RS")];
   return keys;
+}
+
+const rsKey = () => state.game?.saveId || "";
+
+function rsBook() {
+  const key = rsKey();
+  return macroBook(state.input, key ? state.prefs.rsPresets?.[key] : null);
+}
+
+const rsSteps = () => macroOf(rsBook());
+
+const presetName = (book, slot) => book.slots[slot]?.name || t("macro.presetName", { n: slot + 1 });
+
+function applyRs() {
+  const book = rsBook();
+  const steps = macroOf(book);
+  player.setMacro(steps);
+  const node = el.pad.querySelector('[data-key="RS"]');
+  const title = book.active >= 0 ? presetName(book, book.active) : "";
+  if (node && node.title !== title) node.title = title;
+  const shown = Boolean(state.game) && book.active >= 0;
+  if (shown === el.pad.hasAttribute("data-rs")) return false;
+  el.pad.toggleAttribute("data-rs", shown);
+  return true;
+}
+
+function saveRs(book) {
+  const key = rsKey();
+  if (!key) return;
+  const rsPresets = { ...(state.prefs.rsPresets ?? {}) };
+  rsPresets[key] = { active: book.active, slots: book.slots.map((slot) => slot && { name: slot.name, steps: normalizeMacro(slot.steps) }) };
+  savePrefs({ rsPresets });
+  if (applyRs() && document.documentElement.dataset.ready) layout();
 }
 
 /** 지금 게임이 터치 화면에 쓰는 자리(TOUCH_SLOT 값) 묶음. */
@@ -555,7 +589,10 @@ const pad = new VirtualPad({
   combo: () => state.prefs.padCombo !== false,
   vibrate: () => (state.prefs.vibrate ? HAPTIC : ""),
   vibrateDir: () => (state.prefs.vibrateDir ? HAPTIC : ""),
-  onChange: (name, down) => (down ? player.keyDown(padCode(name)) : player.keyUp(padCode(name))),
+  onChange: (name, down) => {
+    if (name === "RS" && down && !player.macro.length) toast(t("web.rs.emptyPress"));
+    return down ? player.keyDown(padCode(name)) : player.keyUp(padCode(name));
+  },
   onVisual: (name, down) => {
     skin.key(name, down);
     padMark(name, down);
@@ -598,7 +635,7 @@ function setInput(input) {
   const slots = touchSlots(next);
   let changed = setExtraButtons({ C: slots.has("C"), D: slots.has("D") });
   for (const node of el.pad.querySelectorAll("[data-key]")) {
-    if (EXTRA_PAD.includes(node.dataset.key)) continue;
+    if (EXTRA_PAD.includes(node.dataset.key) || node.dataset.key === "RS") continue;
     const off = !slots.has(node.dataset.key);
     if (off !== node.hasAttribute("data-off")) {
       node.toggleAttribute("data-off", off);
@@ -612,6 +649,7 @@ function setInput(input) {
   }
   player.setLayout(next, keyTable());
   player.setDpadMode(dpadFor(next, state.prefs));
+  if (applyRs()) changed = true;
   if (changed && document.documentElement.dataset.ready) layout();
 }
 
@@ -721,6 +759,8 @@ const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, 
 // 원으로 약 7.3칸이지만 픽셀 계단 때문에 실제 약 6.4칸이라, 그보다 넓지 않은 가장 큰 정수 줄 수(시험 web-ui C·D 가 잼).
 const FACE_UP_LANDSCAPE = 25 + 6;
 const faceUp = (face, landscape) => (landscape ? FACE_UP_LANDSCAPE : 2 * (face.h - ART.roundH));
+const RS_GAP = 2;
+const rsBand = (unit) => Math.round((ART.pillH + RS_GAP) * unit);
 // 배율이 기기 픽셀 단위(소수 CSS px)일 때 반올림한 묶음 폭이 버튼 두 개 폭보다 좁아 좌우 버튼이 겹치지 않게.
 const faceWidth = (face, unit) => Math.max(Math.round(face.w * unit), ART.roundW * 2 * unit);
 
@@ -729,6 +769,8 @@ const boardSide = (width) => Math.min(BOARD_SIDE_MAX, Math.floor(width * BOARD_S
 // 게임 화면이 먼저(사용자 2026-11-04 "스크린을 채울 수 있는 영역까지 채운 뒤 버튼을 알맞은 크기로"): 세로 = 가로 폭 가득, 가로 = 높이 가득.
 // 버튼·스틱은 남은 칸에 들어가는 가장 큰 크기 — 상한 = 390x844 설치 앱의 배율 4, 모자라면 간격 → 배율(기기 픽셀 1칸씩) 순으로 필요한 만큼만 줄인다.
 const ART_REF = 4;
+const FACE_CAP_PORTRAIT = ART_REF * 0.875;
+const DIR_CAP_PORTRAIT = ART_REF * 1.25;
 const PAD_SPACE = {
   portrait: { nice: { top: 10, bottom: 14, gap: 8 }, min: { top: 4, bottom: 4, gap: 4 } },
   landscape: { nice: { top: 8, bottom: 10, gap: 8 }, min: { top: 4, bottom: 4, gap: 2 } },
@@ -833,7 +875,8 @@ function layout() {
   const icon = 2;
   const face = landscape ? FACE.landscape : FACE.portrait;
   const four = Boolean(state.extra);
-  const faceH = face.h + (four ? faceUp(face, landscape) : 0);
+  const rs = el.pad.hasAttribute("data-rs");
+  const faceH = face.h + (four ? faceUp(face, landscape) : 0) + (rs ? ART.pillH + RS_GAP : 0);
   let art = state.art ?? 3;
   skin.resize({ art, icon, dpr });
   syncTools();
@@ -850,7 +893,7 @@ function layout() {
     pillH: parts.pills ? ART.pillH * u : 0,
     pillW: parts.pills ? ART.pillW * u : 0,
     faceW: faceWidth(face, u),
-    faceH: Math.round(face.h * u) + (four ? Math.round(faceUp(face, landscape) * u) : 0),
+    faceH: Math.round(face.h * u) + (four ? Math.round(faceUp(face, landscape) * u) : 0) + (rs ? rsBand(u) : 0),
   });
   // 배율 = 기기 픽셀 칸 수 / dpr — 기준 배율의 칸 수부터 1칸씩 내려 accept 를 만족하는 첫 값(그림은 늘 정수 기기 픽셀).
   const pickScale = (start, plan, accept) => {
@@ -875,9 +918,9 @@ function layout() {
   // 스틱·십자 패드는 버튼과 따로: 칸 폭(room)·스틱 줄 높이(bandH)가 허락하는 가장 큰 배율(상한 ART_REF, 버튼 배율 이상).
   let dirArt = null;
   let toolSize = 2;
-  const pickDir = (base, room, bandH) => {
+  const pickDir = (base, room, bandH, cap = ART_REF) => {
     if (!parts.dir) return art;
-    for (let k = skin.px(ART_REF); k > skin.px(art); k--) {
+    for (let k = skin.px(cap); k > skin.px(art); k--) {
       const du = k / dpr;
       const n = nudges(base, skin.px(art) / dpr, du);
       if (ART.stick * du <= room && ART.stick * du + 2 * Math.abs(n.dir) <= bandH) return du;
@@ -890,6 +933,7 @@ function layout() {
   let sw;
   let sh;
   root.setProperty("--lr-top", `${PAD_SPACE.landscape.nice.top}px`);
+  root.setProperty("--tool-edge", `${TOOL_PAD}px`);
   root.setProperty("--pill-bottom", `${PAD_SPACE.landscape.nice.bottom}px`);
   if (padOn && !landscape) {
     sw = innerW;
@@ -902,12 +946,12 @@ function layout() {
       return { s, need, rowW, fits: rowW + PAD_SIDE.min * 2 + PAD_GAP_X <= innerW && need(PAD_SPACE.portrait.min) <= padH };
     };
     let p;
-    [art, p] = pickScale(ART_REF, plan, (q) => q.fits);
+    [art, p] = pickScale(FACE_CAP_PORTRAIT, plan, (q) => q.fits);
     const fitted = fitSpace(PAD_SPACE.portrait, p.need, padH);
     const space = fitted && p.need(fitted) <= padH ? fitted : PAD_SPACE.portrait.min;
     const base = portraitBase(p.s, space);
     const bandH = padH - space.top - p.s.lrH - space.gap * 2 - p.s.pillH - space.bottom;
-    dirArt = pickDir(base, innerW - p.s.faceW - PAD_SIDE.min * 2 - PAD_GAP_X, bandH);
+    dirArt = pickDir(base, innerW - p.s.faceW - PAD_SIDE.min * 2 - PAD_GAP_X, bandH, DIR_CAP_PORTRAIT);
     const rowW = Math.max(p.rowW, (parts.dir ? ART.stick * dirArt : 0) + p.s.faceW);
     const side = clamp(Math.floor((innerW - rowW - 12) / 2), PAD_SIDE.min, PAD_SIDE.nice);
     nudge(base, p.s.u, dirArt);
@@ -968,6 +1012,11 @@ function layout() {
       };
       art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
       while (art > 2 && !fits(art)) art--;
+      if (!fits(art)) {
+        let k = skin.px(art);
+        while (k > skin.px(1) && !fits(k / dpr)) k--;
+        art = k / dpr;
+      }
       side = sideOf(art);
     }
     root.setProperty("--side", `${side}px`);
@@ -984,8 +1033,10 @@ function layout() {
   iconSizes(dpr);
   root.setProperty("--face-w", `${faceWidth(face, unit)}px`);
   const up = Math.round(faceUp(face, landscape) * unit);
-  root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
+  const band = rs ? rsBand(unit) : 0;
+  root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0) + band}px`);
   root.setProperty("--face-up", `${up}px`);
+  root.setProperty("--rs-band", `${band}px`);
   // 오버레이 C·D 묶음은 세로줄 전체 가운데에 놓이므로 R 줄(8 + R)과 START 줄(START + 10)의 차이 절반만큼 내려 둘 사이 가운데로.
   root.setProperty("--face-shift", `${((ART.shoulderH - ART.pillH) * unit + 8 - 10) / 2}px`);
   root.setProperty("--sw", `${sw}px`);
@@ -1256,11 +1307,11 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label";
-const INK_BLOCK = ".item__main, .field__text, .pack__label";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label";
+const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
-const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color], .cfg-nick";
+const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color], .cfg-nick, .field > .btn, .rs-num";
 
 function iconInkRows(name) {
   const cache = (state.iconInk ??= new Map());
@@ -2722,7 +2773,7 @@ function closeSheet({ fromHistory = false, force = false } = {}) {
 function renderSheet() {
   const name = state.sheet;
   if (!name) return;
-  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, help: renderHelp, info: renderInfo, doc: renderDoc, net: () => netWin.open && netWin.render() }[name];
+  const render = { library: renderLibrary, saves: renderSaves, quick: renderQuick, settings: renderSettings, rs: renderRs, help: renderHelp, info: renderInfo, doc: renderDoc, net: () => netWin.open && netWin.render() }[name];
   render?.();
 }
 
@@ -3883,6 +3934,7 @@ function renderSettings() {
         },
       ),
       switchField(t("web.padCombo"), t("web.padCombo.note"), p.padCombo !== false, (on) => savePrefs({ padCombo: on })),
+      rsSetting(),
       switchField(t("web.vibrate"), t(HAPTIC ? "web.vibrate.note" : "web.vibrate.unsupported"), p.vibrate, (on) => savePrefs({ vibrate: on }), { disabled: !HAPTIC }),
       switchField(t("web.vibrateDir"), t(HAPTIC ? "web.vibrateDir.note" : "web.vibrate.unsupported"), p.vibrateDir, (on) => savePrefs({ vibrateDir: on }), { disabled: !HAPTIC }),
       "wakeLock" in navigator
@@ -3966,6 +4018,282 @@ function renderSettings() {
     ),
   ];
   el.sheetBody.replaceChildren(...children.filter(Boolean));
+}
+
+const msOf = (frames) => Math.round(frames * FRAME_MS);
+const RS_ORDER = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "D", "L", "R", "SELECT", "START"];
+const RS_ARROWS = { UP: "↑", DOWN: "↓", LEFT: "←", RIGHT: "→" };
+
+function rsSetting() {
+  const book = rsBook();
+  const note = !state.game ? t("web.rs.noGame") : book.active < 0 ? t("macro.off") : t("web.rs.summary", { name: presetName(book, book.active), n: macroOf(book).length });
+  return field(t("web.rs"), note, button({ label: t("web.rs.edit"), icon: "pencil", disabled: !state.game, action: "cfg-rs", onClick: () => {
+    state.rsOpen = new Set();
+    openSheet("rs");
+  } }));
+}
+
+function rsSlots() {
+  const have = new Set(state.input.buttons.map((b) => b.role?.toUpperCase()).filter((key) => MACRO_KEYS.includes(key)));
+  return RS_ORDER.filter((key) => have.has(key));
+}
+
+function rsNumber(label, value, { min, onChange }) {
+  const input = make("input", "dialog__input rs-num__input");
+  input.type = "number";
+  input.inputMode = "numeric";
+  input.min = String(min);
+  input.max = String(MACRO_FRAMES_MAX);
+  input.step = "1";
+  input.value = String(value);
+  input.setAttribute("aria-label", label);
+  const row = field(label, t("macro.frames", { n: value, ms: msOf(value) }), make("div", "rs-num"));
+  const note = row.querySelector(".field__note");
+  const set = (next) => {
+    const n = clamp(Math.round(Number(next) || 0), min, MACRO_FRAMES_MAX);
+    input.value = String(n);
+    const text = t("macro.frames", { n, ms: msOf(n) });
+    if (note.textContent !== text) note.textContent = text;
+    onChange(n);
+  };
+  const less = button({ icon: "minus", kind: "tool", title: t("macro.less"), onClick: () => set(Number(input.value) - 1) });
+  const more = button({ icon: "plus", kind: "tool", title: t("macro.more"), onClick: () => set(Number(input.value) + 1) });
+  input.addEventListener("change", () => set(input.value));
+  row.querySelector(".rs-num").append(less, input, more);
+  return row;
+}
+
+async function removePreset(book, slot, done) {
+  const ok = await confirmDialog(t("macro.removeTitle", { name: presetName(book, slot) }), t("macro.removeText"), t("macro.removeOk"), true);
+  if (!ok) return;
+  book.slots[slot] = null;
+  if (book.active === slot) book.active = book.slots.findIndex(Boolean);
+  done();
+}
+
+const RS_GROUP = { A: "ab", B: "ab", C: "cd", D: "cd", L: "ss", R: "ss", SELECT: "ss", START: "ss", UP: "dir", DOWN: "dir", LEFT: "dir", RIGHT: "dir" };
+
+function presetBar(book, choose) {
+  const bar = make("div", "seg rs-pick");
+  bar.setAttribute("role", "radiogroup");
+  bar.setAttribute("aria-label", t("macro.presets"));
+  for (const slot of [-1, ...book.slots.keys()]) {
+    const node = make("button", "seg__btn rs-pick__btn");
+    node.type = "button";
+    node.setAttribute("role", "radio");
+    node.setAttribute("aria-checked", String(book.active === slot));
+    node.setAttribute("aria-selected", String(book.active === slot));
+    node.dataset.slot = String(slot);
+    const empty = slot >= 0 && !book.slots[slot];
+    if (empty) node.dataset.empty = "";
+    const name = slot < 0 ? t("macro.off") : empty ? t("macro.newPreset") : presetName(book, slot);
+    node.title = name;
+    node.setAttribute("aria-label", name);
+    node.append(slot < 0 ? iconNode("x") : make("span", "seg__label", String(slot + 1)));
+    node.addEventListener("click", () => {
+      if (book.active === slot) return;
+      if (empty) book.slots[slot] = { name: "", steps: [] };
+      choose(slot);
+    });
+    bar.append(node);
+  }
+  return bar;
+}
+
+function presetNameRow(book, changed) {
+  const slot = book.active;
+  const row = make("div", "rs-name");
+  const input = make("input", "dialog__input rs-name__input");
+  input.type = "text";
+  input.maxLength = MACRO_NAME_MAX;
+  input.value = presetName(book, slot);
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.enterKeyHint = "done";
+  input.setAttribute("aria-label", t("macro.rename"));
+  input.title = t("macro.rename");
+  const commit = () => {
+    const name = [...input.value.trim()].slice(0, MACRO_NAME_MAX).join("");
+    const keep = name === t("macro.presetName", { n: slot + 1 }) ? "" : name;
+    if (keep === book.slots[slot].name) {
+      input.value = presetName(book, slot);
+      return;
+    }
+    book.slots[slot].name = keep;
+    changed();
+  };
+  input.addEventListener("change", commit);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing) input.blur();
+  });
+  row.append(input, button({ icon: "trash", kind: "tool-danger", title: t("macro.removePreset"), action: "rs-remove", onClick: () => removePreset(book, slot, changed) }));
+  return row;
+}
+
+function renderRs() {
+  el.sheetTitle.textContent = t("macro.title");
+  if (!state.game) {
+    el.sheetBody.replaceChildren(group("", make("p", "note", t("web.rs.noGame"))));
+    el.sheetFoot.hidden = true;
+    return;
+  }
+  const book = rsBook();
+  const slots = rsSlots();
+  const opened = (state.rsOpen ??= new Set());
+  const rerender = () => {
+    const top = el.sheetBody.scrollTop;
+    renderRs();
+    el.sheetBody.scrollTop = top;
+  };
+  let paintReset = () => {};
+  const save = () => {
+    saveRs(book);
+    paintReset();
+  };
+  const restructure = () => {
+    saveRs(book);
+    rerender();
+  };
+  const choose = (slot) => {
+    book.active = slot;
+    opened.clear();
+    restructure();
+  };
+  const parts = [group("", make("p", "note", t("macro.lead"))), group(t("macro.presets"), presetBar(book, choose))];
+  const draft = book.active >= 0 ? book.slots[book.active].steps : null;
+  if (!draft) {
+    parts.push(group("", make("p", "note rs-off", t("macro.offNote"))));
+    el.sheetBody.replaceChildren(...parts);
+    el.sheetFoot.replaceChildren();
+    el.sheetFoot.hidden = true;
+    return;
+  }
+  parts[1].append(presetNameRow(book, restructure));
+  const totalNote = make("p", "note rs-total");
+  const paintTotal = () => {
+    const frames = macroFrameCount(draft);
+    const text = draft.length ? t("macro.total", { n: frames, ms: msOf(frames) }) : t("macro.empty");
+    if (totalNote.textContent !== text) totalNote.textContent = text;
+  };
+  const list = make("ol", "rs-steps");
+  const shiftOpen = (from) => {
+    const next = [...opened].filter((i) => i !== from).map((i) => (i > from ? i - 1 : i));
+    opened.clear();
+    for (const i of next) opened.add(i);
+  };
+  draft.forEach((step, index) => {
+    const card = make("li", "rs-step");
+    card.dataset.index = String(index);
+    const head = make("div", "rs-step__head");
+    const move = (to) => {
+      const [item] = draft.splice(index, 1);
+      draft.splice(to, 0, item);
+      const a = opened.has(index);
+      const b = opened.has(to);
+      opened.delete(index);
+      opened.delete(to);
+      if (a) opened.add(to);
+      if (b) opened.add(index);
+      restructure();
+    };
+    const last = index === draft.length - 1;
+    const toggle = make("button", "rs-step__toggle");
+    toggle.type = "button";
+    const titleLine = make("span", "rs-step__title");
+    const timeLine = make("span", "rs-step__time");
+    const text = make("span", "rs-step__text");
+    text.append(titleLine, timeLine);
+    toggle.append(iconNode("chevron"), text);
+    const paintHead = () => {
+      const title = t("macro.step", { n: index + 1 });
+      const time = last ? t("macro.timeSumLast", { hold: step.hold }) : t("macro.timeSum", { hold: step.hold, gap: step.gap });
+      if (titleLine.textContent !== title) titleLine.textContent = title;
+      if (timeLine.textContent !== time) timeLine.textContent = time;
+    };
+    paintHead();
+    const body = make("div", "rs-step__body");
+    const setOpen = (on) => {
+      if (on) opened.add(index);
+      else opened.delete(index);
+      body.hidden = !on;
+      toggle.setAttribute("aria-expanded", String(on));
+      toggle.title = t(on ? "macro.close" : "macro.open");
+    };
+    toggle.addEventListener("click", () => setOpen(body.hidden));
+    head.append(
+      toggle,
+      button({ icon: "arrowUp", kind: "tool", title: t("macro.up"), disabled: index === 0, onClick: () => move(index - 1) }),
+      button({ icon: "arrowDown", kind: "tool", title: t("macro.down"), disabled: last, onClick: () => move(index + 1) }),
+      button({ icon: "trash", kind: "tool-danger", title: t("macro.remove"), onClick: () => {
+        draft.splice(index, 1);
+        shiftOpen(index);
+        restructure();
+      } }),
+    );
+    const keys = make("div", "rs-keys");
+    keys.setAttribute("role", "group");
+    keys.setAttribute("aria-label", t("macro.keys"));
+    for (const key of slots) {
+      const chip = make("button", `rs-key${key.length > 1 && !RS_ARROWS[key] ? " rs-key--word" : ""}`);
+      chip.type = "button";
+      chip.dataset.key = key;
+      chip.dataset.group = RS_GROUP[key];
+      chip.setAttribute("aria-pressed", String(step.keys.includes(key)));
+      if (RS_ARROWS[key]) chip.setAttribute("aria-label", t(`key.${key}`));
+      chip.append(make("span", "rs-key__label", RS_ARROWS[key] ?? key));
+      chip.addEventListener("click", () => {
+        const on = !step.keys.includes(key);
+        step.keys = MACRO_KEYS.filter((k) => (k === key ? on : step.keys.includes(k)));
+        chip.setAttribute("aria-pressed", String(on));
+        paintHead();
+        save();
+      });
+      keys.append(chip);
+    }
+    body.append(keys, rsNumber(t("macro.hold"), step.hold, { min: 1, onChange: (n) => {
+      step.hold = n;
+      paintHead();
+      save();
+      paintTotal();
+    } }));
+    if (!last) body.append(rsNumber(t("macro.gap"), step.gap, { min: 0, onChange: (n) => {
+      step.gap = n;
+      paintHead();
+      save();
+      paintTotal();
+    } }));
+    setOpen(opened.has(index));
+    card.append(head, body);
+    list.append(card);
+  });
+  paintTotal();
+  const full = draft.length >= MACRO_STEPS_MAX;
+  parts.push(group(t("macro.steps"), list, totalNote, full ? make("p", "note", t("macro.max", { n: MACRO_STEPS_MAX })) : null));
+  const initial = (book.active === 0 ? normalizeMacro(state.input.rs) : null) ?? [];
+  const actions = make("div", "rs-actions");
+  actions.append(
+    button({ label: t("macro.add"), icon: "plus", kind: "primary", disabled: full, action: "rs-add", onClick: () => {
+      draft.push({ keys: [], hold: MACRO_HOLD, gap: MACRO_GAP });
+      opened.add(draft.length - 1);
+      restructure();
+      el.sheetBody.scrollTop = el.sheetBody.scrollHeight;
+    } }),
+    button({ label: t("macro.reset"), icon: "refresh", kind: "danger", action: "rs-reset", onClick: async () => {
+      if (!(await confirmDialog(t("macro.resetTitle", { name: presetName(book, book.active) }), t(initial.length ? "macro.resetTextDefault" : "macro.resetText"), t("macro.reset"), true))) return;
+      draft.splice(0, draft.length, ...initial);
+      opened.clear();
+      restructure();
+    } }),
+  );
+  const reset = actions.lastChild;
+  paintReset = () => {
+    const same = JSON.stringify(initial) === JSON.stringify(normalizeMacro(draft));
+    if (reset.disabled !== same) reset.disabled = same;
+  };
+  paintReset();
+  el.sheetBody.replaceChildren(...parts);
+  el.sheetFoot.replaceChildren(actions);
+  el.sheetFoot.hidden = false;
 }
 
 function keyName(code) {

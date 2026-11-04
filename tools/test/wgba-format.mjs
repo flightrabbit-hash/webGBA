@@ -265,6 +265,19 @@ const { screenOf } = await import("../../src-bundle/src/js/core/wgba-read.js");
   const p1 = gameDpadPatch(kovInput, { gameDpad: { other: "both" } }, "latest");
   const p2 = gameDpadPatch(kovInput, { gameDpad: { "local.kov115": "latest", other: "both" } }, "both");
   ok(p1.gameDpad["local.kov115"] === "latest" && p1.gameDpad.other === "both" && !("local.kov115" in p2.gameDpad) && p2.gameDpad.other === "both" && gameDpadPatch(gbaInput, {}, "both") === null, "gameDpadPatch: 설명서 값과 다르면 게임 id 에 기록, 같으면 삭제, 지정 없는 게임 = null(전체 설정)");
+  // RS 기본 입력 input.rs(결정 178·179)
+  const fight = { preset: "none", buttons: [{ id: "UP", role: "up", bit: 6 }, { id: "LEFT", role: "left", bit: 5 }, { id: "P", role: "a", bit: 0 }, { id: "K", role: "b", bit: 1 }, { id: "X", role: "extra", bit: 12 }] };
+  const rsGood = await manifestErrors({ input: { ...fight, rs: [{ buttons: ["P", "K"], hold: 6 }, { buttons: ["UP", "LEFT"], gap: 0 }] } });
+  const rsGba = await manifestErrors({ input: { preset: "gba", rs: [{ buttons: ["A", "B"] }] } });
+  ok(rsGood.length === 0 && rsGba.length === 0, "input.rs: 버튼 id 묶음·hold·gap 통과(preset none·gba)", [...rsGood, ...rsGba].join(" / "));
+  const rsBad = [];
+  for (const rs of [[], {}, [{ buttons: [] }], [{ buttons: ["P", "P"] }], [{ buttons: ["Q"] }], [{ buttons: ["X"] }], [{ buttons: ["P"], hold: 0 }], [{ buttons: ["P"], hold: 601 }], [{ buttons: ["P"], gap: -1 }], [{ buttons: ["P"], gap: 1.5 }], Array.from({ length: 33 }, () => ({ buttons: ["P"] }))]) {
+    const errors = await manifestErrors({ input: { ...fight, rs } });
+    if (!errors.some((e) => /input\.rs/.test(e))) rsBad.push(JSON.stringify(rs).slice(0, 40));
+  }
+  ok(rsBad.length === 0, "input.rs 규칙 밖 → 오류(빈 배열·객체·빈 묶음·겹친 id·없는 id·extra role·hold 0·601·gap -1·1.5·33단계)", rsBad.join(", "));
+  const rsIn = resolveInput({ ...manifestA, input: { ...fight, rs: [{ buttons: ["K", "P"], hold: 6 }, { buttons: ["LEFT", "UP"], gap: 0 }] } });
+  ok(JSON.stringify(rsIn.rs) === JSON.stringify([{ keys: ["A", "B"], hold: 6, gap: 3 }, { keys: ["UP", "LEFT"], hold: 3, gap: 0 }]) && resolveInput(manifestA).rs === null && resolveInput(null).rs === null && resolveInput({ ...manifestA, input: { preset: "gba", rs: [{ buttons: ["A", "B"] }] } }).gba, "resolveInput: rs = 자리 이름(A·B·UP…) 단계, 기본 누름·간격 3, 없음 = null, GBA 버튼 그대로면 gba 유지", JSON.stringify(rsIn.rs));
 }
 
 // 앱 읽기(wgba-read.js — exe·웹이 .wgba 를 여는 길, S2)

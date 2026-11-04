@@ -12,7 +12,7 @@ const TOOL_ICONS = {
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
 };
 
-const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select" };
+const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs" };
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
 
 const MENU_ART = [
@@ -67,6 +67,37 @@ const CD_COLORS = {
   contrast: "#b3001e",
 };
 
+const RS_TOKENS = ["--macro", "--run", "--on", "--global", "--danger"];
+const RS_SATURATION_MIN = 0.18;
+
+function hueOf(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (!d) return { h: 0, s: 0 };
+  const l = (max + min) / 2;
+  const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s: d / (1 - Math.abs(2 * l - 1)) };
+}
+
+export function rsColor(read, others) {
+  const taken = others.filter(Boolean).map(hueOf).filter((c) => c.s >= 0.15);
+  const apart = (h) => Math.min(...taken.map((c) => Math.min(Math.abs(c.h - h), 360 - Math.abs(c.h - h))), 360);
+  let best = null;
+  for (const token of RS_TOKENS) {
+    const face = read(token, "");
+    if (!face) continue;
+    const c = hueOf(face);
+    if (c.s < RS_SATURATION_MIN) continue;
+    const score = apart(c.h);
+    if (!best || score > best.score) best = { token, face, score };
+  }
+  if (!best) return {};
+  const inks = [`--ink-${best.token.slice(2)}`, "--bg-sunken", "--text"].map((name) => read(name, "")).filter(Boolean);
+  return { rs: best.face, rsInk: inks.find((ink) => PX.contrastRatio(best.face, ink) >= UI_INK_MIN) ?? inks[0], rsToken: best.token };
+}
+
 export function baseColors() {
   const style = getComputedStyle(document.documentElement);
   const read = (name, fallback) => hexOf(style.getPropertyValue(name)) || fallback;
@@ -78,13 +109,39 @@ export function baseColors() {
   const light = document.documentElement.dataset.tone === "light";
   const themeId = document.documentElement.dataset.theme ?? "";
   const cd = Object.hasOwn(CD_COLORS, themeId) ? CD_COLORS[themeId] : undefined;
+  const { rs, rsInk } = rsColor(read, [accent, cd]);
   return light
-    ? { body: mix(bg, "#000000", 0.08), button: mix(raised, "#000000", 0.1), accent, ink: text, outline: mix(text, line, 0.35), cd }
-    : { body: mix(bg, "#ffffff", 0.24), button: mix(raised, "#ffffff", 0.12), accent, ink: text, outline: mix(bg, "#000000", 0.6), cd };
+    ? { body: mix(bg, "#000000", 0.08), button: mix(raised, "#000000", 0.1), accent, ink: text, outline: mix(text, line, 0.35), cd, rs, rsInk }
+    : { body: mix(bg, "#ffffff", 0.24), button: mix(raised, "#ffffff", 0.12), accent, ink: text, outline: mix(bg, "#000000", 0.6), cd, rs, rsInk };
 }
 
 const UI_INK_MIN = 4.5;
 const ICON_LINE_MIN = 3;
+
+function fromHue(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return `#${[r, g, b].map((v) => Math.round((v + m) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function keyGroupFaces(faces, light) {
+  const hues = faces.map(hueOf).filter((c) => c.s >= 0.15).map((c) => c.h);
+  const out = [];
+  for (let n = 0; n < 2; n++) {
+    const sorted = [...hues].sort((a, b) => a - b);
+    let best = { at: 0, size: 360 };
+    if (sorted.length) {
+      best = { at: sorted.at(-1), size: sorted[0] + 360 - sorted.at(-1) };
+      for (let i = 1; i < sorted.length; i++) if (sorted[i] - sorted[i - 1] > best.size) best = { at: sorted[i - 1], size: sorted[i] - sorted[i - 1] };
+    }
+    const h = (best.at + best.size / 2) % 360;
+    hues.push(h);
+    out.push(fromHue(h, 0.62, light ? 0.36 : 0.62));
+  }
+  return out;
+}
 
 function uiColors(p) {
   const style = getComputedStyle(document.documentElement);
@@ -110,6 +167,11 @@ function uiColors(p) {
   put("acc", read("--accent") || p.base.accent, tokens("--ink-accent", "--text", "--bg-sunken"));
   put("dng", read("--danger") || p.base.accent, tokens("--ink-danger", "--ink-accent", "--bg-sunken", "--text"));
   put("warn", read("--global") || p.base.accent, tokens("--ink-global", "--bg-sunken", "--text"));
+  const keyInks = [...tokens("--bg-sunken", "--text", "--ink-accent"), "#ffffff", "#000000"];
+  const [ss, dir] = keyGroupFaces([p.ab, p.cd, p.rs], document.documentElement.dataset.tone === "light");
+  put("cd", p.cd, keyInks);
+  put("ss", ss, keyInks);
+  put("dir", dir, keyInks);
   out["--px-off"] = p.off;
   out["--px-off-hi"] = p.offHi;
   out["--px-off-side"] = p.offSide;
