@@ -2,7 +2,7 @@ import { CodeError, cleanCode } from "../core/net/lan.js";
 import { HOST_BACK_MS, SessionError } from "../core/net/session.js";
 import { CONNECTED_CLOSE_MS, WHY } from "../core/net/net-host.js";
 import { drawQr } from "../core/net/qr.js";
-import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, signalCompat, signalPurpose } from "../core/net/signal.js";
+import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, nonce, signalCompat, signalPurpose } from "../core/net/signal.js";
 import { pickText } from "../core/wgba-read.js";
 import { lang, t } from "../shell/i18n.js";
 import { seatRows } from "./board-panel.js";
@@ -18,6 +18,10 @@ const PIPS_MAX = 8;
 
 const SCAN_EDGE = 640;
 const BACK_SAVE_MS = 15000;
+
+const SEAT_MS = 600000;
+const validSeat = (r) =>
+  Boolean(r) && typeof r === "object" && /^\d{6}$/.test(r.room ?? "") && ["x", "rt", "key", "c", "p", "purpose"].every((key) => typeof r[key] === "string" && r[key]) && Number.isInteger(r.s) && r.s >= 1 && Number.isInteger(r.max) && Number.isFinite(r.at);
 
 const validBack = (r) =>
   Boolean(r) && typeof r === "object" && /^\d{6}$/.test(r.room ?? "") && ["x", "g", "t", "code", "c", "p", "purpose"].every((key) => typeof r[key] === "string" && r[key]) && Number.isInteger(r.i) && Number.isInteger(r.q) && Number.isInteger(r.max) && Number.isFinite(r.at) && Array.isArray(r.slots) && r.slots.length > 0;
@@ -198,6 +202,10 @@ export class NetWindow {
     this.parking = false;
     this.hostWaitShown = false;
     this.fromHost = false;
+    this.seatC = "";
+    this.seatTick = 0;
+    this.seatSaved = "";
+    this.seatRoom = "";
   }
 
   show(request) {
@@ -260,12 +268,100 @@ export class NetWindow {
       }, BACK_SAVE_MS);
   }
 
+
+  seatRecord() {
+    const g = this.roomGuest;
+    const s = this.net.session;
+    const r = this.net.request;
+    if (!g?.rejoin || !s || s.closed || s.host || !s.rejoinKey || s.slot < 1 || !r || !this.seatC) return null;
+    return { c: this.seatC, p: signalPurpose(r.purpose.id), purpose: r.purpose.id, min: r.min, max: s.max, room: g.room, x: g.x, rt: g.rt, s: s.slot, key: s.rejoinKey, hb: s.hostBack ? 1 : 0, hn: s.members.get(0)?.nick ?? "", at: Date.now() };
+  }
+
+  keepSeat(snap) {
+    const store = this.kit.seatStore;
+    if (!store) return;
+    const live = Boolean(snap.active && snap.role === "join" && snap.connected && this.roomGuest?.rejoin);
+    if (!live) {
+      clearInterval(this.seatTick);
+      this.seatTick = 0;
+      if (this.seatRoom && !snap.active) store.clear(this.seatRoom);
+      if (!snap.active) {
+        this.seatRoom = "";
+        this.seatSaved = "";
+      }
+      return;
+    }
+    const rec = this.seatRecord();
+    if (!rec) return;
+    const sig = JSON.stringify({ ...rec, at: 0 });
+    if (sig !== this.seatSaved) {
+      this.seatSaved = sig;
+      this.seatRoom = rec.room;
+      store.save(rec);
+    }
+    if (!this.seatTick)
+      this.seatTick = setInterval(() => {
+        const next = this.seatRecord();
+        if (next) store.save(next);
+      }, BACK_SAVE_MS);
+  }
+
+  async offerSeat(seq) {
+    const store = this.kit.seatStore;
+    const rec = store?.load();
+    if (!rec) return false;
+    const left = validSeat(rec) ? rec.at + SEAT_MS - Date.now() : 0;
+    if (!(left > 0)) {
+      store.clear(rec.room);
+      return false;
+    }
+    if (!this.net.game || !this.net.config?.rejoin || !this.signal) return false;
+    const c = await signalCompat(this.net.compat);
+    if (seq !== this.backSeq || c !== rec.c || this.net.active || !this.net.offerBack(rec)) return false;
+    this.back = { ...rec, guest: true };
+    this.backTimer = setTimeout(() => this.expireBack(), left);
+    this.net.log?.("info", `이전 방 ${rec.room} 자리 ${rec.s} 로 돌아갈 수 있음`);
+    this.kit.openWindow?.();
+    if (this.open && this.screen === "choose") this.render();
+    return true;
+  }
+
+  async returnSeat() {
+    const rec = this.back;
+    if (!rec?.guest || this.busy) return;
+    if (!this.signal) return this.setError(errorText(new SignalError("offline")));
+    this.busy = true;
+    this.setProgress(t("net.back.going"));
+    if (this.refs.backGo) this.refs.backGo.disabled = true;
+    try {
+      const session = await this.net.rejoinSeat(rec);
+      this.seatC = rec.c;
+      this.net.useRelay(this.signal, () => ({ room: rec.room, x: rec.x, rt: rec.rt }));
+      this.roomGuest = new RoomGuest({ signal: this.signal, session, room: rec.room, x: rec.x, rt: rec.rt, log: this.net.log ?? (() => {}) });
+      this.joinedRoom = rec.room;
+      clearTimeout(this.backTimer);
+      this.backTimer = 0;
+      this.back = null;
+      this.busy = false;
+      this.clearError();
+      this.stay = true;
+      session.helperCall("lost");
+      if (this.open) this.go("rejoin");
+      this.update();
+    } catch (error) {
+      this.busy = false;
+      this.net.drop();
+      this.setError(errorText(error));
+      if (this.refs.backGo) this.refs.backGo.disabled = false;
+    }
+  }
+
   async offerBack() {
     const seq = ++this.backSeq;
     this.clearBack();
     const store = this.kit.backStore;
     const rec = store?.load();
-    if (!rec) return false;
+    if (!rec) return this.offerSeat(seq);
     const left = validBack(rec) ? rec.at + HOST_BACK_MS - Date.now() : 0;
     if (!(left > 0)) {
       store.clear(rec.room);
@@ -293,7 +389,7 @@ export class NetWindow {
   expireBack() {
     const rec = this.back;
     this.clearBack();
-    if (rec) this.kit.backStore?.clear(rec.room);
+    if (rec) (rec.guest ? this.kit.seatStore : this.kit.backStore)?.clear(rec.room);
     if (this.open && this.screen === "choose") this.render();
   }
 
@@ -305,17 +401,29 @@ export class NetWindow {
     clearTimeout(this.backTimer);
     this.backTimer = 0;
     this.back = null;
+    if (rec.guest) {
+      this.kit.seatStore?.clear(rec.room);
+      this.signal?.rejoinPost({ room: rec.room, x: rec.x, rt: rec.rt, s: rec.s, u: nonce(), k: "b", key: rec.key }).catch(() => {});
+      return;
+    }
     this.kit.backStore?.clear(rec.room);
     this.signal?.close({ room: rec.room, x: rec.x, g: rec.g, i: rec.i, t: rec.t }).catch(() => {});
   }
 
   backLeft() {
-    return this.back ? this.back.at + HOST_BACK_MS - Date.now() : 0;
+    return this.back && !this.back.guest ? this.back.at + HOST_BACK_MS - Date.now() : 0;
   }
 
   backSection() {
     const k = this.kit;
     const rec = this.back;
+    if (rec.guest) {
+      const rows = this.infoRows([["people", t("net.seat.host", { nick: rec.hn || "1P" })]]);
+      this.refs.backLeft = null;
+      const go = k.button({ label: k.label("goBack"), icon: "back", kind: "warn", big: true, block: true, action: "net-back", onClick: () => this.returnSeat(), disabled: this.busy });
+      this.refs.backGo = go;
+      return this.section(t("net.back.title"), { sub: rec.room, children: [k.note(t("net.seat.lead")), rows.list, go], kind: "back" });
+    }
     const rows = this.infoRows([
       ["people", t("net.back.users", { n: rec.slots.length })],
       ["history", t("net.back.left", { time: clockText(this.backLeft()) })],
@@ -495,6 +603,7 @@ export class NetWindow {
 
   apply(snap) {
     this.keepBack(snap);
+    this.keepSeat(snap);
     if (this.roomHost && (!snap.active || snap.role !== "make")) {
       this.roomHost.close();
       this.roomHost = null;
@@ -1414,6 +1523,7 @@ export class NetWindow {
       await this.signal.answer({ x: got.x, q: got.q, t: got.t, d: made.code });
       this.joinHint = hintOf(made.sym, made.peerSym);
       if (got.rt && session.rejoinGame) this.roomGuest = new RoomGuest({ signal: this.signal, session, room, x: got.x, rt: got.rt, log: this.net.log ?? (() => {}) });
+      this.seatC = info.c;
       this.joinInfo = got;
       this.joinedRoom = room;
       this.busy = false;

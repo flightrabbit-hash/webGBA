@@ -309,6 +309,11 @@ const netKit = {
     save: (rec) => savePrefs({ netBack: rec }),
     clear: (room) => (!room || state.prefs.netBack?.room === room ? savePrefs({ netBack: null }) : undefined),
   },
+  seatStore: {
+    load: () => state.prefs.netSeat ?? null,
+    save: (rec) => savePrefs({ netSeat: rec }),
+    clear: (room) => (!room || state.prefs.netSeat?.room === room ? savePrefs({ netSeat: null }) : undefined),
+  },
   textKey: (key) => (NET_EXE_TEXT.has(key) ? key.replace(/^net\./, "net.exe.") : key),
 };
 

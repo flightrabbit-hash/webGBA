@@ -328,6 +328,23 @@ export class NetSession {
     return [...this.members.entries()].filter(([slot, m]) => slot && m.key).map(([s, m]) => ({ s, nick: m.nick, key: m.key }));
   }
 
+  seat(rec) {
+    if (this.host || this.opened || this.closed || !Number.isInteger(rec?.s) || rec.s < 1 || rec.s >= SLOTS || !RK_RE.test(rec.key ?? "")) return false;
+    const now = this.now();
+    this.slot = rec.s;
+    this.rejoinKey = rec.key;
+    this.hostBack = rec.hb === 1;
+    this.max = Math.max(2, Math.min(SLOTS, rec.max | 0 || this.max));
+    this.members.set(0, { nick: cleanNick(rec.hn, "1P"), lastSeen: now, rtt: null, stalled: true });
+    this.members.set(rec.s, { nick: this.nick, lastSeen: now, rtt: null });
+    this.opened = true;
+    this.rejoining = true;
+    this.rejoinSince = now;
+    this.log("info", `이전 방 자리 ${rec.s} 로 돌아가기 시작`);
+    this.changed();
+    return true;
+  }
+
   // 앱을 닫는 방장: BYE 대신 K_AWAY 를 보내 유저가 세션을 끝내지 않고 방장을 기다리게 한다
   park() {
     if (!this.host || this.closed || !this.rejoinable || this.count < 2) return false;
@@ -1208,16 +1225,20 @@ export class NetSession {
       return;
     }
     if (kind === K_WELCOME) {
-      if (link.ready) return;
+      if (link.ready || link.held) return;
       const w = readCtl(b);
       if (!w || !Number.isInteger(w.slot) || w.slot < 1 || w.slot >= SLOTS || !Array.isArray(w.members)) return this.close(WHY.LOST);
+      link.held = [];
       const pair = await (link.pair ?? selectedPair(link.pc).catch(() => null));
       if (this.closed || this.link !== link) return;
       if (!this.pairOk(pair)) {
         this.log("warn", `고른 후보 쌍이 같은 와이파이 밖 경로(${pair.local}/${pair.remote}) — 끊음`);
         return this.close(WHY.NO_NETWORK);
       }
-      if (link.rejoin) return this.rejoined(link, w, pair);
+      if (link.rejoin) {
+        this.rejoined(link, w, pair);
+        return this.replayHeld(link);
+      }
       this.slot = w.slot;
       this.max = Math.max(2, Math.min(SLOTS, w.max | 0 || this.max));
       this.rejoinKey = typeof w.rk === "string" && RK_RE.test(w.rk) ? w.rk : "";
@@ -1232,14 +1253,17 @@ export class NetSession {
       this.watchRelay(link);
       this.emit(EV.OPEN, this.slot, this.count);
       this.changed();
-      return;
+      return this.replayHeld(link);
     }
     if (kind === K_REJECT) {
       const r = readCtl(b);
       const why = [WHY.INCOMPATIBLE, WHY.FULL, WHY.NO_NETWORK, WHY.LOST].includes(r?.why) ? r.why : WHY.INCOMPATIBLE;
       return this.close(why);
     }
-    if (!link.ready) return;
+    if (!link.ready) {
+      if (link.held) link.held.push(b);
+      return;
+    }
     if (kind === K_ICE) {
       this.onGuestIce(link, readCtl(b));
       return;
@@ -1278,6 +1302,13 @@ export class NetSession {
       return;
     }
     if (kind === K_BYE) this.close(WHY.HOST_LEFT);
+  }
+
+  replayHeld(link) {
+    const held = link.held;
+    link.held = null;
+    if (!held || this.closed || this.link !== link || !link.ready) return;
+    for (const b of held) this.onGuestMessage(link, b);
   }
 
   rejoined(link, w, pair) {
