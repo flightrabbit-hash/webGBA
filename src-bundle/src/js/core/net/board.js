@@ -1,3 +1,5 @@
+import { pickText } from "../lang-text.js";
+
 export const BOARD_BYTES = 400;
 export const BOARD_HEAD = 16;
 export const ROW_BYTES = 48;
@@ -25,13 +27,6 @@ export function cleanText(text, max) {
     .trim();
   const chars = Array.from(value);
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : value;
-}
-
-export function pickLang(value, lang) {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
-  const own = value[lang] ?? value.en ?? Object.values(value).find((v) => typeof v === "string");
-  return typeof own === "string" ? own : "";
 }
 
 const isText = (value) => typeof value === "string" || (value && typeof value === "object" && !Array.isArray(value) && Object.values(value).some((v) => typeof v === "string"));
@@ -213,14 +208,14 @@ function cellOf(col, raw, lang) {
     return { type: "bar", value: p.value, max: p.max, ratio: p.ratio, tone };
   }
   if (col.type === "number") {
-    const prefix = cleanText(pickLang(col.prefix, lang), 4);
-    const suffix = cleanText(pickLang(col.suffix, lang), 4);
-    return { type: "number", text: `${prefix}${raw}${suffix}`, label: prefix || suffix ? "" : cleanText(pickLang(col.name, lang), 12) };
+    const prefix = cleanText(pickText(col.prefix, lang), 4);
+    const suffix = cleanText(pickText(col.suffix, lang), 4);
+    return { type: "number", text: `${prefix}${raw}${suffix}`, label: prefix || suffix ? "" : cleanText(pickText(col.name, lang), 12) };
   }
   if (col.type === "rank") return { type: "rank", text: raw >= 1 && raw <= 99 ? rankText(raw, lang) : "" };
   if (col.type === "status") {
     const label = raw >= 1 ? col.labels?.[raw - 1] : null;
-    return { type: "status", text: label ? cleanText(pickLang(label.name, lang), 8) : "", tone: label?.tone ?? "", dimRow: Boolean(label?.dimRow) };
+    return { type: "status", text: label ? cleanText(pickText(label.name, lang), 8) : "", tone: label?.tone ?? "", dimRow: Boolean(label?.dimRow) };
   }
   return { type: "none" };
 }
@@ -256,7 +251,7 @@ export function boardView({ config = null, board = null, selfRows = null, member
   let rows;
   if (source) {
     rows = source.map((r, i) => {
-      const base = r.slot !== null && r.slot !== undefined ? human(r.slot) : { human: false, slot: null, seat: "AI", name: cleanText(r.nameLabel ? pickLang(config.names[r.nameLabel - 1], lang) : r.name, NAME_SHOW) || "AI", me: false, host: false, conn: null };
+      const base = r.slot !== null && r.slot !== undefined ? human(r.slot) : { human: false, slot: null, seat: "AI", name: cleanText(r.nameLabel ? pickText(config.names[r.nameLabel - 1], lang) : r.name, NAME_SHOW) || "AI", me: false, host: false, conn: null };
       const cells = r.values ? columns.map((col, c) => cellOf(col, r.values[c] | 0, lang)) : columns.map(() => ({ type: "empty" }));
       const dim = Boolean(r.dim) || cells.some((c) => c.dimRow && c.text);
       return { ...base, key: base.human ? `p${base.slot}` : `a${i}`, dim, mark: Boolean(r.mark), cells, raw: r.values };
@@ -268,14 +263,14 @@ export function boardView({ config = null, board = null, selfRows = null, member
     }
   } else rows = members.map((m) => ({ ...human(m.slot), key: `p${m.slot}`, dim: false, mark: false, cells: [] }));
   const shown = columns.map((col, c) => col.type !== "none" && (col.type !== "status" || rows.some((r) => r.cells[c]?.text)));
-  const caption = config && board?.caption && source ? cleanText(fillCaption(pickLang(config.captions[board.caption - 1], lang), board.args), 24) : "";
+  const caption = config && board?.caption && source ? cleanText(fillCaption(pickText(config.captions[board.caption - 1], lang), board.args), 24) : "";
   return {
     plain: !source,
-    columns: columns.map((col, c) => ({ type: col.type, shown: shown[c], name: cleanText(pickLang(col.name, lang), 12) })),
+    columns: columns.map((col, c) => ({ type: col.type, shown: shown[c], name: cleanText(pickText(col.name, lang), 12) })),
     rows,
     caption,
     final: Boolean(board?.final),
-    mark: config && source && rows.some((r) => r.mark) ? cleanText(pickLang(config.mark, lang), 8) : "",
+    mark: config && source && rows.some((r) => r.mark) ? cleanText(pickText(config.mark, lang), 8) : "",
     people: members.length,
     ai: rows.filter((r) => !r.human).length,
   };

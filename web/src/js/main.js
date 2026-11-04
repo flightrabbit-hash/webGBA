@@ -1070,10 +1070,10 @@ function visibleAlpha(node, style) {
   return Math.max(24, Math.min(230, Math.ceil((INK_VISIBLE / diff) * 255)));
 }
 
-function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
+function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = false) {
   const scale = Math.max(1, window.devicePixelRatio || 1);
   const frac = Math.round((((baseY * scale) % 1) + 1) % 1 * 4) / 4;
-  const key = `${font}|${alpha}|${scale}|${frac}|${text}`;
+  const key = `${font}|${alpha}|${scale}|${frac}|${span ? "span|" : ""}${text}`;
   const cache = (state.glyphCache ??= new Map());
   if (cache.has(key)) return cache.get(key);
   const above = Math.ceil(metrics.fontBoundingBoxAscent) + 4;
@@ -1104,6 +1104,20 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0) {
     }
   }
   const result = first < 0 ? { top: -metrics.actualBoundingBoxAscent, bottom: metrics.actualBoundingBoxDescent } : { top: first / scale - baseline, bottom: (last + 1) / scale - baseline };
+  if (span) {
+    let from = -1;
+    let to = -1;
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        if (data[(y * width + x) * 4 + 3] > alpha) {
+          if (from < 0) from = x;
+          to = x;
+          break;
+        }
+      }
+    }
+    Object.assign(result, from < 0 ? { left: 0, right: metrics.width } : { left: from / scale - 4, right: (to + 1) / scale - 4 });
+  }
   cache.set(key, result);
   return result;
 }
@@ -1738,7 +1752,7 @@ const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|w
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
 async function startHosted(host, meta, input = null, net = null, kind = null) {
   const saveId = saveIdOf(meta);
-  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), author: meta.author ?? "", build: meta.build ?? "", kind };
+  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), names: meta.gameId ? meta.title : null, author: meta.author ?? "", build: meta.build ?? "", kind };
   context.game = meta.name;
   state.quick.played = 0;
   holds.delete("user");
@@ -2397,19 +2411,19 @@ function spineLines(raw, w, h, pad) {
     rest = chars.slice(cut).join("").trimStart();
   }
   if (!lines.length) return [];
-  const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line)));
+  const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line), INK_ALPHA, 0, true));
   const top = Math.min(...inks.map((ink, i) => i * SPINE_LINE + ink.top));
   const bottom = Math.max(...inks.map((ink, i) => i * SPINE_LINE + ink.bottom));
   const lift = baselineOffset(style, SPINE_LINE);
-  const left = (text) => pad + Math.floor((length - widthOf(text)) / 2);
+  const device = Math.max(1, window.devicePixelRatio || 1);
+  const left = (i) => Math.floor(((h - (inks[i].right - inks[i].left)) / 2 - inks[i].left) * device) / device;
   if (lines.length === 1) {
     const base = Math.floor((w - (bottom - top)) / 2) - top;
-    return [{ text: lines[0], top: Math.round(base - lift), left: left(lines[0]) }];
+    return [{ text: lines[0], top: Math.round(base - lift), left: left(0) }];
   }
-  const device = Math.max(1, window.devicePixelRatio || 1);
   const exact = (w - (bottom - top)) / 2 - top - lift;
   const shift = Math.round(exact * device) / device - Math.round(exact);
-  return lines.map((text, i) => ({ text, top: Math.round(exact) + i * SPINE_LINE, left: left(text), shift }));
+  return lines.map((text, i) => ({ text, top: Math.round(exact) + i * SPINE_LINE, left: left(i), shift }));
 }
 
 async function loadRoms() {
@@ -3919,7 +3933,7 @@ function renderInfo() {
   };
   paintAudio();
   el.sheetBody.replaceChildren(
-    ...(game ? [group(t("info.game", { name: `${game.title} ${game.version}` }), make("p", "note info__line", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
+    ...(game ? [group(t("info.game", { name: `${pickText(game.names, i18n.lang()) || game.title} ${game.version}` }), make("p", "note info__line", t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) })))] : []),
     group("", make("p", "info__line", `webGBA ${BUILD.version} · ${BUILD.hash}`), audioLine, make("p", "note", t("web.info.about")), make("p", "note", t("web.privacy")), make("p", "note", LICENSE_LINE), blog),
     group(t("info.openSource"), make("p", "note", t("info.mgba")), make("p", "note", t("info.mgbaSource")), make("p", "note", t("info.others")), links),
   );

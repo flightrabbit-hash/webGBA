@@ -4,6 +4,7 @@
 // (롬팩 그림은 망가져도 그 그림만 빼고 연다 — 규격 6장). 문장은 t() 키를 코드에 그대로 적는다(i18n-keys 검사).
 import { t } from "../shell/i18n.js";
 import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND, KIND_NAME, LIMITS, NEEDS, parseAspect, ratioOf, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
+import { pickText } from "./lang-text.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -86,12 +87,7 @@ export async function readWgba(bytes) {
 /** code 조각 → 컴파일한 모듈(wasm 머리를 붙여서). */
 export const compileCode = (code) => WebAssembly.compile(codeWasm(code));
 
-/** 설명서의 글(글 하나 또는 언어별 객체) → 보일 글: 사용자 언어 → en → 첫 값. */
-export function pickText(value, lang = "ko") {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  return value[lang] ?? value.en ?? Object.values(value).find((v) => typeof v === "string") ?? "";
-}
+export { pickText };
 
 /** 이 webGBA 가 아직 못 여는 게임이면 그 까닭 { code, … }, 열 수 있으면 null. ② 자체 JS·240×160 이 아닌 화면도 연다(S4). */
 export function supportProblem(manifest, has = HOST_HAS) {

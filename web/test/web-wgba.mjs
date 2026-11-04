@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { readWgba } from "../../src-bundle/src/js/core/wgba-read.js";
+import { pickText, readWgba } from "../../src-bundle/src/js/core/wgba-read.js";
 
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
@@ -28,8 +28,9 @@ const GAME_ID = "com.flightrabbit.rapid";
 // 기대 롬 SHA-1·게임 이름은 --new 파일에서 읽는다(저장소에 롬 SHA-1·고정 이름을 두지 않음 — check-no-rom, 이름이 바뀌어도 시험이 따라감)
 const NEW_WGBA = await readWgba(new Uint8Array(fs.readFileSync(opt.new)));
 const ROM_SHA1 = NEW_WGBA.romSha1;
-const GAME_NAME = typeof NEW_WGBA.manifest.name === "string" ? NEW_WGBA.manifest.name : NEW_WGBA.manifest.name?.en ?? "";
-const SHORT_NAME = typeof NEW_WGBA.manifest.shortName === "string" ? NEW_WGBA.manifest.shortName : NEW_WGBA.manifest.shortName?.en ?? "";
+// 시험 화면 언어 = 기본(ko). 언어별 이름은 규격 순서(화면 언어 → en → ko → ja)
+const GAME_NAME = pickText(NEW_WGBA.manifest.name, "ko");
+const SHORT_NAME = pickText(NEW_WGBA.manifest.shortName, "ko");
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });

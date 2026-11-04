@@ -347,14 +347,22 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `wgba` | 정수 | manifest 규격 번호. 현재 `1` |
 | `id` | 문자열 | **게임 id — 변경하지 않는 값.** 소문자 역도메인(`io.github.someone.mygame`), 점 1개 이상, 64자 이하. 웹 버전은 세이브·퀵슬롯을, Windows 앱은 게임별 키 설정을 이 id 기준으로 관리합니다(Windows 앱의 세이브는 연 파일 옆 `<파일명>.sav`). 새 버전에서도 같은 id를 사용하세요 |
 | `version` | 문자열 | **게임 버전**, 유의적 버전 `x.y.z`(예 `1.2.0`, 테스트 버전 `1.3.0-beta.1`도 가능, `+` 접미사는 지원하지 않음). 콘텐츠가 변경될 때 올립니다 |
-| `name` | 문자열 또는 객체 | 게임 이름(48자 이하). 언어별 `{"en": "…", "ko": "…", "ja": "…"}`도 가능. 호스트는 사용자 언어 → `en` → 첫 값 순서로 선택 |
+| `name` | 문자열 또는 객체 | 게임 이름(라이브러리·첫 화면 최근 목록·창 제목 등, 칸마다 48자 이하). 문자열 = 모든 언어에 같은 이름. 언어별 = ① `en`(영어) ② `ko`(한국어) ③ `ja`(일본어) 칸이 있는 객체(아래 "언어별 글") |
 | `runtime` | 문자열 | `"webapi"`(①) 또는 `"script"`(②) |
+
+**언어별 글**: `name`·`shortName`·버튼 `label`·멀티플레이 글(`purposes[].name`·상태 메뉴) 등 "문자열 또는 객체"인 글은 같은 규칙입니다.
+
+- 객체 칸 = ① `"en"` 영어 · ② `"ko"` 한국어 · ③ `"ja"` 일본어. 그 밖의 언어 코드 칸도 작성할 수 있습니다.
+- 표시 순서: 현재 화면 언어 칸 → 없으면 `en` → `ko` → `ja` → 그 밖의 칸(작성한 순서). 빈 칸(`""`·공백만)은 없는 칸으로 봅니다.
+- 필요한 칸만 작성하면 됩니다. 예 `{"en": "Demon Front", "ko": "데몬프론트"}`는 일본어 화면에서 `Demon Front`를 표시합니다.
+- 한 줄 문자열(`"name": "Demon Front"`)은 모든 언어에 그대로 표시합니다(기존 .wgba 그대로 동작).
+- 사용자가 웹 버전 라이브러리에서 이름을 바꾼 게임은 바꾼 이름을 표시합니다.
 
 #### 3.2 선택 필드
 
 | 필드 | 타입·기본값 | 설명 |
 | --- | --- | --- |
-| `shortName` | 문자열·객체 | 롬팩 옆면 이름, 라벨 그림이 없을 때 라벨에 사용하는 짧은 이름(16자 이하 권장). 없으면 `name` |
+| `shortName` | 문자열·객체 | 롬팩 옆면 이름, 라벨 그림이 없을 때 라벨에 사용하는 짧은 이름(칸마다 16자 이하 권장). `name`과 같은 언어 칸·표시 순서. 없거나 모든 칸이 비면 `name` |
 | `description` | 문자열·객체 | 소개(500자 이하) |
 | `author` | 문자열 | 제작자. 정보 화면에 표시 |
 | `license` · `homepage` · `contact` | 문자열 | 라이선스(SPDX 이름 권장 `MIT`), `https://` 주소(다른 주소는 오류), 연락처. 정보 화면 표시용으로 예약한 필드(현재 webGBA는 표시하지 않음) |
@@ -380,7 +388,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
   "wgba": 1,
   "id": "io.github.someone.pixelquest",
   "version": "1.2.0",
-  "name": { "en": "Pixel Quest", "ko": "픽셀 퀘스트" },
+  "name": { "en": "Pixel Quest", "ko": "픽셀 퀘스트", "ja": "ピクセルクエスト" },
   "runtime": "webapi",
   "author": "someone",
   "license": "MIT",
@@ -530,7 +538,7 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 | --- | --- |
 | `id` | 버튼 이름(`A`, `JUMP` …, 영문·숫자·`_`·`-` 16자, 중복 불가) |
 | `role` | 위치: `up` `down` `left` `right` · 앞면 `a` `b` `c` `d`(최대 4개) · `l` `r` `l2` `r2` · `start` `select` · `extra`. 기본 키·게임패드·터치 위치를 이 값으로 결정. `extra` 외에는 role 한 개에 버튼 한 개 |
-| `label` | 화면에 표시할 문자열(문자열 또는 언어별, 6자 이하 권장, 8자까지). 없으면 `id` |
+| `label` | 화면에 표시할 문자열(문자열 또는 언어별 — 3.1 "언어별 글"과 같은 순서, 6자 이하 권장, 8자까지). 없으면 `id` |
 | `bit` | **① 필수**: `Web_RunFrame(keys)`의 비트 번호 0~31(눌림 = 1) |
 | `code` | **② 필수**: 게임 JS가 수신하는 `KeyboardEvent.code`(예 `"Space"`, `"KeyZ"`). 호스트는 `key`·`keyCode`도 맞춰 전달 |
 | `keys` | 기본 키보드 배치(`KeyboardEvent.code` 4개까지). 없으면 `role`의 기본값 |
@@ -1198,7 +1206,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 항목: 이름 규칙·중복 없음, 순서대로이고 파일 범위 안, 해당 위치에 `webgba.<이름>` section이 있음(code는 wasm section 경계와 일치하고 내부에 `webgba.*` 없음), 종류가 이름과 일치, 방식 0이면 압축 해제 크기 = 저장 길이, SHA-256 일치, 필수 flag인데 모르는 종류 없음, 한 개만 있어야 하는 chunk가 한 개
 - TOC에 없는 `webgba.*` section → 경고
 - `rom`이 있으면 맨 끝, WGRM 헤더·크기·SHA-1 일치(`--quick`이면 압축 해제 생략), manifest `rom.sha1`이 다르면 경고
-- manifest: 64KB 이하 JSON, `wgba` 1, `id` 규칙, `version`이 `x.y.z`, `name`(48자), `runtime`, 모르는 `needs` 없음, `homepage`는 `https://`, `screen`·`save`·`input.preset`·`input.dpad`·`cart.color` 값, `display`는 객체·`display.aspect`는 `"정수:정수"`(W·H 1~1024, 비율 1:4~4:1), 버튼 id 규칙·중복, role 중복, `shortName` 16자 초과 시 경고
+- manifest: 64KB 이하 JSON, `wgba` 1, `id` 규칙, `version`이 `x.y.z`, `name`(문자열 또는 언어 칸마다 1~48자, 칸 이름과 함께 오류 표시, `en`·`ko`·`ja` 칸이 하나도 없거나 공백뿐인 칸은 경고), `runtime`, 모르는 `needs` 없음, `homepage`는 `https://`, `screen`·`save`·`input.preset`·`input.dpad`·`cart.color` 값, `display`는 객체·`display.aspect`는 `"정수:정수"`(W·H 1~1024, 비율 1:4~4:1), 버튼 id 규칙·중복, role 중복, `shortName` 칸이 16자 초과면 경고. `info`는 `name`·`shortName`을 화면 언어(en·ko·ja)마다 표시할 글로 출력(다른 칸을 쓰면 `ja → en …`)
 - ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31이고 중복 없음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 실행되는데(`rom.required: false`) `webgba.v1`이 없으면 경고, `js` chunk가 있으면 경고(사용하지 않음)
 - 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고)
 - ②: `js` chunk 있음, `entry.style`, `entry.js`가 `"js"`가 아니면 경고, 버튼별 `code`, 가져온 공유 메모리(스레드) 없음
@@ -1232,7 +1240,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 
 [먼저 나에게 확인할 항목]
 - 게임 wasm 파일, 함께 빌드된 JS(emscripten Glue 등) 유무, 데이터 파일 목록, 롬처럼 게임 메모리에 배치할 큰 데이터 유무
-- 게임 이름(언어별 가능), 게임 id(소문자 역도메인, 예 io.github.내아이디.게임이름 — 한 번 정하면 변경하지 않음), 버전(x.y.z)
+- 게임 이름(영어·한국어·일본어 언어별 가능), 게임 id(소문자 역도메인, 예 io.github.내아이디.게임이름 — 한 번 정하면 변경하지 않음), 버전(x.y.z)
 - 화면 크기, 사용하는 버튼과 각 버튼의 의미, 세이브 유무, 마우스 사용 여부
 - 롬팩 그림 유무(라벨 48×32·앞면 54×44·옆면 18×46의 같은 배수 1~4배, PNG 또는 무손실 WebP — 모두 선택), 롬팩 몸통 색(#RRGGBB)
 - 포함할 데이터에 대한 권리 보유 여부(없으면 포함하지 않는다)
@@ -1253,8 +1261,8 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 크기 상한: 파일 512MB, manifest 64KB, 롬팩 그림 한 개 256KB(64KB 권장), JS 16MB, 롬 32MB, TOC 항목 256개.
 
 [manifest webgba.manifest — UTF-8 JSON, BOM 없음]
-- 필수: "wgba": 1, "id"(소문자 역도메인, 점 1개 이상, 64자 이하), "version"("x.y.z", 테스트 버전 "-beta.1" 가능), "name"(문자열 또는 {"en":…,"ko":…}, 48자 이하), "runtime"("webapi" 또는 "script").
-- 선택: shortName(16자), description, author, license, homepage(https://만), contact, build, needs(["pointer","net","keyboard","state"] 중), screen{width,height(1~1024, 기본 240·160), scale("fit"·"integer")}, display{aspect("W:H" 표시 비율, 예 "4:3" — 화면 버퍼와 다르면 늘려 표시)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad("latest"·"opposite"·"both" 방향 동시 입력 기본값)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. 모르는 필드는 무시되고, 규격에 없는 값이 반드시 필요하면 "x-"로 시작하는 이름을 사용한다.
+- 필수: "wgba": 1, "id"(소문자 역도메인, 점 1개 이상, 64자 이하), "version"("x.y.z", 테스트 버전 "-beta.1" 가능), "name"(문자열 또는 {"en":…,"ko":…,"ja":…}, 칸마다 48자 이하 — 호스트는 화면 언어 칸 → en → ko → ja 순서로 있는 칸을 표시, 필요한 칸만 작성), "runtime"("webapi" 또는 "script").
+- 선택: shortName(16자, name과 같은 언어 칸), description, author, license, homepage(https://만), contact, build, needs(["pointer","net","keyboard","state"] 중), screen{width,height(1~1024, 기본 240·160), scale("fit"·"integer")}, display{aspect("W:H" 표시 비율, 예 "4:3" — 화면 버퍼와 다르면 늘려 표시)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad("latest"·"opposite"·"both" 방향 동시 입력 기본값)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. 모르는 필드는 무시되고, 규격에 없는 값이 반드시 필요하면 "x-"로 시작하는 이름을 사용한다.
 - runtime "webapi"인데 롬 chunk가 없으면 반드시 "rom": {"required": false} (없으면 webGBA가 롬 파일 선택을 요청한다).
 - cart.label/front/spine은 {"chunk":"cart.label|cart.front|cart.spine","format":"png|webp","width":…,"height":…}를 그림과 같게 작성하고, 포함하지 않는 그림의 항목은 제외하며, 앞면에 labelAt [x,y](기본 [3k,5k]), 옆면에 textArea [x,y,w,h](호스트가 짧은 이름을 세로로 표시, 없으면 문자열 없음)를 설정한다.
 - 현재 webGBA는 screen.fps·audio·state.use를 조회하지 않는다(항상 약 59.7275fps). needs에 "net"이 포함되면 현재 webGBA는 열지 않는다.

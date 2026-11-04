@@ -8,6 +8,7 @@
 import { Inflate, deflate } from "../vendor/pako.js";
 import { concat, customSection, leb, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECTION } from "./wgbp.js";
 import { checkBoard } from "./net/board.js";
+import { pickTextKey, TEXT_LANGS } from "./lang-text.js";
 import { readIceServers } from "./net/ice.js";
 
 export const SECTION_PREFIX = "webgba.";
@@ -593,7 +594,23 @@ export function updateAction({ version: oldVersion, build: oldBuild }, { version
   return compareVersions(newVersion, oldVersion) < 0 ? "older" : "update";
 }
 
-const textOk = (value, max) => (typeof value === "string" ? value.length >= 1 && value.length <= max : value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0 && Object.values(value).every((v) => typeof v === "string" && v.length >= 1 && v.length <= max));
+function textProblems(key, value, max) {
+  const one = (at, text) => {
+    if (typeof text !== "string") return [`${at} 이 글이 아닙니다`];
+    if (!text.length) return [`${at} 이 비었습니다`];
+    const count = [...text].length;
+    return count > max ? [`${at} 이 ${max}자를 넘습니다(${count}자)`] : [];
+  };
+  if (value === undefined || value === null) return { errors: [`${key} 이 없습니다`], warnings: [] };
+  if (typeof value === "string") return { errors: one(key, value), warnings: [] };
+  if (typeof value !== "object" || Array.isArray(value)) return { errors: [`${key} 는 글 또는 언어별 객체({"en": …, "ko": …, "ja": …})입니다`], warnings: [] };
+  const keys = Object.keys(value);
+  if (!keys.length) return { errors: [`${key} 에 언어 칸이 없습니다`], warnings: [] };
+  const errors = keys.flatMap((lang) => one(`${key}.${lang}`, value[lang]));
+  const warnings = keys.filter((lang) => typeof value[lang] === "string" && value[lang].length && !value[lang].trim()).map((lang) => `${key}.${lang} 이 공백뿐이라 다음 언어 칸을 씁니다`);
+  if (!errors.length && !TEXT_LANGS.some((lang) => keys.includes(lang))) warnings.push(`${key} 에 en·ko·ja 칸이 없어 ${pickTextKey(value)} 칸을 씁니다`);
+  return { errors, warnings };
+}
 
 /** 설명서만 보는 검사(모듈 없이). errors·warnings 에 글을 더한다. */
 export function checkManifest(m, errors, warnings) {
@@ -601,8 +618,13 @@ export function checkManifest(m, errors, warnings) {
   if (m.wgba !== 1) errors.push(`wgba(규격 번호)가 1 이 아닙니다: ${m.wgba}`);
   if (typeof m.id !== "string" || m.id.length > 64 || !ID_RE.test(m.id)) errors.push(`id 가 규칙 밖입니다(소문자 역도메인, 점 1개 이상, 64자 이하): ${m.id}`);
   if (typeof m.version !== "string" || !VERSION_RE.test(m.version)) errors.push(`version 이 x.y.z(유의적 버전)가 아닙니다: ${m.version}`);
-  if (!textOk(m.name, 48)) errors.push("name 이 없거나 48자를 넘습니다");
-  if (m.shortName !== undefined && !textOk(m.shortName, 16)) warnings.push("shortName 은 16자 이하 권장");
+  const name = textProblems("name", m.name, 48);
+  errors.push(...name.errors);
+  warnings.push(...name.warnings);
+  if (m.shortName !== undefined) {
+    const short = textProblems("shortName", m.shortName, 16);
+    warnings.push(...short.errors, ...short.warnings);
+  }
   if (!RUNTIMES.includes(m.runtime)) errors.push(`runtime 이 webapi·script 가 아닙니다: ${m.runtime}`);
   if (m.homepage !== undefined && !/^https:\/\//.test(m.homepage)) errors.push("homepage 는 https:// 주소만 받습니다");
   for (const need of m.needs ?? []) if (!NEEDS.includes(need)) errors.push(`이 검사기가 모르는 needs: ${need}`);
