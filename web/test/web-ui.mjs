@@ -1365,7 +1365,7 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     await page.waitForTimeout(400);
     const run = await libraryLayout(page);
     const runButtons = await page.$$eval(".lib__btns .btn", (nodes) => nodes.map((node) => node.dataset.action));
-    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 종료(btn--danger)·이름·지우기 · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && Boolean(await page.$('.lib__btns .btn--danger[data-action="close-game"]')) && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
+    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 종료(btn--warn)·이름·지우기(btn--danger) · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && Boolean(await page.$('.lib__btns .btn--warn[data-action="close-game"]')) && Boolean(await page.$('.lib__btns .btn--danger[data-action="delete"]')) && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
     await measure(page, `${key}|running`, [".lib__btns .btn", ".pack__chip"]);
     if (LIB_SHOTS[`${key}|running`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|running`]) });
     const runBase = await frame();

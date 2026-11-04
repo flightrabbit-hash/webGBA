@@ -2745,7 +2745,7 @@ function fillCard(key) {
         act(t("web.lib.resume"), "play", "resume", () => openFromLibrary(rom), "primary"),
         act(t("web.saves"), "floppy", "saves", () => openGameSaves(rom)),
         act(t("menu.reset"), "refresh", "reset", () => (closeSheet(), resetGame())),
-        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet()), "danger"),
+        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet()), "warn"),
         act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
         act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
       ]
