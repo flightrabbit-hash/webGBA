@@ -652,7 +652,7 @@ picking it pulls it out and shows the **front + label**. A `.wgba` may contain t
 | File size | 64KB or less each recommended (over 256KB the picture is not used) |
 | Drawing | Hosts draw only nearest-neighbour at integer scale (never shrink or smooth). Drawing at grid size and saving at 2× is recommended |
 | Label position | `cart.front.labelAt: [x, y]` — top-left of the label inside the front picture (front picture pixels). Default `[3k, 5k]`. The label (48k×32k) must fit inside the front |
-| Spine name area | `cart.spine.textArea: [x, y, width, height]` — spine picture pixels. The host writes `shortName` (or `name`) here vertically. Absent means no text (the name is painted on the spine picture) |
+| Spine name area | `cart.spine.textArea: [x, y, width, height]` — spine picture pixels. The host writes `shortName` (or `name`) here vertically. If the area is one colour (paper), the web library repaints that paper as a cartridge-colour strip (`cart.color` at 50% opacity over white) and writes the name in black. Absent means no text (the name is painted on the spine picture) |
 
 ```json
 "cart": {

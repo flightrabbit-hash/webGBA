@@ -244,6 +244,49 @@ export function cartModel(rom) {
   return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk, shape };
 }
 
+const BAND_ALPHA = 0.5;
+const BAND_SHARE = 0.6;
+const BAND_NEAR = 48;
+const bandCache = new WeakMap();
+
+function spineBand(model, bitmap) {
+  const key = `${model.color}|${model.textArea.join()}`;
+  let byKey = bandCache.get(bitmap);
+  if (!byKey) bandCache.set(bitmap, (byKey = new Map()));
+  if (byKey.has(key)) return byKey.get(key);
+  const canvas = canvasOf(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const [ax, ay, aw, ah] = model.textArea;
+  const image = ctx.getImageData(ax, ay, aw, ah);
+  const { data } = image;
+  const count = new Map();
+  for (let o = 0; o < data.length; o += 4) {
+    if (data[o + 3] < 255) continue;
+    const rgb = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
+    count.set(rgb, (count.get(rgb) ?? 0) + 1);
+  }
+  let paper = 0;
+  let most = 0;
+  for (const [rgb, n] of count) if (n > most) [paper, most] = [rgb, n];
+  let band = null;
+  if (most >= aw * ah * BAND_SHARE) {
+    const base = [paper >> 16, (paper >> 8) & 255, paper & 255];
+    const color = rgbOf(model.color) ?? BLACK;
+    const tone = WHITE.map((v, i) => v + (color[i] - v) * BAND_ALPHA);
+    for (let o = 0; o < data.length; o += 4) {
+      if (data[o + 3] < 255) continue;
+      const delta = [0, 1, 2].map((i) => data[o + i] - base[i]);
+      if (delta.some((d) => Math.abs(d) > BAND_NEAR)) continue;
+      for (let i = 0; i < 3; i++) data[o + i] = Math.max(0, Math.min(255, Math.round(tone[i] + delta[i])));
+    }
+    ctx.putImageData(image, ax, ay);
+    band = canvas;
+  }
+  byKey.set(key, band);
+  return band;
+}
+
 const imageCache = new Map();
 
 /** 롬팩 그림 바이트(store cart:<id>:<부분>)를 풀어 ImageBitmap 으로. 실패한 부분은 빠짐. read(part) → Uint8Array|null. */
@@ -314,13 +357,17 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(18k×46k). 이름 자리는 model.textArea. */
+/** 옆면 canvas(18k×46k). 이름 자리는 model.textArea, band = 이름 자리 종이를 롬팩 색 띠로 바꿔 칠함. */
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  if (images.spine) ctx.drawImage(images.spine, 0, 0);
-  else blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
-  return canvas;
+  if (!images.spine) {
+    blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
+    return { canvas, band: false };
+  }
+  const band = model.textArea ? spineBand(model, images.spine) : null;
+  ctx.drawImage(band ?? images.spine, 0, 0);
+  return { canvas, band: Boolean(band) };
 }
