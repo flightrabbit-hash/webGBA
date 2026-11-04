@@ -14,6 +14,7 @@ import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
 import { DIR_MODES, DIRS, VirtualPad, hapticKind } from "./pad.js";
+import { guardBounce, needsBounceGuard } from "./bounce.js";
 import { extractRom, ZIP_MAX, zipEntries, zipFile, zipGames, zipReadAsync, ZipError } from "./core/zip.js";
 import { openCountLoader, shownNames, whyText, zipPicker } from "./app/zip-pick.js";
 import { Skin } from "./skin.js";
@@ -4142,6 +4143,7 @@ function wire() {
   });
   for (const name of ["fullscreenchange", "webkitfullscreenchange"]) document.addEventListener(name, () => (syncControls(), setTimeout(layout, 60)));
   document.addEventListener("gesturestart", (event) => event.preventDefault());
+  if (needsBounceGuard()) guardBounce();
   document.addEventListener("dragstart", (event) => {
     if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) event.preventDefault();
   });
