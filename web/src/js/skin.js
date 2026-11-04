@@ -212,8 +212,9 @@ export class Skin {
     return shift;
   }
 
-  resize({ art, icon, dpr }) {
+  resize({ art, icon, dpr, dirArt = art }) {
     this.art = art;
+    this.dirArt = dirArt;
     this.icon = icon;
     this.dpr = dpr;
     this.redraw();
@@ -243,7 +244,7 @@ export class Skin {
   }
 
   drawDir() {
-    const scale = this.scaleOf(this.art);
+    const scale = this.scaleOf(this.dirArt ?? this.art);
     if (this.mode === "dpad") {
       const pressed = [...this.down].filter((name) => STICK_NAMES[name]).map((name) => STICK_NAMES[name]);
       this.paint(this.dpad, PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette: this.palette }));

@@ -197,6 +197,12 @@ button {
   gap: 4px;
 }
 
+.bar__side {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+}
+
 .tool {
   display: inline-flex;
   flex: none;
@@ -328,21 +334,17 @@ button {
   height: 36px;
 }
 
-.tool--menu {
-  display: none;
-}
-
 .bar {
   position: relative;
 }
 
-body[data-layout="portrait"] .tool--menu {
+.tool--menu {
   display: inline-flex;
 }
 
 /* 세로 햄버거 창: 늘 레이아웃·합성 층에 두고 transform·opacity 만 바꾼다(열 때 레이아웃을 다시 계산하지 않게).
    data-open = "open" 열림 / "closing" 닫는 중(끝나면 JS 가 지움) / 없음 = 숨김(visibility). 여닫기 시간·곡선은 같은 값. */
-body[data-layout="portrait"] .bar__group--files {
+.bar__group--files {
   position: absolute;
   top: calc(100% + var(--gap-1));
   left: var(--gap-2);
@@ -363,11 +365,11 @@ body[data-layout="portrait"] .bar__group--files {
   will-change: transform, opacity;
 }
 
-body[data-layout="portrait"] .bar__group--files[data-open] {
+.bar__group--files[data-open] {
   visibility: visible;
 }
 
-body[data-layout="portrait"] .bar__group--files[data-open="open"] {
+.bar__group--files[data-open="open"] {
   opacity: 1;
   transform: translate3d(0, 0, 0);
   pointer-events: auto;
@@ -884,8 +886,8 @@ body[data-layout="portrait"] .pad {
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: "l r" "dpad face" "sel start";
   align-items: center;
-  padding: 10px 14px 14px;
-  row-gap: 8px;
+  padding: var(--pad-top, 10px) var(--pad-side, 14px) var(--pad-bottom, 14px);
+  row-gap: var(--pad-gap, 8px);
 }
 
 body[data-layout="portrait"][data-pad="off"] .pad {
@@ -905,11 +907,13 @@ body[data-layout="portrait"] .key--r {
 body[data-layout="portrait"] .dpad {
   grid-area: dpad;
   justify-self: start;
+  top: var(--dir-nudge, 0px);
 }
 
 body[data-layout="portrait"] .face {
   grid-area: face;
   justify-self: end;
+  top: var(--face-nudge, 0px);
 }
 
 body[data-layout="portrait"] .key--select {
@@ -924,39 +928,53 @@ body[data-layout="portrait"] .key--start {
   margin-left: 10px;
 }
 
-body[data-layout="portrait"] .pad[data-fit="compact"] {
-  grid-template-rows: repeat(4, auto);
-  grid-template-areas: "l r" "dpad face" "sel face" "start face";
-  align-content: center;
-  align-items: start;
-}
-
-body[data-layout="portrait"] .pad[data-fit="compact"] .face {
-  align-self: start;
-}
-
-body[data-layout="portrait"] .pad[data-fit="compact"] .key--select,
-body[data-layout="portrait"] .pad[data-fit="compact"] .key--start {
-  justify-self: start;
-  margin: 0 0 0 var(--pill-indent, 0px);
-}
-
 body[data-layout="landscape"] .app {
   grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas: "l bar r" "dpad stage face" "sel stage start";
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "tl stage tr" "l stage r" "dpad stage face" "sel stage start";
 }
 
 body[data-layout="landscape"][data-pad="off"] .app {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: var(--tool-side) minmax(0, 1fr) var(--tool-side);
   grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "bar" "stage";
+  grid-template-areas: "tl stage tr" ". stage .";
 }
 
 body[data-layout="landscape"] .bar {
+  display: contents;
+}
+
+body[data-layout="landscape"] .bar__side,
+body[data-layout="landscape"] .bar__group--right {
+  display: grid;
+  grid-auto-flow: column;
+  gap: var(--gap-1);
   justify-content: center;
-  gap: 16px;
-  padding: 3px 8px;
+  align-self: start;
+  padding-top: var(--tool-top, 8px);
+}
+
+body[data-layout="landscape"] .bar__side {
+  position: relative;
+  grid-area: tl;
+}
+
+body[data-layout="landscape"] .bar__group--right {
+  grid-area: tr;
+}
+
+body[data-layout="landscape"] .bar__group--quick {
+  display: contents;
+}
+
+body[data-layout="landscape"][data-tools="inline"] .tool--menu {
+  display: none;
+}
+
+body[data-layout="landscape"][data-tools="inline"] .bar__group--files {
+  display: contents;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 body[data-layout="landscape"][data-pad="on"] .pad {
@@ -969,26 +987,26 @@ body[data-layout="landscape"] .zone {
 
 body[data-layout="landscape"] .zone--left {
   grid-column: 1;
-  grid-row: 1 / 4;
+  grid-row: 1 / -1;
 }
 
 body[data-layout="landscape"] .zone--right {
   grid-column: 3;
-  grid-row: 1 / 4;
+  grid-row: 1 / -1;
 }
 
 body[data-layout="landscape"] .key--l {
   grid-area: l;
   justify-self: start;
   align-self: start;
-  margin: 8px 0 0 10px;
+  margin: var(--lr-top, 8px) 0 0 10px;
 }
 
 body[data-layout="landscape"] .key--r {
   grid-area: r;
   justify-self: end;
   align-self: start;
-  margin: 8px 10px 0 0;
+  margin: var(--lr-top, 8px) 10px 0 0;
 }
 
 body[data-layout="landscape"] .dpad {
@@ -1001,29 +1019,42 @@ body[data-layout="landscape"] .face {
   place-self: center;
 }
 
-/* 가로 + C·D: 네 버튼 묶음을 오른쪽 세로줄 전체(R ~ START) 가운데로 — 기능 버튼 막대 높이와 관계없이.
+/* 오버레이 + C·D: 네 버튼 묶음을 오른쪽 세로줄 전체(R ~ START) 가운데로 — 기능 버튼 막대 높이와 관계없이.
    --face-shift = (R 줄 − START 줄) / 2 (main.js layout). */
-body[data-layout="landscape"] .pad[data-extra] .face {
+body[data-pad="overlay"] .pad[data-extra] .face {
   grid-row: 1 / 4;
   top: var(--face-shift);
+}
+
+body[data-layout="landscape"][data-pad="on"] .dpad,
+body[data-layout="landscape"][data-pad="on"] .face {
+  grid-row: 1 / -1;
+}
+
+body[data-layout="landscape"][data-pad="on"] .dpad {
+  top: calc(var(--band-shift, 0px) + var(--dir-nudge, 0px));
+}
+
+body[data-layout="landscape"][data-pad="on"] .face {
+  top: calc(var(--band-shift, 0px) + var(--face-nudge, 0px));
 }
 
 body[data-layout="landscape"] .key--select {
   grid-area: sel;
   place-self: center;
-  margin-bottom: 10px;
+  margin-bottom: var(--pill-bottom, 10px);
 }
 
 body[data-layout="landscape"] .key--start {
   grid-area: start;
   place-self: center;
-  margin-bottom: 10px;
+  margin-bottom: var(--pill-bottom, 10px);
 }
 
 body[data-pad="overlay"] .app {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: var(--tool-side) minmax(0, 1fr) var(--tool-side);
   grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "bar" "stage";
+  grid-template-areas: "tl stage tr" ". stage .";
 }
 
 body[data-pad="overlay"] .pad {
@@ -2124,11 +2155,6 @@ body[data-layout="landscape"] .lib__shelf {
   overflow-wrap: anywhere;
   -webkit-user-select: text;
   user-select: text;
-}
-
-/* 퀵슬롯(빠른 저장·불러오기) */
-body[data-layout="landscape"] .bar__group--quick {
-  margin-left: -12px;
 }
 
 .seg {
@@ -3797,7 +3823,7 @@ body[data-board="side"] .app {
 
 body[data-layout="landscape"][data-board="inline"] .app {
   grid-template-columns: var(--side) minmax(0, 1fr) var(--mpb-w) var(--side);
-  grid-template-areas: "l bar bar r" "dpad stage board face" "sel stage board start";
+  grid-template-areas: "tl stage board tr" "l stage board r" "dpad stage board face" "sel stage board start";
 }
 
 body[data-layout="landscape"][data-board="inline"] .zone--right {

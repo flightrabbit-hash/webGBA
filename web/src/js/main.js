@@ -635,6 +635,7 @@ function applyDirInput() {
   el.dpad.dataset.mode = mode;
   skin.setMode(mode);
   pad.invalidate();
+  if (document.documentElement.dataset.ready) layout();
 }
 
 function applyPlayerPrefs() {
@@ -710,7 +711,7 @@ function showNow(node) {
 }
 
 const FRAME_ROWS = 3;
-const ART = { stick: 37, shoulderH: 17, pillH: 15, pillW: 31, roundH: 27 };
+const ART = { stick: 37, shoulderH: 17, pillH: 15, pillW: 31, roundH: 27, roundW: 23 };
 const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, h: 27 * 1.75 } };
 // C·D 가 있으면 A·B 묶음 위에 같은 모양 한 단(C 는 A 위, D 는 B 위): A·B 를 faceUp 만큼 내린다
 // (C 아래 ↔ A 위 사이 = D 아래 ↔ B 위 사이 = faceUp − 버튼 높이).
@@ -720,8 +721,91 @@ const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, 
 // 원으로 약 7.3칸이지만 픽셀 계단 때문에 실제 약 6.4칸이라, 그보다 넓지 않은 가장 큰 정수 줄 수(시험 web-ui C·D 가 잼).
 const FACE_UP_LANDSCAPE = 25 + 6;
 const faceUp = (face, landscape) => (landscape ? FACE_UP_LANDSCAPE : 2 * (face.h - ART.roundH));
+// 배율이 기기 픽셀 단위(소수 CSS px)일 때 반올림한 묶음 폭이 버튼 두 개 폭보다 좁아 좌우 버튼이 겹치지 않게.
+const faceWidth = (face, unit) => Math.max(Math.round(face.w * unit), ART.roundW * 2 * unit);
 
 const boardSide = (width) => Math.min(BOARD_SIDE_MAX, Math.floor(width * BOARD_SIDE_SHARE));
+
+// 게임 화면이 먼저(사용자 2026-11-04 "스크린을 채울 수 있는 영역까지 채운 뒤 버튼을 알맞은 크기로"): 세로 = 가로 폭 가득, 가로 = 높이 가득.
+// 버튼·스틱은 남은 칸에 들어가는 가장 큰 크기 — 상한 = 390x844 설치 앱의 배율 4, 모자라면 간격 → 배율(기기 픽셀 1칸씩) 순으로 필요한 만큼만 줄인다.
+const ART_REF = 4;
+const PAD_SPACE = {
+  portrait: { nice: { top: 10, bottom: 14, gap: 8 }, min: { top: 4, bottom: 4, gap: 4 } },
+  landscape: { nice: { top: 8, bottom: 10, gap: 8 }, min: { top: 4, bottom: 4, gap: 2 } },
+};
+const PAD_SIDE = { nice: 14, min: 8 };
+const PAD_GAP_X = 8;
+
+// 가로는 기능 버튼 줄을 없애고 좌측(파일·퀵슬롯)·우측(빨리 감기·소리·설정·전체 화면) 묶음을 양옆 칸 위에 둔다(사용자 2026-11-04
+// "툴바를 좌/우로 나누어 터치패드 상단과 버튼 상단에 각각 배치하면 스크린을 더 크게").
+const TOOL_GAP = 4;
+const TOOL_TOP = 8;
+const TOOL_PAD = 8;
+// 기능 버튼 그림 = 아이콘 버튼 22칸 + 옆면·그림자 3칸(pixel-ui iconButton), 세로 기본 배율 2 = 44x50.
+const TOOL_ART = { w: 22, h: 25 };
+// 가로 기능 버튼 최소 폭(CSS px): WCAG 2.2 2.5.8 최소 24px 보다 넉넉하게, 엄지로 누르는 휴대폰 기준 32px.
+const TOOL_MIN = 32;
+
+// 가로 좌·우 묶음은 한 줄(사용자 "두 줄로 표현하는건 보기 안좋음"). 먼저 버튼 배율(기기 픽셀 1칸씩, 상한 2)을 줄여 다 넣고,
+// 폭이 TOOL_MIN 아래가 될 때만 덜 쓰는 버튼을 햄버거 메뉴로(사용자 "너무 작아서 클릭이 안될정도가 되었을 때만 햄버거로").
+function toolPlan(side, dpr) {
+  const fit = (n) => Math.min(skin.px(2), Math.floor(((side - TOOL_PAD * 2 - (n - 1) * TOOL_GAP) / (TOOL_ART.w * n)) * dpr)) / dpr;
+  const plan = (size, slots) => ({ size, slots, h: TOOL_TOP + TOOL_ART.h * size });
+  const all = Math.max(4, TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length);
+  if (TOOL_ART.w * fit(all) >= TOOL_MIN) return plan(fit(all), 0);
+  for (let n = all - 1; n > 2; n--) if (TOOL_ART.w * fit(n) >= TOOL_MIN) return plan(fit(n), n);
+  return plan(fit(2), 2);
+}
+
+const toolSideMin = () => TOOL_MIN * 2 + TOOL_GAP + TOOL_PAD * 2;
+
+// 우측 묶음 우선순위(앞이 먼저 보임). 메뉴(좌측 첫 칸)·설정·멀티플레이(인원 배지)·전체 화면은 늘 보이게 — 우측이 넘치면 좌측 빈칸으로.
+const TOOL_RIGHT_ORDER = ["btnSettings", "btnNet", "btnFull", "btnFast", "btnSound"];
+const TOOL_KEEP = new Set(["btnSettings", "btnNet", "btnFull"]);
+let toolHomes = null;
+
+// slots = 0(세로, 또는 가로에서 모두 들어감)이면 처음 자리로. 자리가 같으면 DOM 을 건드리지 않는다(잉크 맞춤 MutationObserver 를 깨우지 않게).
+function placeTools(slots) {
+  state.toolSlots = slots;
+  const mode = slots ? "menu" : "inline";
+  if (document.body.dataset.tools !== mode) document.body.dataset.tools = mode;
+  if (!slots && document.body.dataset.layout === "landscape" && state.menuOpen) setMenu(false, { instant: true });
+  toolHomes ??= [...el.bar.querySelectorAll(".bar__group--quick .tool, .bar__group--right .tool")].map((node) => [node, node.parentElement]);
+  const side = el.bar.querySelector(".bar__side");
+  const target = new Map(toolHomes);
+  if (slots) {
+    const shown = (id) => !$(id).hidden;
+    let left = slots - 1;
+    if (shown("btnNet")) target.set(el.btnQuick, el.menuPanel);
+    else left--;
+    for (const id of TOOL_RIGHT_ORDER.filter(shown).slice(slots)) {
+      const keep = TOOL_KEEP.has(id) && left > 0;
+      if (keep) left--;
+      target.set($(id), keep ? side : el.menuPanel);
+    }
+  }
+  const want = new Map();
+  for (const [node] of toolHomes) want.set(target.get(node), [...(want.get(target.get(node)) ?? []), node]);
+  for (const parent of new Set([...toolHomes.map(([, home]) => home), side, el.menuPanel])) {
+    const list = want.get(parent) ?? [];
+    const have = [...parent.children].filter((node) => target.has(node));
+    if (list.length !== have.length || list.some((node, i) => node !== have[i])) for (const node of list) parent.append(node);
+  }
+}
+
+function padParts() {
+  const slots = touchSlots();
+  return { lr: slots.has("L") || slots.has("R"), pills: slots.has("START") || slots.has("SELECT"), dir: DIRS.some((name) => slots.has(name)) };
+}
+
+// need 는 간격 값마다 늘어나는 1차식이라, min·nice 사이를 같은 비율로 좁힌 값 중 avail 에 들어가는 가장 넓은 것.
+function fitSpace(space, need, avail) {
+  const lo = need(space.min);
+  const hi = need(space.nice);
+  if (lo > avail) return null;
+  const share = hi <= avail || hi === lo ? 1 : (avail - lo) / (hi - lo);
+  return Object.fromEntries(Object.keys(space.nice).map((key) => [key, Math.floor(space.min[key] + share * (space.nice[key] - space.min[key]))]));
+}
 
 function layout() {
   const height = window.innerHeight;
@@ -739,7 +823,8 @@ function layout() {
   else delete body.dataset.board;
   document.documentElement.style.setProperty("--mpb-w", `${side}px`);
   body.dataset.pad = overlay ? "overlay" : padOn ? "on" : "off";
-  if (landscape && (state.menuOpen || el.menuPanel.dataset.open)) setMenu(false, { instant: true });
+  if (state.layoutWas !== body.dataset.layout && (state.menuOpen || el.menuPanel.dataset.open)) setMenu(false, { instant: true });
+  state.layoutWas = body.dataset.layout;
   const dpr = window.devicePixelRatio || 1;
   const inset = safeInsets();
   const innerW = Math.max(0, width - inset.l - inset.r);
@@ -750,72 +835,130 @@ function layout() {
   const four = Boolean(state.extra);
   const faceH = face.h + (four ? faceUp(face, landscape) : 0);
   let art = state.art ?? 3;
-  let fit = "rows";
   skin.resize({ art, icon, dpr });
   syncTools();
   const ring = skin.px(2);
   const edge = (ring * FRAME_ROWS) / dpr;
   const sideEdge = landscape ? edge * 2 : 0;
   const [aw, ah] = state.screen?.aspect ?? [3, 2];
+  const parts = padParts();
+  const sizes = (u) => ({
+    u,
+    dir: parts.dir ? ART.stick * u : 0,
+    lrH: parts.lr ? ART.shoulderH * u : 0,
+    lrW: parts.lr ? ART.stick * u : 0,
+    pillH: parts.pills ? ART.pillH * u : 0,
+    pillW: parts.pills ? ART.pillW * u : 0,
+    faceW: faceWidth(face, u),
+    faceH: Math.round(face.h * u) + (four ? Math.round(faceUp(face, landscape) * u) : 0),
+  });
+  // 배율 = 기기 픽셀 칸 수 / dpr — 기준 배율의 칸 수부터 1칸씩 내려 accept 를 만족하는 첫 값(그림은 늘 정수 기기 픽셀).
+  const pickScale = (start, plan, accept) => {
+    const least = Math.max(1, skin.px(1));
+    for (let k = skin.px(start); k >= least; k--) {
+      const p = plan(k / dpr);
+      if (p && accept(p)) return [k / dpr, p];
+    }
+    return [least / dpr, plan(least / dpr)];
+  };
+  // 스틱은 그림자가 없고 십자 패드·버튼은 아래 그림자 2칸이 상자에 들어 있어, 상자 대신 잉크 가운데를 맞추는 보정(base = 잉크 영역 가운데 − 상자 가운데).
+  const nudges = (base, u, du = u) => ({ dir: base + (el.dpad.dataset.mode === "dpad" ? du : 0), face: base + u });
+  const mainNeed = (s, base) => {
+    const n = nudges(base, s.u);
+    return Math.max(s.dir + 2 * Math.abs(n.dir), s.faceH + 2 * Math.abs(n.face));
+  };
+  const nudge = (base, u, du) => {
+    const n = nudges(base, u, du);
+    root.setProperty("--dir-nudge", `${n.dir}px`);
+    root.setProperty("--face-nudge", `${n.face}px`);
+  };
+  // 스틱·십자 패드는 버튼과 따로: 칸 폭(room)·스틱 줄 높이(bandH)가 허락하는 가장 큰 배율(상한 ART_REF, 버튼 배율 이상).
+  let dirArt = null;
+  let toolSize = 2;
+  const pickDir = (base, room, bandH) => {
+    if (!parts.dir) return art;
+    for (let k = skin.px(ART_REF); k > skin.px(art); k--) {
+      const du = k / dpr;
+      const n = nudges(base, skin.px(art) / dpr, du);
+      if (ART.stick * du <= room && ART.stick * du + 2 * Math.abs(n.dir) <= bandH) return du;
+    }
+    return art;
+  };
+  const portraitBase = (s, sp) => (s.lrH ? -s.u : -sp.top / 2) + (s.pillH ? 0 : sp.bottom / 2);
+  const landscapeBase = (s) => (s.lrH ? -s.u : 0);
+  const colNeed = (s) => Math.ceil(Math.max(s.faceW, s.dir, s.lrW, s.pillW) + 16);
   let sw;
   let sh;
+  root.setProperty("--lr-top", `${PAD_SPACE.landscape.nice.top}px`);
+  root.setProperty("--pill-bottom", `${PAD_SPACE.landscape.nice.bottom}px`);
   if (padOn && !landscape) {
-    const barH = el.bar.offsetHeight;
     sw = innerW;
-    sh = Math.floor((sw * ah) / aw);
-    const minPad = Math.min(300, innerH * 0.4);
-    if (innerH - barH - sh - edge * 2 < minPad) {
-      sh = Math.max(96, Math.floor(innerH - barH - edge * 2 - minPad));
-      sw = Math.min(innerW, Math.floor((sh * aw) / ah));
-    }
-    let padH = innerH - barH - sh - edge * 2;
-    art = clamp(Math.floor(Math.min((innerW - 44) / (ART.stick + face.w), (padH - 44) / (ART.shoulderH + face.h + ART.pillH))), 2, 6);
-    if (four) {
-      const rowsPad = (a) => {
-        const u = skin.px(a) / dpr;
-        return 44 + (ART.shoulderH + ART.pillH) * u + Math.round(faceH * u);
-      };
-      const colsPad = (a) => {
-        const u = skin.px(a) / dpr;
-        return 36 + ART.shoulderH * u + Math.max(Math.round(faceH * u), (ART.stick + ART.pillH * 2) * u + 16);
-      };
-      const pick = (a) => (rowsPad(a) <= padH ? "rows" : colsPad(a) <= padH ? "compact" : "");
-      let a = art;
-      while (a > 2 && !pick(a)) a--;
-      fit = pick(a) || "compact";
-      art = a;
-      if (fit === "compact" && colsPad(art) > padH) {
-        sh = Math.max(96, Math.min(sh, Math.floor(innerH - barH - edge * 2 - colsPad(art))));
-        sw = Math.min(innerW, Math.floor((sh * aw) / ah));
-        padH = innerH - barH - sh - edge * 2;
-      }
-    }
+    sh = Math.floor((innerW * ah) / aw);
+    const padH = innerH - el.bar.offsetHeight - edge * 2 - sh;
+    const plan = (a) => {
+      const s = sizes(skin.px(a) / dpr);
+      const rowW = Math.max(s.dir + s.faceW, s.lrW * 2, s.pillW * 2 + 20);
+      const need = (sp) => sp.top + s.lrH + sp.gap * 2 + mainNeed(s, portraitBase(s, sp)) + s.pillH + sp.bottom;
+      return { s, need, rowW, fits: rowW + PAD_SIDE.min * 2 + PAD_GAP_X <= innerW && need(PAD_SPACE.portrait.min) <= padH };
+    };
+    let p;
+    [art, p] = pickScale(ART_REF, plan, (q) => q.fits);
+    const fitted = fitSpace(PAD_SPACE.portrait, p.need, padH);
+    const space = fitted && p.need(fitted) <= padH ? fitted : PAD_SPACE.portrait.min;
+    const base = portraitBase(p.s, space);
+    const bandH = padH - space.top - p.s.lrH - space.gap * 2 - p.s.pillH - space.bottom;
+    dirArt = pickDir(base, innerW - p.s.faceW - PAD_SIDE.min * 2 - PAD_GAP_X, bandH);
+    const rowW = Math.max(p.rowW, (parts.dir ? ART.stick * dirArt : 0) + p.s.faceW);
+    const side = clamp(Math.floor((innerW - rowW - 12) / 2), PAD_SIDE.min, PAD_SIDE.nice);
+    nudge(base, p.s.u, dirArt);
+    placeTools(0);
+    root.setProperty("--pad-top", `${space.top}px`);
+    root.setProperty("--pad-bottom", `${space.bottom}px`);
+    root.setProperty("--pad-gap", `${space.gap}px`);
+    root.setProperty("--pad-side", `${side}px`);
     root.setProperty("--side", "0px");
   } else if (padOn && landscape && !overlay) {
-    art = clamp(Math.floor(Math.min((innerH - 30) / 95, innerW / 260)), 2, 5);
-    if (four) {
-      // 네 버튼 묶음은 오른쪽 세로줄 전체에서 R(위 여백 8) 아래 ~ START(아래 여백 10) 위 가운데(web.css) — 그 사이에 들어가는 배율까지.
-      const fits = (a) => {
-        const u = skin.px(a) / dpr;
-        return Math.round(faceH * u) <= innerH - (ART.shoulderH * u + 8) - (ART.pillH * u + 10) - 4;
-      };
-      while (art > 2 && !fits(art)) art--;
-    }
-    const rowH = Math.max(el.bar.offsetHeight + 4, ART.shoulderH * art + 12);
-    const sideMin = Math.ceil(Math.max(face.w, ART.stick) * art + 16);
+    const least = sizes(skin.px(2) / dpr);
+    const sideMin = Math.max(toolSideMin(), colNeed(least));
     const board = inline ? clamp(Math.floor((innerW - sideMin * 2) * BOARD_INLINE_SHARE), BOARD_INLINE_MIN, BOARD_SIDE_MAX) : 0;
     const gap = inline ? BOARD_GAP : 0;
-    const availW = innerW - sideMin * 2 - sideEdge - board - gap;
-    const availH = innerH - rowH - 8 - edge * 2;
-    sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
+    sw = Math.floor(Math.max(120, Math.min(innerW - sideMin * 2 - sideEdge - board - gap, ((innerH - edge * 2) * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
-    root.setProperty("--side", `${Math.floor((innerW - sw - (inline ? board + sideEdge + gap : 0)) / 2)}px`);
+    const sideW = Math.floor((innerW - sw - sideEdge - board - gap) / 2);
+    const block = toolPlan(sideW, dpr);
+    const plan = (a) => {
+      const s = sizes(skin.px(a) / dpr);
+      if (colNeed(s) > sideW) return null;
+      const need = (sp) => (s.lrH ? sp.top + s.lrH : 0) + sp.gap * 2 + mainNeed(s, landscapeBase(s)) + (s.pillH ? s.pillH + sp.bottom : 0);
+      const space = fitSpace(PAD_SPACE.landscape, need, innerH - block.h);
+      return space ? { s, space } : null;
+    };
+    let p;
+    [art, p] = pickScale(ART_REF, plan, Boolean);
+    p ??= { s: sizes(art), space: PAD_SPACE.landscape.min };
+    const top = block.h + (p.s.lrH ? p.space.top + p.s.lrH : 0);
+    const bottom = p.s.pillH ? p.s.pillH + p.space.bottom : 0;
+    root.setProperty("--lr-top", `${p.space.top}px`);
+    root.setProperty("--pill-bottom", `${p.space.bottom}px`);
+    root.setProperty("--band-shift", `${(top - bottom) / 2}px`);
+    const base = landscapeBase(p.s);
+    dirArt = pickDir(base, sideW - 16, innerH - top - bottom - p.space.gap * 2);
+    nudge(base, p.s.u, dirArt);
+    root.setProperty("--side", `${sideW}px`);
+    placeTools(block.slots);
+    toolSize = block.size;
     if (inline) root.setProperty("--mpb-w", `${board}px`);
   } else {
-    const availW = innerW - 16 - sideEdge;
-    const availH = innerH - el.bar.offsetHeight - 16 - edge * 2;
+    const toolSide = landscape ? toolSideMin() : 0;
+    const availW = innerW - 16 - sideEdge - toolSide * 2;
+    const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - 16 - edge * 2;
     sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
+    const wide = Math.floor((innerW - sw - sideEdge) / 2);
+    if (landscape) root.setProperty("--tool-side", `${wide}px`);
+    const block = landscape ? toolPlan(wide, dpr) : null;
+    placeTools(block?.slots ?? 0);
+    if (block) toolSize = block.size;
     let side = 0;
     if (overlay) {
       const sideOf = (a) => Math.ceil(Math.max(face.w, ART.stick) * (skin.px(a) / dpr) + 16);
@@ -830,19 +973,20 @@ function layout() {
     root.setProperty("--side", `${side}px`);
   }
   state.art = art;
-  skin.resize({ art, icon, dpr });
+  state.dirArt = dirArt ?? art;
+  if (state.toolSize !== toolSize) {
+    state.toolSize = toolSize;
+    syncTools();
+  }
+  skin.resize({ art, icon, dpr, dirArt: state.dirArt });
   const unit = skin.px(art) / dpr;
-  if (fit === "compact") {
-    if (el.pad.dataset.fit !== fit) el.pad.dataset.fit = fit;
-  } else if (el.pad.dataset.fit) delete el.pad.dataset.fit;
-  root.setProperty("--pill-indent", `${Math.round(((ART.stick - ART.pillW) / 2) * unit)}px`);
   root.setProperty("--px", `${skin.px(2) / dpr}px`);
   iconSizes(dpr);
-  root.setProperty("--face-w", `${Math.round(face.w * unit)}px`);
+  root.setProperty("--face-w", `${faceWidth(face, unit)}px`);
   const up = Math.round(faceUp(face, landscape) * unit);
   root.setProperty("--face-h", `${Math.round(face.h * unit) + (four ? up : 0)}px`);
   root.setProperty("--face-up", `${up}px`);
-  // 가로 C·D 묶음은 세로줄 전체 가운데에 놓이므로 R 줄(8 + R)과 START 줄(START + 10)의 차이 절반만큼 내려 둘 사이 가운데로.
+  // 오버레이 C·D 묶음은 세로줄 전체 가운데에 놓이므로 R 줄(8 + R)과 START 줄(START + 10)의 차이 절반만큼 내려 둘 사이 가운데로.
   root.setProperty("--face-shift", `${((ART.shoulderH - ART.pillH) * unit + 8 - 10) / 2}px`);
   root.setProperty("--sw", `${sw}px`);
   root.setProperty("--sh", `${sh}px`);
@@ -871,7 +1015,7 @@ const toolOff = (node) => node.disabled || node.getAttribute("aria-disabled") ==
 function syncTools() {
   const running = Boolean(state.game);
   const full = Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
-  const size = 2;
+  const size = state.toolSize ?? 2;
   for (const node of el.bar.querySelectorAll(".tool")) {
     skin.tool(node, {
       size,
@@ -882,7 +1026,7 @@ function syncTools() {
       full,
     });
   }
-  skin.tool(el.btnMenu, { menu: true, size: 2, on: state.menuOpen });
+  skin.tool(el.btnMenu, { menu: true, size, on: state.menuOpen });
 }
 
 function syncControls() {
@@ -907,7 +1051,11 @@ function syncControls() {
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
   const netOn = running && Boolean(player.net.request || player.net.active);
-  if (el.btnNet.hidden !== !netOn) el.btnNet.hidden = !netOn;
+  if (el.btnNet.hidden !== !netOn) {
+    el.btnNet.hidden = !netOn;
+    el.btnFast.hidden = netOn;
+    if (state.toolSlots) placeTools(state.toolSlots);
+  }
   if (el.btnFast.hidden !== netOn) el.btnFast.hidden = netOn;
   const netBadge = el.btnNet.querySelector(".tool__badge") ?? el.btnNet.appendChild(make("span", "tool__badge"));
   const netBadgeText = netBadge.querySelector(".tool__badgeText") ?? netBadge.appendChild(make("span", "tool__badgeText"));
