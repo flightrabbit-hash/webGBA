@@ -1340,11 +1340,19 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     const back = await page.evaluate(() => ({ state: document.querySelector(".lib__card").dataset.state, out: document.querySelectorAll(".spine.is-out").length }));
     ok(`${key}|library 반투명 자리 누르면 넣음 → 안내`, back.state === "empty" && back.out === 0, JSON.stringify(back));
     await measure(page, `${key}|library-empty`, [".lib__hint"]);
+    const instant = [];
     for (const k of [keys[5], keys[1], keys[7]]) {
-      await page.$eval(`.spine[data-key="${k}"]`, (n) => n.click());
+      instant.push(
+        await page.evaluate((k) => {
+          document.querySelector(`.spine[data-key="${k}"]`).click();
+          const anims = document.getAnimations().filter((a) => a.effect?.target?.closest?.(".lib__card, .lib__fly, .lib__case")).length;
+          return { k, card: document.querySelector(".lib__card").dataset.key, outs: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key).join(), fly: document.querySelector(".lib__fly").childElementCount, anims };
+        }, k),
+      );
       await page.waitForTimeout(150);
       drift = Math.max(drift, moved(base, await frame()));
     }
+    ok(`${key}|library 움직임 줄이기 = 바로(누른 즉시 새 칸·꺼낸 자리 하나 · 날기 그림·움직임 0)`, instant.every((x) => x.card === x.k && x.outs === x.k && x.fly === 0 && x.anims === 0), JSON.stringify(instant));
     ok(`${key}|library 꺼내기·넣기·바꾸기 전후 꺼낸 칸·책장 위치 그대로(최대 ${+drift.toFixed(3)}px)`, drift < 1);
 
     // 정렬: 버튼으로 이름순 ↔ 최근 연 순(기억)
@@ -1369,7 +1377,7 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     await page.waitForTimeout(400);
     const run = await libraryLayout(page);
     const runButtons = await page.$$eval(".lib__btns .btn", (nodes) => nodes.map((node) => node.dataset.action));
-    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 닫기·이름·지우기 · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
+    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 종료(btn--warn)·이름·지우기(btn--danger) · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && Boolean(await page.$('.lib__btns .btn--warn[data-action="close-game"]')) && Boolean(await page.$('.lib__btns .btn--danger[data-action="delete"]')) && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
     await measure(page, `${key}|running`, [".lib__btns .btn", ".pack__chip"]);
     if (LIB_SHOTS[`${key}|running`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|running`]) });
     const runBase = await frame();
@@ -1406,9 +1414,9 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
   await page.evaluate(() => document.querySelector(".lib__count").click());
   await page.waitForTimeout(800);
   const keys = await page.$$eval(".lib__case .spine[data-key]", (nodes) => nodes.map((node) => node.dataset.key));
-  const record = (act, ms, pause = -1) =>
+  const record = (act, ms, pause = -1, watch = []) =>
     page.evaluate(
-      ({ act, ms, pause }) =>
+      ({ act, ms, pause, watch }) =>
         new Promise((done) => {
           const props = new Set();
           const box = (n) => {
@@ -1424,30 +1432,34 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
             const fronts = [...card.querySelectorAll(".lib__pack")].map((n) => ({ b: box(n.querySelector(".pack")), o: op(n) })).concat([...document.querySelectorAll(".lib__fly > .pack")].map((n) => ({ b: box(n), o: op(n), g: 1 })));
             const ghostSpines = [...document.querySelectorAll(".lib__fly > .spine__art")].map((n) => ({ b: box(n), o: op(n) }));
             const text = card.querySelector(".lib__text");
-            return { card: box(card), shelf: box(shelf), fronts, ghostSpines, key: card.dataset.key, state: card.dataset.state, textOp: text ? op(text) : -1, grids: card.querySelectorAll(".lib__grid").length, outs: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), arts: Object.fromEntries(act.map(([k]) => [k, op(spine(k))])) };
+            return { card: box(card), shelf: box(shelf), fronts, ghostSpines, key: card.dataset.key, state: card.dataset.state, textOp: text ? op(text) : -1, grids: card.querySelectorAll(".lib__grid").length, outs: [...document.querySelectorAll(".spine.is-out")].map((n) => n.dataset.key), arts: Object.fromEntries([...act.map(([k]) => k), ...watch].map((k) => [k, op(spine(k))])) };
           };
-          const press = (k) => document.querySelector(`.lib__case .spine[data-key="${k}"]`).click();
+          const presses = [];
+          const press = (k) => {
+            presses.push({ k, at: performance.now() - start });
+            document.querySelector(`.lib__case .spine[data-key="${k}"]`).click();
+          };
           const start = performance.now();
-          const frames = [{ t: 0, ...look() }];
+          const frames = [{ t: 0, at: 0, ...look() }];
           for (const [k, at] of act) {
             if (at) setTimeout(() => press(k), at);
             else press(k);
           }
-          frames.push({ t: 0, ...look() });
+          frames.push({ t: 0, at: performance.now() - start, ...look() });
           const step = (now) => {
             const t = now - start;
             if (pause >= 0 && t >= pause) {
               for (const anim of document.getAnimations()) anim.pause();
-              done({ frames, props: [...props], paused: true });
+              done({ frames, props: [...props], presses, paused: true });
               return;
             }
-            frames.push({ t: +t.toFixed(1), ...look() });
+            frames.push({ t: +t.toFixed(1), at: performance.now() - start, ...look() });
             if (t < ms) requestAnimationFrame(step);
-            else done({ frames, props: [...props] });
+            else done({ frames, props: [...props], presses });
           };
           requestAnimationFrame(step);
         }),
-      { act, ms, pause },
+      { act, ms, pause, watch },
     );
   const flyMs = await page.evaluate(() => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--pop-ms")) || 200) * 1.1));
   const drift = (frames) => Math.max(0, ...frames.flatMap((f) => [...f.card.map((v, i) => Math.abs(v - frames[0].card[i])), ...f.shelf.map((v, i) => Math.abs(v - frames[0].shelf[i]))]));
@@ -1496,14 +1508,19 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
   const backMid = put.frames.filter((f) => f.fronts.some((x) => x.g && x.o > 0.02)).length;
   ok(`${key} 넣기: 앞면이 책장 칸으로 날며 옆면으로(중간 ${backMid}프레임) · 끝 옆면 불투명도 ${pt.arts[keys[3]]} · 칸은 안내`, backMid >= 2 && pt.arts[keys[3]] === 1 && pt.outs.length === 0 && pt.state === "empty" && pt.ghostSpines.length === 0 && pt.fronts.length === 0, JSON.stringify({ state: pt.state, outs: pt.outs }));
 
-  // 바꾸기: keys[3] 꺼낸 뒤 keys[6] 을 누름 → 넣기 다음 꺼내기
+  // 바꾸기: keys[3] 꺼낸 뒤 keys[6] 을 누름 → 옛 앞면은 넣는 움직임 없이 바로 사라지고(책장 자리도 바로 원래 옆면) 새 롬팩 꺼내기만
   await record([one(keys[3])], 500);
-  const swap = await record([one(keys[6])], 900);
+  const swap = await record([one(keys[6])], 900, -1, [keys[3]]);
   note("swap", swap);
   const sw = last(swap.frames);
-  const oldSeen = Math.max(0, ...swap.frames.filter((f) => f.key === keys[3]).map((f) => f.t));
-  const newSeen = Math.min(...swap.frames.filter((f) => f.key === keys[6] && f.t > 0).map((f) => f.t));
-  ok(`${key} 바꾸기: 넣기(옛 칸 ${oldSeen}ms까지) 다음 꺼내기(새 칸 ${newSeen}ms부터) · 끝 ${settledAt(swap.frames)}ms · 꺼낸 자리 하나`, oldSeen >= flyMs * 0.8 && newSeen >= oldSeen && sw.key === keys[6] && sw.outs.join() === keys[6] && sw.arts[keys[6]] === 0.35 && swap.frames.every((f) => f.grids <= 1) && settledAt(swap.frames) <= flyMs * 2 + 200);
+  const pressed = swap.frames[1];
+  const oldAfter = swap.frames.slice(1).filter((f) => f.key === keys[3] || f.outs.includes(keys[3]) || f.arts[keys[3]] !== 1).length;
+  const flights = (f) => f.fronts.filter((x) => x.g).length <= 1 && f.ghostSpines.length <= 1;
+  ok(
+    `${key} 바꾸기: 옛 앞면 바로 사라짐(누른 뒤 옛 칸·옛 꺼낸 자리 ${oldAfter}프레임, 옛 옆면 불투명도 ${pressed.arts[keys[3]]}) · 새 칸 바로 · 꺼내기만(끝 ${settledAt(swap.frames)}ms, ${flyMs}ms) · 꺼낸 자리 하나`,
+    oldAfter === 0 && pressed.key === keys[6] && sw.key === keys[6] && sw.outs.join() === keys[6] && sw.arts[keys[6]] === 0.35 && swap.frames.every((f) => f.grids <= 1 && flights(f)) && settledAt(swap.frames) >= flyMs * 0.8 && settledAt(swap.frames) <= flyMs + 150,
+    JSON.stringify({ pressed: { key: pressed.key, outs: pressed.outs, arts: pressed.arts } }),
+  );
 
   // 빠르게 연달아 누르기: 날고 있는 중에 다른 칸 → 그 자리에서 정리하고 새로
   const rapid = await record([one(keys[8]), one(keys[9], 80)], 900);
@@ -1511,7 +1528,25 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
   const rp = last(rapid.frames);
   ok(`${key} 빠르게 두 칸: 마지막에 누른 칸만 꺼냄 · 날기 그림 남지 않음`, rp.key === keys[9] && rp.outs.join() === keys[9] && rp.fronts.length === 1 && rp.ghostSpines.length === 0, JSON.stringify({ key: rp.key, outs: rp.outs }));
 
-  const all = [putFirst, pull, put, swap, rapid].flatMap((out) => out.frames);
+  // 빠르게 열 번(간격 30~80ms): 누를 때마다 바로 새 칸·날기 그림은 늘 한 벌, 마지막 것만 남고 꺼내기 한 번 시간에 끝
+  const tenKeys = [10, 13, 11, 16, 12, 18, 14, 19, 15, 17].map((i) => keys[i]);
+  const tenAt = [0, 45, 115, 145, 225, 280, 315, 380, 430, 505];
+  const ten = await record(tenKeys.map((k, i) => one(k, tenAt[i])), 1300);
+  note("rapid-10", ten);
+  const tp = last(ten.frames);
+  const lastKey = tenKeys[tenKeys.length - 1];
+  const tenEnd = settledAt(ten.frames) - ten.presses[ten.presses.length - 1].at;
+  const behind = ten.frames.slice(1).filter((f) => {
+    const done = ten.presses.filter((p) => p.at < f.at);
+    return done.length && f.key !== done[done.length - 1].k;
+  }).length;
+  ok(
+    `${key} 빠르게 열 번: 마지막 칸만 꺼냄 · 날기 그림 남지 않음·늘 한 벌 · 누른 칸 늦게 따라감 ${behind}프레임 · 마지막 누름 뒤 끝 ${tenEnd.toFixed(0)}ms(${flyMs}ms)`,
+    tp.key === lastKey && tp.outs.join() === lastKey && tp.fronts.length === 1 && tp.ghostSpines.length === 0 && ten.frames.every((f) => f.grids <= 1 && flights(f)) && behind === 0 && tenEnd >= 0 && tenEnd <= flyMs + 150,
+    JSON.stringify({ key: tp.key, outs: tp.outs, end: tenEnd }),
+  );
+
+  const all = [putFirst, pull, put, swap, rapid, ten].flatMap((out) => out.frames);
   ok(`${key} 움직이는 동안 책장·꺼낸 칸 상자 그대로(최대 ${drift(all)}px, ${all.length}프레임)`, drift(all) < 1);
   ok(`${key} 움직이는 동안 앞면 겹침 0(${clash(all)}프레임) · 칸 내용 한 벌`, clash(all) === 0 && all.every((f) => f.grids <= 1));
   ok(`${key} transform·opacity 만`, props.size > 0 && [...props].every((p) => p === "transform" || p === "opacity"), [...props].join(","));

@@ -2344,10 +2344,26 @@ function sizeCanvas(canvas, model) {
   return canvas;
 }
 
+const frontCache = new WeakMap();
+
+function frontOf(look) {
+  const drawn = frontCache.get(look);
+  if (!drawn) {
+    const fresh = cartArt.drawFront(look.model, look.images, look.body);
+    frontCache.set(look, fresh);
+    return fresh;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = drawn.canvas.width;
+  canvas.height = drawn.canvas.height;
+  canvas.getContext("2d").drawImage(drawn.canvas, 0, 0);
+  return { ...drawn, canvas };
+}
+
 /** 앞면(몸통 + 라벨). 라벨 그림이 없으면 라벨 자리에 이름(두 줄까지, 잉크 기준 가운데). */
 function packNode(rom, look, { running = false } = {}) {
-  const { model, images, body } = look;
-  const { canvas, textBox, paper } = cartArt.drawFront(model, images, body);
+  const { model } = look;
+  const { canvas, textBox, paper } = frontOf(look);
   const node = make("span", "pack");
   if (model.shape === "gb") node.dataset.shape = "gb";
   node.style.width = `${cssOf(model, canvas.width)}px`;
@@ -2371,15 +2387,16 @@ function packNode(rom, look, { running = false } = {}) {
 /** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
 function spineArt(rom, look) {
   const { model, images, body } = look;
-  const canvas = cartArt.drawSpine(model, images, body);
+  const { canvas, band, textArea } = cartArt.drawSpine(model, images, body);
   const art = make("span", "spine__art");
   art.style.width = `${cssOf(model, canvas.width)}px`;
   art.style.height = `${cssOf(model, canvas.height)}px`;
   art.append(sizeCanvas(canvas, model));
-  if (model.textArea) {
-    const [x, y, w, h] = model.textArea.map((v) => Math.round(cssOf(model, v)));
-    const name = make("span", "spine__name");
-    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, color: model.spineInk ?? cartArt.LABEL_INK });
+  if (textArea) {
+    const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
+    const name = make("span", band ? "spine__name is-band" : "spine__name");
+    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+    if (!band) name.style.color = cartArt.LABEL_INK;
     const text = make("span", "spine__text");
     Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
     const lines = spineLines(spineName(rom), w, h, SPINE_PAD * model.unit);
@@ -2786,7 +2803,7 @@ function fillCard(key) {
         act(t("web.lib.resume"), "play", "resume", () => openFromLibrary(rom), "primary"),
         act(t("web.saves"), "floppy", "saves", () => openGameSaves(rom)),
         act(t("menu.reset"), "refresh", "reset", () => (closeSheet(), resetGame())),
-        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet())),
+        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet()), "warn"),
         act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
         act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
       ]
@@ -2950,31 +2967,38 @@ function pickSpine(key) {
   const lib = state.lib;
   const refs = lib.refs;
   if (!refs) return;
-  settleLibrary(refs);
+  const pop = popMs();
+  const ease = popEase();
+  const shown = refs.card.isConnected && refs.card.getClientRects().length > 0;
   const prev = lib.sel;
   const next = prev === key ? "" : key;
   lib.sel = next;
   refs.spines.get(prev)?.setAttribute("aria-pressed", "false");
   refs.spines.get(next)?.setAttribute("aria-pressed", "true");
-  const pop = popMs();
-  if (!pop || !refs.card.isConnected || !refs.card.getClientRects().length) {
+  if (!pop || !shown) {
     settleLibrary(refs);
     return;
   }
+  stopFlights(refs);
   refs.ms = Math.round(pop * 1.1);
-  refs.ease = popEase();
+  refs.ease = ease;
   const token = refs.seq;
-  (prev ? flyBack(refs, prev) : Promise.resolve(true))
+  const finish = (done) => {
+    if (done && token === refs.seq) refs.runs.length = 0;
+  };
+  if (next) {
+    for (const [other, slot] of refs.spines) if (other !== next && slot.classList.contains("is-out")) slot.classList.remove("is-out");
+    flyOut(refs, next).then(finish);
+    return;
+  }
+  (refs.card.dataset.key === prev ? flyBack(refs, prev) : Promise.resolve(true))
     .then((done) => {
       if (!done || token !== refs.seq || state.lib.refs !== refs) return false;
-      if (next) return flyOut(refs, next);
       fillCard("");
       centerInk(refs.card);
       return play(refs, refs.card.firstElementChild, [{ opacity: 0 }, { opacity: 1 }], { ms: pop });
     })
-    .then((done) => {
-      if (done && token === refs.seq) refs.runs.length = 0;
-    });
+    .then(finish);
 }
 
 function openFromLibrary(rom) {

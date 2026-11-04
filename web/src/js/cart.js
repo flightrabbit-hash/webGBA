@@ -4,7 +4,7 @@
 // cart.color(없으면 테마 색)로 그린다. 규격 6장: 다른 k·규격 밖 자리·망가진 그림은 "없음"으로 보고 오류 창 없음.
 // 화면에서는 격자 1칸 = UNIT(2) CSS px 이상의 정수 배율이고 canvas 는 image-rendering: pixelated — 흐리게·줄여 그리지 않는다
 // (k 가 UNIT 보다 크면 그 게임은 1 그림 픽셀 = 1 CSS px 로 키운다).
-import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS, contrastInk, rompackColor } from "./core/wgba-format.js";
+import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS, rompackColor } from "./core/wgba-format.js";
 
 export const UNIT = 2;
 export const FRONT = CART_PARTS.front.unit;
@@ -46,6 +46,12 @@ function tones(color) {
   return { hi: mix(c, WHITE, 0.3), base: hexOf(c), lo: mix(c, BLACK, 0.3), sh: mix(c, BLACK, 0.55) };
 }
 
+const BAND_ALPHA = 0.5;
+const bandRgb = (color) => {
+  const body = rgbOf(color) ?? BLACK;
+  return WHITE.map((v, i) => Math.round(v + (body[i] - v) * BAND_ALPHA));
+};
+
 /** 테마에서 만든 기본 몸통 색(--bg-raised 를 흰색 쪽으로 28%). 테마가 바뀌면 다시 부른다. */
 export function themeBody() {
   const raised = rgbOf(getComputedStyle(document.documentElement).getPropertyValue("--bg-raised")) ?? [21, 29, 51];
@@ -67,13 +73,19 @@ function grid(w, h) {
 }
 
 function blit(ctx, g, k) {
-  for (let y = 0; y < g.h; y++)
-    for (let x = 0; x < g.w; x++) {
-      const v = g.px[y * g.w + x];
-      if (!v) continue;
-      ctx.fillStyle = v;
-      ctx.fillRect(x * k, y * k, k, k);
+  for (let y = 0; y < g.h; y++) {
+    const row = y * g.w;
+    for (let x = 0; x < g.w; ) {
+      const v = g.px[row + x];
+      let end = x + 1;
+      while (end < g.w && g.px[row + end] === v) end++;
+      if (v) {
+        ctx.fillStyle = v;
+        ctx.fillRect(x * k, y * k, (end - x) * k, k);
+      }
+      x = end;
     }
+  }
 }
 
 /** 기본 앞면 54×44 칸. withLabel = 라벨 그림이 들어갈 자리(바탕 종이를 칠하지 않음). */
@@ -188,7 +200,7 @@ function gbFront(color) {
   return g;
 }
 
-/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리의 종이). */
+/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리, 그림 옆면 띠와 같은 색 규칙). */
 function defaultSpine(color, shape = "gba") {
   const [W, H] = SPINE;
   const t = tones(color);
@@ -204,10 +216,9 @@ function defaultSpine(color, shape = "gba") {
     paint(1, y, t.hi);
     paint(W - 2, y, t.lo);
   }
-  // 이름 자리는 몸통 색을 그대로 둬 책장에서 롬팩 색이 드러나게 한다(결정 102-8). 왼쪽 1칸만 밝은 테를 남긴다.
-  // 글자(main.js)는 model.spineInk 로 이 몸통 색과 대비가 큰 검정·흰색을 쓴다.
-  const [ax, ay, , ah] = CART_DEFAULT_TEXT_AREA;
-  for (let y = ay; y < ay + ah; y++) paint(ax, y, t.hi);
+  const [ax, ay, aw, ah] = CART_DEFAULT_TEXT_AREA;
+  const band = hexOf(bandRgb(color));
+  for (let y = ay; y < ay + ah; y++) for (let x = ax; x < ax + aw; x++) paint(x, y, band);
   for (const y of shape === "gb" ? [2, H - 4] : [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
   if (shape === "gb") for (let x = 3; x <= W - 4; x++) paint(x, 3, t.hi);
   return g;
@@ -239,9 +250,70 @@ export function cartModel(rom) {
     const area = cart.spine?.textArea;
     if (ints(area, 4) && area[2] > 0 && area[3] > 0 && area[0] + area[2] <= SPINE[0] * k && area[1] + area[3] <= SPINE[1] * k) textArea = [...area];
   }
-  // 옆면 이름 글자 색: 옆면 그림이 있으면 지금처럼 어두운 잉크, 없으면(기본 옆면 = 몸통 색) 대비로 검정·흰색 자동(결정 102-8).
-  const spineInk = parts.includes("spine") ? LABEL_INK : contrastInk(color);
-  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk, shape };
+  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, shape };
+}
+
+const BAND_SHARE = 0.6;
+const BAND_NEAR = 48;
+const bandCache = new WeakMap();
+
+const brightness = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+
+function spineBand(model, bitmap) {
+  const key = `${model.color}|${model.textArea.join()}`;
+  let byKey = bandCache.get(bitmap);
+  if (!byKey) bandCache.set(bitmap, (byKey = new Map()));
+  if (byKey.has(key)) return byKey.get(key);
+  const { width, height } = bitmap;
+  const canvas = canvasOf(width, height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const image = ctx.getImageData(0, 0, width, height);
+  const { data } = image;
+  const at = (x, y) => (y * width + x) * 4;
+  const rgbAt = (o) => [data[o], data[o + 1], data[o + 2]];
+  const paint = (o, rgb) => {
+    data.set(rgb, o);
+    data[o + 3] = 255;
+  };
+  const [ax, ay, aw, ah] = model.textArea;
+  const count = new Map();
+  for (let y = ay; y < ay + ah; y++)
+    for (let x = ax; x < ax + aw; x++) {
+      const o = at(x, y);
+      if (data[o + 3] < 255) continue;
+      const rgb = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
+      count.set(rgb, (count.get(rgb) ?? 0) + 1);
+    }
+  let paper = 0;
+  let most = 0;
+  for (const [rgb, n] of count) if (n > most) [paper, most] = [rgb, n];
+  let band = null;
+  if (most >= aw * ah * BAND_SHARE) {
+    const base = [paper >> 16, (paper >> 8) & 255, paper & 255];
+    const body = rgbOf(model.color) ?? BLACK;
+    const tone = bandRgb(model.color);
+    for (let y = ay; y < ay + ah; y++)
+      for (let x = ax; x < ax + aw; x++) {
+        const o = at(x, y);
+        if (data[o + 3] === 255 && [0, 1, 2].every((i) => Math.abs(data[o + i] - base[i]) <= BAND_NEAR)) paint(o, body);
+      }
+    for (const top of [ay - model.k, ay + ah]) {
+      if (top < 0 || top + model.k > height) continue;
+      const strip = [];
+      for (let y = top; y < top + model.k; y++) for (let x = ax; x < ax + aw; x++) strip.push(at(x, y));
+      const first = rgbAt(strip[0]);
+      const one = strip.every((o) => data[o + 3] === 255 && [0, 1, 2].every((i) => data[o + i] === first[i]));
+      if (one && brightness(first) > brightness(body)) strip.forEach((o) => paint(o, body));
+    }
+    const area = CART_DEFAULT_TEXT_AREA.map((v) => v * model.k);
+    const [bx, by, bw, bh] = area;
+    for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) paint(at(x, y), tone);
+    ctx.putImageData(image, 0, 0);
+    band = { canvas, textArea: area };
+  }
+  byKey.set(key, band);
+  return band;
 }
 
 const imageCache = new Map();
@@ -314,13 +386,17 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(18k×46k). 이름 자리는 model.textArea. */
+/** 옆면 canvas(18k×46k) + 이름 자리. band = 기본 이름 자리에 롬팩 색 띠(그림 옆면은 종이를 롬팩 색으로 바꾼 후). */
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  if (images.spine) ctx.drawImage(images.spine, 0, 0);
-  else blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
-  return canvas;
+  if (!images.spine) {
+    blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
+    return { canvas, band: true, textArea: CART_DEFAULT_TEXT_AREA.map((v) => v * k) };
+  }
+  const band = model.textArea ? spineBand(model, images.spine) : null;
+  ctx.drawImage(band?.canvas ?? images.spine, 0, 0);
+  return { canvas, band: Boolean(band), textArea: band?.textArea ?? model.textArea };
 }

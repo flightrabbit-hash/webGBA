@@ -45,7 +45,7 @@ export const CART_DEFAULT_TEXT_AREA = [2, 5, 14, 34];
 /**
  * 그림 없는 롬팩(.gba·설명서 없는 .wasm·옛 .wgba, 설명서에 cart.color 없음)의 기본 몸통 색(결정 102-8).
  * 이름을 FNV-1a 로 해시해 팔레트에서 하나 고른다 — 같은 이름은 늘 같은 색(웹·exe 같은 계산). 색은 여기 JS 에만 둔다(CSS 금지).
- * 13개 테마 책장 바탕(밝음·어두움 모두)에서 구분되게 중간 채도로 고르고, 옆면 글자는 contrastInk 로 검정·흰색을 자동으로 고른다.
+ * 13개 테마 책장 바탕(밝음·어두움 모두)에서 구분되게 중간 채도로 고른다(옆면 이름 띠·글자 규칙은 cart.js).
  */
 export const ROMPACK_PALETTE = Object.freeze([
   "#c0392b", // 빨강
@@ -69,23 +69,6 @@ export function rompackColor(name) {
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return ROMPACK_PALETTE[hash % ROMPACK_PALETTE.length];
-}
-
-/** 바탕 색(#rgb·#rrggbb) 위에 읽기 좋은 글자 색: 상대 휘도로 검정·흰색 중 대비가 큰 쪽(결정 102-8 자동 전환). */
-export const INK_DARK = "#10131c";
-export const INK_LIGHT = "#f4f6fb";
-export function contrastInk(color) {
-  const hex = /^#?([0-9a-f]{6})$/i.exec(String(color ?? "").replace(/^#/, "#")) ? String(color).replace("#", "") : null;
-  const h = hex && hex.length === 6 ? hex : "808080";
-  const lin = (v) => {
-    const s = parseInt(v, 16) / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const lum = 0.2126 * lin(h.slice(0, 2)) + 0.7152 * lin(h.slice(2, 4)) + 0.0722 * lin(h.slice(4, 6));
-  // 흰색(1.0)·검정(0.0) 대비 = (L+0.05)/(0.0+0.05) vs (1.05)/(L+0.05)
-  const withLight = (1.0 + 0.05) / (lum + 0.05);
-  const withDark = (lum + 0.05) / 0.05;
-  return withLight >= withDark ? INK_LIGHT : INK_DARK;
 }
 export const NEEDS = Object.freeze(["pointer", "net", "keyboard", "state"]);
 export const RUNTIMES = Object.freeze(["webapi", "script"]);

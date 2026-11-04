@@ -1598,6 +1598,10 @@ body[data-layout="landscape"] .lib__shelf {
   pointer-events: none;
 }
 
+.spine__name.is-band {
+  color: var(--screen-ink);
+}
+
 .spine__text {
   position: absolute;
   top: 0;
