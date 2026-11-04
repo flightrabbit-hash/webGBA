@@ -131,7 +131,8 @@ node tools/run.cjs   # 전체 명령 목록
 - **멀티플레이** — 지원하는 게임은 방 코드 6자리로 같은 Wi-Fi·다른 네트워크의 기기와 연결합니다(같은 Wi-Fi의 근처 방 목록, 짝 찾기 서버 없이 연결 코드·QR을 주고받는 "인터넷 없이 연결"도 사용 가능). 기기 간 직접 연결(WebRTC)을 먼저 시도하고, 직접 연결이 되지 않는 망(휴대폰 데이터·회사·학교 망 등)에서는 **Cloudflare 중계 서버(TURN)**를 거칩니다. 중계 서버를 거쳐도 게임 내용은 암호화되어(DTLS) 중계 서버가 볼 수 없습니다.
   연결 정보에는 공인 IP(공인 주소 후보)가 들어가므로 **상대 기기에 이 기기의 공인 IP가 보입니다**. 연결 정보(공인 IP 포함)는 짝 찾기 서버(`webgba.vercel.app/api/v1/mp`)에 최대 2분 30초 저장됩니다. 설정 › 멀티플레이 › **멀티플레이 사용**(기본 켬)을 비활성화하면 멀티플레이 창을 열 수 없고 연결도 하지 않습니다(바로 적용). 다른 기기에 표시되는 닉네임(12자까지)도 같은 곳에서 변경합니다. 중계 서버 무료 한도를 지키려고 최근 31일 중계 사용량이 900GB 이상이면 중계 접속 정보 발급을 멈추고, 그동안은 STUN만으로 연결합니다.
   세션 중에는 빨리 감기·상태 저장 슬롯·다시 시작을 사용할 수 없습니다. 플레이어 상태 표는 웹 버전 상단 "멀티플레이" 버튼, Windows 앱 도구 막대 "멀티플레이" 버튼 또는 Tab으로 엽니다.
-  다시 들어오기(`rejoin`)를 지원하는 게임은 연결이 끊긴 유저의 자리를 보관해 같은 자리로 다시 연결하고, 방장이 앱을 닫아도 방이 2분 동안 남습니다. 방장이 2분 안에 앱을 다시 열고 같은 게임을 열면 멀티플레이 창에 **이전 방으로 돌아가기**가 나오고, 같은 방 코드의 방장 자리로 돌아갑니다. 그동안 유저 화면은 "방장을 기다리는 중… m:ss 남음"으로 게임이 멈추고, 방장이 돌아오면 자동으로 다시 연결되어 유저 한 명의 게임 상태를 받아 이어서 합니다. 2분이 지나면 세션이 끝납니다.
+  다시 들어오기(`rejoin`)를 지원하는 게임은 연결이 끊긴 유저의 자리를 보관해 같은 자리로 다시 연결하고, 방장이 앱을 닫아도 방이 2분 동안 남습니다. 방장이 2분 안에 앱을 다시 열고 같은 게임을 열면 멀티플레이 창에 **이전 방으로 돌아가기**가 나오고, 같은 방 코드의 방장 자리로 돌아갑니다. 그동안 유저 화면은 "방장을 기다리는 중… m:ss 남음"으로 게임이 멈추고, 방장이 돌아오면 자동으로 다시 연결되어 유저 한 명의 게임 상태를 받아 이어서 합니다. 2분이 지나면 세션이 끝납니다. 유저가 게임 도중 앱을 닫은 경우에도 방장이 자리를 보관하고, 같은 기기에서 같은 게임을 다시 열면 **이전 방으로 돌아가기**로 같은 자리에 돌아갑니다.
+  멀티플레이 규약 번호가 이 webGBA보다 새로운 게임은 멀티플레이 없이 실행하고, 멀티플레이 버튼·연결 창에 "이 게임의 멀티플레이는 새 webGBA가 필요합니다"를 출력합니다.
 
 ---
 
@@ -232,7 +233,7 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 해시를 기록합니다. GBA 게임이 아니어도 됩니다 — wasm으로 빌드한 게임이면 `.wgba`로 패키징해 webGBA(Windows 앱·웹 버전)에서
 실행할 수 있습니다.
 
-> 모든 장(7장 멀티플레이 포함)은 현재 webGBA(v0.6.0, Windows 앱·웹 버전)의 동작과 같습니다. 7장 중 키 동기화(`sync: "inputs"`, 7.6)만 현재 webGBA가 지원하지 않습니다.
+> 모든 장(7장 멀티플레이 포함)은 현재 webGBA(v0.6.1, Windows 앱·웹 버전)의 동작과 같습니다. 7장 중 키 동기화(`sync: "inputs"`, 7.6)만 현재 webGBA가 지원하지 않습니다.
 > 아래 내용 중 "현재 webGBA"로 기재한 부분은 규격이 아니라 현재 앱의 동작입니다(다른 호스트는 달라도 됨).
 
 1. [개요](#1-개요)
@@ -522,7 +523,7 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 | `webgba.on("pause"·"resume"·"speed", fn)` | 일시정지·재개·빨리 감기 배수(게임이 반영해도 되고 무시해도 됨). 일시정지 동안 `requestAnimationFrame`은 틀이 보류. `on`은 리스너 해제 함수를 반환 |
 | `webgba.audioContext()` | 틀이 음량·일시정지를 제어하는 공용 `AudioContext`(권장) |
 | `webgba.ready()` · `webgba.exit(reason)` · `webgba.log(level, text)` | 시작 완료(호스트가 로딩 화면을 닫음 — 호출하지 않아도 10초 후 표시) · 정지 · 로그 |
-| `webgba.net` | 멀티플레이 — [7장](#7-멀티플레이)(7.4). manifest에 `multiplayer`가 있으면 객체, 없으면 `null`(멀티플레이를 모르는 옛 webGBA도 `null`) |
+| `webgba.net` | 멀티플레이 — [7장](#7-멀티플레이)(7.4). manifest에 `multiplayer`가 있으면 객체, 없으면 `null`(멀티플레이를 모르는 옛 webGBA, `multiplayer.protocol`이 호스트가 아는 번호보다 큰 게임도 `null`) |
 
 ##### 4.2.3 시작 방식 `entry.style`
 
@@ -774,7 +775,7 @@ webGBA는 같은 Wi-Fi(같은 공유기) 안의 기기끼리, 그리고 방 코�
 }
 ```
 
-모르는 키는 무시합니다. `multiplayer.protocol`이 호스트가 지원하는 번호보다 크면 호스트는 멀티플레이를 비활성화하고 게임은 그대로 실행합니다. 다만 현재 webGBA는 파일을 열 때 manifest 검사에서 `protocol`이 1이 아니면 오류로 처리해 열지 않습니다(10장).
+모르는 키는 무시합니다. `multiplayer.protocol`이 호스트가 지원하는 번호보다 크면 호스트는 멀티플레이를 비활성화하고 게임은 그대로 실행합니다. 이때 ①에는 `Web_NetHost`를 호출하지 않고 ②의 `webgba.net`은 `null`이며(멀티플레이를 모르는 옛 webGBA와 같음), webGBA는 게임을 열 때 알림과 멀티플레이 버튼(누르면 연결 창)에 "이 게임의 멀티플레이는 새 webGBA가 필요합니다"를 출력합니다. 파일 검사(10장)는 경고만 출력하고 나머지 `multiplayer` 항목은 검사하지 않습니다. `protocol`이 없거나 1 이상 정수가 아니면 오류입니다.
 
 #### 7.3 ① Web API — 내보내기 함수
 
@@ -844,7 +845,7 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 | 6 | `RESUME` | 슬롯 | 0 | 연결 재개 |
 | 7 | `HOLD` | 슬롯 | 현재 인원 | `rejoin` 게임만(7.10). 해당 슬롯의 연결이 끊겨 자리를 보관함. 끊긴 기기 자신은 `a` = 본인 슬롯. 유저 기기의 `a` = 0 = 방장이 앱을 닫아 돌아오기를 기다림(7.10.1) |
 | 8 | `BACK` | 슬롯 | 현재 인원 | `rejoin` 게임만. 보관한 슬롯이 다시 연결됨(늘 `HOLD` 뒤). 유저 기기의 `a` = 0 = 방장이 돌아옴 → 이 기기가 상태 묶음을 슬롯 0으로 보냄(7.10.1) |
-| 9 | `REJOINED` | 본인 슬롯 | 현재 인원 | `rejoin` 게임만. 돌아온 기기에 `OPEN` 대신(방장이 앱을 다시 열어 돌아온 경우 방장 기기에 `a` = 0) |
+| 9 | `REJOINED` | 본인 슬롯 | 현재 인원 | `rejoin` 게임만. 돌아온 기기에 `OPEN` 대신(방장이 앱을 다시 열어 돌아온 경우 방장 기기에 `a` = 0, 유저가 앱을 다시 열어 돌아온 경우 앞선 `OPEN`·`HOLD` 없이 이 사건부터, 7.10.2) |
 
 사유: 1 `CANCEL`(사용자가 멀티플레이 창에서 취소) · 2 `TIMEOUT`(제한 시간 안에 연결 실패 / 연결 끊김 후 복귀하지 않음) · 3 `INCOMPATIBLE`(서로 다른 게임·호환 키·규약 번호) · 4 `LOST`(연결 끊김) · 5 `FULL`(방 정원 초과) · 6 `LEFT`(정상 퇴장) · 7 `HOST_LEFT`(방장이 나가 방이 사라짐) · 8 `NO_NETWORK`(Wi-Fi가 없거나 이 기기에서 연결 기능을 사용할 수 없음) · 9 `SOLO`(`rejoin` 게임만: 끊긴 기기의 사용자가 "혼자 이어 하기"를 선택)
 
@@ -869,7 +870,7 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 | `webgba.net.onrecv = (from, bytes) => …` | 수신 메시지(순서 유지) |
 | `webgba.net.onstate = (from, bytes) => …` | 수신 상태 묶음(7.10). 같은 송신자의 메시지와 순서 유지 |
 
-멀티플레이를 모르는 호스트에서는 `webgba.net` 자체가 `null`입니다. 현재 webGBA도 manifest에 `multiplayer`가 없는 게임에는 `null`을 제공합니다.
+멀티플레이를 모르는 호스트에서는 `webgba.net` 자체가 `null`입니다. 현재 webGBA도 manifest에 `multiplayer`가 없는 게임, `multiplayer.protocol`이 1보다 큰 게임(7.2)에는 `null`을 제공합니다.
 
 #### 7.5 한도
 
@@ -1068,7 +1069,7 @@ webgba.net.board(null); // 표 없음
 - 유저 연결이 끊기면(15초 넘게 응답 없음·채널 닫힘) 방장은 자리를 보관하고(`HOLD`, 인원 그대로, 새 참가자가 받지 않음) 상태 메뉴에 "끊김 · 기다리는 중"으로 표시합니다. 끊긴 기기는 `HOLD`(본인 슬롯)를 받고, webGBA가 "다시 연결하는 중…" 창을 출력하며 같은 방에 자동으로 다시 연결합니다(네트워크가 돌아오면 바로). 사용자는 "다시 들어가기"(바로 다시 시도)·"혼자 이어 하기"(`CLOSED(SOLO)`, 방장·다른 기기에는 `LEAVE(LEFT)`)를 누를 수 있습니다.
 - 돌아오면 방장·다른 기기는 `BACK`, 돌아온 기기는 `OPEN` 대신 `REJOINED`를 받습니다. 끊긴 동안의 메시지는 전달되지 않으므로 방장 게임이 **상태 묶음**을 돌아온 슬롯에 보냅니다. `REJOINED` 다음에는 끊긴 동안 바뀐 다른 슬롯의 사건(`JOIN`·`LEAVE`·`HOLD`·`BACK`)이 차이만큼 옵니다.
 - 짧은 끊김(같은 Wi-Fi 재연결로 주소가 바뀐 경우 포함)은 ICE 재시작으로 같은 연결을 복구합니다. 이 경우 게임에는 `STALL` → `RESUME`만 가고 메시지 손실이 없습니다.
-- 방장 기기의 네트워크 끊김은 15초 안에서만 복구합니다. 넘으면 방장 `CLOSED(LOST)`, 유저 `CLOSED(HOST_LEFT)`로 세션이 끝납니다. 방장이 앱을 닫은 경우는 7.10.1(2분 안에 다시 열면 같은 방으로 돌아옴).
+- 방장 기기의 네트워크 끊김은 15초 안에서만 복구합니다. 넘으면 방장 `CLOSED(LOST)`, 유저 `CLOSED(HOST_LEFT)`로 세션이 끝납니다. 방장이 앱을 닫은 경우는 7.10.1(2분 안에 다시 열면 같은 방으로 돌아옴), 유저가 앱을 닫은 경우는 7.10.2(같은 기기에서 같은 게임을 다시 열면 같은 자리로 돌아옴).
 - 방장이 세션을 끝내면 방이 닫혀 돌아오려던 기기에 `CLOSED(HOST_LEFT)`가 갑니다.
 
 상태 묶음(1~262144바이트, 받는 곳 = 슬롯 한 개):
@@ -1288,7 +1289,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - `rom`이 있으면 맨 끝, WGRM 헤더·크기·SHA-1 일치(`--quick`이면 압축 해제 생략), manifest `rom.sha1`이 다르면 경고
 - manifest: 64KB 이하 JSON, `wgba` 1, `id` 규칙, `version`이 `x.y.z`, `name`(문자열 또는 언어 칸마다 1~48자, 칸 이름과 함께 오류 표시, `en`·`ko`·`ja` 칸이 하나도 없거나 공백뿐인 칸은 경고), `runtime`, 모르는 `needs` 없음, `homepage`는 `https://`, `screen`·`save`·`input.preset`·`input.dpad`·`cart.color` 값, `display`는 객체·`display.aspect`는 `"정수:정수"`(W·H 1~1024, 비율 1:4~4:1), 버튼 id 규칙·중복, role 중복, `shortName` 칸이 16자 초과면 경고. `info`는 `name`·`shortName`을 화면 언어(en·ko·ja)마다 표시할 글로 출력(다른 칸을 쓰면 `ja → en …`)
 - ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31이고 중복 없음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 실행되는데(`rom.required: false`) `webgba.v1`이 없으면 경고, `js` chunk가 있으면 경고(사용하지 않음)
-- 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고), `board`(7.9.1 형식 = 오류, 모르는 키 = 경고), ①에서 `Web_NetBoard`와 `multiplayer.board` 중 한쪽만 있으면 경고
+- 멀티플레이: `multiplayer.protocol` 1(1보다 큰 정수 = 경고 — 멀티플레이 없이 실행, 나머지 `multiplayer` 항목은 검사하지 않음 / 없음·1 이상 정수가 아님 = 오류), `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고), `board`(7.9.1 형식 = 오류, 모르는 키 = 경고), ①에서 `Web_NetBoard`와 `multiplayer.board` 중 한쪽만 있으면 경고
 - ②: `js` chunk 있음, `entry.style`, `entry.js`가 `"js"`가 아니면 경고, 버튼별 `code`, 가져온 공유 메모리(스레드) 없음
 - 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 초과 시 경고), 격자(48×32 · 54×44 · 18×46) × k(1~4)가 아니면 경고, 세 그림의 k가 다르면 경고, manifest의 형식·크기와 다르면 경고, `labelAt`·`textArea`가 그림 밖이면 경고, manifest에 있는데 chunk가 없으면 오류, chunk가 있는데 manifest에 없으면 경고
 - 기본 키(`keys`)에 호스트 예약 키(`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12`)가 있으면 경고
@@ -1304,7 +1305,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 | manifest `wgba`(현재 1) | 기존 필드의 의미가 변경되거나 삭제될 때만(새 필드는 올리지 않음) | 더 높으면 열지 않음 |
 | `needs` | 번호 대신 "이 기능이 반드시 필요함"을 기재 | 모르는 값이면 열지 않음 |
 | 틀 API `webgba.version`(현재 1) | 기존 함수의 의미가 변경될 때만 | 게임이 확인해 대응 |
-| 멀티플레이 규약 `multiplayer.protocol`(현재 1) | 통신 규약이 변경될 때 | 규격: 호스트가 지원하는 번호보다 크면 멀티플레이만 비활성화하고 게임은 실행(7.2). 현재 webGBA는 1이 아니면 manifest 오류로 열지 않음 |
+| 멀티플레이 규약 `multiplayer.protocol`(현재 1) | 통신 규약이 변경될 때 | 호스트가 지원하는 번호보다 크면 멀티플레이만 비활성화하고 게임은 실행, 멀티플레이 버튼·연결 창에 새 webGBA가 필요하다고 안내(7.2) |
 | 롬 chunk WGRM 형식(현재 1) | 롬 헤더가 변경될 때 | 모르면 열지 않음 |
 | 게임 `version` | 제작자 재량(콘텐츠 변경 시) | 업데이트 여부 구분·표시에만 사용 |
 
@@ -1373,16 +1374,16 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 [멀티플레이 — 규약 1, 현재 webGBA(Windows 앱·웹 버전)가 지원]
 - 연결은 webGBA가 담당한다: 방 코드 6자리·같은 Wi-Fi 근처 방·연결 코드(QR). 기기 간 직접 연결(WebRTC)을 먼저 시도하고, 직접 연결이 되지 않는 망에서는 Cloudflare 중계 서버(TURN, 내용은 DTLS 암호화)를 거친다. 게임은 "통신 상대가 필요함" 요청·바이트 송수신·사건 처리만 한다. 게임이 직접 네트워크(WebSocket·WebRTC·fetch)를 열지 않는다.
 - 세션 = 방 1개, 2~8명. 방장 = 슬롯 0, 참가 순서대로 1·2…. 메시지는 누락 없이 송신자별 순서 유지, 한 개 16384바이트까지, 한 프레임 송신 합계 65536바이트 이하 권장. 같은 게임끼리만 연결된다(compat).
-- manifest "multiplayer": protocol 1(필수) · players{min,max}(2~8, 기본 2·2) · purposes[{id(영문 소문자·숫자·-, 32자), name(언어별 글), players[min,max]}](배열 순서 = 용도 번호 1부터, 서로 다른 용도끼리는 연결하지 않음, 없으면 용도 1개) · compat("exact" 기본 = 같은 id + 같은 빌드 식별 / 다른 문자열 = id와 그 문자열이 같은 게임끼리) · rejoin(true = 다시 들어오기) · join("anytime" = 중간 참가) · iceServers([{urls: stun:·turn:·turns: 주소(모두 합쳐 4개), username·credential 또는 credentialUrl(https, 연결할 때 호스트가 GET → {username, credential, ttl}, CORS로 https://webgba.vercel.app·http://ui.localhost 허용)}] — 지정하면 webGBA 기본 STUN·TURN 대신 이 목록만 사용, 고정 접속 정보는 파일에서 누구나 꺼낼 수 있어 credentialUrl 권장) · board(상태 표, 아래). sync "inputs"·inputDelay는 규격에 있지만 현재 webGBA는 지원하지 않으므로 사용하지 않는다.
+- manifest "multiplayer": protocol 1(필수 — 호스트가 아는 번호보다 크면 호스트는 멀티플레이만 끄고 게임을 실행한다: ① Web_NetHost 호출 없음, ② webgba.net = null) · players{min,max}(2~8, 기본 2·2) · purposes[{id(영문 소문자·숫자·-, 32자), name(언어별 글), players[min,max]}](배열 순서 = 용도 번호 1부터, 서로 다른 용도끼리는 연결하지 않음, 없으면 용도 1개) · compat("exact" 기본 = 같은 id + 같은 빌드 식별 / 다른 문자열 = id와 그 문자열이 같은 게임끼리) · rejoin(true = 다시 들어오기) · join("anytime" = 중간 참가) · iceServers([{urls: stun:·turn:·turns: 주소(모두 합쳐 4개), username·credential 또는 credentialUrl(https, 연결할 때 호스트가 GET → {username, credential, ttl}, CORS로 https://webgba.vercel.app·http://ui.localhost 허용)}] — 지정하면 webGBA 기본 STUN·TURN 대신 이 목록만 사용, 고정 접속 정보는 파일에서 누구나 꺼낼 수 있어 credentialUrl 권장) · board(상태 표, 아래). sync "inputs"·inputDelay는 규격에 있지만 현재 webGBA는 지원하지 않으므로 사용하지 않는다.
 - webapi 내보내기(일곱 개가 모두 있어야 멀티플레이 지원): Web_NetWanted()→u32 · Web_NetEvent(kind,a,b) · Web_NetOut()→ptr · Web_NetOutLen()→u32 · Web_NetOutClear() · Web_NetInBuffer(len)→ptr(0 = 현재 공간 없음 → 호스트가 다음 프레임에 순서대로 다시 시도) · Web_NetIn(from,len)(from 비트 8 = 0x100이면 상태 묶음). 선택: Web_NetHost(protocol,flags)(Web_Init 후 한 번, flags 비트 0 = 순서 보장, 비트 1 = 키 동기화(현재 0), 비트 2 = 다시 들어오기 — 호출되지 않으면 통신 메뉴를 숨긴다) · Web_NetBoard()→ptr · Web_NetCompat()→ptr(NUL 종료 ASCII 64자까지의 호환 키, compat 뒤에 연결해 비교). 새 가져오기는 없다.
 - 호스트의 한 프레임: 수신 메시지마다 Web_NetInBuffer(len) → 기록 → Web_NetIn(from,len) → Web_RunFrame(keys) → Web_NetOut·Web_NetOutLen 레코드 송신 → Web_NetOutClear() → Web_NetWanted() 확인(창 열기·세션 종료).
 - Web_NetWanted 값: 비트 0~7 용도 번호(0 = 첫 용도) · 8~11 최소 인원(0 = 2) · 12~15 최대 인원(0 = 최소와 같음) · 16~17 역할(0 무관, 1 방 생성만, 2 참가만) · 18~23 = 0 · 24~31 요청 번호(새로 상대를 찾을 때마다 +1, 255 다음 1). 세션 동안 같은 값을 계속 반환하고, 0 = 통신 종료(호스트가 남은 송신 후 세션을 닫고 CLOSED(LEFT)).
 - 송신 레코드(little endian, 연속 배치): u16 내용 길이 n(1~16384) · u8 받는 곳(0~7 = 슬롯, 0xFE = TO_ORDERED 본인 포함 모두가 같은 순서로 수신, 0xFF = TO_ALL 본인 제외 모두) · u8 종류(0 메시지, rejoin 게임만 1 = 상태 묶음 조각·2 = 마지막 조각) · 내용 n바이트, 다음 레코드는 4바이트 경계. 세션이 없을 때 쌓인 레코드는 버려진다.
-- 사건 Web_NetEvent(kind,a,b): 1 OPEN(본인 슬롯, 인원 — 방장은 혼자 먼저 시작) · 2 JOIN(슬롯, 인원) · 3 LEAVE(슬롯, 사유) · 4 CLOSED(사유, 0) · 5 STALL(슬롯 — 1초 넘게 응답 없음·앱 이탈) · 6 RESUME(슬롯). rejoin 게임만: 7 HOLD(슬롯, 인원 — 끊긴 자리 보관, 끊긴 기기 자신은 본인 슬롯, 유저 기기에서 a = 0이면 방장이 앱을 닫아 돌아오기를 기다림) · 8 BACK(슬롯, 인원 — 보관 자리가 다시 연결됨, 항상 HOLD 뒤. 유저 기기에서 a = 0이면 방장이 돌아옴 → 이 기기가 상태 묶음을 슬롯 0으로 보냄) · 9 REJOINED(본인 슬롯, 인원 — 돌아온 기기에 OPEN 대신, 돌아온 방장은 a = 0. 이후 끊긴 동안 바뀐 JOIN·LEAVE·HOLD·BACK이 이어짐). 사유: 1 CANCEL · 2 TIMEOUT · 3 INCOMPATIBLE · 4 LOST · 5 FULL · 6 LEFT · 7 HOST_LEFT · 8 NO_NETWORK · 9 SOLO(끊긴 사용자가 "혼자 이어 하기" 선택).
+- 사건 Web_NetEvent(kind,a,b): 1 OPEN(본인 슬롯, 인원 — 방장은 혼자 먼저 시작) · 2 JOIN(슬롯, 인원) · 3 LEAVE(슬롯, 사유) · 4 CLOSED(사유, 0) · 5 STALL(슬롯 — 1초 넘게 응답 없음·앱 이탈) · 6 RESUME(슬롯). rejoin 게임만: 7 HOLD(슬롯, 인원 — 끊긴 자리 보관, 끊긴 기기 자신은 본인 슬롯, 유저 기기에서 a = 0이면 방장이 앱을 닫아 돌아오기를 기다림) · 8 BACK(슬롯, 인원 — 보관 자리가 다시 연결됨, 항상 HOLD 뒤. 유저 기기에서 a = 0이면 방장이 돌아옴 → 이 기기가 상태 묶음을 슬롯 0으로 보냄) · 9 REJOINED(본인 슬롯, 인원 — 돌아온 기기에 OPEN 대신, 돌아온 방장은 a = 0, 앱을 다시 열어 돌아온 유저는 앞선 OPEN·HOLD 없이 이 사건부터. 이후 끊긴 동안 바뀐 JOIN·LEAVE·HOLD·BACK이 이어짐). 사유: 1 CANCEL · 2 TIMEOUT · 3 INCOMPATIBLE · 4 LOST · 5 FULL · 6 LEFT · 7 HOST_LEFT · 8 NO_NETWORK · 9 SOLO(끊긴 사용자가 "혼자 이어 하기" 선택).
 - 게임이 지킬 것: CLOSED(CANCEL)은 게임 안 취소와 같게 처리하고 Web_NetWanted를 0으로. STALL은 일시적일 수 있으므로 바로 끊지 않고 기다린다(기본 15초 넘게 돌아오지 않으면 호스트가 LEAVE(LOST)·CLOSED, rejoin 게임은 HOLD). HOST_LEFT = 세션 종료(방장 위임 없음). 세션 중 호스트는 빨리 감기·퀵슬롯·다시 시작을 막는다(게임 안 세이브는 그대로).
 - script: webgba.net(manifest에 multiplayer가 있을 때만, 없으면 null) — want({purpose: 용도 id, min, max, role: "any"|"make"|"join"})(호출할 때마다 새 요청) · unwant() · send(to: 슬롯 0~7 | "ordered" | "all", bytes 16384바이트까지) · sendState(to: 슬롯, bytes 1~262144바이트, rejoin 게임만) · board(table | null) · host{protocol, ordered, inputs(현재 false), rejoin} · onevent = (kind,a,b) => …(위 번호) · onrecv = (from,bytes) => … · onstate = (from,bytes) => …. 바이트는 ArrayBuffer·Uint8Array.
 - 같은 상태 유지(권장 = lockstep): 게임을 결정적으로 제작한다(같은 입력·메시지에 같은 결과, 난수는 게임 내부 seed). TO_ORDERED 메시지는 본인에게도 돌아오므로(from = 본인 슬롯) 모든 기기가 돌아온 순서대로만 적용하면 같은 상태가 된다. 키를 맞추는 게임은 프레임 f의 본인 키를 프레임 번호와 함께 보내 f + 지연(예: 3프레임)에 적용하고, 모든 참가자의 f 키가 모일 때까지 프레임 f를 진행하지 않는다 — 느린 기기가 있어도 기기 사이 진행 차이가 지연 프레임 수를 넘지 않는다. 시작 프레임은 방장이 보낸 "시작" 메시지로 맞춘다. 수신은 프레임 사이에 오므로 Queue에 추가하고 프레임 안에서 처리한다.
-- 다시 들어오기(rejoin: true, 방 코드 세션만 — 연결 코드·QR 세션은 LEAVE(LOST)): 끊긴 유저 자리는 세션 끝까지 보관된다(HOLD). 끊긴 동안의 메시지는 전달되지 않으므로 BACK(s)를 받은 방장 게임이 상태 묶음(1~262144바이트, 호스트가 16384바이트씩 나눠 보내고 합침)을 슬롯 s로 보낸다. ① 송신 = 레코드 종류 1(조각, 16384바이트까지, 여러 프레임에 나눠도 됨)·2(마지막 조각), ① 수신 = 묶음 전체가 모이면 Web_NetInBuffer(묶음 크기) → Web_NetIn(from | 0x100, len)이므로 묶음 최대 크기만큼 받기 공간을 준비한다. 묶음에 게임이 적용한 순서 메시지 번호를 기록하고, 돌아온 기기는 그보다 큰 번호만 적용한다. 방장이 앱을 닫으면 방이 2분 남고, 방장이 돌아오면 방장 기기는 REJOINED(0), webGBA가 고른 유저 한 명은 BACK(0)을 받아 상태 묶음을 슬롯 0으로 보내며, 나머지 유저는 REJOINED(본인 슬롯) 후 방장 게임이 보내는 묶음을 기다린다.
+- 다시 들어오기(rejoin: true, 방 코드 세션만 — 연결 코드·QR 세션은 LEAVE(LOST)): 끊긴 유저 자리는 세션 끝까지 보관된다(HOLD). 끊긴 동안의 메시지는 전달되지 않으므로 BACK(s)를 받은 방장 게임이 상태 묶음(1~262144바이트, 호스트가 16384바이트씩 나눠 보내고 합침)을 슬롯 s로 보낸다. ① 송신 = 레코드 종류 1(조각, 16384바이트까지, 여러 프레임에 나눠도 됨)·2(마지막 조각), ① 수신 = 묶음 전체가 모이면 Web_NetInBuffer(묶음 크기) → Web_NetIn(from | 0x100, len)이므로 묶음 최대 크기만큼 받기 공간을 준비한다. 묶음에 게임이 적용한 순서 메시지 번호를 기록하고, 돌아온 기기는 그보다 큰 번호만 적용한다. 방장이 앱을 닫으면 방이 2분 남고, 방장이 돌아오면 방장 기기는 REJOINED(0), webGBA가 고른 유저 한 명은 BACK(0)을 받아 상태 묶음을 슬롯 0으로 보내며, 나머지 유저는 REJOINED(본인 슬롯) 후 방장 게임이 보내는 묶음을 기다린다. 유저가 앱을 닫아도 방장은 자리를 보관하고(HOLD), 같은 기기에서 같은 게임(같은 id·버전)을 다시 열어 "이전 방으로 돌아가기"를 누르면 그 기기는 새로 시작한 게임에서 REJOINED(본인 슬롯)를 받고 방장·다른 기기는 BACK(s)를 받는다 — 방장 게임은 앱 안 다시 들어오기와 같게 상태 묶음을 보낸다.
 - 중간 참가(join: "anytime"): 게임이 시작부터 요청을 유지해도 창을 자동으로 열지 않고 시간 초과도 없다. 사용자가 "멀티플레이" 버튼으로 창을 열어 방을 생성하고, 방장이 방을 생성하거나 갱신한 뒤 2분 30초 동안 참가를 받는다. 들어온 유저는 JOIN으로 알리므로, 그 유저에게 필요한 게임 상태는 게임이 메시지(rejoin 게임은 상태 묶음도 가능)로 보낸다.
 - 상태 표(선택): multiplayer.board{columns[1~6]{id(영문 소문자·숫자·-, 16자), type "bar"|"number"|"rank"|"status", name(12자), max(bar 필수, 1~65535), tone("hp"|"accent"), prefix·suffix(4자), labels(status 필수, 1~15개 {name(8자), tone "normal"|"good"|"warn"|"bad"|"dim", dimRow})}, names(사람이 아닌 줄 이름), captions(머리 글 {0}·{1}), mark(강조 줄 의미), scope("all" 게임이 모든 줄 | "self" 기기마다 자기 줄), sort{column, order}}. ① Web_NetBoard() = 세션 동안 같은 위치의 400바이트 버퍼: 0 serial u32(바꿀 때마다 +1, 0 건너뜀, 다른 칸을 모두 기록한 후 마지막에) · 4 format u8 = 1 · 5 rows u8(0~8) · 6 flags u8(비트 0 = 최종 결과) · 7 caption u8(1부터, 0 없음) · 8 arg0 s32 · 12 arg1 s32 · 16 + 48×i 줄{slot u8(0~7, 0xFF = 사람 아님) · flags u8(비트 0 흐리게, 비트 1 강조) · nameLabel u8 · nameLen u8(0~20) · values s32×6 · name 20바이트 UTF-8}. 값: bar = 하위 16비트 현재·상위 16비트 최대(0 = max), number = s32, rank = 0 또는 1~99, status = 0 또는 labels 번호. ② webgba.net.board({caption, args:[…], final, rows:[{slot, values, nameLabel, name, dim, mark}]}). 초당 4번까지만 바꾼다. 사람 줄 이름은 항상 webGBA 닉네임이다.
 - 예제: webGBA 저장소 docs/wgba/examples/net-webapi(① C, 롬 없음)·net-script(② JS 한 개).

@@ -417,12 +417,14 @@ function netWant(request) {
 }
 
 function openNet(request = player.net.request) {
-  if (!request && !player.net.active) return;
+  const newer = !request && !player.net.active && player.net.newer;
+  if (!request && !player.net.active && !newer) return;
   if (state.menuOpen) setMenu(false);
   if (state.dialogDone) state.dialogDone(null);
   if (state.sheet && state.sheet !== "net") closeSheet();
   if (state.sheet !== "net") openSheet("net");
-  netWin.show(request);
+  if (newer) netWin.showNewer();
+  else netWin.show(request);
 }
 
 const BOARD_WIDTHS = { portrait: { bar: 22, number: 30, rank: 26, status: 12 }, landscape: { bar: 20, number: 28, rank: 26, status: 12 } };
@@ -1147,13 +1149,15 @@ function syncControls() {
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
-  const netOn = running && Boolean(player.net.request || player.net.active);
-  if (el.btnNet.hidden !== !netOn) {
+  const netLive = running && Boolean(player.net.request || player.net.active);
+  const netOn = netLive || (running && player.net.newer);
+  if (el.btnNet.hidden !== !netOn || el.btnFast.hidden !== netLive) {
+    const shownBefore = el.btnNet.hidden + el.btnFast.hidden;
     el.btnNet.hidden = !netOn;
-    el.btnFast.hidden = netOn;
-    if (state.toolSlots) placeTools(state.toolSlots);
+    el.btnFast.hidden = netLive;
+    if (shownBefore !== el.btnNet.hidden + el.btnFast.hidden && document.documentElement.dataset.ready) layout();
+    else if (state.toolSlots) placeTools(state.toolSlots);
   }
-  if (el.btnFast.hidden !== netOn) el.btnFast.hidden = netOn;
   const netBadge = el.btnNet.querySelector(".tool__badge") ?? el.btnNet.appendChild(make("span", "tool__badge"));
   const netBadgeText = netBadge.querySelector(".tool__badgeText") ?? netBadge.appendChild(make("span", "tool__badgeText"));
   const netText = player.net.connected ? `${player.net.session.count}/${player.net.session.max}` : "";
@@ -1166,7 +1170,7 @@ function syncControls() {
     if (netTone) netBadge.dataset.tone = netTone;
     else delete netBadge.dataset.tone;
   }
-  const netLabel = accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
+  const netLabel = !netLive && player.net.newer ? "net.newer" : accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();

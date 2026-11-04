@@ -462,7 +462,8 @@ function netWant(request) {
 }
 
 function openNet(request = player.net.request) {
-  if (!request && !player.net.active) return;
+  const newer = !request && !player.net.active && player.net.newer;
+  if (!request && !player.net.active && !newer) return;
   closeMenu();
   player.releaseAll();
   if (settings.isOpen()) settings.close();
@@ -473,7 +474,8 @@ function openNet(request = player.net.request) {
   el.dialog.classList.add("dialog--net");
   netClose.hidden = false;
   el.layer.hidden = false;
-  netWin.show(request);
+  if (newer) netWin.showNewer();
+  else netWin.show(request);
 }
 
 function closeNetLayer() {
@@ -653,14 +655,15 @@ function syncControls() {
   const stateBlocked = player.canState && player.net.locked;
   netBlock(el.btnStateSave, stateBlocked ? "rail.stateSaveNet" : "rail.stateSave", stateBlocked);
   netBlock(el.btnStateLoad, stateBlocked ? "rail.stateLoadNet" : "rail.stateLoad", stateBlocked);
-  const netOn = hosted && Boolean(player.net.request || player.net.active);
+  const netLive = hosted && Boolean(player.net.request || player.net.active);
+  const netOn = netLive || (hosted && player.net.newer);
   el.btnNet.hidden = !netOn;
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   const accept = netWin?.acceptState() ?? null;
   const dotTone = accept ? (accept.on ? "on" : "off") : player.net.waiting ? "wait" : "";
   el.btnNetDot.hidden = !dotTone;
   if ((el.btnNetDot.dataset.tone ?? "") !== dotTone) el.btnNetDot.dataset.tone = dotTone;
-  const netLabel = accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : mpWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
+  const netLabel = !netLive && player.net.newer ? "net.newer" : accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : mpWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) {
     el.btnNet.dataset.i18nTitle = netLabel;
     el.btnNet.title = t(netLabel);

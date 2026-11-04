@@ -769,6 +769,8 @@
   "net.back.gone": "The previous room has already closed",
   "net.seat.lead": "You left this room during a game. Go back to carry on with the host from the same seat.",
   "net.seat.host": "Host {nick}",
+  "net.newer": "This game's multiplayer needs a newer webGBA",
+  "net.newer.note": "You can still play alone. To play with friends, update webGBA to the latest version.",
   "net.hostWait.lead": "Lost the connection to the host. If the host reopens the app, you continue in the same room.",
   "net.hostWait.state": "Waiting for the host… {time} left",
   "net.hostWait.note": "If the host does not return in time, the session ends. 'Play alone' leaves the friend game and continues alone.",

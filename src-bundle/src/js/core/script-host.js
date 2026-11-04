@@ -6,6 +6,7 @@
 // player.js 의 Player 가 이 호스트를 ① 호스트처럼 다룬다(script = true): 입력 비트 → 버튼 키, 세이브·퀵슬롯·일시정지·소리 크기.
 import { codeWasm, parseAspect, ratioOf } from "./wgba-format.js";
 import { readRomPayload } from "./web-host.js";
+import { netNewer } from "./net/net-host.js";
 
 const STATE_BYTES = 262144;
 
@@ -257,7 +258,7 @@ export class ScriptHost {
         speed: this.speed,
         autoFire: this.fire,
         text: { tap: this.text.tap ?? "" },
-        net: this.manifest.multiplayer ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
+        net: this.manifest.multiplayer && !netNewer(this.manifest) ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
       },
       transfer,
     );

@@ -96,10 +96,11 @@ export function noticeText(info) {
   if (info.kind === "hostWait") return t("net.notice.hostWait");
   if (info.kind === "hostBack") return t("net.notice.hostBack");
   if (info.kind === "returned") return t("net.notice.returned");
+  if (info.kind === "newer") return t("net.newer");
   return "";
 }
 
-export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" || info.kind === "hostWait" ? "warn" : "info";
+export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || ["hold", "rejoining", "hostWait", "newer"].includes(info.kind) ? "warn" : "info";
 
 const HINTS = { linkFailed: "net.err.linkFailed", wanSym: "net.err.wanSym", peerSym: "net.err.peerSym" };
 const HELP_HINTS = ["linkFailed"];
@@ -225,6 +226,14 @@ export class NetWindow {
       } else this.go(snap.connected ? "joined" : this.joinInfo ? "wait" : "join2");
     } else if (this.back || this.request.role !== "make") this.go("choose");
     else this.startRoom();
+  }
+
+  showNewer() {
+    this.request = null;
+    this.open = true;
+    this.stay = false;
+    this.clearError();
+    this.go("newer");
   }
 
   // ── 방장 돌아오기: 방 정보 보관(앱 재실행 후에도) · 같은 게임을 열면 안내 ──
@@ -557,7 +566,7 @@ export class NetWindow {
   requestClose() {
     const snap = this.net.snapshot();
     const keep = snap.active && (snap.reached || snap.role === "join" || snap.anytime);
-    if (this.screen === "ended" || keep) this.close();
+    if (this.screen === "ended" || this.screen === "newer" || keep) this.close();
     else this.close({ cancel: true });
   }
 
@@ -614,6 +623,7 @@ export class NetWindow {
       this.roomGuest = null;
     }
     if (!this.open) return;
+    if (this.screen === "newer" && snap.newer) return;
     if (!snap.request && !snap.active) {
       this.close();
       return;
@@ -1385,6 +1395,11 @@ export class NetWindow {
       this.error = whyText(why);
       this.errorHelp = [WHY.NO_NETWORK, WHY.TIMEOUT, WHY.LOST].includes(why);
       body = [this.bannerNode(), this.helpNode()];
+      foot = [this.spacer(), k.action({ id: "close", primary: true, onClick: () => this.close() })];
+    } else if (this.screen === "newer") {
+      this.errorTitle = t("net.newer");
+      this.error = t("net.newer.note");
+      body = [this.bannerNode()];
       foot = [this.spacer(), k.action({ id: "close", primary: true, onClick: () => this.close() })];
     } else if (this.screen === "fail") {
       const stack = (...nodes) => {

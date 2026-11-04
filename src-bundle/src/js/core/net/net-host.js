@@ -29,9 +29,14 @@ export function packWanted({ purpose = 0, min = 2, max = 0, role = 0, serial = 1
   return ((purpose & 0xff) | ((min & 15) << 8) | ((max & 15) << 12) | ((role & 3) << 16) | ((serial & 0xff) << 24)) >>> 0;
 }
 
+export function netNewer(manifest) {
+  const p = manifest?.multiplayer?.protocol;
+  return Number.isInteger(p) && p > PROTOCOL;
+}
+
 export function netConfig(manifest) {
   const mp = manifest?.multiplayer;
-  if (mp && typeof mp === "object" && Number.isInteger(mp.protocol) && mp.protocol > PROTOCOL) return { off: "protocol" };
+  if (netNewer(manifest)) return { off: "protocol" };
   const clampN = (n, low, high, fallback) => (Number.isInteger(n) ? Math.max(low, Math.min(high, n)) : fallback);
   const pmin = clampN(mp?.players?.min, 2, SLOTS, 2);
   const pmax = Math.max(pmin, clampN(mp?.players?.max, 2, SLOTS, pmin));
@@ -237,6 +242,10 @@ export class NetHost {
     return Boolean(this.config?.anytime);
   }
 
+  get newer() {
+    return this.config?.off === "protocol" && this.enabled();
+  }
+
   get waiting() {
     return Boolean(this.session?.open && this.session.role === "make" && !this.reached);
   }
@@ -252,17 +261,21 @@ export class NetHost {
       this.pending = { host, opts: { manifest, build } };
       return false;
     }
+    const config = netConfig(manifest);
+    // 규약 번호가 더 높은 게임: 게임 쪽 연결 기능(Web_Net* 등)과 상관없이 멀티플레이만 끄고 안내(결정 181 가)
+    if (config.off) {
+      this.config = config;
+      this.log("warn", `멀티플레이 규약 ${manifest?.multiplayer?.protocol} 은 이 webGBA 가 모름 — 통신 없이 실행`);
+      this.notice({ kind: "newer" });
+      this.changed();
+      return false;
+    }
     let game = null;
     if (host?.script) {
       if (manifest?.multiplayer && typeof host.netPost === "function") game = new ScriptNetGame(host);
     } else if (WebApiNetGame.supports(host)) game = new WebApiNetGame(host, this.log);
     if (!game) return false;
-    const config = netConfig(manifest);
     this.config = config;
-    if (config.off) {
-      this.log("warn", `멀티플레이 규약 ${manifest?.multiplayer?.protocol} 은 이 webGBA 가 모름 — 통신 없이 실행`);
-      return false;
-    }
     this.game = game;
     this.manifest = manifest;
     this.build = build;
@@ -408,6 +421,7 @@ export class NetHost {
     const s = this.session;
     return {
       supported: this.supported,
+      newer: this.newer,
       request: this.request,
       active: this.active,
       connected: this.connected,

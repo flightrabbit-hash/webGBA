@@ -10,6 +10,7 @@ import { concat, customSection, leb, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECT
 import { checkBoard } from "./net/board.js";
 import { pickTextKey, TEXT_LANGS } from "./lang-text.js";
 import { readIceServers } from "./net/ice.js";
+import { netNewer } from "./net/net-host.js";
 
 export const SECTION_PREFIX = "webgba.";
 export const TOC_SECTION = "webgba.toc";
@@ -665,9 +666,11 @@ export function checkManifest(m, errors, warnings) {
     for (const key of b.keys ?? []) if (HOST_KEYS.includes(key)) warnings.push(`버튼 ${b.id}: 기본 키 ${key} 는 호스트 몫 키입니다`);
   }
   if (m.input?.rs !== undefined) checkMacro(m.input.rs, roles, errors);
-  if (m.multiplayer) {
+  // 더 높은 규약은 다른 칸 규칙을 모르므로 검사하지 않는다 — 멀티플레이만 끄고 실행(규격 7.2, 결정 181 가)
+  if (m.multiplayer && netNewer(m)) warnings.push(`multiplayer.protocol ${m.multiplayer.protocol} 은 이 webGBA 가 모르는 규약입니다 — 멀티플레이 없이 실행합니다`);
+  else if (m.multiplayer) {
     const mp = m.multiplayer;
-    if (mp.protocol !== 1) errors.push(`multiplayer.protocol 이 1 이 아닙니다: ${mp.protocol}`);
+    if (mp.protocol !== 1) errors.push(`multiplayer.protocol 은 1 이상 정수(현재 규약 1): ${mp.protocol}`);
     const pids = new Set();
     for (const p of mp.purposes ?? []) {
       if (typeof p.id !== "string" || !/^[a-z0-9-]{1,32}$/.test(p.id) || pids.has(p.id)) errors.push(`multiplayer.purposes id 가 규칙 밖이거나 겹칩니다: ${p.id}`);
@@ -922,10 +925,10 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
           const ok = imp.kind === "function" && ((imp.module === "env" && (WEBAPI_ENV.includes(imp.name) || /^invoke_[a-z]+$/.test(imp.name))) || (imp.module === "wasi_snapshot_preview1" && WEBAPI_WASI.includes(imp.name)));
           if (!ok) errors.push(`webapi 가 모르는 가져오기: ${imp.module}.${imp.name}`);
         }
-        const net = WEBAPI_NET.filter((n) => exportsSet.has(n)).length;
+        const net = netNewer(m) ? 0 : WEBAPI_NET.filter((n) => exportsSet.has(n)).length;
         if (net && net < WEBAPI_NET.length) warnings.push(`Web_Net* 일곱 개 중 ${net}개만 있습니다 — 멀티플레이를 쓰지 않는 것으로 봅니다`);
-        if (exportsSet.has("Web_NetBoard") && !m.multiplayer?.board) warnings.push("Web_NetBoard 가 있는데 설명서에 multiplayer.board 가 없습니다 — 상태 표를 읽지 않습니다");
-        if (m.multiplayer?.board && !exportsSet.has("Web_NetBoard")) warnings.push("multiplayer.board 가 있는데 Web_NetBoard 내보내기가 없습니다 — 사람 목록만 보입니다");
+        if (!netNewer(m) && exportsSet.has("Web_NetBoard") && !m.multiplayer?.board) warnings.push("Web_NetBoard 가 있는데 설명서에 multiplayer.board 가 없습니다 — 상태 표를 읽지 않습니다");
+        if (!netNewer(m) && m.multiplayer?.board && !exportsSet.has("Web_NetBoard")) warnings.push("multiplayer.board 가 있는데 Web_NetBoard 내보내기가 없습니다 — 사람 목록만 보입니다");
         const w = m.screen?.width ?? 240;
         const h = m.screen?.height ?? 160;
         const customButtons = (m.input?.buttons ?? []).length > 0 || (m.input?.preset ?? "gba") !== "gba";

@@ -126,7 +126,7 @@
       "type": "object",
       "required": ["protocol"],
       "properties": {
-        "protocol": { "const": 1 },
+        "protocol": { "type": "integer", "minimum": 1, "description": "멀티플레이 규약 번호(현재 1). 호스트가 아는 번호보다 크면 호스트는 멀티플레이만 끄고 게임은 실행(README 7.2)" },
         "players": { "type": "object", "properties": { "min": { "type": "integer", "minimum": 2, "maximum": 8 }, "max": { "type": "integer", "minimum": 2, "maximum": 8 } } },
         "purposes": {
           "type": "array",
@@ -145,6 +145,28 @@
         "sync": { "enum": ["messages", "inputs"], "default": "messages" },
         "inputDelay": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
         "join": { "enum": ["anytime"], "description": "anytime = 중간 참가 게임: 멀티플레이 창을 자동으로 열지 않고 시간 초과 없음, 방장이 방을 만들거나 갱신한 뒤 2분 30초 동안 참가를 받음(README 7.12)" },
+        "rejoin": { "type": "boolean", "default": false, "description": "true = 다시 들어오기: 연결이 끊긴 유저의 자리를 세션 끝까지 보관하고 같은 자리로 돌아오게 함(방 코드 세션만, README 7.10)" },
+        "iceServers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "description": "게임별 연결 서버(README 7.11). 지정하면 webGBA 기본 STUN·TURN 대신 이 목록만 사용. 서버 주소는 모두 합쳐 4개까지. turn:·turns: 는 username·credential 또는 credentialUrl 이 필요하고, 고정 접속 정보는 경고(credentialUrl 권장)",
+          "items": {
+            "type": "object",
+            "required": ["urls"],
+            "properties": {
+              "urls": {
+                "oneOf": [
+                  { "$ref": "#/$defs/iceUrl" },
+                  { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/iceUrl" } }
+                ]
+              },
+              "username": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "credential": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "credentialUrl": { "type": "string", "maxLength": 512, "pattern": "^https://", "description": "연결할 때 호스트가 GET → { username, credential, ttl }(turn:·turns: 서버만, CORS 로 https://webgba.vercel.app·http://ui.localhost 허용)" }
+            }
+          }
+        },
         "board": {
           "type": "object",
           "required": ["columns"],
@@ -200,6 +222,7 @@
   ],
   "$defs": {
     "imageFormat": { "enum": ["png", "webp"] },
+    "iceUrl": { "type": "string", "maxLength": 256, "pattern": "^([Ss][Tt][Uu][Nn]|[Tt][Uu][Rr][Nn][Ss]?):(\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?(\\?transport=(udp|tcp))?$" },
     "text4": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 4 }, { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 4 } }] },
     "text8": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 8 }, { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 8 } }] },
     "text12": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 12 }, { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 12 } }] },
