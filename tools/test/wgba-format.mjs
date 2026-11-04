@@ -362,6 +362,44 @@ ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.nam
   const bad = [check({ name: undefined }), check({ name: {} }), check({ name: ["x"] }), check({ name: { en: 3 } })];
   ok(bad.every((r) => r.errors.length === 1), "검사: 이름 없음·빈 객체·배열·글이 아닌 칸 = 오류", bad.map((r) => r.errors[0]).join(" / "));
 }
+// 규약 번호가 높은 게임(결정 181 가): 열림·멀티플레이 꺼짐·안내 문구
+{
+  const mpCheck = (multiplayer) => {
+    const errors = [];
+    const warnings = [];
+    checkManifest({ ...manifestA, multiplayer }, errors, warnings);
+    return { errors, warnings };
+  };
+  const p2 = mpCheck({ protocol: 2, players: { min: 1 }, join: "always", purposes: [{ id: "BAD ID" }], newField: { x: 1 } });
+  ok(p2.errors.length === 0 && p2.warnings.length === 1 && p2.warnings[0].includes("protocol 2"), "검사: multiplayer.protocol 2 = 경고 1개만(나머지 multiplayer 항목은 검사하지 않음)", [...p2.errors, ...p2.warnings].join(" / "));
+  const badP = [0, -1, 1.5, "1", undefined, null].map((protocol) => mpCheck({ protocol }));
+  ok(badP.every((r) => r.errors.some((e) => e.startsWith("multiplayer.protocol"))), "검사: protocol 0·-1·1.5·\"1\"·없음·null = 오류", badP.map((r) => r.errors[0]).join(" / "));
+  const p1 = mpCheck({ protocol: 1 });
+  ok(p1.errors.length === 0 && p1.warnings.length === 0, "검사: protocol 1 통과", [...p1.errors, ...p1.warnings].join(" / "));
+  const fileP2 = await checkWgba((await packWgba({ wasm: webapiWasm(), manifest: { ...manifestA, multiplayer: { protocol: 2, board: { columns: [] } } } })).bytes);
+  ok(fileP2.errors.length === 0 && fileP2.warnings.some((w) => w.includes("protocol 2")) && !fileP2.warnings.some((w) => w.includes("Web_Net")), "파일 검사: protocol 2 게임 = 오류 0(열림)·내보내기 경고 없음", [...fileP2.errors, ...fileP2.warnings].join(" / "));
+  const { netConfig, NetHost } = await import("../../src-bundle/src/js/core/net/net-host.js");
+  const notices = [];
+  let on = true;
+  let hello = 0;
+  const seven = Object.fromEntries(["Web_NetWanted", "Web_NetEvent", "Web_NetOut", "Web_NetOutLen", "Web_NetOutClear", "Web_NetInBuffer", "Web_NetIn"].map((n) => [n, () => 0]));
+  const net = new NetHost({ onNotice: (n) => notices.push(n), enabled: () => on });
+  const attached = net.attach({ ex: { ...seven, Web_NetHost: () => hello++ }, u8: new Uint8Array(64), halted: false }, { manifest: { multiplayer: { protocol: 2 } } });
+  ok(netConfig({ multiplayer: { protocol: 2 } }).off === "protocol" && !attached && hello === 0 && net.newer && net.snapshot().newer && !net.supported && notices.length === 1 && notices[0].kind === "newer", "멀티플레이 꺼짐: 붙지 않음·Web_NetHost 호출 없음·newer·알림 1번", JSON.stringify({ attached, hello, notices }));
+  on = false;
+  const offHidden = !net.newer;
+  on = true;
+  net.syncEnabled();
+  ok(offHidden && net.newer && notices.length === 1, "멀티플레이 사용 끔 = newer 거짓(버튼 숨김), 다시 켬 = 참·알림 다시 없음");
+  const bare = new NetHost({ onNotice: (n) => notices.push(n) });
+  bare.attach({ ex: {}, u8: new Uint8Array(64), halted: false }, { manifest: { multiplayer: { protocol: 3 } } });
+  ok(bare.newer && notices.length === 2, "Web_Net* 내보내기가 없는 protocol 3 게임도 안내");
+  const one = new NetHost({});
+  one.attach({ ex: seven, u8: new Uint8Array(64), halted: false }, { manifest: { multiplayer: { protocol: 1 } } });
+  ok(!one.newer && one.supported, "protocol 1 게임 = 그대로 붙음");
+  const tables = ["ko", "en", "ja"].map((l) => JSON.parse(fs.readFileSync(path.join(tools, "..", "src-bundle", "src", "i18n", `${l}.json`), "utf8")));
+  ok(tables.every((tb) => tb["net.newer"] && tb["net.newer.note"]) && tables[0]["net.newer"] === "이 게임의 멀티플레이는 새 webGBA가 필요합니다", "안내 문구 net.newer·net.newer.note 세 언어", tables.map((tb) => tb["net.newer"]).join(" / "));
+}
 // 가져오기 webgba.v1(규격 4.1.2) + 롬 없는 ① 시작
 function v1Wasm() {
   const types = sec(1, vec([[0x60, 0, 1, 0x7f], [0x60, 1, 0x7f, 1, 0x7f], [0x60, 0, 0]]));

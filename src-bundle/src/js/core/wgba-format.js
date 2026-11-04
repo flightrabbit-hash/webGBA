@@ -667,7 +667,7 @@ export function checkManifest(m, errors, warnings) {
   }
   if (m.input?.rs !== undefined) checkMacro(m.input.rs, roles, errors);
   // 더 높은 규약은 다른 칸 규칙을 모르므로 검사하지 않는다 — 멀티플레이만 끄고 실행(규격 7.2, 결정 181 가)
-  if (m.multiplayer && netNewer(m)) warnings.push(`multiplayer.protocol ${m.multiplayer.protocol} 은 이 webGBA 가 모르는 규약입니다 — 멀티플레이 없이 실행합니다`);
+  if (m.multiplayer && netNewer(m)) warnings.push(`multiplayer.protocol ${m.multiplayer.protocol}: 이 webGBA 가 모르는 규약입니다 — 멀티플레이 없이 실행합니다`);
   else if (m.multiplayer) {
     const mp = m.multiplayer;
     if (mp.protocol !== 1) errors.push(`multiplayer.protocol 은 1 이상 정수(현재 규약 1): ${mp.protocol}`);
