@@ -667,9 +667,9 @@ The pack tool fills `chunk`, `format`, `width` and `height` from the pictures (w
 
 Missing pictures (sizes or formats outside the rules, broken pictures, or a different k all count as "missing" — no error dialog):
 - No front → default front (`cart.color` body + label window, label position `[3k, 5k]`)
-- No spine → default spine (`cart.color` body + `shortName`·`name` on the name strip)
+- No spine → default spine (`cart.color` body + a cartridge-colour strip (`cart.color` at 50% opacity over white) at the default name area `[2k, 5k, 14k, 34k]`, with `shortName`·`name` in black)
 - No label → `shortName` (or `name`) written as text in the label position
-- No `cart.color` → theme colour
+- No `cart.color` → a colour picked from the name (the same name always gets the same colour)
 
 - **Do not include trademarks**: other companies' names or logos (console makers, console names or logos …), copies of real cartridges or box art, or characters you have no rights to. Draw the front and spine body in your own shape too — do not copy the shape, grooves or contacts of a real console cartridge. Only include pictures you made or have the right to use.
 

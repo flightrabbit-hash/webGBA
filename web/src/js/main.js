@@ -2339,7 +2339,7 @@ function spineArt(rom, look) {
     const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
     const name = make("span", band ? "spine__name is-band" : "spine__name");
     Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
-    if (!band) name.style.color = model.spineInk ?? cartArt.LABEL_INK;
+    if (!band) name.style.color = cartArt.LABEL_INK;
     const text = make("span", "spine__text");
     Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
     const lines = spineLines(spineName(rom), w, h, SPINE_PAD * model.unit);

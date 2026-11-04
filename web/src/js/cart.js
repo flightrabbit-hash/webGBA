@@ -4,7 +4,7 @@
 // cart.color(없으면 테마 색)로 그린다. 규격 6장: 다른 k·규격 밖 자리·망가진 그림은 "없음"으로 보고 오류 창 없음.
 // 화면에서는 격자 1칸 = UNIT(2) CSS px 이상의 정수 배율이고 canvas 는 image-rendering: pixelated — 흐리게·줄여 그리지 않는다
 // (k 가 UNIT 보다 크면 그 게임은 1 그림 픽셀 = 1 CSS px 로 키운다).
-import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS, contrastInk, rompackColor } from "./core/wgba-format.js";
+import { CART_DEFAULT_LABEL_AT, CART_DEFAULT_TEXT_AREA, CART_PARTS, rompackColor } from "./core/wgba-format.js";
 
 export const UNIT = 2;
 export const FRONT = CART_PARTS.front.unit;
@@ -45,6 +45,12 @@ function tones(color) {
   const c = rgbOf(color) ?? [96, 104, 128];
   return { hi: mix(c, WHITE, 0.3), base: hexOf(c), lo: mix(c, BLACK, 0.3), sh: mix(c, BLACK, 0.55) };
 }
+
+const BAND_ALPHA = 0.5;
+const bandRgb = (color) => {
+  const body = rgbOf(color) ?? BLACK;
+  return WHITE.map((v, i) => Math.round(v + (body[i] - v) * BAND_ALPHA));
+};
 
 /** 테마에서 만든 기본 몸통 색(--bg-raised 를 흰색 쪽으로 28%). 테마가 바뀌면 다시 부른다. */
 export function themeBody() {
@@ -188,7 +194,7 @@ function gbFront(color) {
   return g;
 }
 
-/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리의 종이). */
+/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리, 그림 옆면 띠와 같은 색 규칙). */
 function defaultSpine(color, shape = "gba") {
   const [W, H] = SPINE;
   const t = tones(color);
@@ -204,10 +210,9 @@ function defaultSpine(color, shape = "gba") {
     paint(1, y, t.hi);
     paint(W - 2, y, t.lo);
   }
-  // 이름 자리는 몸통 색을 그대로 둬 책장에서 롬팩 색이 드러나게 한다(결정 102-8). 왼쪽 1칸만 밝은 테를 남긴다.
-  // 글자(main.js)는 model.spineInk 로 이 몸통 색과 대비가 큰 검정·흰색을 쓴다.
-  const [ax, ay, , ah] = CART_DEFAULT_TEXT_AREA;
-  for (let y = ay; y < ay + ah; y++) paint(ax, y, t.hi);
+  const [ax, ay, aw, ah] = CART_DEFAULT_TEXT_AREA;
+  const band = hexOf(bandRgb(color));
+  for (let y = ay; y < ay + ah; y++) for (let x = ax; x < ax + aw; x++) paint(x, y, band);
   for (const y of shape === "gb" ? [2, H - 4] : [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
   if (shape === "gb") for (let x = 3; x <= W - 4; x++) paint(x, 3, t.hi);
   return g;
@@ -239,12 +244,9 @@ export function cartModel(rom) {
     const area = cart.spine?.textArea;
     if (ints(area, 4) && area[2] > 0 && area[3] > 0 && area[0] + area[2] <= SPINE[0] * k && area[1] + area[3] <= SPINE[1] * k) textArea = [...area];
   }
-  // 옆면 이름 글자 색: 옆면 그림이 있으면 지금처럼 어두운 잉크, 없으면(기본 옆면 = 몸통 색) 대비로 검정·흰색 자동(결정 102-8).
-  const spineInk = parts.includes("spine") ? LABEL_INK : contrastInk(color);
-  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, spineInk, shape };
+  return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, shape };
 }
 
-const BAND_ALPHA = 0.5;
 const BAND_SHARE = 0.6;
 const BAND_NEAR = 48;
 const bandCache = new WeakMap();
@@ -284,7 +286,7 @@ function spineBand(model, bitmap) {
   if (most >= aw * ah * BAND_SHARE) {
     const base = [paper >> 16, (paper >> 8) & 255, paper & 255];
     const body = rgbOf(model.color) ?? BLACK;
-    const tone = WHITE.map((v, i) => Math.round(v + (body[i] - v) * BAND_ALPHA));
+    const tone = bandRgb(model.color);
     for (let y = ay; y < ay + ah; y++)
       for (let x = ax; x < ax + aw; x++) {
         const o = at(x, y);
@@ -378,7 +380,7 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(18k×46k) + 이름 자리. band = 종이를 롬팩 색으로 바꾸고 기본 이름 자리에 띠를 칠함(이름 자리도 기본 자리). */
+/** 옆면 canvas(18k×46k) + 이름 자리. band = 기본 이름 자리에 롬팩 색 띠(그림 옆면은 종이를 롬팩 색으로 바꾼 후). */
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
@@ -386,7 +388,7 @@ export function drawSpine(model, images, body) {
   ctx.imageSmoothingEnabled = false;
   if (!images.spine) {
     blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
-    return { canvas, band: false, textArea: model.textArea };
+    return { canvas, band: true, textArea: CART_DEFAULT_TEXT_AREA.map((v) => v * k) };
   }
   const band = model.textArea ? spineBand(model, images.spine) : null;
   ctx.drawImage(band?.canvas ?? images.spine, 0, 0);
