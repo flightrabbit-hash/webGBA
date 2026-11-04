@@ -536,6 +536,18 @@ export class NetHost {
     return this.open("make", { restore: back.slots });
   }
 
+  async rejoinSeat(rec) {
+    if (!this.game || !this.config?.rejoin) throw new Error("no game");
+    const request = this.backRequest(rec);
+    if (!request) throw new Error("purpose");
+    if (this.active) throw new Error("busy");
+    if (!this.request || this.request.purpose.id !== request.purpose.id) this.request = request;
+    else this.request = { ...this.request, max: request.max, restored: true };
+    clearTimeout(this.windowTimer);
+    this.windowTimer = 0;
+    return this.open("join", { seat: rec });
+  }
+
   drop() {
     const s = this.session;
     if (!s) return;
@@ -731,7 +743,7 @@ export class NetHost {
     } catch {}
   }
 
-  async open(role, { restore = null } = {}) {
+  async open(role, { restore = null, seat = null } = {}) {
     if (!this.request || !this.game) throw new Error("no request");
     if (this.session && !this.session.closed) return this.session;
     const compat = await this.compat;
@@ -763,6 +775,11 @@ export class NetHost {
       if (!session.restore(restore)) {
         this.drop();
         throw new Error("restore");
+      }
+    } else if (seat) {
+      if (!session.seat(seat)) {
+        this.drop();
+        throw new Error("seat");
       }
     } else if (role === "make") session.start();
     this.changed();

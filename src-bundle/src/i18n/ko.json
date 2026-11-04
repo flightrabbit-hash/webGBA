@@ -767,6 +767,8 @@
   "net.back.go": "이전 방으로 돌아가기",
   "net.back.going": "이전 방으로 돌아가는 중…",
   "net.back.gone": "이전 방이 이미 닫혔습니다",
+  "net.seat.lead": "게임 도중 나간 방입니다. 돌아가면 같은 자리에서 방장과 이어서 합니다.",
+  "net.seat.host": "방장 {nick}",
   "net.hostWait.lead": "방장과 연결이 끊겼습니다. 방장이 앱을 다시 열면 같은 방에서 이어서 합니다.",
   "net.hostWait.state": "방장을 기다리는 중… {time} 남음",
   "net.hostWait.note": "시간 안에 방장이 돌아오지 않으면 세션이 끝납니다. '혼자 이어 하기'를 누르면 친구 게임에서 나와 혼자 계속합니다.",

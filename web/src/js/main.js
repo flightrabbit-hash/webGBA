@@ -108,6 +108,7 @@ const AUTO_SAVE_MINUTES = [0, 1, 3, 5, 10, 15, 30];
 const AUTO_SAVE_DEFAULT = 5;
 const AUTO_TOAST_MS = 1600;
 const NET_BACK_KEY = "webgba.netBack";
+const NET_SEAT_KEY = "webgba.netSeat";
 const PAD_MODES = ["on", "overlay", "off"];
 
 const state = {
@@ -380,6 +381,25 @@ const netKit = {
     clear: (room) => {
       try {
         if (!room || netKit.backStore.load()?.room === room) localStorage.removeItem(NET_BACK_KEY);
+      } catch {}
+    },
+  },
+  seatStore: {
+    load: () => {
+      try {
+        return JSON.parse(localStorage.getItem(NET_SEAT_KEY) ?? "null");
+      } catch {
+        return null;
+      }
+    },
+    save: (rec) => {
+      try {
+        localStorage.setItem(NET_SEAT_KEY, JSON.stringify(rec));
+      } catch {}
+    },
+    clear: (room) => {
+      try {
+        if (!room || netKit.seatStore.load()?.room === room) localStorage.removeItem(NET_SEAT_KEY);
       } catch {}
     },
   },

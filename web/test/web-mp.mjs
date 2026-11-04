@@ -5,6 +5,8 @@
 //   [--only base,rejoin,hostback,wan,ice,anytime] 로 묶음을 고른다(기본 전부). rejoin = 다시 들어오기(손님 끊김 20초·ICE 재시작·방장 끊김·선택 안 한 게임),
 //   hostback = 방장 돌아오기(결정 174 가: 방장 페이지 닫기 → 유저 '방장을 기다리는 중'·게임 멈춤 → 같은 맥락에 새 페이지·같은 게임 → '이전 방으로 돌아가기' →
 //   같은 방 코드·유저 자동 재연결·상태 해시 같음(2명·4명), 2분 넘김 = 세션 끝, 다른 게임 = 표시 없음, rejoin 없는 게임 = 기존 그대로),
+//   seat = 유저 돌아오기(유저 페이지 닫기 → 방장이 자리 보관 → 같은 맥락에 새 페이지·같은 게임 → '이전 방으로 돌아가기' → 같은 자리 REJOINED·방장 BACK·상태 해시 같음,
+//   방 만들기를 고르면 이전 자리 기록 삭제·방장 쪽 자리 비움(LEAVE), 방 나가기 = 기록 삭제),
 //   wan = 인터넷 연결(멀티 켬이면 항상: STUN 후보·코드·기본 TURN 발급 요청, 멀티 끔 = 창 안 열림, 설정 줄 없음), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 기본 TURN 미사용),
 //   anytime = 중간 참가 게임(join: "anytime" — 창 자동 열림·시간 초과 없음, 방장 혼자 창 닫기·방 유지 Upstash 명령 수, 손님 참가 알림, 다시 들어오기·인터넷 연결과 함께).
 //   nosave = 세션 중 퀵슬롯·자동 저장 막음(혼자 = 그대로, 방장 혼자 받는 중·2명·다시 들어오기 대기 = 버튼 끔 모양·클릭·탭 알림·포커스·눌림 없음·자동 저장 건너뜀, 세션 끝 = 다시 동작, 상단 버튼 잉크 위·아래 차이 0).
@@ -27,7 +29,7 @@ const which = opt.browser ?? "chrome";
 const SHOTS = opt.shots ?? "";
 const CAPTURE = opt.capture ?? "";
 const REMOTE = opt.base ?? "";
-const ONLY = new Set(String(opt.only ?? "base,rejoin,hostback,wan,ice,anytime,nosave,rs").split(","));
+const ONLY = new Set(String(opt.only ?? "base,rejoin,hostback,seat,wan,ice,anytime,nosave,rs").split(","));
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 if (CAPTURE) fs.mkdirSync(CAPTURE, { recursive: true });
 
@@ -170,6 +172,7 @@ try {
   if (ONLY.has("base")) await baseTests();
   if (ONLY.has("rejoin") && !REMOTE) await rejoinTests();
   if (ONLY.has("hostback") && !REMOTE) await hostBackTests();
+  if (ONLY.has("seat") && !REMOTE) await seatTests();
   if (ONLY.has("wan")) await wanTests();
   if (ONLY.has("ice") && !REMOTE) await iceTests();
   if (opt.turn && !REMOTE) await turnTests();
@@ -780,6 +783,75 @@ async function hostBackTests() {
   const P2 = await reopen(P, "BHP2");
   ok(`선택하지 않은 게임: 방장 페이지 닫기 → 유저 세션 끝 ${((Date.now() - t2) / 1000).toFixed(1)}초(대기 없음) · 방 정보 보관 없음`, qEnd && !qWait && kept === null && (await backRecord(P2)) === null, JSON.stringify({ q: await game(Q) }));
   for (const p of [P2, Q]) await p.context.close().catch(() => {});
+}
+
+function seatRecord(p) {
+  return p.page.evaluate(() => JSON.parse(localStorage.getItem("webgba.netSeat") ?? "null"));
+}
+
+async function seatTests() {
+  const H = await peer("SH", { nick: "방장 S" });
+  const G = await peer("SG", { nick: "유저 S" });
+  const code = await room(H, [G], "rejoin");
+  await stateShim(H);
+  const gSlot = (await snap(G)).slot;
+  const rec = await waitFor(async () => {
+    const r = await seatRecord(G);
+    return r?.room === code ? r : null;
+  }, 5000);
+  ok(`유저: 방 ${code} 자리 ${gSlot} 기록(방 코드·자리·자리 열쇠·방장 이름)`, rec?.s === gSlot && /^[A-Za-z0-9_-]{16,32}$/.test(rec.key ?? "") && rec.hn === "방장 S", JSON.stringify(rec && { room: rec.room, s: rec.s, hn: rec.hn }));
+
+  // 유저 앱 닫기 → 방장이 자리를 보관(HOLD) → 같은 맥락 새 페이지에서 같은 게임 → 이전 방으로 돌아가기
+  const t0 = Date.now();
+  await G.page.close();
+  const held = await waitFor(async () => (await snap(H)).members.some((m) => m.slot === gSlot && m.held), 25000, 250);
+  ok(`유저 페이지 닫기 → 방장이 자리 ${gSlot} 보관 ${((Date.now() - t0) / 1000).toFixed(1)}초`, held);
+  const G2 = await reopen(G, "SG2");
+  await open(G2, "rejoin");
+  const offered = await waitFor(() => G2.page.$('[data-action="net-back"]'), 8000);
+  await sleep(300);
+  const offer = await G2.page.evaluate(() => ({ sheet: window.webgba.state.sheet, sec: document.querySelector("#sheetBody .net-sec--back")?.textContent ?? "" }));
+  ok(`유저가 같은 게임을 다시 열기 → 창 자동 표시 · 이전 방 ${code} · 방장 이름 · '이전 방으로 돌아가기'`, Boolean(offered) && offer.sheet === "net" && offer.sec.includes(code) && offer.sec.includes("방장 S"), JSON.stringify(offer));
+  if (SHOTS) await G2.page.screenshot({ path: path.join(SHOTS, "유저_이전방_돌아가기_390x844.png") });
+  await stateShim(G2);
+  const t1 = Date.now();
+  await G2.page.click('[data-action="net-back"]');
+  const back = await waitFor(async () => {
+    const s = await snap(G2);
+    return s.connected && !s.rejoining && s.slot === gSlot ? s : null;
+  }, 45000, 250);
+  await waitFor(async () => (await G2.page.evaluate(() => window.__shim.got.length)) >= 1, 8000);
+  await sleep(800);
+  const hEv = await events(H);
+  const gEv = await events(G2);
+  const hs = await Promise.all([H, G2].map(hashOf));
+  const hostView = await snap(H);
+  ok(`'이전 방으로 돌아가기' → ${((Date.now() - t1) / 1000).toFixed(1)}초 · 같은 자리 ${gSlot} REJOINED · 방장 BACK(${gSlot}) · 방장 상태 묶음 받음 · 두 기기 해시 같음`, Boolean(back) && kindsOf(gEv, 9, gSlot) === 1 && kindsOf(hEv, 8, gSlot) >= 1 && hs[0] === hs[1] && hostView.members.every((m) => !m.held), JSON.stringify({ hs, members: hostView.members }));
+  // 예제 게임은 REJOINED 를 세션 시작으로 보지 않아(OPEN 만) 새로 연 페이지에서 보내지 않는다 — 주고받기는 BR2 시험에서 확인
+
+  // 돌아가지 않고 방 만들기를 고름 → 기록 삭제·방장 쪽 자리 비움
+  await G2.page.close();
+  await waitFor(async () => (await snap(H)).members.some((m) => m.slot === gSlot && m.held), 25000, 250);
+  const G3 = await reopen(G, "SG3");
+  await open(G3, "rejoin");
+  await waitFor(() => G3.page.$('[data-action="net-back"]'), 8000);
+  const before = (await events(H)).length;
+  await makeRoom(G3);
+  const freed = await waitFor(async () => !(await snap(H)).members.some((m) => m.slot === gSlot), 20000, 250);
+  const evs = await events(H);
+  ok("돌아가지 않고 방 만들기 → 이전 자리 기록 삭제 · 방장 쪽 자리 비움(LEAVE)", freed && (await seatRecord(G3)) === null && kindsOf(evs.slice(-Math.max(1, evs.length - before + 1)), 3, gSlot) >= 1, JSON.stringify({ members: (await snap(H)).members }));
+  await G3.page.evaluate(() => window.webgba.player.net.leave());
+  for (const p of [H, G3]) await p.context.close().catch(() => {});
+
+  // 방 나가기로 끝낸 세션은 기록을 남기지 않는다
+  const H4 = await peer("SH4", { nick: "방장 S4" });
+  const G4 = await peer("SG4", { nick: "유저 S4" });
+  await room(H4, [G4], "rejoin");
+  const had = Boolean(await waitFor(async () => await seatRecord(G4), 5000));
+  await G4.page.evaluate(() => window.webgba.player.net.leave());
+  const cleared = await waitFor(async () => (await seatRecord(G4)) === null, 5000);
+  ok("유저가 방 나가기 → 이전 자리 기록 삭제", had && cleared);
+  for (const p of [H4, G4]) await p.context.close().catch(() => {});
 }
 
 async function wanTests() {

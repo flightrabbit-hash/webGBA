@@ -1084,6 +1084,15 @@ REJOINED(0) · HOLD(others)           BACK(0) → state bundle → 0        REJO
 apply bundle → BACK(s) → bundle → s                                    apply bundle
 ```
 
+##### 7.10.2 User return
+
+In a `rejoin` game, when a user who joined by room code closes the app (window or tab closed, reload, crash) or loses the connection, the host keeps the seat (`HOLD`). When the user opens the same game (same game id and version) again on the same device, the first screen of the multiplayer window shows **Return to previous room** (room code and host name); it rejoins the same seat of the same room (the same path as 7.10).
+
+- During the session the user device keeps the seat information (room code, seat, seat key, join ticket) on the device (web `localStorage`, exe settings file) and deletes it when the session ends (leave, host left, continue alone, another game). Ten minutes after it was last kept it is no longer shown.
+- Events: the host and other devices get `BACK(s)`, the returning device `REJOINED(s)` (a freshly opened game, so no `OPEN` or `HOLD`). The host game sends a state bundle as in 7.10.
+- Making a new room or joining another room instead deletes the seat information and tells the host (the same notice as continue alone), which frees the kept seat.
+- If the host has ended the session meanwhile, the attempt ends with `CLOSED(HOST_LEFT)`.
+
 #### 7.11 Internet connection, relay server and game connection servers (`iceServers`, protocol 1 extension)
 
 With Settings › Multiplayer **Use multiplayer** on (the default, web and PC), the room code also connects devices on other networks. There is no separate internet setting.
