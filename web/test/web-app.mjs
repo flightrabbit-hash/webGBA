@@ -311,9 +311,9 @@ async function testGba() {
   await page.click("#btnLibrary");
   await page.waitForSelector('.lib__card[data-state="open"] [data-action]');
   const actions = await page.$$eval(".sheet__body [data-action]", (nodes) => nodes.map((node) => node.dataset.action));
-  // 실행 중인 게임을 꺼낸 칸: 계속하기·세이브 창·다시 시작·게임 닫기·이름·지우기·정보 + 정렬·파일 열기(내려받기 없음)
+  // 실행 중인 게임을 꺼낸 칸: 계속하기·세이브 창·다시 시작·게임 종료·이름·지우기·정보 + 정렬·파일 열기(내려받기 없음)
   const LIB_ACTIONS = ["resume", "saves", "reset", "close-game", "rename", "delete", "info", "sort", "add-file"];
-  ok("라이브러리: 실행 중인 게임 = 계속하기·세이브·다시 시작·게임 닫기·이름·지우기·정보(게임 파일 내보내기 없음)", ["resume", "saves", "reset", "close-game", "rename", "delete", "info"].every((a) => actions.includes(a)) && actions.every((a) => LIB_ACTIONS.includes(a)), actions.join(","));
+  ok("라이브러리: 실행 중인 게임 = 계속하기·세이브·다시 시작·게임 종료·이름·지우기·정보(게임 파일 내보내기 없음)", ["resume", "saves", "reset", "close-game", "rename", "delete", "info"].every((a) => actions.includes(a)) && actions.every((a) => LIB_ACTIONS.includes(a)), actions.join(","));
   await page.click("#sheetClose");
   await page.setViewportSize({ width: 844, height: 390 });
   await page.waitForTimeout(500);
