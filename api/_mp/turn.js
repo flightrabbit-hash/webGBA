@@ -18,11 +18,14 @@ const URL_RE = /^(turn|turns):([a-z0-9.-]+|\[[0-9a-f:.]+\])(:(\d{1,5}))?(\?trans
 
 const TOKEN_RE = /^[\x21-\x7e]{1,512}$/;
 const RELAY_ENV = Object.freeze([
-  ["keyId", "TURN_KEY_ID", /^[A-Za-z0-9_-]{1,128}$/],
-  ["keyToken", "TURN_KEY_API_TOKEN", TOKEN_RE],
-  ["account", "CF_ACCOUNT_ID", /^[A-Za-z0-9]{1,64}$/],
-  ["analytics", "CF_ANALYTICS_API_TOKEN", TOKEN_RE],
+  ["keyId", "TURN_KEY_ID", /^[A-Za-z0-9_-]{1,128}$/, true],
+  ["keyToken", "TURN_KEY_API_TOKEN", TOKEN_RE, false],
+  ["account", "CF_ACCOUNT_ID", /^[A-Za-z0-9]{1,64}$/, true],
+  ["analytics", "CF_ANALYTICS_API_TOKEN", TOKEN_RE, false],
 ]);
+const ZERO_WIDTH_RE = /[\xad\u{200b}-\u{200f}\u{2060}\u{feff}]/gu;
+const EDGE_RE = /^[\s"'`\u{2018}\u{2019}\u{201c}\u{201d}]+|[\s"'`\u{2018}\u{2019}\u{201c}\u{201d}]+$/gu;
+const HEX32_RE = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/gi;
 
 export class RelayError extends Error {
   constructor(code, why) {
@@ -32,13 +35,19 @@ export class RelayError extends Error {
   }
 }
 
-const tidyEnv = (value) => String(value ?? "").replace(/^[\s"']+|[\s"']+$/g, "");
+const tidyEnv = (value) => String(value ?? "").replace(ZERO_WIDTH_RE, "").replace(/\xa0/g, " ").replace(EDGE_RE, "");
+
+function onlyHex32(value) {
+  const found = value.match(HEX32_RE) ?? [];
+  return new Set(found.map((s) => s.toLowerCase())).size === 1 ? found[0] : "";
+}
 
 export function relayConfig(env = process.env) {
   const config = {};
   const why = [];
-  for (const [key, name, re] of RELAY_ENV) {
-    const value = tidyEnv(env[name]);
+  for (const [key, name, re, hex] of RELAY_ENV) {
+    let value = tidyEnv(env[name]);
+    if (hex && value && !re.test(value)) value = onlyHex32(value) || value;
     if (!value) why.push(`${name}:missing`);
     else if (!re.test(value)) why.push(`${name}:format`);
     config[key] = value;

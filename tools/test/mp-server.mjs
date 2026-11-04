@@ -273,8 +273,8 @@ try {
   ok(`${LIMITS.HOLD_TTL}초 지나면 방 기록 없음 → 돌아오기 404 none · 유저 받기 live false · hold 404(새로 만들지 않음)`, late.status === 404 && late.body.error === "none" && lateG.body.live === false && lateHold.status === 404 && !fake.dump().some(([k]) => k === rKey), `${late.status}/${lateG.body.live}/${lateHold.status}`);
 
   // ── 기본 TURN 접속 정보 발급(turn) — 가짜 Cloudflare(발급·GraphQL), 키 값은 출력하지 않음 ──
-  const cloud = { bytes: 0, gql: 0, gen: 0, mode: "", ttl: 0, nodes: 0, vars: null, auth: [] };
   const KEYS = { TURN_KEY_ID: "fake-key-id", TURN_KEY_API_TOKEN: "fake-turn-token", CF_ACCOUNT_ID: "fakeaccount0123", CF_ANALYTICS_API_TOKEN: "fake-analytics-token" };
+  const cloud = { bytes: 0, gql: 0, gen: 0, mode: "", ttl: 0, nodes: 0, vars: null, auth: [], keyId: KEYS.TURN_KEY_ID, genUrl: "" };
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
   const cloudFetch = async (url, init = {}) => {
     const u = String(url);
@@ -292,7 +292,8 @@ try {
     }
     if (u.startsWith(TURN_API)) {
       cloud.gen++;
-      cloud.auth.push(u === `${TURN_API}${KEYS.TURN_KEY_ID}/credentials/generate-ice-servers` && init.headers?.Authorization === `Bearer ${KEYS.TURN_KEY_API_TOKEN}`);
+      cloud.genUrl = u;
+      cloud.auth.push(u === `${TURN_API}${cloud.keyId}/credentials/generate-ice-servers` && init.headers?.Authorization === `Bearer ${KEYS.TURN_KEY_API_TOKEN}`);
       if (cloud.mode === "gen500") return json({ error: "x" }, 500);
       cloud.ttl = JSON.parse(init.body).ttl;
       return json({ iceServers: [{ urls: ["stun:stun.cloudflare.com:3478"] }, { urls: ["turn:turn.cloudflare.com:53?transport=udp", "turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:443?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp", "turn:turn.cloudflare.com:80?transport=tcp", "turns:turn.cloudflare.com:5349?transport=tcp", "turns:turn.cloudflare.com:443?transport=tcp"], username: "U".repeat(96), credential: "P".repeat(96) }] }, 201);
@@ -429,11 +430,54 @@ try {
   const messyAuth = cloud.auth.slice(a0);
   ok("TURN: 앞뒤 공백·줄바꿈·따옴표가 섞인 값 → 다듬은 값으로 사용량 조회·발급(두 키 Bearer·계정 변수 일치)", messy.status === 200 && messy.body.username === "U".repeat(96) && cloud.gql === gq0 + 1 && messyAuth.length === 2 && messyAuth.every(Boolean) && cloud.vars?.a === KEYS.CF_ACCOUNT_ID, JSON.stringify({ status: messy.status, error: messy.body?.error, auth: messyAuth }));
 
+  // 실제 형식(32자리 16진수) id 에 주소·라벨·보이지 않는 문자·둥근 따옴표가 섞인 경우
+  const HEX_ACC = "3f9a0c1d2e4b5a6978c0d1e2f3a4b5c6";
+  const HEX_KEY = "7e1d2c3b4a5f60718293a4b5c6d7e8f9";
+  const HEX_CASES = [
+    ["대시보드 주소 전체", { CF_ACCOUNT_ID: `https://dash.cloudflare.com/${HEX_ACC}/calls/turn/overview`, TURN_KEY_ID: `${TURN_API}${HEX_KEY}/credentials/generate-ice-servers` }],
+    ["라벨 \"Account ID: <id>\"", { CF_ACCOUNT_ID: `Account ID: ${HEX_ACC}`, TURN_KEY_ID: `Turn Token ID:\u{a0}${HEX_KEY}` }],
+    ["보이지 않는 문자(U+200B~U+200D·U+2060·U+FEFF·U+00A0)", { CF_ACCOUNT_ID: `\u{feff}${HEX_ACC.slice(0, 12)}\u{200b}${HEX_ACC.slice(12, 20)}\u{200c}${HEX_ACC.slice(20)}\u{200d}`, TURN_KEY_ID: `\u{2060}${HEX_KEY}\u{a0}`, TURN_KEY_API_TOKEN: `\u{200b}${KEYS.TURN_KEY_API_TOKEN}\u{2060}\n`, CF_ANALYTICS_API_TOKEN: `\u{a0}${KEYS.CF_ANALYTICS_API_TOKEN}\u{feff}` }],
+    ["둥근 따옴표", { CF_ACCOUNT_ID: `\u{201c}${HEX_ACC}\u{201d}`, TURN_KEY_ID: `\u{2018}${HEX_KEY}\u{2019}`, TURN_KEY_API_TOKEN: `\u{201c}${KEYS.TURN_KEY_API_TOKEN}\u{201d}`, CF_ANALYTICS_API_TOKEN: ` \u{2018}${KEYS.CF_ANALYTICS_API_TOKEN}\u{2019}\n` }],
+    ["같은 id 두 번(대소문자만 다름)", { CF_ACCOUNT_ID: `https://dash.cloudflare.com/${HEX_ACC}/home?account=${HEX_ACC.toUpperCase()}`, TURN_KEY_ID: HEX_KEY }],
+  ];
+  const LEAK_RE = new RegExp(`${HEX_ACC}|${HEX_KEY}|fake|account0123`, "i");
+  const hexRaw = [];
+  const hexWarned = [];
+  let twoHex = null;
+  let twoCalls = -1;
+  cloud.keyId = HEX_KEY;
+  console.warn = (...a) => hexWarned.push(a.join(" "));
+  try {
+    let ipN = 82;
+    for (const [label, extra] of HEX_CASES) {
+      await fresh(1e9);
+      tapi = turnApi(extra);
+      const a1 = cloud.auth.length;
+      const q1 = cloud.gql;
+      cloud.vars = null;
+      cloud.genUrl = "";
+      const ip = `198.51.100.${ipN++}`;
+      const res = await turnCall(await capRoom(ip), { ip });
+      hexRaw.push(JSON.stringify(res.body));
+      const auth = cloud.auth.slice(a1);
+      ok(`TURN: ${label} → 32자리 16진수 하나를 꺼내 발급(요청 주소·GraphQL 계정 변수 = 정리된 id, 두 키 Bearer)`, res.status === 200 && res.body.username === "U".repeat(96) && cloud.gql === q1 + 1 && cloud.vars?.a === HEX_ACC && cloud.genUrl === `${TURN_API}${HEX_KEY}/credentials/generate-ice-servers` && auth.length === 2 && auth.every(Boolean), JSON.stringify({ status: res.status, error: res.body?.error, why: res.body?.why, auth }));
+    }
+    const calls0 = cloud.gql + cloud.gen;
+    twoHex = await turnCall(await capRoom("198.51.100.90"), { ip: "198.51.100.90", server: turnApi({ CF_ACCOUNT_ID: `https://dash.cloudflare.com/${HEX_ACC}/calls/turn/${HEX_KEY}`, TURN_KEY_ID: `${HEX_ACC} ${HEX_KEY}` }) });
+    twoCalls = cloud.gql + cloud.gen - calls0;
+    hexRaw.push(JSON.stringify(twoHex.body));
+  } finally {
+    console.warn = warn0;
+    cloud.keyId = KEYS.TURN_KEY_ID;
+  }
+  ok("TURN: 서로 다른 32자리 16진수 두 개 = format(Cloudflare 호출 0)", whyIs(twoHex, ["TURN_KEY_ID:format", "CF_ACCOUNT_ID:format"]) && twoCalls === 0, JSON.stringify(twoHex?.body));
+  ok("TURN: 추출 사례 응답·서버 기록에 id·키 값 없음(기록은 format 1줄)", !hexRaw.some((t) => LEAK_RE.test(t)) && hexWarned.length === 1 && hexWarned.every((w) => /^\[mp\/turn\] off: /.test(w) && w.slice(15).split(" ").every((x) => WHY_RE.test(x)) && !LEAK_RE.test(w)), `기록 ${hexWarned.length}줄`);
+
   const dumpT = fake.dump();
   const ttlLessT = dumpT.filter(([, , ttl]) => ttl < 0);
   const textT = dumpT.map(([k, v]) => `${k} ${v}`).join("\n");
   ok("TURN: 새 열쇠(tl·u·tu)도 모두 만료 시간 · DEL 0", ttlLessT.length === 0 && (fake.stats().byName.DEL ?? 0) === 0 && dumpT.some(([k]) => k.startsWith("tl:")) && dumpT.some(([k]) => k.startsWith("u:")), ttlLessT.map(([k]) => k.split(":")[0]).join(","));
-  ok("TURN: 저장 값에 접속 정보·키·IP 없음", !/UUUUUUUU|PPPPPPPP|fake-|fakeaccount|198\.51\.100/.test(textT));
+  ok("TURN: 저장 값에 접속 정보·키·IP 없음", !/UUUUUUUU|PPPPPPPP|fake-|fakeaccount|198\.51\.100/.test(textT) && !new RegExp(`${HEX_ACC}|${HEX_KEY}`, "i").test(textT));
 
   // ── 저장소 한도·장애 ──
   fake.fail("quota");
