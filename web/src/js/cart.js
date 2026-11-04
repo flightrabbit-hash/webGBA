@@ -73,13 +73,19 @@ function grid(w, h) {
 }
 
 function blit(ctx, g, k) {
-  for (let y = 0; y < g.h; y++)
-    for (let x = 0; x < g.w; x++) {
-      const v = g.px[y * g.w + x];
-      if (!v) continue;
-      ctx.fillStyle = v;
-      ctx.fillRect(x * k, y * k, k, k);
+  for (let y = 0; y < g.h; y++) {
+    const row = y * g.w;
+    for (let x = 0; x < g.w; ) {
+      const v = g.px[row + x];
+      let end = x + 1;
+      while (end < g.w && g.px[row + end] === v) end++;
+      if (v) {
+        ctx.fillStyle = v;
+        ctx.fillRect(x * k, y * k, (end - x) * k, k);
+      }
+      x = end;
     }
+  }
 }
 
 /** 기본 앞면 54×44 칸. withLabel = 라벨 그림이 들어갈 자리(바탕 종이를 칠하지 않음). */
