@@ -477,7 +477,7 @@ body:not([data-view="start"]) .start {
   gap: 6px;
   padding: 6px;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .start.has-list .start__head {
@@ -1129,7 +1129,7 @@ body[data-pad="overlay"] .app:has(#pauseVeil:not([hidden])) .pad {
   min-height: 0;
   overflow: auto;
   padding: var(--gap-3) var(--gap-4) var(--gap-4);
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .group {
@@ -1328,7 +1328,7 @@ body[data-layout="landscape"] .lib__card {
   width: 248px;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 body[data-layout="landscape"] .lib__card[data-state="empty"] {
@@ -1497,7 +1497,7 @@ body[data-layout="landscape"] .lib__shelf {
   gap: var(--gap-2);
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .lib__scroll .note {
@@ -1868,7 +1868,7 @@ body[data-layout="landscape"] .lib__shelf {
   margin: 0;
   padding: 0 var(--gap-4) var(--gap-2);
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .choice__opt {
@@ -2402,6 +2402,7 @@ body[data-layout="landscape"] .bar__group--quick {
   margin: calc(var(--px) * -1);
   padding: var(--px);
   overflow: auto;
+  overscroll-behavior: none;
 }
 
 .dialog__body p {
@@ -2521,7 +2522,7 @@ body[data-layout="landscape"] .bar__group--quick {
   padding: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   border-top: var(--px) solid var(--line);
   list-style: none;
 }
@@ -2689,6 +2690,7 @@ body[data-layout="landscape"] .bar__group--quick {
   margin: 0 0 var(--gap-3);
   padding: 0;
   overflow: auto;
+  overscroll-behavior: none;
   list-style: none;
 }
 
@@ -2790,6 +2792,7 @@ body[data-layout="landscape"] .bar__group--quick {
   min-height: 0;
   margin: var(--gap-3) 0 0;
   overflow: auto;
+  overscroll-behavior: none;
   color: var(--danger);
   line-height: 20px;
   word-break: keep-all;
@@ -2847,7 +2850,7 @@ body[data-layout="landscape"] .bar__group--quick {
   overflow: auto;
   padding: max(var(--gap-4), env(safe-area-inset-top)) max(var(--gap-4), env(safe-area-inset-right)) max(var(--gap-4), env(safe-area-inset-bottom)) max(var(--gap-4), env(safe-area-inset-left));
   background: var(--bg-sunken);
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 body[data-gate="on"] .app {
@@ -3899,7 +3902,7 @@ body[data-layout="landscape"] .mpb__panel {
   padding: var(--gap-3);
   overflow: auto;
   list-style: none;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .mpb__rows[data-plain] {
