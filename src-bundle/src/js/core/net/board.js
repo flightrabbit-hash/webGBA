@@ -237,7 +237,7 @@ export function connOf(member, { me, hostRow }) {
   if (hostRow) return { kind: "ok" };
   if (!Number.isFinite(member.rtt)) return { kind: me ? "ok" : "joining" };
   const ms = Math.round(member.rtt);
-  return { kind: "ok", ms, q: ms <= 50 ? "good" : ms <= 150 ? "fair" : "poor" };
+  return { kind: "ok", ms, q: ms <= 50 ? "good" : ms <= 150 ? "fair" : "poor", ...(member.turn ? { turn: true } : {}) };
 }
 
 export function boardView({ config = null, board = null, selfRows = null, members = [], gone = new Map(), slot = -1, lang = "ko" }) {

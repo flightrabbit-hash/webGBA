@@ -13,7 +13,7 @@ import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { decodePng } from "../../web/test/png.mjs";
 
 //   [--api <짝 찾기 서버 주소>] = exe 의 서버 주소를 시험 중에만 바꿈(예: tools/test/mp-local.mjs 의 http://127.0.0.1:8791/api/v1/mp/).
-//   [--only base,wan,rejoin,anytime] — wan = exe 에서 인터넷 연결 켬 → STUN 공인 후보, rejoin = exe 손님 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함),
+//   [--only base,wan,rejoin,anytime] — wan = exe 기본 인터넷 연결(STUN 공인 후보·기본 TURN 발급 요청), rejoin = exe 유저 끊김 20초 → 같은 자리(서버가 rj 를 알아야 함),
 //   anytime = 중간 참가 게임(join: "anytime"): 창 자동 열림 없음 → 레일 버튼으로 방 만들기 → 혼자 창 닫기 → 레일 점·상태 줄 "기다리는 중" → 웹 손님 참가 알림.
 //   nosave = 세션 중 상태 저장·불러오기 막음(레일 끔 모양·이유 title·클릭·Shift+F1/F1·게임 메뉴 → 상태 줄 경고, 언어 바꾸기, 세션 끝 = 다시 동작).
 //   [--capture <폴더>] = anytime 캡처를 그 폴더에도.
@@ -216,15 +216,15 @@ async function appMake() {
 }
 
 async function wanFlow() {
-  await app.evaluate(`${T}.state.prefs.netWan = true`);
   await app.evaluate(`${T}.openPath(${JSON.stringify(gameFile)})`);
   await waitFor(() => app.evaluate(`${T}.player.running === true && !${T}.player.net.active`), 15000);
   await appWant();
   await appMake();
   const info = await waitFor(() => app.evaluate(`(async () => { const inv = ${T}.netWin.roomHost?.invite; if (!inv?.code) return null; const lan = await import("/js/core/net/lan.js"); const d = lan.decodeCode(inv.code, "offer", { wan: true }); return { public: inv.public, types: d.sdp.split("\\r\\n").filter((l) => l.startsWith("a=candidate")).map((l) => l.split(" ")[7]), flag: d.wan }; })()`), 15000);
-  check("exe 인터넷 연결 켬: WebView2 에서 STUN 막힘 없음(공인 후보 srflx 수집 · 코드에 포함)", info && info.public > 0 && info.types.includes("srflx") && info.flag, JSON.stringify(info));
+  check("exe 기본(멀티 켬 = 인터넷 연결 항상): WebView2 에서 STUN 막힘 없음(공인 후보 srflx 수집 · 코드에 포함)", info && info.public > 0 && info.types.includes("srflx") && info.flag, JSON.stringify(info));
+  const relay = await waitFor(() => app.evaluate(`(() => { const p = ${T}.player.net.icePlan; return p && p.relayCalls > 0 ? { calls: p.relayCalls, got: Boolean(p.relay), wait: p.relayWait > 0 } : null; })()`), 10000);
+  check("exe 기본 TURN 발급 요청: 방을 만든 뒤 짝 찾기 서버 turn 요청(exe 출처 허용 — 키 없는 서버면 503 → STUN 만)", relay && relay.calls >= 1 && (relay.got || relay.wait), JSON.stringify(relay));
   await app.evaluate("document.querySelector('[data-action=net-cancel]')?.click()");
-  await app.evaluate(`${T}.state.prefs.netWan = false`);
   await sleep(500);
 }
 

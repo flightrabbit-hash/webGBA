@@ -67,6 +67,18 @@ node tools/run.cjs   # list all commands
   and copies the result (`mgba_core.wasm` + licenses) to `src-bundle/bin/core/`.
 - In VS Code, open `webGBA.code-workspace` to get the same commands as Tasks.
 
+### Deploying the web version and matchmaking server yourself (operators)
+
+The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, one Vercel function) deploy to Vercel. Register the values directly as environment variables (Production) of the Vercel project; never write them into the repository or files.
+
+| Environment variable | Purpose | When missing |
+|---|---|---|
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL`, `KV_REST_API_TOKEN`) | Rooms and connection details (Upstash Redis REST) | Matchmaking returns 503 → the app points to connection codes (QR) |
+| `TURN_KEY_ID`, `TURN_KEY_API_TOKEN` | Cloudflare Realtime TURN key — issues one-hour credentials (`/credentials/generate-ice-servers`) | If any of the four is missing, STUN only (no relay server) |
+| `CF_ACCOUNT_ID`, `CF_ANALYTICS_API_TOKEN` | Checks the relay usage of the last 31 days before issuing (GraphQL `callsTurnUsageAdaptiveGroups`, token permission Account › Account Analytics › Read) — issuing stops at 900 GB or more | Same as above |
+
+- Cloudflare does not stop by itself when usage passes the free tier, so the issuing route keeps the limit. Change the limit and window in one place, `TURN_CAP` in `api/_mp/turn.js`.
+
 ---
 
 ## Features
@@ -677,15 +689,15 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 ### 7. Multiplayer
 
-> Multiplayer protocol 1 (draft). The current webGBA connects players on the same Wi-Fi with **a 6-digit room code or the nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
+> Multiplayer protocol 1 (draft). The current webGBA connects players with **a 6-digit room code** (same Wi-Fi or other networks) and the same Wi-Fi's **nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
-> Protocol 1 extensions (optional): when the user turns on **Also connect over the internet (experimental)** in settings, the room code also reaches devices on other networks (7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and players are taken for 2 min 30 s after the host creates or renews the room (7.12).
+> Protocol 1 extensions (optional): a game can name its own connection servers (`multiplayer.iceServers`, 7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and players are taken for 2 min 30 s after the host creates or renews the room (7.12).
 
 #### 7.1 Overview
 
-webGBA connects devices on the same Wi-Fi (same router). The connection is direct between devices (WebRTC data channels), and game data never passes through any server (except a TURN server the game names, 7.11 — the content stays encrypted). By default devices on other networks are not connected. With "Also connect over the internet (experimental)" on, the room code also connects devices on other networks (7.11).
+webGBA connects devices on the same Wi-Fi (same router), and devices on other networks by room code. It tries a direct connection between devices (WebRTC data channels) first; on networks where that fails (mobile data, office or school networks), traffic goes through a **Cloudflare relay server (TURN)**. Through the relay the game content stays encrypted (DTLS), so the relay cannot read it (7.11). With Settings › Multiplayer **Use multiplayer** off, the multiplayer window does not open and nothing connects.
 
-The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used while finding a room (for games with rejoin, until the session ends). It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (Offer and Answer), deleted automatically at most 2 minutes 30 seconds after the last update. Connection details carry only local address candidates by default; a device with "Also connect over the internet" on also puts its public IP (public address candidates) in them. The server does not store the IP address of the requesting device. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
+The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used while finding a room (for games with rejoin, until the session ends). It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (Offer and Answer), deleted automatically at most 2 minutes 30 seconds after the last update. Connection details carry local address candidates, **the public IP (public address candidates)** and relay addresses, so **the other device can see this device's public IP**. The server does not store the IP address of the requesting device. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
 
 The game only says "I need a link partner now" and handles the bytes it sends and receives. Creating and joining rooms, finding nearby devices, connecting and handling drop-outs are done by webGBA. ② game JS cannot use the network directly (chapter 8), so it always goes this way.
 
@@ -712,7 +724,7 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 | `inputDelay` | integer | no | `3` | With `sync: "inputs"`, how many frames later keys take effect (1–10) |
 | `rejoin` | boolean | no | `false` | `true` = rejoin (7.10). A dropped guest's seat is kept until the session ends and the same device can come back to it |
 | `join` | `"anytime"` | no | none (7.7 behavior) | `"anytime"` = drop-in game (7.12). The dialog does not open by itself when the game asks, there is no timeout, and players are taken for 2 min 30 s after the host creates the room or presses Renew (also with the dialog closed; the host can close it alone) |
-| `iceServers` | array | no | none (webGBA default STUN) | The game's own connection servers (STUN/TURN, 7.11). Used only when the user turned on "Also connect over the internet" |
+| `iceServers` | array | no | none (webGBA default STUN + Cloudflare TURN) | The game's own connection servers (STUN/TURN, 7.11). When given, only this list is used instead of webGBA's defaults |
 
 ```json
 "multiplayer": {
@@ -869,7 +881,7 @@ Host:  ① give the host code (111 characters · QR) to the other player → ②
 Guest: ① enter the host code and press Next → ② give the answer code (· QR) to the host
 ```
 
-- Connection codes never pass through a server. A code only carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local); public addresses are dropped both when making and when reading a code (no STUN or TURN). If the chosen candidate pair has a srflx or relay candidate after connecting, the link is dropped. A prflx candidate (learned from a connectivity check when the other side could not resolve an mDNS name, as happens between a PC and a phone on the same Wi-Fi) is accepted. This is the default; a device with "Also connect over the internet" on follows 7.11.
+- Connection codes never pass through a server. A code carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local) and public address candidates from STUN (no matchmaking server is used, so no default TURN credentials — 7.11). A prflx candidate (learned from a connectivity check when the other side could not resolve an mDNS name, as happens between a PC and a phone on the same Wi-Fi) is accepted too.
 - A code is for one person, once. For 3 or more players the host makes a new host code per player (used codes and answer codes for another invite are refused).
 - Requests with a fixed role (create only, join only) start on that screen.
 - When the minimum player count is reached, it shows "Connected" and closes after 1 second. Any further confirmation (e.g. "Press A to start") happens inside the game.
@@ -1017,19 +1029,18 @@ State bundle (1–262144 bytes, to one seat):
 
 Matchmaking server use: the host of a rejoin session refreshes even a full room every 120 seconds to keep it during the session (3 commands) and checks the server mailbox only while a seat is dropped (every 2 seconds for a minute, then every 10). The dropped device and the host exchange connection details once through the mailbox (`/api/v1/mp/rj`). The host refuses a seat key (given in WELCOME) that does not match.
 
-#### 7.11 Internet connection and game connection servers (`iceServers`, protocol 1 extension)
+#### 7.11 Internet connection, relay server and game connection servers (`iceServers`, protocol 1 extension)
 
-When the user turns on Settings › Multiplayer **Also connect over the internet (experimental)** (off by default, web and PC), the room code also connects devices elsewhere. It can fail on networks that block direct links between devices, such as mobile data, office or school networks (STUN only, no TURN).
+With Settings › Multiplayer **Use multiplayer** on (the default, web and PC), the room code also connects devices on other networks. There is no separate internet setting.
 
-- A device with it on gathers public address candidates (srflx, global IPv6) through connection servers (default = two public STUN servers, `stun.l.google.com:19302` and `stun.cloudflare.com:3478`) and puts them and an "internet on" mark into its connection details (host code, answer code, room Offer/Answer). The other device can see this device's public IP.
-- When only one side has it on, public candidates are exchanged **only when both have it on**.
-  - Host on, guest off: the guest drops the host's public candidates and answers with local ones only (the guest's public IP is not sent). Same Wi-Fi connects, elsewhere fails; the guest is told to turn the setting on too.
-  - Host off, guest on: the host code has no mark, so the guest adds no public candidates. Same Wi-Fi only; the guest is told the other device has it off.
-  - Both on and failing: "Could not connect over the internet. Mobile data, office or school networks may not connect."
-- A device with it on also accepts srflx and relay pairs. A device with it off accepts host and prflx pairs only.
-- Off = the earlier behavior (local candidates only, no STUN request). The nearby-room list still only shows the same router (same public IP).
+- Through connection servers (default = two public STUN servers, `stun.l.google.com:19302` and `stun.cloudflare.com:3478`, plus a Cloudflare relay server (TURN)) the device gathers public address candidates (srflx, global IPv6) and relay candidates and puts them into its connection details (host code, answer code, room Offer/Answer). **The other device can see this device's public IP.**
+- **A direct connection is tried first.** The same Wi-Fi and ordinary routers connect directly; only when a direct link fails, as behind a symmetric NAT (mobile data and the like), does traffic go through the Cloudflare relay. The relay can see both devices' IPs but not the game content (encrypted with DTLS). A relayed link shows "Relay · Nms" in the connection cell of the status table.
+- The matchmaking server issues the relay credentials (`POST /api/v1/mp/turn`): only to a device with an open room (host = room token, guest = join ticket), 30 per public-IP group per hour, valid for one hour. Long games restart ICE with fresh credentials 10 minutes before they expire (the link stays up), and rejoining uses fresh credentials too. Connection codes (connect without internet) do not use the matchmaking server, so they use STUN only.
+- To stay inside the relay's free tier, issuing stops when the relay usage of the last 31 days (Cloudflare analytics) reaches 900 GB or cannot be checked. Meanwhile only STUN is used, and networks without a direct path fail.
+- When both the direct and the relayed connection fail, the reason is shown: if this device's network looks like a symmetric NAT, "…This device's network (such as mobile data) can't connect directly to devices elsewhere, and the connection through the relay server also failed. Connect this device to Wi-Fi and try again."; the other device's network gives "Connect the other device …"; anything else gives "Could not connect to the other device. Go through the checklist."
+- The nearby-room list only shows the same router (same public IP).
 
-`multiplayer.iceServers` — the game names its own STUN/TURN servers. Used only when the user turned the internet connection on; when given, **only the game's list** is used instead of webGBA's default STUN. Games without it use the default STUN. webGBA runs no TURN server of its own.
+`multiplayer.iceServers` — the game names its own STUN/TURN servers. When given, **only the game's list** is used instead of webGBA's defaults (STUN and Cloudflare TURN). Games without it use the defaults.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -1045,7 +1056,7 @@ When the user turns on Settings › Multiplayer **Also connect over the internet
 ```
 
 - Malformed entries are not used (logged). If a `credentialUrl` request fails (timeout, bad response, HTTP error) only that entry is left out and the dialog says so.
-- The dialog shows "This game's connection servers: <domain>". A TURN server in the path can see both devices' IPs but not the game content (encrypted). There is no separate consent dialog (the internet setting explains it).
+- The dialog shows "This game's connection servers: <domain>". A TURN server in the path can see both devices' IPs but not the game content (encrypted). There is no separate consent dialog (the "Use multiplayer" setting explains it).
 - webGBA (the host) contacts connection servers only while connecting. The game frame (② JS) still cannot use the network directly (chapter 8).
 
 #### 7.12 Drop-in games (`join: "anytime"`, protocol 1 extension)

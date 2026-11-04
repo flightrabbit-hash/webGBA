@@ -10,6 +10,7 @@ const WAN_FLAG = 0x40;
 const KIND_SRFLX = 0x10;
 const KIND_RELAY = 0x20;
 const PUBLIC_MAX = 4;
+const RELAY_MAX = 2;
 const CANDS_MAX = 8;
 
 export class CodeError extends Error {
@@ -40,7 +41,7 @@ export function isLanAddress(addr) {
 export function parseCandidate(line) {
   const s = String(line).replace(/^a=/, "").replace(/^candidate:/, "").trim().split(/\s+/);
   if (s.length < 8) return null;
-  return { protocol: s[2].toLowerCase(), address: s[4], port: Number(s[5]), type: s[7] };
+  return { protocol: s[2].toLowerCase(), priority: Number(s[3]) || 0, address: s[4], port: Number(s[5]), type: s[7] };
 }
 
 export function lanCandidateOk(c) {
@@ -113,7 +114,8 @@ export function encodeCode(sdp, ref = "", { wan = false } = {}) {
   const setup = SETUPS.indexOf(get(/^a=setup:(\w+)$/m));
   if (!ufrag || !pwd || !fp || ufrag.length > 64 || pwd.length > 64) throw new CodeError("sdp");
   const lan = [];
-  const pub = [];
+  const direct = [];
+  const relays = [];
   const seen = new Set();
   let dropped = 0;
   let hosts = 0;
@@ -127,9 +129,14 @@ export function encodeCode(sdp, ref = "", { wan = false } = {}) {
     if (c?.protocol === "udp" && c.type === "host") hosts++;
     else if (wanCandidateOk(c) && c.type === "srflx") reflexive++;
     if (lanCandidateOk(c) && lan.length < CANDS_MAX) lan.push(c);
-    else if (wan && wanCandidateOk(c) && c.type !== "prflx" && pub.length < PUBLIC_MAX) pub.push(c);
+    else if (wan && wanCandidateOk(c) && c.type === "relay") relays.push(c);
+    else if (wan && wanCandidateOk(c) && c.type !== "prflx") direct.push(c);
     else dropped++;
   }
+  relays.sort((a, b) => b.priority - a.priority);
+  const relayKeep = Math.min(relays.length, RELAY_MAX);
+  const pub = [...direct.slice(0, PUBLIC_MAX - relayKeep), ...relays.slice(0, relayKeep)];
+  dropped += direct.length + relays.length - pub.length;
   const lanKeep = Math.min(lan.length, CANDS_MAX - pub.length);
   dropped += lan.length - lanKeep;
   const cands = [...lan.slice(0, lanKeep), ...pub];
@@ -323,6 +330,12 @@ export async function selectedPair(pc) {
     remote: remote?.candidateType ?? "none",
     host,
     lan: !far(local) && !far(remote),
+    turn: local?.candidateType === "relay" || remote?.candidateType === "relay",
+    via: local?.candidateType === "relay" ? String(local.relayProtocol ?? "") : "",
+    sent: Number(pair.bytesSent ?? 0),
+    recv: Number(pair.bytesReceived ?? 0),
     rttMs: pair.currentRoundTripTime != null ? pair.currentRoundTripTime * 1000 : null,
   };
 }
+
+export const pairText = (pair) => (pair ? `${pair.local}/${pair.remote}${pair.turn ? ` · 중계${pair.via ? `(${pair.via})` : ""}` : ""}` : "?");

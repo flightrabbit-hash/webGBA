@@ -2,19 +2,49 @@
 //   const local = await startLocal({ dist });  local.base = "http://127.0.0.1:<포트>/"
 //   공인 IP 흉내: 요청 머리 x-test-ip(페이지가 보냄) 또는 기본 203.0.113.1. local.fake = 가짜 Upstash(명령 수·TTL·오류).
 //   node tools/test/mp-local.mjs [포트=8791] 로 띄우면 손으로 확인할 수 있다.
+//   기본 TURN 발급(turn) 흉내: startLocal({ turn: { urls, secret, ttl } }) — 가짜 Cloudflare 가 coturn REST 방식
+//   (username = "<만료 초>:<이름>", credential = base64(HMAC-SHA1(secret, username)))으로 발급. local.turn.mode = "turn"(발급 실패)·"usage"(사용량 조회 실패).
+import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../../api/_mp/server.js";
+import { GRAPHQL_API, TURN_API, TURN_CAP } from "../../api/_mp/turn.js";
 import { startFakeUpstash } from "./fake-upstash.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".webmanifest": "application/manifest+json", ".wasm": "application/wasm", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 
-export async function startLocal({ dist = path.join(here, "..", "..", "web", "dist"), port = 0, ip = "203.0.113.1" } = {}) {
+function fakeCloud({ urls, secret, usage = 0 }) {
+  const state = { mode: "", usage, issued: 0 };
+  const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+  const env = { TURN_KEY_ID: "local-test", TURN_KEY_API_TOKEN: "local-test", CF_ACCOUNT_ID: "localtest", CF_ANALYTICS_API_TOKEN: "local-test" };
+  const fetchImpl = async (url, init = {}) => {
+    const u = String(url);
+    if (u === GRAPHQL_API) {
+      if (state.mode === "usage") return json({}, 500);
+      const account = {};
+      for (let i = 0; i < TURN_CAP.days; i++) account[`d${i}`] = i ? [] : [{ sum: { egressBytes: state.usage } }];
+      return json({ data: { viewer: { accounts: [account] } }, errors: null });
+    }
+    if (u.startsWith(TURN_API)) {
+      if (state.mode === "turn") return json({ error: "test" }, 500);
+      state.issued++;
+      const username = `${Math.floor(Date.now() / 1000) + JSON.parse(init.body).ttl}:webgba${state.issued}`;
+      const credential = createHmac("sha1", secret).update(username).digest("base64");
+      return json({ iceServers: [{ urls: typeof urls === "function" ? urls() : urls, username, credential }] }, 201);
+    }
+    return fetch(url, init);
+  };
+  return { env, fetchImpl, state };
+}
+
+export async function startLocal({ dist = path.join(here, "..", "..", "web", "dist"), port = 0, ip = "203.0.113.1", turn = null } = {}) {
   const fake = await startFakeUpstash();
-  let api = createServer({ env: { UPSTASH_REDIS_REST_URL: fake.url, UPSTASH_REDIS_REST_TOKEN: fake.token } });
+  const cloud = turn ? fakeCloud(turn) : null;
+  const make = () => createServer({ env: { UPSTASH_REDIS_REST_URL: fake.url, UPSTASH_REDIS_REST_TOKEN: fake.token, ...cloud?.env }, ...(cloud ? { fetchImpl: cloud.fetchImpl, turnTtl: turn.ttl ?? 3600 } : {}) });
+  let api = make();
   const apiCalls = [];
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -46,8 +76,9 @@ export async function startLocal({ dist = path.join(here, "..", "..", "web", "di
     base: `http://127.0.0.1:${server.address().port}/`,
     fake,
     apiCalls,
+    turn: cloud?.state ?? null,
     reset: () => {
-      api = createServer({ env: { UPSTASH_REDIS_REST_URL: fake.url, UPSTASH_REDIS_REST_TOKEN: fake.token } });
+      api = make();
     },
     close: async () => {
       await new Promise((resolve) => server.close(resolve));

@@ -5,6 +5,10 @@ export const ICE_TEXT_MAX = 512;
 export const CRED_TIMEOUT_MS = 5000;
 export const CRED_BYTES_MAX = 8192;
 const CRED_KEEP_MS = 600000;
+export const RELAY_LEAD_MS = 600000;
+export const RELAY_RETRY_MS = 60000;
+export const RELAY_OFF_MS = 300000;
+const RELAY_TTL_MAX_S = 172800;
 
 const URL_RE = /^(stun|turn|turns):(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:\d{1,5})?(\?transport=(udp|tcp))?$/i;
 
@@ -102,6 +106,14 @@ export async function fetchCredential(server, { fetchImpl = globalThis.fetch, ti
   }
 }
 
+export function readRelay(body) {
+  const urls = Array.isArray(body?.urls) ? body.urls.filter((u) => typeof u === "string" && u.length <= 256 && /^turns?:/i.test(u) && URL_RE.test(u)).slice(0, ICE_URLS_MAX) : [];
+  if (!urls.length || !text(body.username) || !text(body.credential) || !Number.isFinite(body.ttl) || body.ttl <= 0) return null;
+  const ttl = Math.min(body.ttl, RELAY_TTL_MAX_S) * 1000;
+  const lead = Math.min(RELAY_LEAD_MS, ttl / 6);
+  return { server: { urls, username: body.username, credential: body.credential }, ttl, lead, fresh: lead * 1.5 };
+}
+
 export class IcePlan {
   constructor({ manifestList, fetchImpl = globalThis.fetch, log = () => {}, now = () => Date.now() }) {
     const read = readIceServers(manifestList);
@@ -112,6 +124,11 @@ export class IcePlan {
     this.log = log;
     this.now = now;
     this.cache = new Map();
+    this.source = null;
+    this.relay = null;
+    this.relayJob = null;
+    this.relayWait = 0;
+    this.relayCalls = 0;
     for (const e of read.errors) log("warn", `설명서 ${e} — 이 항목은 쓰지 않음`);
   }
 
@@ -119,9 +136,51 @@ export class IcePlan {
     return this.servers.some((s) => s.urls.some((u) => /^turns?:/i.test(u)));
   }
 
+  setRelay(source) {
+    this.source = source && typeof source.request === "function" && typeof source.proof === "function" ? source : null;
+  }
+
+  relayNote(relay) {
+    return relay ? { left: relay.until - this.now(), lead: relay.lead, fresh: relay.fresh } : null;
+  }
+
+  async defaultRelay() {
+    const source = this.source;
+    const proof = source?.proof();
+    if (!proof) return null;
+    const hit = this.relay;
+    if (hit && hit.until - this.now() >= hit.fresh) return hit;
+    if (this.now() < this.relayWait) return hit && hit.until > this.now() ? hit : null;
+    this.relayJob ??= this.fetchRelay(source, proof).finally(() => (this.relayJob = null));
+    return this.relayJob;
+  }
+
+  async fetchRelay(source, proof) {
+    this.relayCalls++;
+    try {
+      const got = readRelay(await source.request(proof));
+      if (!got) throw new Error("shape");
+      this.relay = { ...got, until: this.now() + got.ttl };
+      this.relayWait = 0;
+      this.log("info", `기본 중계 서버 접속 정보 받음(${iceHost(got.server.urls[0])} · ${Math.round(got.ttl / 60000)}분)`);
+      return this.relay;
+    } catch (error) {
+      const code = error?.code ?? error?.message ?? String(error);
+      this.relayWait = this.now() + (error?.status === 503 ? RELAY_OFF_MS : RELAY_RETRY_MS);
+      this.log("warn", `기본 중계 서버 접속 정보를 받지 못함(${code}) — STUN 만 씀`);
+      const hit = this.relay;
+      return hit && hit.until > this.now() ? hit : null;
+    }
+  }
+
   async list(wan) {
-    if (!wan) return { iceServers: [], failed: 0 };
-    if (!this.custom) return { iceServers: STUN_DEFAULT.map((s) => ({ ...s })), failed: 0 };
+    if (!wan) return { iceServers: [], failed: 0, relay: null };
+    if (!this.custom) {
+      const out = STUN_DEFAULT.map((s) => ({ ...s }));
+      const relay = await this.defaultRelay();
+      if (relay) out.push({ ...relay.server, urls: [...relay.server.urls] });
+      return { iceServers: out, failed: 0, relay: this.relayNote(relay) };
+    }
     const out = [];
     let failed = 0;
     for (const s of this.servers) {
@@ -143,6 +202,6 @@ export class IcePlan {
         this.log("warn", `연결 서버 접속 정보를 받지 못함(${iceHost(s.urls[0])}): ${error?.name === "AbortError" ? "시간 초과" : error?.message ?? error}`);
       }
     }
-    return { iceServers: out, failed };
+    return { iceServers: out, failed, relay: null };
   }
 }

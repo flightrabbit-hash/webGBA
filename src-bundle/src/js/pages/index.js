@@ -128,7 +128,6 @@ const player = new Player({
   onNetBoard: () => queueMp(),
   netNick: () => netNick(),
   netEnabled: () => state.prefs.netOn !== false,
-  netWan: () => state.prefs.netWan === true,
   hiddenClock: true,
 });
 
@@ -1621,7 +1620,6 @@ async function settingsSnapshot() {
     autoFireLevel: player.autoFire.level,
     slot: slot(),
     netOn: state.prefs.netOn !== false,
-    netWan: state.prefs.netWan === true,
     netNick: String(state.prefs.netNick ?? ""),
     wgbaLink: state.link.linked,
     webRom: state.prefs.webRom ?? "",
@@ -1647,7 +1645,6 @@ async function applySettings(next) {
     autoFireLevel: autoFireLevel(next.autoFireLevel),
     slot: next.slot,
     netOn: next.netOn !== false,
-    netWan: next.netWan === true,
     netNick: [...String(next.netNick ?? "").trim()].slice(0, 12).join(""),
     webRom: String(next.webRom ?? "").trim(),
     favorites: next.favorites,
@@ -1672,7 +1669,6 @@ async function applySettings(next) {
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
   player.net.syncEnabled();
-  player.net.wanChanged();
 
   const ini = state.info?.settings ?? {};
   const iniPatch = {};

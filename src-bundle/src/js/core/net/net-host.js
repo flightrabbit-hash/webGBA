@@ -183,7 +183,7 @@ export class ScriptNetGame {
 }
 
 export class NetHost {
-  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, onBoard = () => {}, makePeer = null, nick = () => "", enabled = () => true, wan = () => false, fetchImpl = null } = {}) {
+  constructor({ log = () => {}, onWant = () => {}, onChange = () => {}, onNotice = () => {}, onBoard = () => {}, makePeer = null, nick = () => "", enabled = () => true, fetchImpl = null } = {}) {
     this.log = log;
     this.onWant = onWant;
     this.onChange = onChange;
@@ -192,7 +192,6 @@ export class NetHost {
     this.makePeer = makePeer;
     this.nick = nick;
     this.enabled = enabled;
-    this.wan = wan;
     this.fetchImpl = fetchImpl;
     this.icePlan = null;
     this.iceFailed = 0;
@@ -398,7 +397,6 @@ export class NetHost {
 
   snapshot() {
     const s = this.session;
-    const wan = s && !s.closed ? s.wan : Boolean(this.wan());
     return {
       supported: this.supported,
       request: this.request,
@@ -417,24 +415,13 @@ export class NetHost {
       rejoinable: Boolean(s?.rejoinable),
       rejoining: Boolean(s && !s.closed && s.rejoining),
       rejoinState: s && !s.closed && s.rejoining ? s.helper?.state ?? "" : "",
-      wan,
-      iceHosts: wan && this.icePlan?.custom ? this.icePlan.hosts : [],
+      iceHosts: this.icePlan?.custom ? this.icePlan.hosts : [],
       iceFailed: this.iceFailed,
     };
   }
 
-  iceFor(wan) {
-    return { wan, turn: wan && Boolean(this.icePlan?.turn), ice: wan && this.icePlan ? () => this.iceList() : null };
-  }
-
-  wanChanged() {
-    const s = this.session;
-    const wan = Boolean(this.wan());
-    if (s && !s.closed && s.wan !== wan) {
-      if (s.setWan(this.iceFor(wan))) this.log("info", `인터넷 연결 ${wan ? "켬" : "끔"} — 아무도 들어오지 않은 방에 바로 적용`);
-      else this.log("info", `인터넷 연결 ${wan ? "켬" : "끔"} — 진행 중인 연결은 그대로, 다음 방부터 적용`);
-    }
-    this.changed();
+  useRelay(signal, proof) {
+    this.icePlan?.setRelay(signal && proof ? { request: (body) => signal.turn(body), proof } : null);
   }
 
   async iceList() {
@@ -667,7 +654,8 @@ export class NetHost {
     if (!this.request || !this.game) throw new Error("no request");
     if (this.session && !this.session.closed) return this.session;
     const compat = await this.compat;
-    const wan = Boolean(this.wan());
+    this.icePlan?.setRelay(null);
+    const plan = this.icePlan;
     const session = new NetSession({
       role,
       nick: this.nick(),
@@ -676,7 +664,10 @@ export class NetHost {
       purpose: this.request.purpose.id,
       log: this.log,
       makePeer: this.makePeer,
-      ...this.iceFor(wan),
+      wan: true,
+      turn: Boolean(plan?.turn),
+      ice: plan ? () => this.iceList() : null,
+      warm: plan && !plan.custom ? () => plan.defaultRelay() : null,
       rejoinGame: Boolean(this.config?.rejoin),
     });
     this.session = session;

@@ -220,15 +220,18 @@ async function lanOnly(p, codes) {
     for (const code of list) {
       let d;
       try {
-        d = lan.decodeCode(code);
+        d = lan.decodeCode(code, undefined, { wan: true });
       } catch (e) {
         out.bad.push(`decode ${e.code}`);
         continue;
       }
+      if (!d.wan) out.bad.push("인터넷 표시 없음");
       for (const line of d.sdp.split("\r\n").filter((l) => l.startsWith("a=candidate:"))) {
         out.cands++;
         const c = lan.parseCandidate(line);
-        if (!lan.lanCandidateOk(c)) out.bad.push(c.address);
+        if (lan.lanCandidateOk(c)) out.lan = (out.lan ?? 0) + 1;
+        else if (lan.wanCandidateOk(c)) out.pub = (out.pub ?? 0) + 1;
+        else out.bad.push(c.address);
       }
     }
     return out;
@@ -273,7 +276,7 @@ try {
   await waitFor(async () => (await sheet(H)) === "" && (await sheet(G3)) === "", 5000);
   ok("연결되면 창 닫힘(손님은 1초 뒤 저절로)", (await sheet(H)) === "" && (await sheet(G1)) === "" && (await sheet(G3)) === "");
   const lan = await lanOnly(H, [...H.codes, ...G1.codes, ...G2.codes, ...G3.codes]);
-  ok("후보 거르기: 모든 연결 코드의 후보가 망 안 주소(공인 0)", lan.bad.length === 0 && lan.cands > 0, `코드 ${lan.codes} · 후보 ${lan.cands} · 밖 ${lan.bad.join(",") || 0}`);
+  ok("후보 거르기: 연결 코드 후보 = 망 안 주소 + 공인 후보(srflx 등)만 · 인터넷 표시 켬(멀티플레이 켬 = 인터넷 연결 항상)", lan.bad.length === 0 && (lan.lan ?? 0) > 0, `코드 ${lan.codes} · 후보 ${lan.cands}(망 안 ${lan.lan ?? 0}·공인 ${lan.pub ?? 0}) · 밖 ${lan.bad.join(",") || 0}`);
   const pair = await H.page.evaluate(async () => {
     const s = window.webgba.player.net.session;
     const { selectedPair } = await import("/js/core/net/lan.js");
@@ -290,7 +293,7 @@ try {
     const save = await w.player.saveState(1);
     return { before, load, reset, save, canQuick: w.player.canState };
   });
-  ok("세션 중: 속도 1배·퀵슬롯 불러오기 막음·다시 시작 막음·저장은 됨", lock.before === 1 && lock.load === false && lock.reset === false && lock.save === true, JSON.stringify(lock));
+  ok("세션 중: 속도 1배·퀵슬롯 불러오기·저장 모두 막음·다시 시작 막음", lock.before === 1 && lock.load === false && lock.reset === false && lock.save === false, JSON.stringify(lock));
   await H.page.evaluate(() => window.webgba.openSheet("quick"));
   await sleep(400);
   const quickUi = await H.page.evaluate(() => {
@@ -407,8 +410,12 @@ try {
     return all.every((g) => g.closed === 7) ? all : null;
   }, 8000);
   ok("방장 나감 → 손님 CLOSED(HOST_LEFT) · Web_NetWanted 0 → 창 없음", Boolean(hostLeft) && (await sheet(G1)) === "", (hostLeft ?? []).map((g) => g.events.slice(-1)[0]).join(" "));
-  const unlocked = await H.page.evaluate(async () => ({ locked: window.webgba.player.net.locked, load: await window.webgba.player.loadState(1) }));
-  ok("세션 끝나면 퀵슬롯 불러오기 다시 됨", !unlocked.locked && unlocked.load === true, JSON.stringify(unlocked));
+  const unlocked = await H.page.evaluate(async () => {
+    const p = window.webgba.player;
+    const save = await p.saveState(1);
+    return { locked: p.net.locked, canQuick: p.canState, save, load: await p.loadState(1) };
+  });
+  ok("세션 끝나면 퀵슬롯 저장·불러오기 다시 됨", !unlocked.locked && unlocked.save === true && unlocked.load === true, JSON.stringify(unlocked));
   for (const p of [H, G1, G2, variant]) await p.context.close();
 
   // ── 붙여넣기 권한 없음·미지원(입력 칸 초점 + 안내) · 취소 ──

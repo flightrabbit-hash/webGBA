@@ -19,6 +19,7 @@ export const ANSWER_WAIT_MS = 30000;
 export const WELCOME_WAIT_MS = 15000;
 export const RESTART_WAIT_MS = 12000;
 export const OFFLINE_FOR_MS = 10000;
+export const TURN_WAIT_MS = 6000;
 
 const FAIL_LIMIT = 3;
 const HOST_LEFT = 7;
@@ -53,14 +54,14 @@ export class Signal {
     this.calls = 0;
   }
 
-  async request(method, op, data = {}) {
+  async request(method, op, data = {}, timeoutMs = this.timeoutMs) {
     if (globalThis.navigator?.onLine === false) throw new SignalError("offline");
     const url = new URL(op, this.base);
     const init = { method, cache: "no-store", credentials: "omit" };
     if (method === "GET") for (const [k, v] of Object.entries(data)) url.searchParams.set(k, String(v));
     else init.body = JSON.stringify(data);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     init.signal = ctrl.signal;
     this.calls++;
     let response;
@@ -134,6 +135,10 @@ export class Signal {
   rejoinPoll(query) {
     return this.request("GET", "rj", query);
   }
+
+  turn(proof) {
+    return this.request("POST", "turn", proof, TURN_WAIT_MS);
+  }
 }
 
 export class RoomHost {
@@ -166,6 +171,7 @@ export class RoomHost {
     this.keepAt = 0;
     this.eventAt = 0;
     this.rejoin = false;
+    this.upgrade = false;
     this.watchSince = 0;
     this.handled = new Map();
   }
@@ -190,7 +196,18 @@ export class RoomHost {
     if (this.rejoin) this.session.helper = this;
     this.log("info", `방 ${made.room} 만듦(근처 칸 ${made.i}${this.rejoin ? " · 다시 들어오기" : ""})`);
     this.schedule();
+    this.relayLater();
     return made.room;
+  }
+
+  relayLater() {
+    const invite = this.invite;
+    if (!invite || invite.relay || typeof this.session.warmRelay !== "function") return;
+    this.session.warmRelay().then((ok) => {
+      if (!ok || !this.running || this.invite !== invite) return;
+      this.upgrade = true;
+      this.schedule(200);
+    });
   }
 
   trouble(kind) {
@@ -262,9 +279,6 @@ export class RoomHost {
         if (!this.invite) {
           if (this.full) this.parked = true;
           else await this.reoffer();
-        } else if (this.stale) {
-          this.log("info", `방 ${this.room}: 인터넷 연결 설정이 바뀌어 새 연결 코드로 바꿈(방 코드 그대로)`);
-          await this.reoffer();
         } else {
           const got = await this.signal.poll(this.auth, this.q);
           if (got.a) await this.take(got.a);
@@ -274,6 +288,9 @@ export class RoomHost {
               this.log("warn", `방 ${this.room}: 자리를 잡은 사람이 답을 보내지 않아 새 연결 코드로 바꿈`);
               await this.reoffer();
             }
+          } else if (this.upgrade && !this.invite.relay) {
+            this.log("info", `방 ${this.room}: 중계 서버 접속 정보를 받아 새 연결 코드로 바꿈(방 코드 그대로)`);
+            await this.reoffer();
           } else if (this.now() >= this.keepAt) await this.push();
         }
       }
@@ -286,18 +303,7 @@ export class RoomHost {
       if (this.failures === FAIL_LIMIT) this.onError(error);
     }
     this.ticking = false;
-    this.refreshing = false;
     this.schedule();
-  }
-
-  get stale() {
-    return Boolean(this.invite) && this.invite.cfg !== undefined && this.invite.cfg !== this.session.cfg;
-  }
-
-  refresh() {
-    if (!this.stale || !this.running || this.ticking || this.renewing || this.refreshing) return;
-    this.refreshing = true;
-    this.schedule(200);
   }
 
   async rejoinTick() {
@@ -353,6 +359,7 @@ export class RoomHost {
     if (this.invite) this.session.cancelInvite(this.invite.id);
     this.invite = null;
     this.claimSeen = 0;
+    this.upgrade = false;
     this.invite = await this.session.invite();
     this.lastCode = this.invite.code;
     this.q += 1;

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { makeStore, StoreError } from "./store.js";
+import { makeRelay, RelayError, TURN } from "./turn.js";
 
 export const LIMITS = Object.freeze({
   ROOM_TTL: 150,
@@ -73,8 +74,9 @@ function code(v) {
   return s;
 }
 
-export function createServer({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), store = null } = {}) {
+export function createServer({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), store = null, turnTtl = TURN.TTL } = {}) {
   const db = store ?? makeStore({ env, fetchImpl });
+  const relay = makeRelay({ env, fetchImpl, now, db, ttl: turnTtl });
   const secrets = new Map();
   const reads = new Map();
 
@@ -386,6 +388,39 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
     return { q: rec.q, k: rec.k, m: rec.m };
   }
 
+  async function relayProof(body) {
+    if (body.t !== undefined) {
+      const { room, x } = await hostBody(body);
+      return { room, x };
+    }
+    const room = String(body.room ?? "");
+    const x = String(body.x ?? "");
+    need(RE.room.test(room) && RE.nonce.test(x));
+    if (!(await verify(body.rt, "j", x))) throw new HttpError(403, "token");
+    return { room, x };
+  }
+
+  async function turn(request, body) {
+    const { room, x } = await relayProof(body);
+    const g = await groupOf(request);
+    const pre = await limitWrite(g);
+    const rate = `tl:${g}:${Math.floor(now() / 3600000)}`;
+    const mark = `u:${x}`;
+    const got = await db.run([...pre, ["INCR", rate], ["EXPIRE", rate, TURN.RATE_TTL], ["MGET", `r:${room}`, mark]]);
+    const [n, , [roomValue, marked]] = got.slice(-3);
+    if (Number(n) > TURN.RATE_MAX) throw new HttpError(429, "limit");
+    if (readRoom(roomValue)?.x !== x && !marked) throw new HttpError(404, "none");
+    let out;
+    try {
+      out = await relay.issue();
+    } catch (error) {
+      if (error instanceof RelayError) throw new HttpError(503, error.code);
+      throw error;
+    }
+    await db.run([["SET", mark, "1", "EX", TURN.MARK_TTL]]);
+    return out;
+  }
+
   function allowed(request, url) {
     const origin = request.headers.get("origin");
     if (!origin) return { ok: true, origin: "" };
@@ -414,6 +449,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
     const { ok, origin } = allowed(request, url);
     if (!ok) return reply(403, { error: "origin" }, "");
     const op = url.pathname.replace(/\/+$/, "").split("/").pop();
+    if (op === "turn" && !origin) return reply(403, { error: "origin" }, "");
     if (request.method === "OPTIONS") {
       const res = reply(204, null, origin);
       res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -436,6 +472,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       else if (request.method === "GET" && op === "room") out = await status(request, query);
       else if (request.method === "POST" && op === "rj") out = await rejoinPost(request, await readBody(request));
       else if (request.method === "GET" && op === "rj") out = await rejoinPoll(request, query);
+      else if (request.method === "POST" && op === "turn") out = await turn(request, await readBody(request));
       else throw new HttpError(404, "op");
       return reply(200, out, origin);
     } catch (error) {

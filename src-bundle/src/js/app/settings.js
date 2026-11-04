@@ -69,7 +69,6 @@ const FIELDS = [
     group: "net",
     items: [
       { key: "netOn", default: true },
-      { key: "netWan", default: false },
       { key: "netNick", type: "text", maxLength: 12, default: "" },
     ],
   },

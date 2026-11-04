@@ -230,7 +230,6 @@ const player = new WebPlayer({
   onNetBoard: () => queueBoard(),
   netNick: () => netNick(),
   netEnabled: () => state.prefs.netOn !== false,
-  netWan: () => state.prefs.netWan === true,
   hiddenClock: !window.matchMedia("(pointer: coarse)").matches,
 });
 
@@ -3801,10 +3800,6 @@ function renderSettings() {
         savePrefs({ netOn: on });
         player.net.syncEnabled();
         syncControls();
-      }),
-      switchField(t("cfg.netWan"), t("cfg.netWan.note"), p.netWan === true, (on) => {
-        savePrefs({ netWan: on });
-        player.net.wanChanged();
       }),
       nickSetting(),
     ),

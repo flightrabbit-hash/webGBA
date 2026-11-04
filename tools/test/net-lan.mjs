@@ -296,6 +296,85 @@ rb.s.onHostClose(old);
 ok("rd 없는 HELLO(0.5.1 이하 유저): 이전처럼 바로 들어옴, 끊기면 자리 보관", oldJoin.state === "joined" && oldJoin.count === 2 && oldJoin.sent.startsWith("2") && rb.s.members.get(1)?.held === true, JSON.stringify(oldJoin));
 for (const x of [ra.s, rb.s]) x.close();
 
+// ── 기본 TURN(결정 169·171): 코드에 relay 후보 자리 · 접속 정보 받기·캐시·실패 대기 · 상태 표 "중계" ──
+const relaySdp = [
+  "a=ice-ufrag:abcd",
+  "a=ice-pwd:0123456789abcdefghijklmn",
+  `a=fingerprint:sha-256 ${Array.from({ length: 32 }, (_, i) => (i + 16).toString(16).toUpperCase()).join(":")}`,
+  "a=setup:actpass",
+  "a=candidate:1 1 udp 2122260223 0b6c3a2e-1111-2222-3333-444455556666.local 50000 typ host generation 0",
+  "a=candidate:2 1 udp 2122262783 2400:cb00::7 50002 typ host generation 0",
+  "a=candidate:3 1 udp 1686052607 198.51.100.10 61000 typ srflx raddr 0.0.0.0 rport 0 generation 0",
+  "a=candidate:4 1 udp 1686052606 198.51.100.10 61001 typ srflx raddr 0.0.0.0 rport 0 generation 0",
+  "a=candidate:5 1 udp 1686052605 198.51.100.10 61002 typ srflx raddr 0.0.0.0 rport 0 generation 0",
+  "a=candidate:6 1 udp 8331263 203.0.113.50 40001 typ relay raddr 198.51.100.10 rport 61003 generation 0",
+  "a=candidate:7 1 udp 41885439 203.0.113.50 40000 typ relay raddr 198.51.100.10 rport 61000 generation 0",
+].join("\r\n");
+const withRelay = encodeCode(relaySdp, "", { wan: true });
+const relayBack = decodeCode(withRelay.code, "offer", { wan: true });
+const relayLines = relayBack.sdp.split("\r\n").filter((l) => / typ relay/.test(l));
+ok("코드: 공인 후보가 4개를 넘어도 relay 후보 2개 자리는 남김(우선순위 높은 것 먼저)", withRelay.public === 4 && relayLines.length === 2 && / 40000 typ relay/.test(relayLines[0]) && withRelay.code.length <= 400, JSON.stringify({ public: withRelay.public, relay: relayLines.length, len: withRelay.code.length }));
+
+let clock = 1_000_000;
+let reqs = 0;
+let answerWith = () => ({ urls: ["turn:turn.example.test:3478?transport=udp", "turns:turn.example.test:443?transport=tcp", "turn:turn.example.test:9?transport=udp", "stun:x.example.test"], username: "user", credential: "pass", ttl: 3600 });
+const source = (proof) => ({
+  request: async () => {
+    reqs++;
+    const out = answerWith();
+    if (out instanceof Error) throw out;
+    return out;
+  },
+  proof: () => proof,
+});
+const relayPlan = new IcePlan({ manifestList: undefined, now: () => clock });
+const noSource = await relayPlan.list(true);
+relayPlan.setRelay(source(null));
+const noProof = await relayPlan.list(true);
+relayPlan.setRelay(source({ room: "123456", x: "abcdefghijk", rt: "t" }));
+const offList = await relayPlan.list(false);
+ok("기본 TURN: 발급 경로·열린 방 증명이 없거나 멀티 끔이면 요청 0 · STUN 2곳만", reqs === 0 && noSource.iceServers.length === 2 && noProof.iceServers.length === 2 && !noProof.relay && offList.iceServers.length === 0, `요청 ${reqs}`);
+const r1 = await relayPlan.list(true);
+const r2 = await relayPlan.list(true);
+const turnEntry = r1.iceServers[2];
+ok("기본 TURN: STUN 2곳 + 받은 TURN(turn·turns 주소만, 4개까지) · 15분 넘게 남으면 다시 요청하지 않음", reqs === 1 && r1.iceServers.length === 3 && turnEntry.username === "user" && turnEntry.urls.length === 3 && turnEntry.urls.every((u) => /^turns?:/.test(u)) && r2.relay.left === 3600000 && r1.relay.lead === 600000, JSON.stringify({ reqs, urls: turnEntry?.urls, lead: r1.relay?.lead }));
+clock += 3600000 - 899999;
+const r3 = await relayPlan.list(true);
+ok("기본 TURN: 남은 수명이 15분보다 짧으면 새로 받음(새 연결·ICE 재시작용)", reqs === 2 && r3.relay.left === 3600000, `요청 ${reqs}`);
+answerWith = () => new SignalError("cap", 503);
+clock += 3600000;
+const capped = await relayPlan.list(true);
+const cappedAgain = await relayPlan.list(true);
+ok("기본 TURN: 503(한도·키 없음·발급 실패) → STUN 만 · 5분 동안 다시 요청하지 않음", reqs === 3 && capped.iceServers.length === 2 && !capped.relay && cappedAgain.iceServers.length === 2, `요청 ${reqs}`);
+answerWith = () => ({ urls: ["turn:turn.example.test:3478"], username: "user2", credential: "pass2", ttl: 120 });
+clock += 300001;
+const shortTtl = await relayPlan.list(true);
+ok("기본 TURN: 5분 뒤 다시 요청 · 짧은 수명이면 갱신 시점 = 수명의 1/6", reqs === 4 && shortTtl.relay?.lead === 20000 && shortTtl.iceServers[2]?.username === "user2", JSON.stringify(shortTtl.relay));
+answerWith = () => ({ urls: ["stun:only.example.test"], username: "u", credential: "c", ttl: 60 });
+const badPlan = new IcePlan({ manifestList: undefined, now: () => clock });
+badPlan.setRelay(source({ room: "123456" }));
+const badRelay = await badPlan.list(true);
+const gamePlan = new IcePlan({ manifestList: [{ urls: "stun:game.example.test" }], now: () => clock });
+gamePlan.setRelay(source({ room: "123456" }));
+const reqsBefore = reqs;
+const gameList = await gamePlan.list(true);
+ok("기본 TURN: turn 주소 없는 응답은 버림 · 게임이 iceServers 를 정하면 기본 TURN 요청 0", badRelay.iceServers.length === 2 && !badRelay.relay && reqs === reqsBefore && gameList.iceServers.length === 1 && !gameList.relay, `요청 ${reqs - reqsBefore}`);
+
+const quiet = { event() {}, change() {}, deliver() {} };
+const ts = new NetSession({ role: "make", nick: "H", max: 3, sink: quiet, makePeer: () => ({ close() {} }) });
+ts.start();
+ts.members.set(1, { nick: "G", lastSeen: 0, rtt: 30, turn: true });
+ts.members.set(2, { nick: "G2", lastSeen: 0, rtt: 12 });
+const wire = ts.wireMembers();
+const tg = new NetSession({ role: "join", nick: "G", max: 3, sink: quiet });
+tg.slot = 1;
+tg.applyMembers(wire, null, true);
+const view = tg.memberList();
+const { connOf } = await import("../../src-bundle/src/js/core/net/board.js");
+ok("상태 표: 방장이 중계 연결 표시(tu)를 보내고 유저 목록·연결 칸에 turn", wire[1].tu === 1 && wire[2].tu === undefined && view[1].turn === true && view[2].turn === false && connOf(view[1], { me: true, hostRow: false }).turn === true && connOf(view[2], { me: false, hostRow: false }).turn === undefined, JSON.stringify(wire));
+ts.close();
+tg.close();
+
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} 통과`);
 process.exit(failed.length ? 1 : 0);

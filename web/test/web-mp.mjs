@@ -1,9 +1,9 @@
 // 웹 webGBA 멀티플레이 MP2 시험 — 짝 찾기 서버(방 코드·근처 방)로 페이지 2~4개를 잇는다.
 //   node web/test/web-mp.mjs --webapi <net-webapi 예제 폴더> [--browser chrome|edge] [--shots <캡처 폴더>] [--out <결과 json>]
-//   [--capture <폴더>] = 기능 캡처(설정 인터넷 항목·상태 메뉴 끊김 줄). [--base https://webgba.vercel.app/] 를 주면 로컬 서버 대신 그 주소(실제 서버)로 방 코드·근처 방 연결 1회만 확인한다.
+//   [--capture <폴더>] = 기능 캡처(설정 멀티플레이 항목·상태 메뉴 끊김 줄). [--base https://webgba.vercel.app/] 를 주면 로컬 서버 대신 그 주소(실제 서버)로 방 코드·근처 방 연결 1회만 확인한다.
 // 로컬은 tools/test/mp-local.mjs(web/dist + /api/v1/mp + 메모리 가짜 Upstash). PLAYWRIGHT_DIR 가 없으면 저장소 node_modules.
 //   [--only base,rejoin,wan,ice,anytime] 로 묶음을 고른다(기본 전부). rejoin = 다시 들어오기(손님 끊김 20초·ICE 재시작·방장 끊김·선택 안 한 게임),
-//   wan = 인터넷 연결 설정(STUN 후보·코드), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 설정 끔, 지정 안 한 게임),
+//   wan = 인터넷 연결(멀티 켬이면 항상: STUN 후보·코드·기본 TURN 발급 요청, 멀티 끔 = 창 안 열림, 설정 줄 없음), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 기본 TURN 미사용),
 //   anytime = 중간 참가 게임(join: "anytime" — 창 자동 열림·시간 초과 없음, 방장 혼자 창 닫기·방 유지 Upstash 명령 수, 손님 참가 알림, 다시 들어오기·인터넷 연결과 함께).
 //   nosave = 세션 중 퀵슬롯·자동 저장 막음(혼자 = 그대로, 방장 혼자 받는 중·2명·다시 들어오기 대기 = 버튼 끔 모양·클릭·탭 알림·포커스·눌림 없음·자동 저장 건너뜀, 세션 끝 = 다시 동작, 상단 버튼 잉크 위·아래 차이 0).
 //   크롬 개발자 도구의 오프라인은 WebRTC 를 끊지 않으므로, 끊김은 페이지의 RTCPeerConnection 을 감싸 채널 송수신을 막고(window.__netCut)
@@ -564,8 +564,9 @@ async function rejoinTests() {
 }
 
 async function wanTests() {
-  const W = await peer("W", { nick: "인터넷 켬", prefs: { netWan: true } });
-  const L = await peer("L", { nick: "인터넷 끔" });
+  const W = await peer("W", { nick: "방장 기본" });
+  const L = await peer("L", { nick: "유저 기본" });
+  const turnCalls = () => (local ? local.apiCalls.filter((c) => c.op === "turn") : []);
   const offerInfo = (p) =>
     p.page.evaluate(async () => {
       const lan = await import("/js/core/net/lan.js");
@@ -582,7 +583,7 @@ async function wanTests() {
   const code = await roomCode(W);
   await waitFor(() => W.page.evaluate(() => Boolean(window.webgba.net.win.roomHost?.invite)), 5000);
   const on = await offerInfo(W);
-  ok("인터넷 연결 켬: 기본 STUN 2곳 · 공인 주소 후보(srflx) 수집 · 방 연결 정보에 포함(인터넷 표시) · 안내 문구", on.public > 0 && on.types.includes("srflx") && on.flag && /stun\.l\.google\.com/.test(on.servers.join()) && /stun\.cloudflare\.com/.test(on.servers.join()) && /인터넷 연결 켜짐/.test(lead), JSON.stringify({ public: on.public, types: on.types, flag: on.flag, servers: on.servers.slice(0, 1) }));
+  ok("멀티플레이 켬(기본) = 인터넷 연결 항상: 기본 STUN 2곳 · 공인 주소 후보(srflx) 수집 · 방 연결 정보에 포함(인터넷 표시) · 와이파이 설정 줄 없음", on.public > 0 && on.types.includes("srflx") && on.flag && /stun\.l\.google\.com/.test(on.servers.join()) && /stun\.cloudflare\.com/.test(on.servers.join()) && !/인터넷 연결|와이파이/.test(lead), JSON.stringify({ public: on.public, types: on.types, flag: on.flag, servers: on.servers.slice(0, 1), lead }));
   await open(L);
   await want(L);
   await L.page.click('[data-action="net-room-join"]');
@@ -592,32 +593,34 @@ async function wanTests() {
   const lInfo = await L.page.evaluate(() => {
     const s = window.webgba.player.net.session;
     const types = (s?.link?.pc?.localDescription?.sdp ?? "").split("\r\n").filter((l) => l.startsWith("a=candidate")).map((l) => l.split(" ")[7]);
-    return { peerWan: s?.peerWan, types, servers: window.__rtcConfigs.map((c) => (c.iceServers ?? []).length) };
+    return { types, wan: s?.wan === true, servers: window.__rtcConfigs.map((c) => (c.iceServers ?? []).map((x) => [].concat(x.urls).join(",")).join("|")) };
   });
-  ok("한쪽만 켬(방장 켬·손님 끔): 같은 와이파이는 연결됨 · 끈 쪽은 STUN 없음·공인 후보 없음", joined && lInfo.peerWan === true && !lInfo.types.includes("srflx") && lInfo.servers.every((n) => n === 0), JSON.stringify(lInfo));
+  const tc = turnCalls();
+  // 같은 PC 두 페이지에서는 답 쪽 크롬이 상대 host 후보를 받으면 srflx 를 내지 않는다(turn-work stun-probe.mjs) → 유저는 STUN 설정·인터넷 표시만 본다.
+  ok("두 기기 기본 설정: 방 코드로 연결 · 유저도 STUN 2곳·인터넷 연결 · 기본 TURN 발급 경로 요청(로컬 서버 키 없음 = 503) → STUN 만", joined && lInfo.wan && lInfo.servers.length > 0 && lInfo.servers.every((s) => /stun\.l\.google\.com/.test(s) && /stun\.cloudflare\.com/.test(s) && !/turn:/.test(s)) && tc.length >= 1 && tc.every((c) => c.status === 503), JSON.stringify({ ...lInfo, turn: tc.map((c) => c.status) }));
   await L.context.close();
   await W.context.close();
-  const O = await peer("O2", { nick: "끔 방장" });
+  const O = await peer("O2", { nick: "멀티 끔", prefs: { netOn: false } });
   await open(O);
-  await want(O);
-  await makeRoom(O);
-  await roomCode(O);
-  await waitFor(() => O.page.evaluate(() => Boolean(window.webgba.net.win.roomHost?.invite)), 5000);
-  const off = await offerInfo(O);
-  ok("인터넷 연결 끔(기본): STUN 없음 · 공인 후보 없음 · 망 안 후보만(기존 그대로)", off.public === 0 && !off.types.includes("srflx") && !off.flag && off.servers.length === 0, JSON.stringify(off));
+  const t0 = turnCalls().length;
+  await press(O, "KeyZ");
+  await sleep(2500);
+  const offState = await O.page.evaluate(() => ({ sheet: window.webgba.state.sheet ?? "", configs: window.__rtcConfigs.length, active: Boolean(window.webgba.player.net.active) }));
+  ok("멀티플레이 끔: 게임이 요청해도 연결 창 안 열림 · 연결·STUN·TURN 요청 0", offState.sheet !== "net" && offState.configs === 0 && !offState.active && turnCalls().length === t0, JSON.stringify(offState));
   await O.context.close();
-  const S = await peer("S", { nick: "설정", prefs: { netWan: true } });
+  const S = await peer("S", { nick: "설정" });
   await S.page.evaluate(() => window.webgba.openSheet("settings"));
   await sleep(500);
   const item = await S.page.evaluate(() => {
-    const label = [...document.querySelectorAll("#sheetBody *")].find((n) => n.childElementCount === 0 && n.textContent === "인터넷 연결(실험)");
+    const leaves = [...document.querySelectorAll("#sheetBody *")].filter((n) => n.childElementCount === 0);
+    const label = leaves.find((n) => n.textContent === "멀티플레이 사용");
     const row = label?.closest(".field, .item, label, li, .row") ?? label?.parentElement;
     row?.scrollIntoView({ block: "center" });
-    return { found: Boolean(label), text: row?.textContent ?? "" };
+    return { found: Boolean(label), text: row?.textContent ?? "", wanRow: leaves.some((n) => /인터넷 연결|실험/.test(n.textContent)) };
   });
   await sleep(300);
-  ok("설정 › 멀티플레이 '인터넷 연결(실험)'(설명: 방 코드·실패할 수 있는 망·공인 IP)", item.found && /공인 IP/.test(item.text) && /휴대폰 데이터/.test(item.text), item.text.slice(0, 120));
-  if (CAPTURE) await S.page.screenshot({ path: path.join(CAPTURE, "설정_인터넷연결_390x844.png") });
+  ok("설정 › 멀티플레이: '인터넷 연결' 줄 없음 · '(실험)' 없음 · '멀티플레이 사용' 설명에 공인 IP·2분 30초·Cloudflare 중계", item.found && !item.wanRow && /공인 IP/.test(item.text) && /2분 30초/.test(item.text) && /Cloudflare 중계/.test(item.text), item.text.slice(0, 160));
+  if (CAPTURE) await S.page.screenshot({ path: path.join(CAPTURE, "설정_멀티플레이_390x844.png") });
   await S.context.close();
 }
 
@@ -634,7 +637,8 @@ async function iceTests() {
     if (mode === "bad") return route.fulfill({ status: 200, headers, body: "{not json" });
     return route.fulfill({ status: 200, headers, body: JSON.stringify({ username: "u-test", credential: "c-test", ttl: 600 }) });
   };
-  const I = await peer("I", { nick: "게임 서버", prefs: { netWan: true } });
+  const turnBefore = local ? local.apiCalls.filter((x) => x.op === "turn").length : 0;
+  const I = await peer("I", { nick: "게임 서버" });
   await I.context.route("https://cred.example.test/**", cred);
   const make = async (p) => {
     await open(p, "iced");
@@ -649,7 +653,7 @@ async function iceTests() {
   };
   const a = await make(I);
   const urls = a.cfg.map((s) => [].concat(s.urls).join(","));
-  ok("게임 연결 서버(설정 켬): 게임 목록만 사용(기본 STUN 없음) · credentialUrl 접속 정보 적용 · 연결 창 '이 게임의 연결 서버' 표시", calls === 1 && urls.length === 2 && urls[0].startsWith("stun:stun.example.test") && a.cfg[1].username === "u-test" && a.cfg[1].credential === "c-test" && !/google|cloudflare/.test(urls.join()) && /이 게임의 연결 서버: stun\.example\.test, turn\.example\.test/.test(a.lead), JSON.stringify({ calls, urls, lead: a.lead.slice(0, 160) }));
+  ok("게임 연결 서버: 게임 목록만 사용(기본 STUN 없음) · credentialUrl 접속 정보 적용 · 연결 창 '이 게임의 연결 서버' 표시", calls === 1 && urls.length === 2 && urls[0].startsWith("stun:stun.example.test") && a.cfg[1].username === "u-test" && a.cfg[1].credential === "c-test" && !/google|cloudflare/.test(urls.join()) && /이 게임의 연결 서버: stun\.example\.test, turn\.example\.test/.test(a.lead), JSON.stringify({ calls, urls, lead: a.lead.slice(0, 160) }));
   mode = "slow";
   calls = 0;
   const t0 = Date.now();
@@ -660,21 +664,16 @@ async function iceTests() {
   const c = await make(I);
   ok("credentialUrl 잘못된 응답: 그 서버만 빼고 연결 · 안내 표시", calls === 1 && c.failed === 1 && c.cfg.length === 1, JSON.stringify({ calls, cfg: c.cfg.length }));
   await I.context.close();
-  const F = await peer("F2", { nick: "끔" });
-  calls = 0;
-  mode = "ok";
-  await F.context.route("https://cred.example.test/**", cred);
-  const d = await make(F);
-  ok("설정 끔: 게임 연결 서버도 쓰지 않음(요청 없음·STUN 없음·표시 없음)", calls === 0 && d.cfg.length === 0 && !/연결 서버/.test(d.lead), JSON.stringify({ calls, cfg: d.cfg.length }));
-  await F.context.close();
+  const turnAfter = local ? local.apiCalls.filter((x) => x.op === "turn").length : 0;
+  ok("게임이 iceServers 를 정함: webGBA 기본 TURN 발급 경로 요청 0(세 번 방 만들기)", turnAfter === turnBefore, `${turnAfter - turnBefore}`);
 }
 
 // --turn <host:port> (e.g. a local coturn: --lt-cred-mech --user test:secret) forces iceTransportPolicy "relay" so the game's TURN server carries the channel.
 async function turnTests() {
   const manifest = { ...webapiArgs.manifest, id: "com.example.netturn", multiplayer: { ...webapiArgs.manifest.multiplayer, iceServers: [{ urls: `turn:${opt.turn}?transport=udp`, username: "test", credential: "secret" }] } };
   files.turned = (await packWgba({ ...webapiArgs, manifest })).bytes;
-  const H = await peer("TH", { nick: "TURN 방장", prefs: { netWan: true } });
-  const G = await peer("TG", { nick: "TURN 손님", prefs: { netWan: true } });
+  const H = await peer("TH", { nick: "TURN 방장" });
+  const G = await peer("TG", { nick: "TURN 유저" });
   for (const p of [H, G])
     await p.page.evaluate(() => {
       window.__forceRelay = true;
@@ -832,8 +831,8 @@ async function anytimeTests() {
   for (const p of [H, G, C]) await p.context.close();
 
   // ── 중간 참가 + 다시 들어오기 + 인터넷 연결 ──
-  const RH = await peer("ARH", { nick: "중간 방장 R", prefs: { netWan: true } });
-  const RG = await peer("ARG", { nick: "중간 손님 R", prefs: { netWan: true } });
+  const RH = await peer("ARH", { nick: "중간 방장 R" });
+  const RG = await peer("ARG", { nick: "중간 유저 R" });
   for (const p of [RH, RG]) await open(p, "anytimeRejoin");
   await press(RH, "KeyZ");
   await sleep(800);
@@ -850,8 +849,8 @@ async function anytimeTests() {
   await RG.page.fill('[data-action="net-code-in"]', rCode);
   await RG.page.click('[data-action="net-code-go"]');
   const rOn = await waitFor(async () => (await game(RG))?.open === 1 && (await game(RH))?.count === 2, 30000, 200);
-  const rInfo = await RH.page.evaluate(() => ({ rejoin: window.webgba.net.win.roomHost?.rejoin === true && window.webgba.player.net.session?.rejoinable === true, wan: window.webgba.player.net.snapshot().wan }));
-  ok("중간 참가 + 다시 들어오기 + 인터넷 연결 켬: 창을 닫아 둔 방에 방 코드로 연결 · 다시 들어오기 켜짐", rOn && rInfo.rejoin && rInfo.wan, JSON.stringify(rInfo));
+  const rInfo = await RH.page.evaluate(() => ({ rejoin: window.webgba.net.win.roomHost?.rejoin === true && window.webgba.player.net.session?.rejoinable === true, wan: window.webgba.player.net.session?.wan === true }));
+  ok("중간 참가 + 다시 들어오기 + 인터넷 연결(항상): 창을 닫아 둔 방에 방 코드로 연결 · 다시 들어오기 켜짐", rOn && rInfo.rejoin && rInfo.wan, JSON.stringify(rInfo));
   if (!opt.fast) {
     const slot = (await snap(RG)).slot;
     await sleep(1500);

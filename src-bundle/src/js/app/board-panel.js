@@ -105,7 +105,8 @@ function connNodes(conn, showMs) {
   const sig = make("span", "mpb__sig");
   sig.dataset.q = conn.q;
   sig.append(make("i"), make("i"), make("i"));
-  return showMs ? [sig, make("span", "mpb__text mpb__small mpb__dim mpb__ms", t("board.ms", { ms: conn.ms }))] : [sig];
+  const note = showMs ? t(conn.turn ? "board.turnMs" : "board.ms", { ms: conn.ms }) : conn.turn ? t("board.turn") : "";
+  return note ? [sig, make("span", "mpb__text mpb__small mpb__dim mpb__ms", note)] : [sig];
 }
 
 export class BoardPanel {

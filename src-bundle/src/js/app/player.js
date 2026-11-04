@@ -192,7 +192,7 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, netWan, hiddenClock = false }) {
+  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false }) {
     this.canvas = canvas;
     this.hiddenClock = hiddenClock;
     this.clock = null;
@@ -208,7 +208,6 @@ export class Player {
       onBoard: () => onNetBoard?.(),
       nick: () => netNick?.() ?? "",
       enabled: () => netEnabled?.() ?? true,
-      wan: () => netWan?.() ?? false,
     });
     globalThis.document?.addEventListener?.("visibilitychange", () => {
       this.syncClock();
