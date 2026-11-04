@@ -4458,8 +4458,9 @@ function startTouchDebug() {
     const keys = player.running ? prev : 0;
     const fingers = pad.fingers();
     const lines = [`fingers ${fingers.length} · touches ${pad.touchCount} · path ${pad.touchSeen ? "touch" : "pointer"}`];
-    for (const f of fingers) lines.push(`${f.src}#${f.id} ${Math.round(f.x)},${Math.round(f.y)} ${f.owner} ${f.keys.join("+") || "-"}`);
-    lines.push(`down ${[...pad.down].join("+") || "-"}`);
+    const size = (v) => (Number.isFinite(v) ? v.toFixed(1) : "-");
+    for (const f of fingers) lines.push(`${f.src}#${f.id} ${Math.round(f.x)},${Math.round(f.y)} r ${size(f.rx)}x${size(f.ry)} ${f.contact ? "size" : "point"} ${f.owner} ${f.keys.join("+") || "-"}`);
+    lines.push(`down ${[...pad.down].join("+") || "-"} · contact ${pad.contactSizes.size < 2 ? "waiting" : "on"}`);
     lines.push(`cancel touch ${count.touchcancel} · pointer ${count.pointercancel} · lostcapture ${count.lostpointercapture}`);
     lines.push(`start touch ${count.touchstart} · pointer ${count.pointerdown}`);
     lines.push(`game ${names(keys)} 0x${keys.toString(16)} · frame ${frame} · autofire ${player.fireRate || "off"}`);
