@@ -16,20 +16,34 @@ export const GRAPHQL_API = "https://api.cloudflare.com/client/v4/graphql";
 const USAGE_KEY = "tu";
 const URL_RE = /^(turn|turns):([a-z0-9.-]+|\[[0-9a-f:.]+\])(:(\d{1,5}))?(\?transport=(udp|tcp))?$/i;
 
+const TOKEN_RE = /^[\x21-\x7e]{1,512}$/;
+const RELAY_ENV = Object.freeze([
+  ["keyId", "TURN_KEY_ID", /^[A-Za-z0-9_-]{1,128}$/],
+  ["keyToken", "TURN_KEY_API_TOKEN", TOKEN_RE],
+  ["account", "CF_ACCOUNT_ID", /^[A-Za-z0-9]{1,64}$/],
+  ["analytics", "CF_ANALYTICS_API_TOKEN", TOKEN_RE],
+]);
+
 export class RelayError extends Error {
-  constructor(code) {
+  constructor(code, why) {
     super(code);
     this.code = code;
+    if (why) this.why = why;
   }
 }
 
+const tidyEnv = (value) => String(value ?? "").replace(/^[\s"']+|[\s"']+$/g, "");
+
 export function relayConfig(env = process.env) {
-  const keyId = String(env.TURN_KEY_ID ?? "");
-  const keyToken = String(env.TURN_KEY_API_TOKEN ?? "");
-  const account = String(env.CF_ACCOUNT_ID ?? "");
-  const analytics = String(env.CF_ANALYTICS_API_TOKEN ?? "");
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(keyId) || !keyToken || !/^[A-Za-z0-9]{1,64}$/.test(account) || !analytics) return null;
-  return { keyId, keyToken, account, analytics };
+  const config = {};
+  const why = [];
+  for (const [key, name, re] of RELAY_ENV) {
+    const value = tidyEnv(env[name]);
+    if (!value) why.push(`${name}:missing`);
+    else if (!re.test(value)) why.push(`${name}:format`);
+    config[key] = value;
+  }
+  return { config: why.length ? null : config, why };
 }
 
 export function pickUrls(urls) {
@@ -81,9 +95,10 @@ async function timed(fetchImpl, url, init, ms) {
 }
 
 export function makeRelay({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), db, ttl = TURN.TTL } = {}) {
-  const config = relayConfig(env);
+  const { config, why } = relayConfig(env);
   let memo = null;
   let job = null;
+  let told = false;
 
   async function readUsage() {
     let response;
@@ -150,7 +165,11 @@ export function makeRelay({ env = process.env, fetchImpl = globalThis.fetch, now
   return {
     ready: Boolean(config),
     async issue() {
-      if (!config) throw new RelayError("off");
+      if (!config) {
+        if (!told) console.warn(`[mp/turn] off: ${why.join(" ")}`);
+        told = true;
+        throw new RelayError("off", why);
+      }
       await checkCap();
       return generate();
     },

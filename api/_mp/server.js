@@ -20,10 +20,11 @@ export const LIMITS = Object.freeze({
 export const ORIGINS = Object.freeze(["https://webgba.vercel.app", "http://ui.localhost", "ui://localhost"]);
 
 class HttpError extends Error {
-  constructor(status, code) {
+  constructor(status, code, why) {
     super(code);
     this.status = status;
     this.code = code;
+    if (why) this.why = why;
   }
 }
 
@@ -463,7 +464,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
     try {
       out = await relay.issue();
     } catch (error) {
-      if (error instanceof RelayError) throw new HttpError(503, error.code);
+      if (error instanceof RelayError) throw new HttpError(503, error.code, error.why);
       throw error;
     }
     await db.run([["SET", mark, "1", "EX", TURN.MARK_TTL]]);
@@ -528,7 +529,7 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       else throw new HttpError(404, "op");
       return reply(200, out, origin);
     } catch (error) {
-      if (error instanceof HttpError) return reply(error.status, { error: error.code }, origin);
+      if (error instanceof HttpError) return reply(error.status, error.why ? { error: error.code, why: error.why } : { error: error.code }, origin);
       if (error instanceof StoreError) return reply(503, { error: "store" }, origin);
       return reply(500, { error: "server" }, origin);
     }

@@ -313,10 +313,35 @@ try {
   const tj = (await call("POST", "join", { body: { room: th.room, c: C, p: "trade", n: "유저" }, ip: "198.51.100.71" })).body;
   const guestProof = { room: th.room, x: tj.x, rt: tj.rt };
 
-  const off = await turnCall(hostProof, { server: createServer({ env, fetchImpl: cloudFetch, now: clock }) });
-  ok("TURN: 환경 변수 4개 중 하나라도 없으면 503 off(Cloudflare 호출 0)", off.status === 503 && off.body.error === "off" && cloud.gql + cloud.gen === 0, JSON.stringify(off.body));
-  const partial = await turnCall(hostProof, { server: turnApi({ CF_ANALYTICS_API_TOKEN: "" }) });
-  ok("TURN: 사용량 조회 키가 없으면 발급하지 않음(503 off)", partial.status === 503 && partial.body.error === "off" && cloud.gen === 0, JSON.stringify(partial.body));
+  const NAMES = Object.keys(KEYS);
+  const WHY_RE = new RegExp(`^(${NAMES.join("|")}):(missing|format)$`);
+  const warned = [];
+  const warn0 = console.warn;
+  console.warn = (...a) => warned.push(a.join(" "));
+  const offRaw = [];
+  const offCall = async (server) => {
+    const res = await turnCall(hostProof, { server });
+    offRaw.push(JSON.stringify(res.body));
+    return res;
+  };
+  let off, offAgain, partial, blank, badForm;
+  try {
+    const offApi = createServer({ env, fetchImpl: cloudFetch, now: clock });
+    off = await offCall(offApi);
+    offAgain = await offCall(offApi);
+    partial = await offCall(turnApi({ CF_ANALYTICS_API_TOKEN: "" }));
+    blank = await offCall(turnApi({ TURN_KEY_ID: ` "" \n`, TURN_KEY_API_TOKEN: "\r\n" }));
+    badForm = await offCall(turnApi({ TURN_KEY_ID: "fake key id", TURN_KEY_API_TOKEN: "fake-turn\ntoken", CF_ACCOUNT_ID: "fake-account-0123" }));
+  } finally {
+    console.warn = warn0;
+  }
+  const whyIs = (res, list) => res.status === 503 && res.body.error === "off" && JSON.stringify(res.body.why) === JSON.stringify(list);
+  ok("TURN: 환경 변수 4개 중 하나라도 없으면 503 off(Cloudflare 호출 0)·why = 4개 missing", whyIs(off, NAMES.map((n) => `${n}:missing`)) && whyIs(offAgain, NAMES.map((n) => `${n}:missing`)) && cloud.gql + cloud.gen === 0, JSON.stringify(off.body));
+  ok("TURN: 사용량 조회 키가 없으면 발급하지 않음(503 off · why = CF_ANALYTICS_API_TOKEN:missing)", whyIs(partial, ["CF_ANALYTICS_API_TOKEN:missing"]) && cloud.gen === 0, JSON.stringify(partial.body));
+  ok("TURN: 공백·줄바꿈·따옴표만 있는 값 = missing", whyIs(blank, ["TURN_KEY_ID:missing", "TURN_KEY_API_TOKEN:missing"]) && cloud.gql + cloud.gen === 0, JSON.stringify(blank.body));
+  ok("TURN: 형식이 틀린 값(가운데 공백·줄바꿈·허용하지 않는 글자) = format", whyIs(badForm, ["TURN_KEY_ID:format", "TURN_KEY_API_TOKEN:format", "CF_ACCOUNT_ID:format"]) && cloud.gql + cloud.gen === 0, JSON.stringify(badForm.body));
+  const offShapes = [off, offAgain, partial, blank, badForm].every((r) => Object.keys(r.body).join(",") === "error,why" && r.body.why.every((w) => WHY_RE.test(w)));
+  ok("TURN: off 응답·서버 기록 = 변수 이름과 이유만(값 없음), 서버 기록은 인스턴스마다 1번", offShapes && !offRaw.some((t) => /fake|account0123/.test(t)) && warned.length === 4 && warned.every((w) => /^\[mp\/turn\] off: /.test(w) && w.slice(15).split(" ").every((x) => WHY_RE.test(x)) && !/fake|account0123/.test(w)), `기록 ${warned.length}줄`);
 
   cloud.bytes = 10e9;
   const issued = await turnCall(hostProof);
@@ -394,6 +419,15 @@ try {
   const genFail = await turnCall(await capRoom("198.51.100.80"), { ip: "198.51.100.80" });
   ok("TURN: Cloudflare 발급 실패 → 503 turn", genFail.status === 503 && genFail.body.error === "turn", JSON.stringify(genFail.body));
   cloud.mode = "";
+
+  await fresh(1e9);
+  const MESSY = { TURN_KEY_ID: `  "${KEYS.TURN_KEY_ID}"\n`, TURN_KEY_API_TOKEN: `'${KEYS.TURN_KEY_API_TOKEN}'\r\n`, CF_ACCOUNT_ID: ` ${KEYS.CF_ACCOUNT_ID}\t`, CF_ANALYTICS_API_TOKEN: `"\n${KEYS.CF_ANALYTICS_API_TOKEN} "\n` };
+  tapi = turnApi(MESSY);
+  const a0 = cloud.auth.length;
+  const gq0 = cloud.gql;
+  const messy = await turnCall(await capRoom("198.51.100.81"), { ip: "198.51.100.81" });
+  const messyAuth = cloud.auth.slice(a0);
+  ok("TURN: 앞뒤 공백·줄바꿈·따옴표가 섞인 값 → 다듬은 값으로 사용량 조회·발급(두 키 Bearer·계정 변수 일치)", messy.status === 200 && messy.body.username === "U".repeat(96) && cloud.gql === gq0 + 1 && messyAuth.length === 2 && messyAuth.every(Boolean) && cloud.vars?.a === KEYS.CF_ACCOUNT_ID, JSON.stringify({ status: messy.status, error: messy.body?.error, auth: messyAuth }));
 
   const dumpT = fake.dump();
   const ttlLessT = dumpT.filter(([, , ttl]) => ttl < 0);
