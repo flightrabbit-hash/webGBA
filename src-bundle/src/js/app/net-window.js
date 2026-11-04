@@ -1,5 +1,5 @@
 import { CodeError, cleanCode } from "../core/net/lan.js";
-import { SessionError } from "../core/net/session.js";
+import { HOST_BACK_MS, SessionError } from "../core/net/session.js";
 import { CONNECTED_CLOSE_MS, WHY } from "../core/net/net-host.js";
 import { drawQr } from "../core/net/qr.js";
 import { ACCEPT_MS, JOIN_WAIT_MS, NEAR_MS, NEAR_RETRY_MS, POLL_MS, RoomGuest, RoomHost, SignalError, signalCompat, signalPurpose } from "../core/net/signal.js";
@@ -17,6 +17,15 @@ const CODE_LEN = 6;
 const PIPS_MAX = 8;
 
 const SCAN_EDGE = 640;
+const BACK_SAVE_MS = 15000;
+
+const validBack = (r) =>
+  Boolean(r) && typeof r === "object" && /^\d{6}$/.test(r.room ?? "") && ["x", "g", "t", "code", "c", "p", "purpose"].every((key) => typeof r[key] === "string" && r[key]) && Number.isInteger(r.i) && Number.isInteger(r.q) && Number.isInteger(r.max) && Number.isFinite(r.at) && Array.isArray(r.slots) && r.slots.length > 0;
+
+const clockText = (ms) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
 
 export const canScan = (touch = false) => Boolean(globalThis.navigator?.mediaDevices?.getUserMedia) && (typeof globalThis.BarcodeDetector === "function" || touch);
 
@@ -80,10 +89,13 @@ export function noticeText(info) {
   if (info.kind === "back") return t("net.notice.back", { nick: info.nick });
   if (info.kind === "rejoining") return t("net.notice.rejoining");
   if (info.kind === "rejoined") return t("net.notice.rejoined", { slot: info.slot + 1 });
+  if (info.kind === "hostWait") return t("net.notice.hostWait");
+  if (info.kind === "hostBack") return t("net.notice.hostBack");
+  if (info.kind === "returned") return t("net.notice.returned");
   return "";
 }
 
-export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" ? "warn" : "info";
+export const noticeLevel = (info) => (info.kind === "closed" && ![WHY.LEFT, WHY.SOLO].includes(info.why)) || (info.kind === "leave" && info.why !== WHY.LEFT) || info.kind === "hold" || info.kind === "rejoining" || info.kind === "hostWait" ? "warn" : "info";
 
 const HINTS = { linkFailed: "net.err.linkFailed", wanSym: "net.err.wanSym", peerSym: "net.err.peerSym" };
 const HELP_HINTS = ["linkFailed"];
@@ -177,6 +189,15 @@ export class NetWindow {
     this.joinedRoom = "";
     this.roomGuest = null;
     this.joinHint = "";
+    this.back = null;
+    this.backTimer = 0;
+    this.backSeq = 0;
+    this.backTick = 0;
+    this.backSaved = "";
+    this.backRoom = "";
+    this.parking = false;
+    this.hostWaitShown = false;
+    this.fromHost = false;
   }
 
   show(request) {
@@ -194,8 +215,165 @@ export class NetWindow {
         this.roomHost?.setActive(true);
         this.go(this.roomHost ? "room" : "host");
       } else this.go(snap.connected ? "joined" : this.joinInfo ? "wait" : "join2");
-    } else if (this.request.role === "make") this.startRoom();
-    else this.go("choose");
+    } else if (this.back || this.request.role !== "make") this.go("choose");
+    else this.startRoom();
+  }
+
+  // ── 방장 돌아오기: 방 정보 보관(앱 재실행 후에도) · 같은 게임을 열면 안내 ──
+
+  backRecord() {
+    const host = this.roomHost;
+    const s = this.net.session;
+    const info = host?.backInfo();
+    const r = this.net.request;
+    if (!info || !s || s.closed || !host.rejoin || !host.running || !r) return null;
+    const slots = s.backList();
+    if (!slots.length) return null;
+    return { c: host.info.c, p: host.info.p, purpose: r.purpose.id, min: r.min, max: s.max, room: info.room, x: info.x, g: info.g, i: info.i, t: info.t, q: info.q, code: info.code, slots, at: Date.now() };
+  }
+
+  keepBack(snap) {
+    const store = this.kit.backStore;
+    if (!store || this.parking) return;
+    const host = this.roomHost;
+    const live = Boolean(host?.rejoin && host.running && snap.active && snap.role === "make" && snap.count > 1);
+    if (!live) {
+      clearInterval(this.backTick);
+      this.backTick = 0;
+      if (this.backRoom) store.clear(this.backRoom);
+      this.backRoom = "";
+      this.backSaved = "";
+      return;
+    }
+    const rec = this.backRecord();
+    if (!rec) return;
+    const sig = JSON.stringify({ ...rec, at: 0 });
+    if (sig !== this.backSaved) {
+      this.backSaved = sig;
+      this.backRoom = rec.room;
+      store.save(rec);
+    }
+    if (!this.backTick)
+      this.backTick = setInterval(() => {
+        const next = this.backRecord();
+        if (next && !this.parking) store.save(next);
+      }, BACK_SAVE_MS);
+  }
+
+  async offerBack() {
+    const seq = ++this.backSeq;
+    this.clearBack();
+    const store = this.kit.backStore;
+    const rec = store?.load();
+    if (!rec) return false;
+    const left = validBack(rec) ? rec.at + HOST_BACK_MS - Date.now() : 0;
+    if (!(left > 0)) {
+      store.clear(rec.room);
+      return false;
+    }
+    if (!this.net.game || !this.net.config?.rejoin) return false;
+    const c = await signalCompat(this.net.compat);
+    if (seq !== this.backSeq || c !== rec.c || this.net.active || !this.net.offerBack(rec)) return false;
+    this.back = rec;
+    this.backTimer = setTimeout(() => this.expireBack(), left);
+    this.net.log?.("info", `이전 방 ${rec.room} 으로 돌아갈 수 있음(${Math.round(left / 1000)}초 남음)`);
+    this.kit.openWindow?.();
+    if (this.open && this.screen === "choose") this.render();
+    return true;
+  }
+
+  clearBack() {
+    clearTimeout(this.backTimer);
+    this.backTimer = 0;
+    const had = Boolean(this.back);
+    this.back = null;
+    if (had) this.net.dropBack();
+  }
+
+  expireBack() {
+    const rec = this.back;
+    this.clearBack();
+    if (rec) this.kit.backStore?.clear(rec.room);
+    if (this.open && this.screen === "choose") this.render();
+  }
+
+  // 돌아가지 않고 새 방·다른 방을 고름 → 이전 방을 닫아 기다리던 유저의 세션을 바로 끝낸다
+  forgetBack() {
+    const rec = this.back;
+    if (!rec) return;
+    this.backSeq++;
+    clearTimeout(this.backTimer);
+    this.backTimer = 0;
+    this.back = null;
+    this.kit.backStore?.clear(rec.room);
+    this.signal?.close({ room: rec.room, x: rec.x, g: rec.g, i: rec.i, t: rec.t }).catch(() => {});
+  }
+
+  backLeft() {
+    return this.back ? this.back.at + HOST_BACK_MS - Date.now() : 0;
+  }
+
+  backSection() {
+    const k = this.kit;
+    const rec = this.back;
+    const rows = this.infoRows([
+      ["people", t("net.back.users", { n: rec.slots.length })],
+      ["history", t("net.back.left", { time: clockText(this.backLeft()) })],
+    ]);
+    this.refs.backLeft = rows.texts[1];
+    const go = k.button({ label: k.label("goBack"), icon: "back", kind: "warn", big: true, block: true, action: "net-back", onClick: () => this.returnBack(), disabled: this.busy });
+    this.refs.backGo = go;
+    return this.section(t("net.back.title"), { sub: rec.room, children: [k.note(t("net.back.lead")), rows.list, go], kind: "back" });
+  }
+
+  async returnBack() {
+    const rec = this.back;
+    if (!rec || this.busy) return;
+    if (!this.signal) return this.setError(errorText(new SignalError("offline")));
+    this.busy = true;
+    this.setProgress(t("net.back.going"));
+    if (this.refs.backGo) this.refs.backGo.disabled = true;
+    let host = null;
+    try {
+      const session = await this.net.restore(rec);
+      host = new RoomHost({
+        signal: this.signal,
+        session,
+        info: { c: rec.c, p: rec.p, m: session.max, n: [...this.kit.nick()].slice(0, NICK_MAX).join("") },
+        log: this.net.log ?? (() => {}),
+        onChange: () => this.update(),
+        onError: () => this.open && this.screen === "room" && this.setError(t("net.err.serverLost")),
+        limit: this.net.anytime ? ACCEPT_MS : 0,
+        onPause: () => this.paused(),
+      });
+      this.roomHost = host;
+      this.net.useRelay(this.signal, () => host.auth);
+      await host.back(rec);
+      if (this.roomHost !== host) return host.stop();
+      clearTimeout(this.backTimer);
+      this.backTimer = 0;
+      this.back = null;
+      this.busy = false;
+      this.clearError();
+      this.stay = true;
+      if (this.open) this.go("room");
+      this.update();
+    } catch (error) {
+      this.busy = false;
+      if (host) {
+        host.stop();
+        if (this.roomHost === host) this.roomHost = null;
+      }
+      this.net.drop();
+      if (error instanceof SignalError && ["none", "token"].includes(error.code)) {
+        this.kit.notice(t("net.back.gone"), "warn");
+        this.expireBack();
+        if (this.open && this.screen === "choose") this.setError(t("net.back.gone"));
+        return;
+      }
+      this.setError(errorText(error));
+      if (this.refs.backGo) this.refs.backGo.disabled = false;
+    }
   }
 
   canMake() {
@@ -250,7 +428,7 @@ export class NetWindow {
     this.screen = "";
     this.refs = {};
     const snap = this.net.snapshot();
-    if (cancel && snap.anytime) {
+    if (cancel && (snap.anytime || this.net.request?.restored)) {
       if (!(snap.active && snap.role === "make")) {
         this.joinSeq++;
         this.net.discard();
@@ -289,8 +467,22 @@ export class NetWindow {
     return snap.active && snap.role === "make" && snap.count < snap.max;
   }
 
+  // 다시 들어오기 게임의 방장이 유저와 함께 있으면 방을 닫지 않고 보관(2분) — 앱을 다시 열어 돌아온다
   pageHide() {
+    const host = this.roomHost;
+    const store = this.kit.backStore;
+    if (store && host?.rejoin && host.running) {
+      const rec = this.backRecord();
+      if (rec && this.net.park()) {
+        this.parking = true;
+        clearInterval(this.backTick);
+        this.backTick = 0;
+        this.roomHost = null;
+        return Promise.all([Promise.resolve(store.save(rec)), host.park(!this.kit.awaitAway)]).catch(() => {});
+      }
+    }
     this.roomHost?.beacon();
+    return Promise.resolve();
   }
 
   update(snap = this.net.snapshot()) {
@@ -302,6 +494,7 @@ export class NetWindow {
   }
 
   apply(snap) {
+    this.keepBack(snap);
     if (this.roomHost && (!snap.active || snap.role !== "make")) {
       this.roomHost.close();
       this.roomHost = null;
@@ -326,7 +519,12 @@ export class NetWindow {
       return;
     }
     if (this.screen === "rejoin" && snap.connected && !snap.rejoining) {
+      this.fromHost = this.hostWaitShown;
       this.go("back");
+      return;
+    }
+    if (this.screen === "rejoin" && Boolean(snap.hostWait) !== this.hostWaitShown) {
+      this.render();
       return;
     }
     if ((this.screen === "join2" || this.screen === "wait") && snap.connected) {
@@ -381,6 +579,8 @@ export class NetWindow {
     if (r.codeGo) r.codeGo.disabled = this.busy;
     if (r.makeGo) r.makeGo.disabled = this.busy;
     if (r.rejoinState) r.rejoinState.textContent = this.rejoinText(snap);
+    if (r.backLeft && this.back) r.backLeft.textContent = t("net.back.left", { time: clockText(this.backLeft()) });
+    if (r.backGo) r.backGo.disabled = this.busy;
     if (r.accept) r.accept.textContent = this.acceptText();
     if (r.renew) r.renew.disabled = Boolean(this.roomHost?.renewing);
   }
@@ -395,14 +595,13 @@ export class NetWindow {
     const state = this.acceptState();
     if (!state) return "";
     if (!state.on) return tb("net.accept.off");
-    const s = Math.ceil(state.left / 1000);
-    return t("net.accept.on", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` });
+    return t("net.accept.on", { time: clockText(state.left) });
   }
 
   startClock() {
     this.stopClock();
     this.clock = setInterval(() => {
-      if (!this.open || !this.refs.accept) return this.stopClock();
+      if (!this.open || !(this.refs.accept || this.refs.backLeft || (this.refs.rejoinState && this.hostWaitShown))) return this.stopClock();
       this.refreshDynamic();
     }, 1000);
   }
@@ -432,6 +631,7 @@ export class NetWindow {
   }
 
   rejoinText(snap) {
+    if (snap.hostWait) return t("net.hostWait.state", { time: clockText(snap.hostLeft) });
     return t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying");
   }
 
@@ -929,16 +1129,25 @@ export class NetWindow {
     return { a: [...this.iceNodes(snap), codeSec], b: [nearSec] };
   }
 
-  makeTab(snap) {
+  infoRows(items) {
     const k = this.kit;
-    const info = k.make("ul", "net-info");
-    for (const [icon, text] of [["people", this.chipText()]]) {
+    const list = k.make("ul", "net-info");
+    const texts = [];
+    for (const [icon, text] of items) {
       const li = k.make("li", "net-info__row");
       const mark = k.make("span", "net-info__icon");
       mark.append(k.icon(icon));
-      li.append(mark, k.make("span", "net-info__text", text));
-      info.append(li);
+      const span = k.make("span", "net-info__text", text);
+      texts.push(span);
+      li.append(mark, span);
+      list.append(li);
     }
+    return { list, texts };
+  }
+
+  makeTab(snap) {
+    const k = this.kit;
+    const info = this.infoRows([["people", this.chipText()]]).list;
     const go = k.button({ label: k.label("create"), icon: "plus", kind: "primary", big: true, block: true, action: "net-room-make", onClick: () => this.startRoom(), disabled: this.busy });
     this.refs.makeGo = go;
     return { a: [k.note(t("net.makeLead")), ...this.iceNodes(snap)], b: [info, go, ...this.errorNodes()] };
@@ -967,8 +1176,9 @@ export class NetWindow {
         : null;
       if (tabs) tabs.classList.add("net-tabs");
       const part = tab === "make" ? this.makeTab(snap) : this.joinTab(snap);
-      body = [this.cols([tabs, ...part.a], part.b)];
+      body = [this.cols([this.back ? this.backSection() : null, tabs, ...part.a], part.b)];
       foot = [this.nickFoot(), this.spacer(), this.offlineButton()];
+      if (this.back) this.startClock();
     } else if (this.screen === "lan") {
       body = [];
       if (this.fallback) body.push(k.note(t("net.fallback")));
@@ -1045,24 +1255,21 @@ export class NetWindow {
       body = [k.step(t("net.join.step2")), ...this.codeBox(this.guestCode, { action: "net-answer-out" }), wait, ...this.errorNodes()];
       foot = [this.spacer(), cancel];
     } else if (this.screen === "joined" || this.screen === "back") {
-      body = [k.note(t(this.screen === "back" ? "net.rejoined" : "net.joined", { slot: snap.slot + 1 })), this.seatSection(snap, { count: false })];
+      const text = this.screen === "joined" ? t("net.joined", { slot: snap.slot + 1 }) : this.fromHost ? t("net.hostWait.back") : t("net.rejoined", { slot: snap.slot + 1 });
+      body = [k.note(text), this.seatSection(snap, { count: false })];
       foot = [this.spacer(), k.action({ id: "done", primary: true, onClick: () => this.close() })];
       this.closeTimer = setTimeout(() => this.close(), CONNECTED_CLOSE_MS);
     } else if (this.screen === "rejoin") {
+      const wait = Boolean(snap.hostWait);
+      this.hostWaitShown = wait;
       const state = k.note(this.rejoinText(snap));
       state.classList.add("net-rejoin-state");
       this.refs.rejoinState = state;
-      body = [
-        k.note(t("net.rejoin.lead")),
-        state,
-        ...this.choices([
-          { text: t("net.rejoinNow"), button: k.button({ label: k.label("rejoin"), kind: "primary", action: "net-rejoin-now", onClick: () => this.net.rejoinNow() }) },
-          { text: t("net.solo"), button: k.button({ label: k.label("solo"), kind: "danger", action: "net-solo", onClick: () => this.goSolo() }) },
-        ]),
-        k.note(t("net.rejoin.note")),
-        this.seatSection(snap, { count: false }),
-      ];
+      const solo = { text: t("net.solo"), button: k.button({ label: k.label("solo"), kind: "danger", action: "net-solo", onClick: () => this.goSolo() }) };
+      const now = { text: t("net.rejoinNow"), button: k.button({ label: k.label("rejoin"), kind: "primary", action: "net-rejoin-now", onClick: () => this.net.rejoinNow() }) };
+      body = [k.note(t(wait ? "net.hostWait.lead" : "net.rejoin.lead")), state, ...this.choices(wait ? [solo] : [now, solo]), k.note(t(wait ? "net.hostWait.note" : "net.rejoin.note")), this.seatSection(snap, { count: false })];
       foot = [this.spacer(), k.action({ id: "close", onClick: () => this.close() })];
+      if (wait) this.startClock();
     } else if (this.screen === "ended") {
       const why = this.endedWhy;
       this.errorTitle = t("net.err.closed");
@@ -1157,6 +1364,7 @@ export class NetWindow {
   }
 
   async freshSession(role) {
+    this.forgetBack();
     const s = this.net.session;
     if (s && !s.closed && !s.opened && s.role === "join") {
       this.clearJoin();
@@ -1237,6 +1445,7 @@ export class NetWindow {
     this.answerText = "";
     this.reachedShown = false;
     this.clearError();
+    this.forgetBack();
     try {
       await this.net.open("make");
     } catch {

@@ -119,11 +119,16 @@ const player = new Player({
     netWin?.update(snap);
     syncControls();
     queueMp();
+    if (snap.hostWait && !mp.clock) mp.clock = setInterval(queueMp, 1000);
+    if (!snap.hostWait && mp.clock) {
+      clearInterval(mp.clock);
+      mp.clock = 0;
+    }
   },
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) status(text, noticeLevel(info));
-    if (info.kind === "rejoining" && !netLayer && !mp.open) openNet();
+    if ((info.kind === "rejoining" || info.kind === "hostWait") && !netLayer && !mp.open) openNet();
   },
   onNetBoard: () => queueMp(),
   netNick: () => netNick(),
@@ -167,7 +172,7 @@ const node = (tag, className, text) => {
   return n;
 };
 
-const NET_ICONS = { people: "users", info: "info-circle", warn: "alert-triangle", refresh: "refresh", copy: "copy", plus: "plus" };
+const NET_ICONS = { people: "users", info: "info-circle", warn: "alert-triangle", refresh: "refresh", copy: "copy", plus: "plus", history: "history" };
 const NET_EXE_TEXT = new Set(["net.anytimeNote", "net.accept.off", "net.notice.paused", "net.err.paused", "net.nearFail", "net.nearOffline", "net.err.server", "net.err.limit", "net.join.step1"]);
 
 function netIcon(name) {
@@ -177,7 +182,7 @@ function netIcon(name) {
 }
 
 function netButton({ label, kind = "", big = false, block = false, grow = false, small = false, onClick, disabled = false, action = "" }) {
-  const b = node("button", `${kind === "primary" ? "btn btn--go" : kind === "danger" ? "btn btn--danger" : "btn"} net-btn${big ? " net-btn--big" : ""}${block ? " net-btn--block" : ""}${grow ? " net-btn--grow" : ""}${small ? " net-btn--small" : ""}`, label);
+  const b = node("button", `${kind === "primary" ? "btn btn--go" : kind === "danger" ? "btn btn--danger" : kind === "warn" ? "btn btn--warn" : "btn"} net-btn${big ? " net-btn--big" : ""}${block ? " net-btn--block" : ""}${grow ? " net-btn--grow" : ""}${small ? " net-btn--small" : ""}`, label);
   b.type = "button";
   b.disabled = disabled;
   if (action) b.dataset.action = action;
@@ -202,7 +207,7 @@ const netKit = {
   },
   icon: netIcon,
   signal: new Signal({ base: APP_API }),
-  label: (code) => ({ copy: "COPY", copyCode: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", create: "CREATE", makeCode: "CREATE", join: "JOIN", enter: "JOIN", enterCode: "ENTER", offline: "OFFLINE", offlineLong: "OFFLINE", rejoin: "RETRY", solo: "SOLO", renew: "RENEW", nickEdit: "EDIT", nickDone: "OK", retry: "RETRY", home: "BACK" })[code] ?? code.toUpperCase(),
+  label: (code) => ({ copy: "COPY", copyCode: "COPY", qr: "QR", scan: "SCAN", paste: "PASTE", connect: "CONNECT", next: "NEXT", create: "CREATE", makeCode: "CREATE", join: "JOIN", enter: "JOIN", enterCode: "ENTER", offline: "OFFLINE", offlineLong: "OFFLINE", rejoin: "RETRY", solo: "SOLO", renew: "RENEW", nickEdit: "EDIT", nickDone: "OK", retry: "RETRY", home: "BACK", goBack: "RETURN" })[code] ?? code.toUpperCase(),
   action: ({ id, label: name = id, primary = false, danger = false, onClick }) => {
     const b = node("button", primary ? "btn btn--go" : danger ? "btn btn--danger" : "btn", { cancel: "CANCEL", close: "CLOSE", done: "OK", leave: "LEAVE", back: "BACK", closeRoom: "CLOSE ROOM", toGame: "DONE" }[name] ?? name.toUpperCase());
     b.type = "button";
@@ -297,6 +302,13 @@ const netKit = {
   },
   tab: () => state.prefs.netTab,
   setTab: (tab) => savePrefs({ netTab: tab }),
+  openWindow: () => openNet(),
+  awaitAway: true,
+  backStore: {
+    load: () => state.prefs.netBack ?? null,
+    save: (rec) => savePrefs({ netBack: rec }),
+    clear: (room) => (!room || state.prefs.netBack?.room === room ? savePrefs({ netBack: null }) : undefined),
+  },
   textKey: (key) => (NET_EXE_TEXT.has(key) ? key.replace(/^net\./, "net.exe.") : key),
 };
 
@@ -304,7 +316,7 @@ const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syn
 let netLayer = false;
 
 const TAB_HOLD_MS = 250;
-const mp = { open: false, frame: 0, tabAt: 0, tabOpened: false };
+const mp = { open: false, frame: 0, tabAt: 0, tabOpened: false, clock: 0 };
 
 function mpButton(icon, key, action, onClick) {
   const b = node("button", "iconbtn iconbtn--xs");
@@ -905,6 +917,7 @@ async function startHosted(host, game) {
   player.pushScript();
   syncControls();
   el.stage.focus();
+  netWin.offerBack();
 }
 
 /** 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 본 창에서 누른 것과 같은 길로. */
@@ -1884,7 +1897,7 @@ async function setSlot(index) {
 
 async function shutdown() {
   try {
-    netWin.pageHide();
+    await netWin.pageHide();
     settings.close();
     await closeGame({ quiet: true });
   } finally {

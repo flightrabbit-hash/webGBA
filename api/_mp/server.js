@@ -4,6 +4,7 @@ import { makeRelay, RelayError, TURN } from "./turn.js";
 
 export const LIMITS = Object.freeze({
   ROOM_TTL: 150,
+  HOLD_TTL: 120,
   ANSWER_TTL: 120,
   CLOSE_TTL: 2,
   SECRET_TTL: 172800,
@@ -355,7 +356,55 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       reply = v ? JSON.parse(v) : null;
     } catch {}
     const mine = reply && reply.u === u;
-    return { live: Boolean(rec && rec.x === x), a: mine && reply.a ? reply.a : null, n: mine && reply.n ? 1 : 0, no: mine && reply.no ? 1 : 0 };
+    const live = Boolean(rec && rec.x === x);
+    return { live, a: mine && reply.a ? reply.a : null, n: mine && reply.n ? 1 : 0, no: mine && reply.no ? 1 : 0, away: live ? awayLeft(rec) : 0 };
+  }
+
+  const awayLeft = (rec) => (rec?.h ? Math.max(0, rec.h + LIMITS.HOLD_TTL * 1000 - now()) : 0);
+
+  async function markAway(request, room, x) {
+    const key = `r:${room}`;
+    const got = await db.run([...(await limitWrite(await groupOf(request))), ["GET", key]]);
+    const rec = readRoom(got[got.length - 1]);
+    if (!rec || rec.x !== x) throw new HttpError(404, "none");
+    if (!rec.h) {
+      Object.assign(rec, { h: now(), w: 0 });
+      const cmds = [["SET", key, JSON.stringify(rec), "XX", "EX", LIMITS.HOLD_TTL]];
+      if (rec.i >= 0) cmds.push(["SET", nearKey(rec.g, rec.i), "", "XX", "EX", 1]);
+      const [set] = await db.run(cmds);
+      if (set !== "OK") throw new HttpError(404, "none");
+    }
+    return { away: awayLeft(rec) };
+  }
+
+  async function hostAway(request, body) {
+    const { room, x } = await hostBody(body);
+    return markAway(request, room, x);
+  }
+
+  async function guestHold(request, body) {
+    const room = String(body.room ?? "");
+    const x = String(body.x ?? "");
+    need(RE.room.test(room) && RE.nonce.test(x));
+    if (!(await verify(body.rt, "j", x))) throw new HttpError(403, "token");
+    return markAway(request, room, x);
+  }
+
+  async function hostBack(request, body) {
+    const { room, x, g, i } = await hostBody(body);
+    const fields = roomFields(body);
+    const o = code(body.o);
+    const q = int(body.q, 1, 1e6);
+    const k = int(body.k, 1, fields.m);
+    need(q !== null && k !== null);
+    const key = `r:${room}`;
+    const got = await db.run([...(await limitWrite(await groupOf(request))), ["GET", key]]);
+    const rec = readRoom(got[got.length - 1]);
+    if (!rec || rec.x !== x) throw new HttpError(404, "none");
+    const next = { x, ...fields, k, q: Math.max(q, rec.q), o, g, i, w: 0 };
+    const [set] = await db.run([["SET", key, JSON.stringify(next), "XX", "EX", LIMITS.ROOM_TTL]]);
+    if (set !== "OK") throw new HttpError(404, "none");
+    return { ok: true, q: next.q, left: awayLeft(rec) };
   }
 
   async function answer(request, body) {
@@ -473,6 +522,9 @@ export function createServer({ env = process.env, fetchImpl = globalThis.fetch, 
       else if (request.method === "POST" && op === "rj") out = await rejoinPost(request, await readBody(request));
       else if (request.method === "GET" && op === "rj") out = await rejoinPoll(request, query);
       else if (request.method === "POST" && op === "turn") out = await turn(request, await readBody(request));
+      else if (request.method === "POST" && op === "away") out = await hostAway(request, await readBody(request));
+      else if (request.method === "POST" && op === "hold") out = await guestHold(request, await readBody(request));
+      else if (request.method === "POST" && op === "back") out = await hostBack(request, await readBody(request));
       else throw new HttpError(404, "op");
       return reply(200, out, origin);
     } catch (error) {

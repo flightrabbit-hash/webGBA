@@ -1760,6 +1760,10 @@ input[type="radio"] {
   line-height: 1.5;
 }
 
+.cfg__hint--lines {
+  white-space: pre-line;
+}
+
 .cfg__check {
   flex: none;
   width: 16px;
@@ -2345,6 +2349,16 @@ label.cfg__swatch-row {
 
 .btn--danger:hover {
   border-color: var(--danger-line-hi);
+}
+
+.btn--warn:not(:disabled) {
+  border-color: var(--global);
+  background: var(--global);
+  color: var(--ink-global);
+}
+
+.btn--warn:not(:disabled):hover {
+  background: var(--global-hi);
 }
 
 .btn:disabled {

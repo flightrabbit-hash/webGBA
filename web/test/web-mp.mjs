@@ -2,7 +2,9 @@
 //   node web/test/web-mp.mjs --webapi <net-webapi 예제 폴더> [--browser chrome|edge] [--shots <캡처 폴더>] [--out <결과 json>]
 //   [--capture <폴더>] = 기능 캡처(설정 멀티플레이 항목·상태 메뉴 끊김 줄). [--base https://webgba.vercel.app/] 를 주면 로컬 서버 대신 그 주소(실제 서버)로 방 코드·근처 방 연결 1회만 확인한다.
 // 로컬은 tools/test/mp-local.mjs(web/dist + /api/v1/mp + 메모리 가짜 Upstash). PLAYWRIGHT_DIR 가 없으면 저장소 node_modules.
-//   [--only base,rejoin,wan,ice,anytime] 로 묶음을 고른다(기본 전부). rejoin = 다시 들어오기(손님 끊김 20초·ICE 재시작·방장 끊김·선택 안 한 게임),
+//   [--only base,rejoin,hostback,wan,ice,anytime] 로 묶음을 고른다(기본 전부). rejoin = 다시 들어오기(손님 끊김 20초·ICE 재시작·방장 끊김·선택 안 한 게임),
+//   hostback = 방장 돌아오기(결정 174 가: 방장 페이지 닫기 → 유저 '방장을 기다리는 중'·게임 멈춤 → 같은 맥락에 새 페이지·같은 게임 → '이전 방으로 돌아가기' →
+//   같은 방 코드·유저 자동 재연결·상태 해시 같음(2명·4명), 2분 넘김 = 세션 끝, 다른 게임 = 표시 없음, rejoin 없는 게임 = 기존 그대로),
 //   wan = 인터넷 연결(멀티 켬이면 항상: STUN 후보·코드·기본 TURN 발급 요청, 멀티 끔 = 창 안 열림, 설정 줄 없음), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 기본 TURN 미사용),
 //   anytime = 중간 참가 게임(join: "anytime" — 창 자동 열림·시간 초과 없음, 방장 혼자 창 닫기·방 유지 Upstash 명령 수, 손님 참가 알림, 다시 들어오기·인터넷 연결과 함께).
 //   nosave = 세션 중 퀵슬롯·자동 저장 막음(혼자 = 그대로, 방장 혼자 받는 중·2명·다시 들어오기 대기 = 버튼 끔 모양·클릭·탭 알림·포커스·눌림 없음·자동 저장 건너뜀, 세션 끝 = 다시 동작, 상단 버튼 잉크 위·아래 차이 0).
@@ -24,7 +26,7 @@ const which = opt.browser ?? "chrome";
 const SHOTS = opt.shots ?? "";
 const CAPTURE = opt.capture ?? "";
 const REMOTE = opt.base ?? "";
-const ONLY = new Set(String(opt.only ?? "base,rejoin,wan,ice,anytime,nosave").split(","));
+const ONLY = new Set(String(opt.only ?? "base,rejoin,hostback,wan,ice,anytime,nosave").split(","));
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 if (CAPTURE) fs.mkdirSync(CAPTURE, { recursive: true });
 
@@ -166,6 +168,7 @@ const stats = () => (local ? local.fake.stats().total : 0);
 try {
   if (ONLY.has("base")) await baseTests();
   if (ONLY.has("rejoin") && !REMOTE) await rejoinTests();
+  if (ONLY.has("hostback") && !REMOTE) await hostBackTests();
   if (ONLY.has("wan")) await wanTests();
   if (ONLY.has("ice") && !REMOTE) await iceTests();
   if (opt.turn && !REMOTE) await turnTests();
@@ -371,7 +374,7 @@ async function cut(p, on) {
 function snap(p) {
   return p.page.evaluate(() => {
     const s = window.webgba.player.net.snapshot();
-    return { active: s.active, connected: s.connected, rejoining: s.rejoining, rejoinable: s.rejoinable, state: s.rejoinState, slot: s.slot, count: s.count, members: s.members.map((m) => ({ slot: m.slot, held: m.held, stalled: m.stalled, rejoining: m.rejoining })) };
+    return { active: s.active, connected: s.connected, rejoining: s.rejoining, rejoinable: s.rejoinable, state: s.rejoinState, slot: s.slot, count: s.count, hostWait: s.hostWait, hostLeft: s.hostLeft, members: s.members.map((m) => ({ slot: m.slot, held: m.held, stalled: m.stalled, rejoining: m.rejoining })) };
   });
 }
 
@@ -563,6 +566,220 @@ async function rejoinTests() {
   for (const p of [P, Q]) await p.context.close();
 }
 
+// The example wasm has no state-bundle code, so the page plays that part of a rejoin game:
+// BACK(s) on the state holder (host for s > 0, the user webGBA chose for s = 0) → Web_StateSave → bundle to s; a bundle in → Web_StateLoad.
+async function stateShim(p) {
+  await p.page.evaluate(() => {
+    const net = window.webgba.player.net;
+    const g = net.game;
+    const host = () => window.webgba.player.host;
+    window.__shim = { sent: [], got: [] };
+    const realEvent = g.event.bind(g);
+    g.event = (kind, a, b) => {
+      realEvent(kind, a, b);
+      const s = net.session;
+      if (kind !== 8 || !s || !(s.host ? a !== 0 : a === 0)) return;
+      setTimeout(() => {
+        const h = host();
+        const at = h.ex.Web_Alloc(16);
+        h.ex.Web_StateSave(at);
+        window.__shim.sent.push({ to: a, hash: h.ex.Net_Hash() >>> 0 });
+        net.statePart({ to: a, part: 2, bytes: h.u8.slice(at, at + 16) });
+      }, 0);
+    };
+    const realDeliver = g.deliver.bind(g);
+    g.deliver = (from, bytes, state) => {
+      if (!state) return realDeliver(from, bytes, state);
+      const h = host();
+      const at = h.ex.Web_Alloc(bytes.length);
+      h.u8.set(bytes, at);
+      const loaded = h.ex.Web_StateLoad(at);
+      window.__shim.got.push({ from, len: bytes.length, loaded, hash: h.ex.Net_Hash() >>> 0 });
+      return true;
+    };
+  });
+}
+
+function hashOf(p) {
+  return p.page.evaluate(() => window.webgba.player.host.ex.Net_Hash() >>> 0);
+}
+function backRecord(p) {
+  return p.page.evaluate(() => JSON.parse(localStorage.getItem("webgba.netBack") ?? "null"));
+}
+
+// "app restart": a new page in the same browser context keeps localStorage, like reopening the app
+async function reopen(H, name) {
+  const page = await H.context.newPage();
+  const p = { name, context: H.context, page, errors: [] };
+  page.on("pageerror", (error) => p.errors.push(error.message));
+  await page.goto(BASE);
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  peers.push(p);
+  return p;
+}
+
+async function roundDone(list) {
+  await press(list[0], "Enter");
+  return waitFor(async () => {
+    for (const p of list) if (!(await p.page.evaluate(() => window.webgba.player.host.ex.Net_Ended()))) return false;
+    return true;
+  }, 30000, 500);
+}
+
+async function hostBackRun(guestCount, { crash = false } = {}) {
+  const tag = `${guestCount + 1}명${crash ? "(강제 종료)" : ""}`;
+  const H = await peer(`BH${guestCount}`, { nick: "방장 B" });
+  const guests = [];
+  for (let i = 0; i < guestCount; i++) guests.push(await peer(`BG${guestCount}${i}`, { nick: `유저 ${i + 1}` }));
+  const code = await room(H, guests, "rejoin");
+  for (const p of [H, ...guests]) await stateShim(p);
+  const ended = await roundDone([H, ...guests]);
+  const hashes = await Promise.all([H, ...guests].map(hashOf));
+  const rec = await backRecord(H);
+  ok(`${tag}: 라운드 끝 · 모두 같은 상태 해시 · 방장 방 정보 보관(방 코드·방장 증명·자리 ${guestCount}개·시각)`, ended && new Set(hashes).size === 1 && hashes[0] !== 2166136261 && rec?.room === code && rec.slots?.length === guestCount && typeof rec.t === "string" && rec.at > Date.now() - 30000, JSON.stringify({ hashes, rec: rec && { room: rec.room, slots: rec.slots.length } }));
+
+  const api0 = local.apiCalls.length;
+  const t0 = Date.now();
+  if (crash) {
+    const cdp = await H.context.newCDPSession(H.page);
+    cdp.send("Page.crash").catch(() => {});
+    await sleep(500);
+  } else await H.page.close();
+  const waiting = await waitFor(async () => {
+    for (const g of guests) if (!(await snap(g)).hostWait) return false;
+    return true;
+  }, crash ? 70000 : 40000, 250);
+  const waitMs = Date.now() - t0;
+  const awayCalls = local.apiCalls.slice(api0).filter((c) => c.op === "away").length;
+  const holdCalls = local.apiCalls.slice(api0).filter((c) => c.op === "hold").length;
+  if (crash) ok(`${tag}: pagehide 없이 끊김 → 유저가 ${(waitMs / 1000).toFixed(1)}초 뒤 방장 자리 보관 요청(hold ${holdCalls}회, away ${awayCalls}회) · 대기 화면`, waiting && holdCalls >= 1 && awayCalls === 0, `${waitMs}`);
+  const g0 = guests[0];
+  const gSlot = (await snap(g0)).slot;
+  await waitFor(async () => (await sheetOf(g0)) === "net", 4000);
+  await sleep(400);
+  const f0 = await g0.page.evaluate(() => window.webgba.player.frameNo);
+  await sleep(1500);
+  const f1 = await g0.page.evaluate(() => window.webgba.player.frameNo);
+  const view = await g0.page.evaluate(() => ({ sheet: window.webgba.state.sheet, state: document.querySelector("#sheetBody .net-rejoin-state")?.textContent ?? "", solo: Boolean(document.querySelector('[data-action="net-solo"]')), now: Boolean(document.querySelector('[data-action="net-rejoin-now"]')), host: [...document.querySelectorAll("#sheetBody .mpb__row")].map((r) => r.textContent)[0] ?? "" }));
+  const gEv = await events(g0);
+  ok(`${tag}: 방장 페이지 닫기 → ${(waitMs / 1000).toFixed(1)}초 뒤 유저 '방장을 기다리는 중… m:ss 남음' · 혼자 이어 하기만 · 게임 멈춤(프레임 ${f0}→${f1}) · HOLD(내 자리)·HOLD(0) · away ${awayCalls}·hold ${holdCalls}회`, waiting && view.sheet === "net" && /방장을 기다리는 중… [01]:\d\d 남음/.test(view.state) && view.solo && !view.now && f1 === f0 && kindsOf(gEv, 7, 0) && kindsOf(gEv, 7, gSlot) && /끊김 · 기다리는 중/.test(view.host), JSON.stringify({ view, f0, f1 }));
+  if (guestCount === 1 && !crash && SHOTS) await g0.page.screenshot({ path: path.join(SHOTS, "유저_방장대기_390x844.png") });
+  if (guestCount === 1 && !crash) {
+    await g0.page.evaluate(() => window.webgba.net.win.requestClose());
+    await g0.page.evaluate(() => window.webgba.net.board.open());
+    await sleep(1300);
+    const bar = await g0.page.evaluate(() => {
+      const box = document.querySelector("#board .mpb__rejoin");
+      const btns = [...document.querySelectorAll("#board .mpb__rejoinActions .btn")].filter((n) => !n.hidden).map((n) => n.dataset.action);
+      return { shown: Boolean(box && !box.hidden), text: document.querySelector("#board .mpb__rejoinText")?.textContent ?? "", btns };
+    });
+    ok("유저 상태 메뉴: '방장을 기다리는 중… m:ss 남음' 줄 · 혼자 이어 하기 버튼만", bar.shown && /방장을 기다리는 중… [01]:\d\d 남음/.test(bar.text) && bar.btns.join() === "board-solo", JSON.stringify(bar));
+    await g0.page.evaluate(() => window.webgba.net.board.close());
+  }
+
+  const t1 = Date.now();
+  const H2 = await reopen(H, `BH${guestCount}b`);
+  await open(H2, "rejoin");
+  const offered = await waitFor(() => H2.page.$('[data-action="net-back"]'), 8000);
+  await sleep(300);
+  const offer = await H2.page.evaluate(() => ({ sheet: window.webgba.state.sheet, sec: document.querySelector("#sheetBody .net-sec--back")?.textContent ?? "", btn: !document.getElementById("btnNet").hidden }));
+  ok(`${tag}: 방장이 다시 열고 같은 게임 → 멀티플레이 창 자동 표시 · 이전 방 ${code} · 유저 ${guestCount}명 · 남은 시간 · '이전 방으로 돌아가기'`, Boolean(offered) && offer.sheet === "net" && offer.sec.includes(code) && offer.sec.includes(`유저 ${guestCount}명`) && /남은 시간 [01]:\d\d/.test(offer.sec) && offer.btn, JSON.stringify(offer));
+  if (guestCount === 1 && !crash && SHOTS) await H2.page.screenshot({ path: path.join(SHOTS, "방장_이전방_돌아가기_390x844.png") });
+  await stateShim(H2);
+  const api1 = local.apiCalls.length;
+  await H2.page.click('[data-action="net-back"]');
+  const back = await waitFor(async () => {
+    const s = await snap(H2);
+    return s.connected && s.members.length === guestCount + 1 && s.members.every((m) => !m.held) ? s : null;
+  }, 45000, 250);
+  const backMs = Date.now() - t1;
+  await waitFor(async () => {
+    for (const g of guests) if ((await snap(g)).rejoining) return false;
+    return true;
+  }, 10000);
+  await sleep(1500);
+  const hash2 = await Promise.all([H2, ...guests].map(hashOf));
+  const hEv = await events(H2);
+  const shim = await H2.page.evaluate(() => window.__shim);
+  const roomNow = await H2.page.evaluate(() => window.webgba.net.win.roomHost?.room ?? "");
+  const backCalls = local.apiCalls.slice(api1).filter((c) => c.op === "back").length;
+  ok(`${tag}: '이전 방으로 돌아가기' → 같은 방 코드(back ${backCalls}회) · 유저 ${guestCount}명 자동 재연결 ${(backMs / 1000).toFixed(1)}초 · 방장 REJOINED(0) · 상태 묶음 받음 · 모두 같은 상태 해시`, Boolean(back) && roomNow === code && backCalls === 1 && kindsOf(hEv, 9, 0) === 1 && shim.got.length === 1 && shim.got[0].loaded === 1 && new Set(hash2).size === 1 && hash2[0] === hashes[0], JSON.stringify({ roomNow, hash2, got: shim.got, sent: shim.sent }));
+  const gEvs = await Promise.all(guests.map(events));
+  const srcs = gEvs.filter((list) => kindsOf(list, 8, 0)).length;
+  const srcSlot = (await Promise.all(guests.map(snap)))[gEvs.findIndex((list) => kindsOf(list, 8, 0))]?.slot;
+  const minSlot = Math.min(...(await Promise.all(guests.map(snap))).map((s) => s.slot));
+  ok(`${tag}: 상태 묶음을 보낸 유저 = 가장 작은 자리(${srcSlot + 1}P)`, srcSlot === minSlot, `${srcSlot}/${minSlot}`);
+  const others = await Promise.all(guests.map((g) => g.page.evaluate(() => window.__shim.got.filter((x) => x.from === 0).length)));
+  const playing = await Promise.all(guests.map(async (g) => {
+    const a = await g.page.evaluate(() => window.webgba.player.frameNo);
+    await sleep(300);
+    return (await g.page.evaluate(() => window.webgba.player.frameNo)) > a;
+  }));
+  ok(`${tag}: 상태 묶음을 보낸 유저 1명(BACK(0)) · 나머지 ${guestCount - 1}명은 REJOINED(내 자리) 뒤 방장 묶음 받음 · 유저 게임 다시 진행`, srcs === 1 && others.filter((n) => n >= 1).length === guestCount - 1 && playing.every(Boolean) && shim.sent.filter((x) => x.to !== 0).length === guestCount - 1, JSON.stringify({ srcs, others, playing, sent: shim.sent }));
+  const big0 = await bigOk(H2);
+  await press(g0, "KeyX");
+  ok(`${tag}: 돌아온 뒤 유저의 16KB 순서 방송을 방장이 받음`, await waitFor(async () => (await bigOk(H2)) > big0, 8000));
+  const rec2 = await backRecord(H2);
+  ok(`${tag}: 돌아온 방장도 방 정보 다시 보관(같은 방 코드)`, rec2?.room === code && rec2.slots.length === guestCount, JSON.stringify(rec2 && { room: rec2.room }));
+  await H2.page.evaluate(() => window.webgba.player.net.leave());
+  await waitFor(async () => (await backRecord(H2)) === null, 5000);
+  ok(`${tag}: 방장이 방 나가기 → 보관한 방 정보 삭제 · 유저 세션 끝`, (await backRecord(H2)) === null && (await waitFor(async () => [6, 7].includes((await game(g0))?.closed), 10000)));
+  for (const p of [H2, ...guests]) await p.context.close().catch(() => {});
+}
+
+async function hostBackTests() {
+  await hostBackRun(1);
+  await hostBackRun(3);
+  await hostBackRun(1, { crash: true });
+
+  // ── 다른 게임으로 열면 표시 안 함 · 2분 넘김 = 세션 끝 ──
+  const H = await peer("BHT", { nick: "방장 T" });
+  const G = await peer("BGT", { nick: "유저 T" });
+  const code = await room(H, [G], "rejoin");
+  await H.page.close();
+  await waitFor(async () => (await snap(G)).hostWait, 40000, 250);
+  const H2 = await reopen(H, "BHT2");
+  await open(H2, "webapi");
+  await sleep(1500);
+  const other = await H2.page.evaluate(() => ({ sheet: window.webgba.state.sheet, back: Boolean(document.querySelector('[data-action="net-back"]')), btn: !document.getElementById("btnNet").hidden }));
+  ok("다른 게임(id 다름)으로 열면 '이전 방으로 돌아가기' 표시 없음 · 창 자동 표시 없음", other.sheet === "" && !other.back && !other.btn, JSON.stringify(other));
+  await H2.page.evaluate(() => {
+    const rec = JSON.parse(localStorage.getItem("webgba.netBack"));
+    rec.at = Date.now() - 121000;
+    localStorage.setItem("webgba.netBack", JSON.stringify(rec));
+  });
+  await open(H2, "rejoin");
+  await sleep(1500);
+  const late = await H2.page.evaluate(() => ({ sheet: window.webgba.state.sheet, back: Boolean(document.querySelector('[data-action="net-back"]')), rec: localStorage.getItem("webgba.netBack") }));
+  ok("2분 지난 방 정보: 같은 게임이어도 표시 없음 · 보관 정보 삭제", late.sheet === "" && !late.back && late.rec === null, JSON.stringify(late));
+  local.fake.advance(125000);
+  const t0 = Date.now();
+  let toastSeen = "";
+  const endG = await waitFor(async () => {
+    toastSeen ||= await G.page.evaluate(() => {
+      const n = document.getElementById("toast");
+      return n && !n.hidden && /방장이 나가/.test(n.textContent) ? n.textContent : "";
+    });
+    return (await game(G))?.closed === 7 && toastSeen;
+  }, 20000, 150);
+  const gView = await G.page.evaluate(() => ({ wait: window.webgba.player.net.snapshot().hostWait, active: window.webgba.player.net.active }));
+  ok(`2분 넘김(방 기록 만료): 유저 세션 끝 ${((Date.now() - t0) / 1000).toFixed(1)}초 · CLOSED(HOST_LEFT) · 대기 해제 · 알림 '${toastSeen}'`, endG && !gView.wait && !gView.active, JSON.stringify(gView));
+  for (const p of [H2, G]) await p.context.close().catch(() => {});
+
+  // ── 다시 들어오기를 선택하지 않은 게임은 그대로(방장 앱 종료 = 세션 끝, 방 정보 보관 없음) ──
+  const P = await peer("BHP", { nick: "방장 P" });
+  const Q = await peer("BGQ", { nick: "유저 Q" });
+  await room(P, [Q], "webapi");
+  const t2 = Date.now();
+  const kept = await backRecord(P);
+  await P.page.close();
+  const qEnd = await waitFor(async () => [4, 7].includes((await game(Q))?.closed), 25000, 250);
+  const qWait = (await snap(Q)).hostWait;
+  const P2 = await reopen(P, "BHP2");
+  ok(`선택하지 않은 게임: 방장 페이지 닫기 → 유저 세션 끝 ${((Date.now() - t2) / 1000).toFixed(1)}초(대기 없음) · 방 정보 보관 없음`, qEnd && !qWait && kept === null && (await backRecord(P2)) === null, JSON.stringify({ q: await game(Q) }));
+  for (const p of [P2, Q]) await p.context.close().catch(() => {});
+}
+
 async function wanTests() {
   const W = await peer("W", { nick: "방장 기본" });
   const L = await peer("L", { nick: "유저 기본" });
@@ -619,7 +836,7 @@ async function wanTests() {
     return { found: Boolean(label), text: row?.textContent ?? "", wanRow: leaves.some((n) => /인터넷 연결|실험/.test(n.textContent)) };
   });
   await sleep(300);
-  ok("설정 › 멀티플레이: '인터넷 연결' 줄 없음 · '(실험)' 없음 · '멀티플레이 사용' 설명에 공인 IP·2분 30초·Cloudflare 중계", item.found && !item.wanRow && /공인 IP/.test(item.text) && /2분 30초/.test(item.text) && /Cloudflare 중계/.test(item.text), item.text.slice(0, 160));
+  ok("설정 › 멀티플레이: '인터넷 연결' 줄 없음 · '(실험)' 없음 · '멀티플레이 사용' 설명 두 줄(코드 값으로 … 연결합니다 / 비활성화 시 …, 공인 IP·중계 안내는 README)", item.found && !item.wanRow && item.text.includes("코드 값으로 다른 네트워크의 유저와 연결합니다.\n비활성화 시 멀티플레이 창을 열 수 없습니다.") && !/공인 IP|Cloudflare|재실행/.test(item.text), item.text.slice(0, 160));
   if (CAPTURE) await S.page.screenshot({ path: path.join(CAPTURE, "설정_멀티플레이_390x844.png") });
   await S.context.close();
 }

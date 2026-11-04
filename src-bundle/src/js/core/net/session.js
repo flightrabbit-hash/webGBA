@@ -11,6 +11,7 @@ export const STATE_MAX = 262144;
 export const SLOTS = 8;
 export const NICK_MAX = 16;
 export const LOST_MS = 15000;
+export const HOST_BACK_MS = 120000;
 
 const K_HELLO = 1;
 const K_WELCOME = 2;
@@ -25,6 +26,7 @@ const K_PONG = 0x14;
 const K_ROW = 0x15;
 const K_STATE = 0x16;
 const K_ICE = 0x17;
+const K_AWAY = 0x18;
 
 const HEARTBEAT_MS = 500;
 const STALL_MS = 1500;
@@ -41,6 +43,9 @@ const RELAY_RECHECK_MS = 60000;
 const RELAY_RETRY_MS = 30000;
 const RELAY_ANSWER_MS = 12000;
 const STATE_CHUNK = MSG_MAX;
+const BACK_STATE_MS = 10000;
+const AWAY_GRACE_MS = 15000;
+const RK_RE = /^[A-Za-z0-9_-]{16,32}$/;
 
 export class SessionError extends Error {
   constructor(code, why = 0) {
@@ -133,6 +138,15 @@ export class NetSession {
     this.rejoinKey = "";
     this.rejoining = false;
     this.rejoinSince = 0;
+    this.hostBack = false;
+    this.hostAway = 0;
+    this.restored = false;
+    this.backSrc = -1;
+    this.backReady = false;
+    this.backQueue = [];
+    this.backTimer = 0;
+    this.backPick = 0;
+    this.backOpened = false;
     this.makePeer = makePeer ?? ((config) => new RTCPeerConnection(config));
     this.now = now;
     this.relayOf = new WeakMap();
@@ -289,6 +303,83 @@ export class NetSession {
     if (this.myRow) this.storeRow(0, this.myRow);
     this.emit(EV.OPEN, 0, 1);
     this.changed();
+  }
+
+  // 앱을 다시 연 방장: 이전 자리·열쇠를 보관 자리로 되살리고, 게임에는 첫 유저가 돌아올 때 REJOINED(0) 을 준다
+  restore(slots) {
+    if (!this.host || this.opened) return false;
+    const now = this.now();
+    this.members.set(0, { nick: this.nick, lastSeen: now, rtt: null });
+    for (const item of slots ?? []) {
+      const s = item?.s;
+      if (!Number.isInteger(s) || s < 1 || s >= this.max || this.members.has(s) || !RK_RE.test(item.key ?? "")) continue;
+      this.members.set(s, { nick: cleanNick(item.nick, `${s + 1}P`), key: item.key, held: true, heldAt: now, lastSeen: now, rtt: null });
+    }
+    if (this.members.size < 2) return false;
+    this.opened = true;
+    this.restored = true;
+    if (this.myRow) this.storeRow(0, this.myRow);
+    this.log("info", `이전 방으로 돌아옴 · 보관 자리 ${[...this.members.keys()].filter((s) => s).join(",")}`);
+    this.changed();
+    return true;
+  }
+
+  backList() {
+    return [...this.members.entries()].filter(([slot, m]) => slot && m.key).map(([s, m]) => ({ s, nick: m.nick, key: m.key }));
+  }
+
+  // 앱을 닫는 방장: BYE 대신 K_AWAY 를 보내 유저가 세션을 끝내지 않고 방장을 기다리게 한다
+  park() {
+    if (!this.host || this.closed || !this.rejoinable || this.count < 2) return false;
+    const away = ctl(K_AWAY, { ms: HOST_BACK_MS });
+    for (const l of this.links.values()) if (l.ready) this.sendTo(l, away);
+    this.closed = true;
+    this.why = WHY.LEFT;
+    clearInterval(this.timer);
+    clearTimeout(this.backTimer);
+    clearTimeout(this.backPick);
+    for (const l of [...this.links.values(), ...this.invites.values()]) {
+      const told = l.ready;
+      l.state = "dead";
+      l.ready = false;
+      clearTimeout(l.timer);
+      if (l.dc) l.dc.onclose = l.dc.onmessage = l.dc.onopen = null;
+      if (l.pc) l.pc.onconnectionstatechange = l.pc.ondatachannel = null;
+      this.killLink(l, told ? 150 : 0);
+    }
+    this.invites.clear();
+    this.log("info", "방장 앱 종료 — 유저에게 방장 기다리기 알림");
+    return true;
+  }
+
+  // 상태 묶음을 보낼 유저 = 같은 때 들어온 다시 들어오기 요청 중 가장 작은 자리. 그 유저가 연결되지 않으면 다음에 들어오는 유저로
+  pickBack(slots) {
+    if (!this.restored || this.backOpened || this.backSrc >= 0 || !slots.length) return;
+    this.backSrc = Math.min(...slots);
+    clearTimeout(this.backPick);
+    this.backPick = setTimeout(() => {
+      if (this.backOpened || this.closed) return;
+      this.log("warn", `자리 ${this.backSrc} 가 시간 안에 다시 연결되지 않음 — 다음에 들어오는 유저가 상태 묶음을 보냄`);
+      this.backSrc = -1;
+    }, CONNECT_MS + 5000);
+  }
+
+  backDone(why) {
+    if (!this.restored || this.backReady) return;
+    this.backReady = true;
+    clearTimeout(this.backTimer);
+    this.backTimer = 0;
+    if (why !== "state") this.log("warn", `돌아온 방장: ${BACK_STATE_MS / 1000}초 안에 상태 묶음이 오지 않음 — 나머지 유저를 그대로 받음`);
+    try {
+      this.sink.backReady?.();
+    } catch {}
+  }
+
+  flushBack() {
+    if (!this.backReady || !this.backQueue.length) return;
+    const list = this.backQueue;
+    this.backQueue = [];
+    for (const slot of list) if (this.links.get(slot)?.ready && !this.members.get(slot)?.held) this.emit(EV.BACK, slot, this.count);
   }
 
   async invite() {
@@ -509,7 +600,7 @@ export class NetSession {
 
   welcomePacket(link, members) {
     const body = { slot: link.slot, max: this.max, members };
-    if (link.key) body.rk = link.key;
+    if (link.key) Object.assign(body, { rk: link.key, hb: 1 });
     return ctl(K_WELCOME, body);
   }
 
@@ -552,11 +643,23 @@ export class NetSession {
     this.stats.rejoins++;
     link.pairAt = this.now();
     this.watchRelay(link);
-    this.log("info", `자리 ${slot} 다시 들어옴 · 후보 ${pairText(pair)}`);
-    this.sendTo(link, ctl(K_WELCOME, { slot, max: this.max, members: this.wireMembers(), rk: m.key, back: 1 }));
+    const src = this.restored && !this.backOpened && (this.backSrc < 0 || this.backSrc === slot);
+    if (src) {
+      this.backSrc = slot;
+      this.backOpened = true;
+      clearTimeout(this.backPick);
+    }
+    this.log("info", `자리 ${slot} 다시 들어옴 · 후보 ${pairText(pair)}${src ? " · 상태 묶음을 보낼 유저" : ""}`);
+    this.sendTo(link, ctl(K_WELCOME, { slot, max: this.max, members: this.wireMembers(), rk: m.key, back: 1, hb: 1, ...(src ? { src: 1 } : {}) }));
     for (const [from, row] of this.rows) this.sendTo(link, this.rowPacket(from, row));
     this.broadcastMembers(null, slot);
-    this.emit(EV.BACK, slot, this.count);
+    if (src) {
+      this.backQueue = this.backQueue.filter((s) => s !== slot);
+      this.emit(EV.REJOINED, 0, this.count);
+      for (const [s, other] of this.members) if (s && s !== slot && (other.held || this.backQueue.includes(s))) this.emit(EV.HOLD, s, this.count);
+      this.backTimer = setTimeout(() => this.backDone("timeout"), BACK_STATE_MS);
+    } else if (this.restored && !this.backReady) this.backQueue.push(slot);
+    else this.emit(EV.BACK, slot, this.count);
     this.changed();
   }
 
@@ -614,7 +717,9 @@ export class NetSession {
     this.stateIn.delete(slot);
     Object.assign(m, { held: true, stalled: false, away: false, heldAt: this.now(), rtt: null });
     this.log("info", `자리 ${slot} 끊김 — 돌아올 때까지 보관`);
-    this.emit(EV.HOLD, slot, this.count);
+    const deferred = this.backQueue.includes(slot);
+    this.backQueue = this.backQueue.filter((s) => s !== slot);
+    if (!deferred) this.emit(EV.HOLD, slot, this.count);
     this.broadcastMembers();
     this.helperCall("watch");
     this.changed();
@@ -874,6 +979,7 @@ export class NetSession {
     if (cur.at === cur.buf.length) {
       this.stats.recv++;
       this.deliver(from, cur.buf, true);
+      if (this.host && from === this.backSrc) this.backDone("state");
     }
   }
 
@@ -1000,6 +1106,24 @@ export class NetSession {
     this.changed();
   }
 
+  setHostAway(left) {
+    if (this.host || this.closed || !this.rejoining) return;
+    const ms = Math.max(0, Math.min(HOST_BACK_MS, Number(left) || 0));
+    const first = !this.hostAway;
+    this.hostAway = this.now() + ms;
+    if (first) {
+      const h = this.members.get(0);
+      if (h) Object.assign(h, { held: true, stalled: false });
+      this.log("info", `방장 기기가 나감 — 같은 방으로 돌아오기를 기다림(${Math.round(ms / 1000)}초)`);
+      this.emit(EV.HOLD, 0, this.count);
+    }
+    this.changed();
+  }
+
+  get hostLeft() {
+    return this.hostAway ? Math.max(0, this.hostAway - this.now()) : 0;
+  }
+
   async restartOffer() {
     const link = this.link;
     const pc = link?.pc;
@@ -1096,7 +1220,8 @@ export class NetSession {
       if (link.rejoin) return this.rejoined(link, w, pair);
       this.slot = w.slot;
       this.max = Math.max(2, Math.min(SLOTS, w.max | 0 || this.max));
-      this.rejoinKey = typeof w.rk === "string" && /^[A-Za-z0-9_-]{16,32}$/.test(w.rk) ? w.rk : "";
+      this.rejoinKey = typeof w.rk === "string" && RK_RE.test(w.rk) ? w.rk : "";
+      this.hostBack = w.hb === 1 && Boolean(this.rejoinKey);
       link.ready = true;
       link.state = "joined";
       this.sendTo(link, Uint8Array.of(K_READY));
@@ -1117,6 +1242,13 @@ export class NetSession {
     if (!link.ready) return;
     if (kind === K_ICE) {
       this.onGuestIce(link, readCtl(b));
+      return;
+    }
+    if (kind === K_AWAY) {
+      if (!this.rejoinable || !this.hostBack) return this.close(WHY.HOST_LEFT);
+      const ms = readCtl(b)?.ms;
+      this.enterRejoin(link);
+      this.setHostAway(Number.isFinite(ms) ? ms : HOST_BACK_MS);
       return;
     }
     if (kind === K_MEMBERS) {
@@ -1157,16 +1289,19 @@ export class NetSession {
     link.state = "joined";
     this.rejoining = false;
     this.stats.rejoins++;
+    const wasAway = Boolean(this.hostAway);
+    this.awayBack = wasAway;
+    this.hostAway = 0;
+    this.hostBack = w.hb === 1;
     const h = this.members.get(0);
     const hostStalled = Boolean(h?.stalled);
-    if (h) {
-      h.lastSeen = this.now();
-      h.stalled = false;
-      h.away = false;
-    }
-    this.log("info", `자리 ${this.slot} 로 다시 들어감 · 후보 ${pairText(pair)}`);
+    if (h) Object.assign(h, { lastSeen: this.now(), stalled: false, away: false, held: false });
+    this.log("info", `자리 ${this.slot} 로 다시 들어감 · 후보 ${pairText(pair)}${w.src === 1 ? " · 돌아온 방장에게 상태 묶음을 보낼 차례" : ""}`);
     this.watchRelay(link);
-    this.emit(EV.REJOINED, this.slot, w.members.length);
+    if (w.src === 1) {
+      if (!wasAway) this.emit(EV.HOLD, 0, w.members.length);
+      this.emit(EV.BACK, 0, w.members.length);
+    } else this.emit(EV.REJOINED, this.slot, w.members.length);
     if (hostStalled) this.emit(EV.RESUME, 0, 0);
     this.applyMembers(w.members, null, false);
     if (this.myRow) this.setRow(this.myRow);
@@ -1303,7 +1438,13 @@ export class NetSession {
       }
       return;
     }
-    if (this.rejoining) return;
+    if (this.rejoining) {
+      if (this.hostAway && now > this.hostAway + AWAY_GRACE_MS) {
+        this.log("warn", "방장이 시간 안에 돌아오지 않음 — 세션을 끝냄");
+        this.close(WHY.HOST_LEFT);
+      }
+      return;
+    }
     const m = this.members.get(0);
     const link = this.link;
     if (!m || !link?.ready) return;
@@ -1332,6 +1473,9 @@ export class NetSession {
     }
     this.invites.clear();
     this.rejoining = false;
+    this.hostAway = 0;
+    clearTimeout(this.backTimer);
+    clearTimeout(this.backPick);
     this.emit(EV.CLOSED, why, 0);
     this.helperCall("closed");
     this.changed();

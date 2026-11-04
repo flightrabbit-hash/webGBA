@@ -137,6 +137,7 @@ export class BoardPanel {
     this.footNode.append(...actions);
     this.footNode.hidden = !actions.length;
     if (rejoinButtons) {
+      this.rejoinNow = rejoinButtons[0] ?? null;
       this.rejoinNode = make("div", "mpb__rejoin");
       this.rejoinText = make("span", "mpb__text mpb__rejoinText");
       const box = make("div", "mpb__rejoinActions");
@@ -160,8 +161,9 @@ export class BoardPanel {
     const people = parts.join(" · ");
     const head = room ? t("board.room", { code: room }) : title;
     const showMs = this.showMs();
-    const rejoin = this.rejoinNode && snap.rejoining ? t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying") : "";
-    const sig = JSON.stringify([lang(), head, view, people, showMs, rejoin, invite, snap.max]);
+    const left = Math.ceil((snap.hostLeft ?? 0) / 1000);
+    const rejoin = !this.rejoinNode || !snap.rejoining ? "" : snap.hostWait ? t("net.hostWait.state", { time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` }) : t({ offline: "net.rejoin.offline", wait: "net.rejoin.wait", server: "net.rejoin.server" }[snap.rejoinState] ?? "net.rejoin.trying");
+    const sig = JSON.stringify([lang(), head, view, people, showMs, rejoin, invite, snap.max, Boolean(snap.hostWait)]);
     if (sig === this.sig) return null;
     this.sig = sig;
     const changed = [];
@@ -173,6 +175,7 @@ export class BoardPanel {
     if (this.rejoinNode) {
       this.rejoinNode.hidden = !rejoin;
       if (rejoin) put(this.rejoinText, rejoin);
+      if (this.rejoinNow) this.rejoinNow.hidden = Boolean(snap.hostWait);
     }
     if (this.invite) this.invite.hidden = !invite;
     put(this.title, head);

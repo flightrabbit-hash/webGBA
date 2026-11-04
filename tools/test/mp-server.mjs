@@ -229,6 +229,49 @@ try {
   const gone = await call("GET", "rj", { query: { ...gAuth, u: U1 }, ip: "198.51.100.41" });
   ok("방장이 방을 닫으면 손님 받기 live: false(다시 들어오기 끝)", gone.status === 200 && gone.body.live === false, JSON.stringify(gone.body));
 
+  // ── 방장 돌아오기(away·hold·back, 결정 174 가): 방장이 앱을 닫아도 방 기록 2분 유지, 방장 증명으로만 되찾음 ──
+  fake.reset();
+  const HIP = "198.51.100.60";
+  const GIP = "198.51.100.61";
+  const hr = (await makeRoom({ body: { m: 3 }, ip: HIP })).body;
+  const hj = (await call("POST", "join", { body: { room: hr.room, c: C, p: "trade", n: "유저" }, ip: GIP })).body;
+  const hA = { room: hr.room, x: hr.x, g: hr.g, i: hr.i, t: hr.t };
+  const gA = { room: hr.room, x: hj.x, rt: hj.rt, s: 1 };
+  const ttlOf = (key) => fake.dump().find(([k]) => k === key)?.[2] ?? 0;
+  const rKey = `r:${hr.room}`;
+  const before = await call("GET", "rj", { query: { ...gA, u: U1 }, ip: GIP });
+  n0 = fake.stats().total;
+  const away = await call("POST", "away", { body: hA, ip: HIP });
+  const awayCmds = fake.stats().total - n0;
+  const awayTtl = ttlOf(rKey);
+  const seen = await call("GET", "rj", { query: { ...gA, u: U1 }, ip: GIP });
+  const joinAway = await call("POST", "join", { body: { room: hr.room, c: C, p: "trade", n: "새 유저" }, ip: "198.51.100.62" });
+  const nearAway = await call("GET", "near", { ip: HIP });
+  ok(`방장 앱 종료(away, ${awayCmds}명령): 방 기록 ${LIMITS.HOLD_TTL}초 유지 · 유저 받기 away > 0 · 새 참가 409 paused · 근처 목록에서 빠짐`, away.status === 200 && away.body.away > (LIMITS.HOLD_TTL - 5) * 1000 && awayTtl > LIMITS.HOLD_TTL - 5 && awayTtl <= LIMITS.HOLD_TTL && before.body.away === 0 && seen.body.live === true && seen.body.away > 0 && joinAway.status === 409 && joinAway.body.error === "paused" && !nearAway.body.rooms.some((x) => x.room === hr.room), JSON.stringify({ away: away.body, ttl: awayTtl, seen: seen.body.away, join: joinAway.body }));
+  fake.advance(10000);
+  const again = await call("POST", "away", { body: hA, ip: HIP });
+  const gHold = await call("POST", "hold", { body: { room: hr.room, x: hj.x, rt: hj.rt }, ip: GIP });
+  ok("두 번째 away·유저 hold 는 시간을 늘리지 않음(처음 나간 시각 기준)", again.status === 200 && gHold.status === 200 && again.body.away <= away.body.away && gHold.body.away <= away.body.away && ttlOf(rKey) <= awayTtl - 9, JSON.stringify({ again: again.body, hold: gHold.body, ttl: ttlOf(rKey) }));
+  const forgedHold = await call("POST", "hold", { body: { room: hr.room, x: hj.x, rt: `${hj.rt.slice(0, 9)}${"A".repeat(22)}` }, ip: GIP });
+  const forgedAway = await call("POST", "away", { body: { ...hA, t: `${hr.t.slice(0, 9)}${"A".repeat(22)}` }, ip: HIP });
+  const forgedBack = await call("POST", "back", { body: { ...hA, t: `${hr.t.slice(0, 9)}${"A".repeat(22)}`, c: C, p: "trade", m: 3, n: "남", o: OFFER, q: 1, k: 2 }, ip: "198.51.100.63" });
+  const guestBack = await call("POST", "back", { body: { room: hr.room, x: hj.x, rt: hj.rt, c: C, p: "trade", m: 3, n: "유저", o: OFFER, q: 1, k: 2 }, ip: GIP });
+  ok("증명이 틀리면 hold·away·back 403 · 유저 표(rt)로는 방장 자리를 되찾지 못함", forgedHold.status === 403 && forgedAway.status === 403 && forgedBack.status === 403 && guestBack.status >= 400, `${forgedHold.status}/${forgedAway.status}/${forgedBack.status}/${guestBack.status}`);
+  fake.advance(50000);
+  n0 = fake.stats().total;
+  const back = await call("POST", "back", { body: { ...hA, c: C, p: "trade", m: 3, n: "방장", o: OFFER, q: 1, k: 2 }, ip: HIP });
+  const backCmds = fake.stats().total - n0;
+  const backTtl = ttlOf(rKey);
+  const afterBack = await call("GET", "rj", { query: { ...gA, u: U1 }, ip: GIP });
+  ok(`돌아오기(back, ${backCmds}명령): 같은 방 코드 · 방 기록 다시 ${LIMITS.ROOM_TTL}초 · 유저 받기 away 0·live`, back.status === 200 && back.body.ok === true && backTtl > LIMITS.ROOM_TTL - 5 && afterBack.body.live === true && afterBack.body.away === 0, JSON.stringify({ back: back.body, ttl: backTtl, after: afterBack.body }));
+  const markG = await call("POST", "hold", { body: { room: hr.room, x: hj.x, rt: hj.rt }, ip: GIP });
+  ok(`유저 hold(방장이 답하지 않음): 방장 자리 보관 시작 · ${LIMITS.HOLD_TTL}초`, markG.status === 200 && markG.body.away > (LIMITS.HOLD_TTL - 5) * 1000 && ttlOf(rKey) <= LIMITS.HOLD_TTL, JSON.stringify(markG.body));
+  fake.advance((LIMITS.HOLD_TTL + 1) * 1000);
+  const late = await call("POST", "back", { body: { ...hA, c: C, p: "trade", m: 3, n: "방장", o: OFFER, q: 1, k: 2 }, ip: HIP });
+  const lateG = await call("GET", "rj", { query: { ...gA, u: U1 }, ip: GIP });
+  const lateHold = await call("POST", "hold", { body: { room: hr.room, x: hj.x, rt: hj.rt }, ip: GIP });
+  ok(`${LIMITS.HOLD_TTL}초 지나면 방 기록 없음 → 돌아오기 404 none · 유저 받기 live false · hold 404(새로 만들지 않음)`, late.status === 404 && late.body.error === "none" && lateG.body.live === false && lateHold.status === 404 && !fake.dump().some(([k]) => k === rKey), `${late.status}/${lateG.body.live}/${lateHold.status}`);
+
   // ── 기본 TURN 접속 정보 발급(turn) — 가짜 Cloudflare(발급·GraphQL), 키 값은 출력하지 않음 ──
   const cloud = { bytes: 0, gql: 0, gen: 0, mode: "", ttl: 0, nodes: 0, vars: null, auth: [] };
   const KEYS = { TURN_KEY_ID: "fake-key-id", TURN_KEY_API_TOKEN: "fake-turn-token", CF_ACCOUNT_ID: "fakeaccount0123", CF_ANALYTICS_API_TOKEN: "fake-analytics-token" };

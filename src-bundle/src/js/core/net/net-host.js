@@ -241,9 +241,17 @@ export class NetHost {
     return Boolean(this.session?.open && this.session.role === "make" && !this.reached);
   }
 
+  get holding() {
+    const s = this.session;
+    return Boolean(s && !s.closed && s.rejoining && s.hostAway);
+  }
+
   attach(host, { manifest = null, build = "" } = {}) {
     this.detach();
-    if (!this.enabled()) return false;
+    if (!this.enabled()) {
+      this.pending = { host, opts: { manifest, build } };
+      return false;
+    }
     let game = null;
     if (host?.script) {
       if (manifest?.multiplayer && typeof host.netPost === "function") game = new ScriptNetGame(host);
@@ -268,6 +276,7 @@ export class NetHost {
   }
 
   detach() {
+    this.pending = null;
     clearTimeout(this.windowTimer);
     this.windowTimer = 0;
     if (this.session && !this.session.closed) {
@@ -415,6 +424,9 @@ export class NetHost {
       rejoinable: Boolean(s?.rejoinable),
       rejoining: Boolean(s && !s.closed && s.rejoining),
       rejoinState: s && !s.closed && s.rejoining ? s.helper?.state ?? "" : "",
+      hostWait: this.holding,
+      hostLeft: this.holding ? s.hostLeft : 0,
+      restored: Boolean(s?.restored && !s.closed),
       iceHosts: this.icePlan?.custom ? this.icePlan.hosts : [],
       iceFailed: this.iceFailed,
     };
@@ -480,8 +492,64 @@ export class NetHost {
     this.changed();
   }
 
+  // 앱 종료(방장, 다시 들어오기 게임): 게임에 알리지 않고 세션을 접는다 — 유저는 방장을 기다린다
+  park() {
+    const s = this.session;
+    if (!s || s.closed || s.role !== "make" || !s.park()) return false;
+    s.sink = { event() {}, deliver() {}, change() {} };
+    return true;
+  }
+
+  backRequest(back) {
+    const purposes = this.config?.purposes ?? [];
+    const purpose = purposes.find((p) => p.id === back.purpose);
+    if (!purpose) return null;
+    const max = Math.max(2, Math.min(purpose.max, back.max | 0));
+    return { serial: -1, purpose, min: Math.min(max, Math.max(purpose.min, back.min | 0)), max, role: "any", restored: true };
+  }
+
+  offerBack(back) {
+    if (this.active || !this.game || !this.config?.rejoin) return false;
+    if (this.request && !this.request.restored) return true;
+    const request = this.backRequest(back);
+    if (!request) return false;
+    this.request = request;
+    this.changed();
+    return true;
+  }
+
+  dropBack() {
+    if (!this.request?.restored || this.active) return;
+    this.request = null;
+    this.changed();
+  }
+
+  async restore(back) {
+    if (!this.game || !this.config?.rejoin) throw new Error("no game");
+    const request = this.backRequest(back);
+    if (!request) throw new Error("purpose");
+    if (this.active) throw new Error("busy");
+    if (!this.request || this.request.purpose.id !== request.purpose.id) this.request = request;
+    else this.request = { ...this.request, max: request.max, restored: true };
+    clearTimeout(this.windowTimer);
+    this.windowTimer = 0;
+    return this.open("make", { restore: back.slots });
+  }
+
+  drop() {
+    const s = this.session;
+    if (!s) return;
+    s.sink = { event() {}, deliver() {}, change() {} };
+    if (!s.closed) s.close(WHY.LEFT);
+    this.session = null;
+    this.changed();
+  }
+
   beforeFrame() {
-    if (this.game && !this.game.script) this.game.feed();
+    if (!this.game || this.game.script) return;
+    this.game.feed();
+    const s = this.session;
+    if (s?.backReady && s.backQueue.length && !this.game.inbox.length) s.flushBack();
   }
 
   afterFrame() {
@@ -535,7 +603,12 @@ export class NetHost {
   }
 
   syncEnabled() {
-    if (this.enabled() || (!this.request && !this.active)) return;
+    if (this.enabled()) {
+      const wait = this.pending;
+      if (!this.game && wait?.host && !wait.host.halted) this.attach(wait.host, wait.opts);
+      return;
+    }
+    if (!this.request && !this.active) return;
     this.finish(WHY.CANCEL);
     this.setRequest(null);
   }
@@ -544,6 +617,11 @@ export class NetHost {
     if (next && !this.enabled()) next = null;
     const prev = this.request;
     if (prev && next && prev.serial === next.serial && prev.purpose.index === next.purpose.index) return;
+    if (prev?.restored && next && this.active && prev.purpose.index === next.purpose.index) {
+      this.request = next;
+      this.changed();
+      return;
+    }
     if (this.session && !this.session.closed) this.session.close(WHY.LEFT);
     clearTimeout(this.windowTimer);
     this.windowTimer = 0;
@@ -623,9 +701,9 @@ export class NetHost {
         else if (kind === EV.LEAVE) this.notice({ kind: "leave", slot: a, nick: session.lastNick?.get(a) ?? `${a + 1}P`, why: b });
         else if (kind === EV.CLOSED) this.notice({ kind: "closed", why: a });
         else if (kind === EV.OPEN && session.role === "join") this.notice({ kind: "open", slot: a, count: b });
-        else if (kind === EV.HOLD) this.notice(a === session.slot ? { kind: "rejoining" } : { kind: "hold", slot: a, nick: nickOf(a) });
-        else if (kind === EV.BACK) this.notice({ kind: "back", slot: a, nick: nickOf(a) });
-        else if (kind === EV.REJOINED) this.notice({ kind: "rejoined", slot: a });
+        else if (kind === EV.HOLD) this.notice(a === session.slot ? { kind: "rejoining" } : a === 0 && !session.host ? { kind: "hostWait" } : { kind: "hold", slot: a, nick: nickOf(a) });
+        else if (kind === EV.BACK) this.notice(a === 0 ? { kind: "hostBack" } : { kind: "back", slot: a, nick: nickOf(a) });
+        else if (kind === EV.REJOINED) this.notice(a === 0 ? { kind: "returned" } : session.awayBack ? { kind: "hostBack" } : { kind: "rejoined", slot: a });
         this.changed();
       },
       deliver: (from, bytes, state = false) => {
@@ -634,6 +712,9 @@ export class NetHost {
           this.log("warn", "받은 메시지가 너무 많이 쌓여 연결을 끊음");
           session.close(WHY.LOST);
         }
+      },
+      backReady: () => {
+        if (this.session === session && this.game?.script) session.flushBack();
       },
       change: () => {
         if (this.session !== session) return;
@@ -650,7 +731,7 @@ export class NetHost {
     } catch {}
   }
 
-  async open(role) {
+  async open(role, { restore = null } = {}) {
     if (!this.request || !this.game) throw new Error("no request");
     if (this.session && !this.session.closed) return this.session;
     const compat = await this.compat;
@@ -678,7 +759,12 @@ export class NetHost {
     session.sink = this.sink(session);
     session.setAway(this.away);
     if (this.boardCfg?.scope === "self" && this.board) this.pushRow();
-    if (role === "make") session.start();
+    if (restore) {
+      if (!session.restore(restore)) {
+        this.drop();
+        throw new Error("restore");
+      }
+    } else if (role === "make") session.start();
     this.changed();
     return session;
   }

@@ -81,6 +81,7 @@
   --px-warn: var(--global);
   --px-warn-hi: var(--global);
   --px-warn-side: var(--line-strong);
+  --px-warn-hov: var(--global);
   --px-warn-ink: var(--bg-sunken);
   --px-off: var(--bg-raised);
   --px-off-hi: var(--bg-raised);
@@ -89,6 +90,7 @@
   --px-face-icol: transparent;
   --px-acc-icol: transparent;
   --px-dng-icol: transparent;
+  --px-warn-icol: transparent;
   --px-off-icol: transparent;
   --px-text-icol: transparent;
   --px-accent-icol: transparent;
@@ -712,6 +714,15 @@ body:not([data-view="start"]) .start {
   --face-hov: var(--px-dng-hov);
   --face-ink: var(--px-dng-ink);
   --icon-ol: var(--px-dng-icol);
+}
+
+.btn--warn:not(:disabled) {
+  --face: var(--px-warn);
+  --face-hi: var(--px-warn-hi);
+  --face-side: var(--px-warn-side);
+  --face-hov: var(--px-warn-hov);
+  --face-ink: var(--px-warn-ink);
+  --icon-ol: var(--px-warn-icol);
 }
 
 .btn--small {
@@ -1751,6 +1762,10 @@ body[data-layout="landscape"] .lib__shelf {
   line-height: 16px;
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+
+.field__note--lines {
+  white-space: pre-line;
 }
 
 .field .pick {

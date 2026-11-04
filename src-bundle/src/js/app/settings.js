@@ -262,6 +262,7 @@ function fieldRow(item) {
   const hint = document.createElement("span");
   hint.className = "cfg__hint";
   hint.textContent = hooks.hint?.(item.key) ?? t(`cfg.${item.key}.note`, hooks.vars?.(item.key) ?? {});
+  hint.classList.toggle("cfg__hint--lines", hint.textContent.includes("\n"));
   text.append(hint);
 
   row.append(text, control(item, hint));

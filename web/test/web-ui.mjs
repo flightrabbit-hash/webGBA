@@ -51,7 +51,9 @@ const ONLY_OVERLAY = process.env.UI_OVERLAY_ONLY === "1";
 // UI_SETTEXT_ONLY=1 이면 설정 줄 문구·테마 목록(대표 색 4개 견본, 커스텀 없음)·빈 라이브러리·빈 세이브 시험만. UI_CAPTURE = 기능 캡처 폴더(없으면 캡처 폴더)
 const ONLY_SETTEXT = process.env.UI_SETTEXT_ONLY === "1";
 const CAPTURE = process.env.UI_CAPTURE || "";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE || ONLY_OVERLAY || ONLY_SETTEXT;
+// UI_HOSTBACK_ONLY=1 이면 방장 돌아오기 화면 시험만(방장 '이전 방' 칸·주황 버튼 대비(테마 12개)·유저 '방장을 기다리는 중', 390x844·844x390·PC × 세 언어, UI_NET_WGBA 를 rejoin 으로 다시 묶음)
+const ONLY_HOSTBACK = process.env.UI_HOSTBACK_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE || ONLY_OVERLAY || ONLY_SETTEXT || ONLY_HOSTBACK;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -1854,8 +1856,127 @@ async function boardChecks() {
   }
 }
 
-if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD && !ONLY_ANYTIME) await netChecks();
-if (process.env.UI_NET_WGBA && (ONLY_ANYTIME || (process.env.UI_NET !== "0" && !ONLY_BOARD))) await anytimeChecks();
+if (process.env.UI_NET_WGBA && process.env.UI_NET !== "0" && !ONLY_BOARD && !ONLY_ANYTIME && !ONLY_HOSTBACK) await netChecks();
+if (process.env.UI_NET_WGBA && (ONLY_ANYTIME || (process.env.UI_NET !== "0" && !ONLY_BOARD && !ONLY_HOSTBACK))) await anytimeChecks();
+if (process.env.UI_NET_WGBA && (ONLY_HOSTBACK || (process.env.UI_NET !== "0" && !ONLY_BOARD && !ONLY_ANYTIME))) await hostBackChecks();
+
+// 방장 돌아오기(결정 174 가): 방장의 '이전 방' 칸(주황 버튼)과 유저의 '방장을 기다리는 중' 화면 — 잉크 세로 가운데·화면 안·겹침·가로 넘침,
+// 주황 버튼 글자 대비 4.5 이상(테마 12개). 유저 화면은 snapshot 을 바꿔 그린다(실제 흐름은 web-mp --only hostback).
+async function hostBackChecks() {
+  const bytes = (await repackWgba(process.env.UI_NET_WGBA, (m) => ({ ...m, id: `${m.id}.hostback`, multiplayer: { ...m.multiplayer, rejoin: true } }))).toString("base64");
+  const shots = CAPTURE || SHOTS;
+  const views = [...VIEWS_ALL.filter((v) => v.name !== "360x640"), { name: "1280x800", viewport: { width: 1280, height: 800 }, dpr: 1 }].filter((v) => !VIEW_FILTER || VIEW_FILTER.has(v.name));
+  const layout = (page) =>
+    page.evaluate(() => {
+      const body = document.getElementById("sheetBody");
+      const b = body.getBoundingClientRect();
+      const kids = [...body.querySelectorAll(".net-col > *, #sheetBody > *")].filter((n) => n.offsetParent).map((n) => [n.parentElement, n.getBoundingClientRect()]);
+      let overlap = 0;
+      for (let i = 1; i < kids.length; i++) if (kids[i][0] === kids[i - 1][0] && kids[i][1].top < kids[i - 1][1].bottom - 0.5) overlap++;
+      const wide = [...body.querySelectorAll(".btn, .net-info__row, .net-note, .mpb__row")].filter((n) => n.offsetParent).filter((n) => n.getBoundingClientRect().right > b.right + 0.5 || n.scrollWidth > n.clientWidth + 1).length;
+      return { overlap, wide, hScroll: body.scrollWidth > body.clientWidth + 1 };
+    });
+  // 위·아래 여백 같음, 홀수로 남는 기기 1픽셀은 늘 아래(UI 규칙) — 그 밖의 차이를 센다
+  const worst = (prefix, dpr) => Math.max(0, ...table.filter((r) => r.key === prefix && !(r.top === r.bottom || +(r.bottom - r.top).toFixed(2) === +(1 / dpr).toFixed(2))).map((r) => r.diff));
+  for (const view of views) {
+    for (const lang of LANGS) {
+      const key = `${view.name}|${lang}|hostback`;
+      const context = await browser.newContext({ viewport: view.viewport, deviceScaleFactor: view.dpr ?? 2, reducedMotion: "reduce" });
+      await context.addInitScript((lang) => {
+        Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+        if (window !== window.top) return;
+        localStorage.setItem("webgba.installHint", "1");
+        localStorage.setItem("webgba.prefs", JSON.stringify({ lang, netNo: "1234" }));
+      }, lang);
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(URL_BASE);
+      await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+      await page.evaluate(async (b64) => {
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        await window.webgba.openFiles([new File([data], "net-hostback.wgba")]);
+      }, bytes);
+      await page.waitForFunction(() => window.webgba.player.running, null, { timeout: 20000 });
+      await page.evaluate(async () => {
+        const { signalCompat } = await import("/js/core/net/signal.js");
+        const c = await signalCompat(window.webgba.player.net.compat);
+        const slots = [{ s: 1, nick: "유저 1", key: "k".repeat(22) }, { s: 2, nick: "유저 2", key: "m".repeat(22) }];
+        localStorage.setItem("webgba.netBack", JSON.stringify({ c, p: "party", purpose: "party", min: 2, max: 4, room: "482193", x: "AAAAAAAAAAA", g: "BBBBBBBBBBBBBBBB", i: 0, t: `20261104.${"C".repeat(22)}`, q: 1, code: "D".repeat(40), slots, at: Date.now() }));
+        await window.webgba.net.win.offerBack();
+      });
+      const offered = await page.waitForFunction(() => Boolean(document.querySelector('[data-action="net-back"]')), null, { timeout: 8000 }).then(() => true, () => false);
+      await page.waitForTimeout(500);
+      ok(`${key} 같은 게임을 열면 창 자동 표시 · 첫 화면 '이전 방' 칸`, offered && (await page.evaluate(() => window.webgba.state.sheet)) === "net");
+      await measure(page, `${key}|back`, [".sheet__head", ".net-sec--back .net-sech", ".net-sec--back .net-info__row", ".net-sec--back .btn", ".seg__btn", "#sheetFoot .btn"]);
+      await fits(page, `${key}|back`, ".sheet__panel");
+      await lineUp(page, `${key}|back`, "#sheetFoot .net-actions", ":scope > button, :scope > .net-nickline > button");
+      const lay = await layout(page);
+      ok(`${key}|back 겹침·가로 넘침 없음 · 잉크 세로 가운데 차이 ${worst(`${key}|back`, view.dpr ?? 2)}px(홀수 1픽셀 아래 제외)`, lay.overlap === 0 && lay.wide === 0 && !lay.hScroll && worst(`${key}|back`, view.dpr ?? 2) === 0, JSON.stringify(lay));
+      const btn = await page.evaluate(() => {
+        const b = document.querySelector('[data-action="net-back"]');
+        return { warn: b.classList.contains("btn--warn"), color: getComputedStyle(b).color, ink: getComputedStyle(document.documentElement).getPropertyValue("--px-warn-ink").trim() };
+      });
+      ok(`${key}|back '이전 방으로 돌아가기' = 주황 버튼(btn--warn, 글자 = --px-warn-ink)`, btn.warn && hexOfColor(btn.color) === hexOfColor(btn.ink), JSON.stringify(btn));
+      if (lang === "ko" && view.name === "390x844") {
+        await page.screenshot({ path: path.join(shots, "방장_이전방_돌아가기_390x844.png") });
+        const ratios = await page.evaluate(async () => {
+          const T = await import("/js/shell/theme.js");
+          const out = [];
+          for (const mode of T.MODES.filter((m) => m.id !== "custom")) {
+            window.webgba.applyTheme(mode.id);
+            await new Promise((r) => setTimeout(r, 120));
+            const s = getComputedStyle(document.documentElement);
+            out.push({ id: mode.id, face: s.getPropertyValue("--px-warn").trim(), ink: s.getPropertyValue("--px-warn-ink").trim() });
+          }
+          window.webgba.applyTheme("dark");
+          return out;
+        });
+        const low = ratios.map((r) => ({ ...r, ratio: +contrastOf(r.face, r.ink).toFixed(2) })).filter((r) => !(r.ratio >= 4.5));
+        ok(`주황 버튼 글자 대비 4.5 이상: 테마 ${ratios.length}개`, ratios.length === 12 && low.length === 0, JSON.stringify(low.length ? low : ratios.map((r) => `${r.id}:${contrastOf(r.face, r.ink).toFixed(1)}`)));
+        await page.waitForTimeout(300);
+      }
+
+      await page.evaluate(() => {
+        const net = window.webgba.player.net;
+        const real = net.snapshot.bind(net);
+        const until = Date.now() + 95000;
+        const m = (slot, nick, extra) => ({ slot, nick, me: false, host: slot === 0, stalled: false, away: false, held: false, rejoining: false, rtt: null, turn: false, ...extra });
+        net.snapshot = () => ({ ...real(), active: true, connected: false, rejoining: true, rejoinable: true, rejoinState: "wait", hostWait: true, hostLeft: Math.max(0, until - Date.now()), role: "join", slot: 1, count: 3, max: 4, members: [m(0, "방장 4821", { held: true }), m(1, "유저 1234", { me: true, rejoining: true }), m(2, "유저 7730", { stalled: true })] });
+        window.webgba.net.win.clearBack();
+        window.webgba.net.open({ serial: 1, purpose: net.config.purposes[0], min: 2, max: 4, role: "any" });
+      });
+      await page.waitForFunction(() => /\d:\d\d/.test(document.querySelector("#sheetBody .net-rejoin-state")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(500);
+      const wait = await page.evaluate(() => ({ state: document.querySelector("#sheetBody .net-rejoin-state")?.textContent ?? "", btns: [...document.querySelectorAll("#sheetBody .btn")].map((b) => b.dataset.action) }));
+      ok(`${key}|wait '방장을 기다리는 중 · 남은 시간' · 혼자 이어 하기만`, /\d:\d\d/.test(wait.state) && wait.btns.join() === "net-solo", JSON.stringify(wait));
+      await measure(page, `${key}|wait`, [".sheet__head", "#sheetBody .net-line", ".net-seats .mpb__l1", ".net-seats .mpb__seat", "#sheetFoot .btn"]);
+      await rows(page, `${key}|wait`, ".net-seats .mpb__row");
+      await fits(page, `${key}|wait`, ".sheet__panel");
+      const lay2 = await layout(page);
+      ok(`${key}|wait 겹침·가로 넘침 없음 · 잉크 세로 가운데 차이 ${worst(`${key}|wait`, view.dpr ?? 2)}px(홀수 1픽셀 아래 제외)`, lay2.overlap === 0 && lay2.wide === 0 && !lay2.hScroll && worst(`${key}|wait`, view.dpr ?? 2) === 0, JSON.stringify(lay2));
+      if (lang === "ko" && view.name === "390x844") await page.screenshot({ path: path.join(shots, "유저_방장대기_390x844.png") });
+      ok(`${key} 페이지 오류 없음`, errors.length === 0, errors.join(" | "));
+      await context.close();
+    }
+  }
+}
+
+function hexOfColor(value) {
+  const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/i.exec(String(value));
+  if (m) return `#${[m[1], m[2], m[3]].map((n) => Math.round(Number(n)).toString(16).padStart(2, "0")).join("")}`;
+  const t = String(value).trim().toLowerCase();
+  return /^#[0-9a-f]{3}$/.test(t) ? `#${[...t.slice(1)].map((c) => c + c).join("")}` : t;
+}
+
+function contrastOf(a, b) {
+  const lum = (hex) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hexOfColor(hex).slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
 if (process.env.UI_NET_WGBA && (ONLY_BOARD || process.env.UI_BOARD === "1")) await boardChecks();
 
 // 중간 참가 게임: 방장 혼자 방 코드 화면(안내 문구·방 나가기·닫기 버튼 줄)과 창을 닫은 뒤 상단 버튼(회색 배지 1/4) — 잉크 세로 가운데·같은 줄 위·아래 차이 0
@@ -2642,6 +2763,23 @@ async function settextChecks() {
           .map((n) => n.textContent.trim()),
       );
       ok(`${key} 설정 이름·설명·선택 값 잘림 0`, cut.length === 0, cut.join(" / "));
+      const netRow = await page.evaluate(async () => {
+        const words = await (await fetch(`/i18n/${document.documentElement.lang || "ko"}.json`)).json().catch(() => ({}));
+        const row = [...document.querySelectorAll("#sheetBody .field")].find((r) => r.querySelector(".field__note")?.textContent.includes("\n"));
+        if (!row) return null;
+        row.scrollIntoView({ block: "center" });
+        const note = row.querySelector(".field__note");
+        const range = document.createRange();
+        range.selectNodeContents(note);
+        const lines = [...range.getClientRects()].map((c) => Math.round(c.top)).filter((v, i, a) => a.indexOf(v) === i).length;
+        return { label: row.querySelector(".field__label").textContent, note: note.textContent, parts: note.textContent.split("\n").length, lines, pre: getComputedStyle(note).whiteSpace, same: words["cfg.netOn.note"] === note.textContent };
+      });
+      ok(`${key} 멀티플레이 사용 설명 = 두 문장 줄바꿈(pre-line, 화면 ${netRow?.lines}줄)`, netRow && netRow.parts === 2 && netRow.pre === "pre-line" && netRow.lines >= 2 && !/재실행|restart|再起動|\bIP\b|Cloudflare/.test(netRow.note), JSON.stringify(netRow));
+      if (lang === "ko" && viewport.width === 390 && netRow) {
+        await page.waitForTimeout(150);
+        await measure(page, `${key}|settings·멀티플레이`, [".field"]);
+        await page.screenshot({ path: path.join(shots, "설정_멀티플레이사용_390x844.png") });
+      }
       if (lang === "ko" && viewport.width === 390) {
         await page.evaluate(() => (document.getElementById("sheetBody").scrollTop = 0));
         await page.waitForTimeout(150);

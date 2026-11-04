@@ -202,6 +202,7 @@ export class Player {
       onWant: (request) => onNetWant?.(request),
       onChange: (snapshot) => {
         this.syncClock();
+        this.syncHold();
         onNetChange?.(snapshot);
       },
       onNotice: (info) => onNetNotice?.(info),
@@ -227,6 +228,7 @@ export class Player {
     this.saveBase = null;
     this.running = false;
     this.paused = false;
+    this.netHold = false;
     this.fast = false;
     this.fastHeld = false;
     this.fastScale = 4;
@@ -794,10 +796,25 @@ export class Player {
     if (this.host.script) {
       // 틀은 requestAnimationFrame 을 붙잡고 소리를 멈춘다(게임이 pause 이벤트를 무시해도 화면·소리가 선다)
       if (paused) this.host.setInput(0);
-      this.host.setPaused(paused);
+      this.host.setPaused(paused || this.netHold);
       this.pushScript();
     }
     if (paused && this.savePending) this.flushSave();
+  }
+
+  syncHold() {
+    const on = this.net.holding;
+    if (on === this.netHold) return;
+    this.netHold = on;
+    if (!this.host) return;
+    this.last = performance.now();
+    this.acc = 0;
+    if (on) this.audio?.node.port.postMessage("clear");
+    if (this.host.script) {
+      if (on) this.host.setInput(0);
+      this.host.setPaused(this.paused || on);
+      this.pushScript();
+    }
   }
 
   setFast(fast) {
@@ -883,7 +900,7 @@ export class Player {
     this.watchAudio(now, now - this.last);
     const dt = Math.min(now - this.last, 100);
     this.last = now;
-    if (this.paused) return;
+    if (this.paused || this.netHold) return;
     if (this.host.script) {
       // ② 는 게임이 스스로 돈다 — 게임패드만 읽어 바뀐 버튼을 넘기고, 세이브가 오면 모아 쓴다(프레임 수는 틀이 셈)
       const padBits = this.padBits();

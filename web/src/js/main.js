@@ -106,6 +106,7 @@ const AUTO_SLOT = 9;
 const AUTO_SAVE_MINUTES = [0, 1, 3, 5, 10, 15, 30];
 const AUTO_SAVE_DEFAULT = 5;
 const AUTO_TOAST_MS = 1600;
+const NET_BACK_KEY = "webgba.netBack";
 const PAD_MODES = ["on", "overlay", "off"];
 
 const state = {
@@ -221,11 +222,16 @@ const player = new WebPlayer({
     netWin?.update(snap);
     syncControls();
     queueBoard();
+    if (snap.hostWait && !boardState.clock) boardState.clock = setInterval(queueBoard, 1000);
+    if (!snap.hostWait && boardState.clock) {
+      clearInterval(boardState.clock);
+      boardState.clock = 0;
+    }
   },
   onNetNotice: (info) => {
     const text = noticeText(info);
     if (text) toast(text, noticeLevel(info));
-    if (info.kind === "rejoining" && state.sheet !== "net" && !boardState.open) openNet();
+    if ((info.kind === "rejoining" || info.kind === "hostWait") && state.sheet !== "net" && !boardState.open) openNet();
   },
   onNetBoard: () => queueBoard(),
   netNick: () => netNick(),
@@ -259,7 +265,7 @@ const netKit = {
   iconButton: ({ icon, title, action, onClick }) => button({ icon, title, kind: "tool", action, onClick }),
   icon: (name) => iconNode(name),
   signal: new Signal({ base: new URL(API_PATH, location.origin).href }),
-  label: (code) => ({ copy: t("net.copy"), copyCode: t("net.copyCode"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), create: t("net.make"), makeCode: t("net.make"), join: t("net.join"), enter: t("net.enter"), enterCode: t("net.enter"), offline: t("net.offlineShort"), offlineLong: t("net.offline"), rejoin: t("net.rejoinNow"), solo: t("net.solo"), renew: t("net.renew"), nickEdit: t("net.nickEdit"), nickDone: t("net.nickDone"), retry: t("net.retry"), home: t("net.home") })[code] ?? code,
+  label: (code) => ({ copy: t("net.copy"), copyCode: t("net.copyCode"), qr: t("net.qr"), scan: t("net.scan"), paste: t("net.paste"), connect: t("net.connect"), next: t("net.next"), create: t("net.make"), makeCode: t("net.make"), join: t("net.join"), enter: t("net.enter"), enterCode: t("net.enter"), offline: t("net.offlineShort"), offlineLong: t("net.offline"), rejoin: t("net.rejoinNow"), solo: t("net.solo"), renew: t("net.renew"), nickEdit: t("net.nickEdit"), nickDone: t("net.nickDone"), retry: t("net.retry"), home: t("net.home"), goBack: t("net.back.go") })[code] ?? code,
   action: ({ id, label: name = id, primary = false, danger = false, onClick }) => {
     const label = { cancel: t("web.btn.cancel"), close: t("win.close"), done: t("net.act.done"), leave: t("net.act.leave"), back: t("net.act.back"), closeRoom: t("net.act.closeRoom"), toGame: t("net.act.toGame") }[name] ?? name;
     return button({ label, kind: primary ? "primary" : danger ? "danger" : "", onClick, action: `net-${id}` });
@@ -356,6 +362,26 @@ const netKit = {
   setNick: (value) => savePrefs({ netNick: [...String(value)].slice(0, 12).join("") }),
   tab: () => state.prefs.netTab,
   setTab: (tab) => savePrefs({ netTab: tab }),
+  openWindow: () => openNet(),
+  backStore: {
+    load: () => {
+      try {
+        return JSON.parse(localStorage.getItem(NET_BACK_KEY) ?? "null");
+      } catch {
+        return null;
+      }
+    },
+    save: (rec) => {
+      try {
+        localStorage.setItem(NET_BACK_KEY, JSON.stringify(rec));
+      } catch {}
+    },
+    clear: (room) => {
+      try {
+        if (!room || netKit.backStore.load()?.room === room) localStorage.removeItem(NET_BACK_KEY);
+      } catch {}
+    },
+  },
 };
 
 const netWin = new NetWindow({ net: player.net, kit: netKit, onClosed: () => syncControls(), onState: () => syncControls() });
@@ -384,7 +410,7 @@ const BOARD_SIDE_SHARE = 0.48;
 const BOARD_INLINE_SHARE = 0.55;
 const BOARD_INLINE_MIN = 260;
 const BOARD_GAP = 8;
-const boardState = { open: false, frame: 0, timer: 0, end: null };
+const boardState = { open: false, frame: 0, timer: 0, end: null, clock: 0 };
 const boardRoot = make("div", "mpb");
 boardRoot.id = "board";
 boardRoot.hidden = true;
@@ -1754,6 +1780,7 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   hold("sheet", Boolean(state.sheet) && state.sheet !== "net");
   syncControls();
   updateWake();
+  netWin.offerBack();
 }
 
 // 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 이 페이지에서 누른 것과 같은 길로.
@@ -3373,7 +3400,7 @@ function field(label, note, control) {
   const row = make("div", "field");
   const text = make("div", "field__text");
   text.append(make("span", "field__label", label));
-  if (note) text.append(make("span", "field__note", note));
+  if (note) text.append(make("span", note.includes("\n") ? "field__note field__note--lines" : "field__note", note));
   row.append(text, control);
   return row;
 }

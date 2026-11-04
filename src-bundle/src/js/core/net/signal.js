@@ -20,6 +20,9 @@ export const WELCOME_WAIT_MS = 15000;
 export const RESTART_WAIT_MS = 12000;
 export const OFFLINE_FOR_MS = 10000;
 export const TURN_WAIT_MS = 6000;
+export const HOLD_AFTER_MS = 20000;
+export const HOST_POLL_MS = 3000;
+export const REPOST_MS = 90000;
 
 const FAIL_LIMIT = 3;
 const HOST_LEFT = 7;
@@ -97,15 +100,35 @@ export class Signal {
     return this.request("POST", "room", { ...auth, close: 1 });
   }
 
-  closeBeacon(auth) {
+  beacon(op, body) {
     try {
       const send = globalThis.navigator?.sendBeacon;
       if (typeof send !== "function") return false;
       this.calls++;
-      return Boolean(send.call(globalThis.navigator, new URL("room", this.base).href, JSON.stringify({ ...auth, close: 1 })));
+      return Boolean(send.call(globalThis.navigator, new URL(op, this.base).href, JSON.stringify(body)));
     } catch {
       return false;
     }
+  }
+
+  closeBeacon(auth) {
+    return this.beacon("room", { ...auth, close: 1 });
+  }
+
+  away(auth) {
+    return this.request("POST", "away", auth);
+  }
+
+  awayBeacon(auth) {
+    return this.beacon("away", auth);
+  }
+
+  hold(proof) {
+    return this.request("POST", "hold", proof);
+  }
+
+  back(info) {
+    return this.request("POST", "back", info);
   }
 
   near() {
@@ -310,7 +333,10 @@ export class RoomHost {
     const slots = this.session.attention();
     if (slots.length) {
       const got = await this.signal.rejoinPoll({ ...this.auth, s: slots.join(",") });
-      for (const item of Array.isArray(got.offers) ? got.offers : []) await this.takeRejoin(item);
+      const offers = Array.isArray(got.offers) ? got.offers : [];
+      const fresh = offers.filter((o) => o?.k === "n" && this.handled.get(Number(o.s)) !== o.u && this.session.members.get(Number(o.s))?.key === o.key);
+      this.session.pickBack(fresh.map((o) => Number(o.s)));
+      for (const item of offers) await this.takeRejoin(item);
     }
     if (!this.inviting && this.now() >= this.keepAt && !this.session.closed) await this.push();
   }
@@ -488,6 +514,47 @@ export class RoomHost {
     this.stop();
     return this.signal.closeBeacon(this.auth);
   }
+
+  park(beacon = true) {
+    if (!this.auth || this.shut) return Promise.resolve(false);
+    this.shut = true;
+    this.stop();
+    if (this.session.helper === this) this.session.helper = null;
+    if (beacon) return Promise.resolve(this.signal.awayBeacon(this.auth));
+    return this.signal.away(this.auth).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  backInfo() {
+    return this.auth ? { ...this.auth, q: this.q, code: this.lastCode } : null;
+  }
+
+  async back({ room, x, g, i, t, q, code }) {
+    this.room = room;
+    this.auth = { room, x, g, i, t };
+    this.q = q;
+    this.lastCode = code;
+    const got = await this.signal.back({ ...this.auth, ...this.info, o: code, q, k: this.count });
+    const now = this.now();
+    this.q = Number.isInteger(got.q) ? got.q : q;
+    this.running = true;
+    this.parked = true;
+    this.invite = null;
+    this.rejoin = this.session.rejoinGame;
+    if (this.rejoin) this.session.helper = this;
+    if (this.limit) {
+      this.pausedAt = now;
+      this.acceptUntil = now;
+    }
+    this.pushedAt = now;
+    this.keepAt = now + REJOIN_KEEP_MS;
+    this.eventAt = now;
+    this.log("info", `방 ${room}: 방장으로 돌아옴(보관 자리 ${this.session.attention().join(",")})`);
+    this.schedule(200);
+    return room;
+  }
 }
 
 export class RoomGuest {
@@ -504,6 +571,7 @@ export class RoomGuest {
     this.busy = false;
     this.wakeFn = null;
     this.restartAt = 0;
+    this.holdSent = false;
     this.stopped = false;
     this.onOnline = () => this.trouble("now");
     if (this.rejoin) {
@@ -542,7 +610,10 @@ export class RoomGuest {
   trouble(kind) {
     if (this.stopped) return;
     if (kind === "closed") return this.stop();
-    if (kind === "back") return this.setState("");
+    if (kind === "back") {
+      this.holdSent = false;
+      return this.setState("");
+    }
     if (kind === "restart") {
       if (!this.busy && !this.session.rejoining && this.now() - this.restartAt > RESTART_WAIT_MS) this.run(() => this.restart());
       return;
@@ -606,6 +677,17 @@ export class RoomGuest {
     await s.restartAbort();
   }
 
+  async markAway() {
+    this.holdSent = true;
+    try {
+      const got = await this.signal.hold({ room: this.room, x: this.x, rt: this.rt });
+      if (got.away > 0) this.session.setHostAway(got.away);
+    } catch (error) {
+      this.holdSent = false;
+      this.log("warn", `방장 자리 보관 요청 실패(${error?.code ?? error?.message ?? error})`);
+    }
+  }
+
   async loop() {
     const s = this.session;
     let tries = 0;
@@ -634,12 +716,13 @@ export class RoomGuest {
         continue;
       }
       this.setState("wait");
-      const until = this.now() + ANSWER_WAIT_MS;
+      const posted = this.now();
+      let until = posted + ANSWER_WAIT_MS;
       let answered = false;
       let refused = false;
       let lostServer = false;
       while (!s.closed && s.rejoining && this.now() < until) {
-        await this.nap(GUEST_POLL_MS);
+        await this.nap(s.hostAway ? HOST_POLL_MS : GUEST_POLL_MS);
         let got;
         try {
           got = await this.signal.rejoinPoll({ ...this.auth, u });
@@ -665,8 +748,14 @@ export class RoomGuest {
           } catch {}
           break;
         }
+        if (s.hostBack) {
+          if (got.away > 0) s.setHostAway(got.away);
+          else if (!this.holdSent && (s.hostAway || this.now() - posted >= HOLD_AFTER_MS)) await this.markAway();
+          if (s.hostAway) until = posted + REPOST_MS;
+        }
       }
       if (s.closed || !s.rejoining) return;
+      if (!answered && !refused && !lostServer && s.hostAway) continue;
       if (answered) {
         const end = this.now() + WELCOME_WAIT_MS;
         while (!s.closed && s.rejoining && this.now() < end) await this.nap(300);

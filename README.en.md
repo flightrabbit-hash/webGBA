@@ -695,7 +695,7 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 #### 7.1 Overview
 
-webGBA connects devices on the same Wi-Fi (same router), and devices on other networks by room code. It tries a direct connection between devices (WebRTC data channels) first; on networks where that fails (mobile data, office or school networks), traffic goes through a **Cloudflare relay server (TURN)**. Through the relay the game content stays encrypted (DTLS), so the relay cannot read it (7.11). With Settings › Multiplayer **Use multiplayer** off, the multiplayer window does not open and nothing connects.
+webGBA connects devices on the same Wi-Fi (same router), and devices on other networks by room code. It tries a direct connection between devices (WebRTC data channels) first; on networks where that fails (mobile data, office or school networks), traffic goes through a **Cloudflare relay server (TURN)**. Through the relay the game content stays encrypted (DTLS), so the relay cannot read it (7.11). With Settings › Multiplayer **Use multiplayer** disabled, the multiplayer window cannot be opened and nothing connects (applies at once).
 
 The matchmaking (signaling) server (`webgba.vercel.app/api/v1/mp`) is used while finding a room (for games with rejoin, until the session ends). It keeps the room code, nickname, the first 8 bytes of the game's compatibility key, purpose, player count and connection details (Offer and Answer), deleted automatically at most 2 minutes 30 seconds after the last update. Connection details carry local address candidates, **the public IP (public address candidates)** and relay addresses, so **the other device can see this device's public IP**. The server does not store the IP address of the requesting device. The nearby-room list only shows rooms to devices that share the same one-day hash (HMAC) made from the public IP.
 
@@ -807,9 +807,9 @@ Records follow one another from `Web_NetOut()` for `Web_NetOutLen()` bytes. Each
 | 4 | `CLOSED` | reason | 0 | Session over. Later sends are dropped |
 | 5 | `STALL` | seat | 0 | Nothing heard from that player for over 1 second, or that device left the app briefly |
 | 6 | `RESUME` | seat | 0 | Back again |
-| 7 | `HOLD` | seat | current count | `rejoin` games only (7.10). The seat's connection dropped and the seat is kept. On the dropped device itself `a` = its own seat |
-| 8 | `BACK` | seat | current count | `rejoin` games only. A kept seat is connected again (always after `HOLD`) |
-| 9 | `REJOINED` | own seat | current count | `rejoin` games only. Sent to the returning device instead of `OPEN` |
+| 7 | `HOLD` | seat | current count | `rejoin` games only (7.10). The seat's connection dropped and the seat is kept. On the dropped device itself `a` = its own seat. On a user device `a` = 0 = the host closed the app and webGBA waits for it to return (7.10.1) |
+| 8 | `BACK` | seat | current count | `rejoin` games only. A kept seat is connected again (always after `HOLD`). On a user device `a` = 0 = the host is back → this device sends a state bundle to seat 0 (7.10.1) |
+| 9 | `REJOINED` | own seat | current count | `rejoin` games only. Sent to the returning device instead of `OPEN` (`a` = 0 on the host device when the host reopened the app and returned) |
 
 Reasons: 1 `CANCEL` (the user cancelled in the multiplayer dialog) · 2 `TIMEOUT` (no connection in time / did not come back after a drop) · 3 `INCOMPATIBLE` (different game, compatibility key or protocol) · 4 `LOST` (connection dropped) · 5 `FULL` (room full) · 6 `LEFT` (left normally) · 7 `HOST_LEFT` (the room host left, the room is gone) · 8 `NO_NETWORK` (no Wi-Fi, or this device cannot use the link feature) · 9 `SOLO` (`rejoin` games only: the dropped device's user chose "Play alone")
 
@@ -1017,7 +1017,7 @@ A guest whose connection dropped can come back to the same seat until the sessio
 - When a guest drops (no reply for 15 seconds, or the channel closed) the host keeps the seat (`HOLD`, the count stays, new players cannot take it) and the status menu shows "Disconnected · waiting". The dropped device gets `HOLD` (its own seat); webGBA shows a "Reconnecting…" dialog and retries the same room automatically (right away when the network comes back). The user can press "Rejoin" (retry now) or "Play alone" (`CLOSED(SOLO)`; the host and others get `LEAVE(LEFT)`).
 - On return the host and others get `BACK`, the returning device gets `REJOINED` instead of `OPEN`. Messages sent while it was away are not delivered, so the host game sends a **state bundle** to the returning seat. After `REJOINED` come the events (`JOIN`, `LEAVE`, `HOLD`, `BACK`) for other seats that changed meanwhile.
 - A short drop (including an address change after reconnecting to the same Wi-Fi) is repaired on the same connection with an ICE restart. The game then only sees `STALL` → `RESUME` and no message is lost.
-- A host drop is repaired only within 15 seconds. Beyond that the session ends: host `CLOSED(LOST)`, guests `CLOSED(HOST_LEFT)` (when the room closes or the host does not answer for 30 seconds).
+- A drop of the host device's network is repaired only within 15 seconds. Beyond that the session ends: host `CLOSED(LOST)`, guests `CLOSED(HOST_LEFT)`. When the host closes the app, see 7.10.1 (reopen within 2 minutes to return to the same room).
 - When the host ends the session the room closes and a device trying to come back gets `CLOSED(HOST_LEFT)`.
 
 State bundle (1–262144 bytes, to one seat):
@@ -1028,6 +1028,24 @@ State bundle (1–262144 bytes, to one seat):
 - Bundles to a kept or empty seat, and bundles over 262144 bytes, are dropped.
 
 Matchmaking server use: the host of a rejoin session refreshes even a full room every 120 seconds to keep it during the session (3 commands) and checks the server mailbox only while a seat is dropped (every 2 seconds for a minute, then every 10). The dropped device and the host exchange connection details once through the mailbox (`/api/v1/mp/rj`). The host refuses a seat key (given in WELCOME) that does not match.
+
+##### 7.10.1 Host return
+
+In a `rejoin` game, if the host closes the app while users are in the room (closing the window or tab, reloading) or the app is killed, the room stays for **2 minutes**. When the host reopens the app within 2 minutes and opens the same game (same game id and version), the first screen of the multiplayer window shows **Return to previous room**; it takes the host back to the host seat with the same room code. Users reconnect automatically, and the host takes over one user's game state (state bundle) and continues.
+
+- During a session the host device keeps the room details (room code, host proof, game compatibility key, seats, seat keys, time) on the device (web `localStorage`, exe settings file) and drops them after 2 minutes. They are deleted at once when the host closes the room or the session ends. Another game does not show them, and making a new room or joining another room instead of returning closes the previous room.
+- Users see "Waiting for the host… m:ss left", the game is paused (webGBA stops the frames), and "Play alone" stays available. After 2 minutes the session ends with `CLOSED(HOST_LEFT)`.
+- Events: users get `HOLD` (own seat) → `HOLD(0)`. When the host is back, one user chosen by webGBA (the lowest seat among the users asking to reconnect at that time) gets `BACK(0)` and **sends a state bundle to seat 0** (the same as the host does on `BACK(s)`). The other users get `REJOINED` (own seat) and wait for the bundle from the host game. The returning host device gets `REJOINED(0)` instead of `OPEN` and waits for the bundle; seats not back yet come as `HOLD(s)`, later `BACK(s)` (only after the bundle arrived). If no bundle arrives within 10 seconds, the remaining `BACK` events are sent anyway.
+- When the host app closes, webGBA tells the users at once (a connection control message) and asks the server to keep the room (`POST /api/v1/mp/away`, host proof). If the host drops without telling (killed app and so on), a user that gets no answer to reconnecting for 20 seconds asks the server to keep it (`POST /api/v1/mp/hold`, join ticket). The keep time is 2 minutes from the first request and is never extended. Returning = `POST /api/v1/mp/back` (host proof only, only while the room record exists).
+- Connections through the default TURN relay get new credentials for the returning host as well (direct and relay).
+
+```text
+host device (closed → reopened)      user (sends the bundle)          other users
+close app → notice · away           HOLD(own) · HOLD(0) "Waiting for the host…"  HOLD(own) · HOLD(0)
+"Return to previous room" → back
+REJOINED(0) · HOLD(others)           BACK(0) → state bundle → 0        REJOINED(own)
+apply bundle → BACK(s) → bundle → s                                    apply bundle
+```
 
 #### 7.11 Internet connection, relay server and game connection servers (`iceServers`, protocol 1 extension)
 
