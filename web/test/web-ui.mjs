@@ -365,7 +365,11 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       const list = await toolBoxes();
       const blockers = await page.evaluate(() => [document.getElementById("screen"), ...document.querySelectorAll("[data-key], [data-dpad]")].map((n) => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
       const hits = list.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b));
-      ok(`${base}|bar 가로: 기능 버튼 8개(퀵슬롯 포함) 모두 바로 보임·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, list.length === 8 && !list.some((x) => x.id === "btnMenu") && !overlap(list) && inView(list) && !hits, JSON.stringify(list.map((x) => x.id)));
+      // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두
+      const inMenu = await page.evaluate(() => (getComputedStyle(document.querySelector("#btnMenu")).display === "none" ? [] : [...document.querySelectorAll(".bar__group--files .tool")].filter((b) => !b.hidden).map((b) => b.id)));
+      const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu"));
+      const oneRow = new Set(list.map((x) => Math.round(x.t))).size === 1;
+      ok(`${base}|bar 가로: 한 줄 기능 버튼(32px 이상)·나머지는 메뉴 안(모두 ${all.size}개)·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, oneRow && all.size === 8 && list.every((x) => x.r - x.l >= 32) && (inMenu.length === 0 || list[0]?.id === "btnMenu") && !overlap(list) && list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height) && !hits, JSON.stringify({ shown: list.map((x) => x.id), inMenu }));
       await snap(page, `${base}|bar`);
     } else {
       const closed = await toolBoxes();
@@ -387,7 +391,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
     }
 
     const openSheet = async (button) => {
-      if (!landscape && button !== "#btnSettings") {
+      if (await page.evaluate((sel) => Boolean(document.querySelector(sel)?.closest(".bar__group--files")) && getComputedStyle(document.querySelector("#btnMenu")).display !== "none", button)) {
         await page.click("#btnMenu");
         await page.waitForTimeout(250);
       }
@@ -596,7 +600,8 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
   await page.mouse.down();
   const held = await page.evaluate(() => window.webgba.player.held);
   await page.mouse.up();
-  const want = info.layout === "landscape" ? 8 : 6;
+  // 가로는 게임 화면을 먼저 키우고 양옆 칸 위 한 줄 — 좁으면 메뉴 + 퀵슬롯 + 설정·전체 화면(나머지는 메뉴 안), 넓으면 8개
+  const want = info.layout === "landscape" ? (info.tools >= 4 && info.tools <= 8 ? info.tools : 4) : 6;
   await page.click("#btnSettings");
   await page.waitForTimeout(200);
   const span = await page.evaluate(() => { const r = document.querySelector(".sheet__body").getBoundingClientRect(); return [r.left + 10, r.top + 10, r.right - 10, r.bottom - 10]; });
@@ -613,7 +618,7 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
 
 // ── C·D 버튼·키 매핑(게임 설명서 input 이 정의했을 때만 — main.js setInput, 시험은 window.webgba.setInput(설명서 input)) ──
 // 정의 없음: C·D 없고 수정 전 빌드(UI_BASE_URL)와 픽셀 같음. C·D 정의(preset gba + c = bit 10, d = bit 11): C 는 A 위·D 는 B 위,
-// 크기 = A·B, 겹침 0·화면 안, 세로는 게임 화면 그대로(좁으면 버튼 배율·배치만 다시 맞춤, 결정 102-11), 터치 C·D → bit 10·11,
+// 크기 = A·B, 겹침 0·화면 안, 세로는 게임 화면 그대로(가로 폭 가득, 버튼은 남은 칸에 들어가는 배율), 터치 C·D → bit 10·11,
 // 두 손가락(A + C)·미끄러짐(C→D→B)·스틱 + C, 키보드 C·I / V·U. 끄면 처음 화면과 픽셀 같음.
 // 버튼 일부(방향·A·START 만): 나머지 자리 안 보임·겹침 0. 역할이 다른 버튼(a = bit 8 …): 터치·키보드가 그 bit.
 const CD_INPUT = { preset: "gba", buttons: [{ id: "C", role: "c", bit: 10 }, { id: "D", role: "d", bit: 11 }] };
@@ -758,10 +763,10 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
     continue;
   }
   if (view.width < view.height) {
-    // 세로(결정 102-11): 게임 화면은 정의 없을 때와 같은 크기(폭 맞춤 3:2), 버튼 배율·배치만 다시 맞춤(정수 배율, 들어가는 가장 큰 값)
-    const fit = await page.evaluate(() => document.getElementById("pad").dataset.fit ?? "rows");
-    ok(`${key}: 세로 게임 화면 그대로(줄이지 않음), 버튼은 정수 배율 ${art}·배치 ${fit}`, screen === before.screen && Number.isInteger(art) && art >= 2 && art <= before.art, `배율 ${before.art}→${art} · 게임 화면 ${before.screen} → ${screen} · 배치 ${fit}`);
-    console.log(`측정 ${key}: 세로 게임 화면 ${before.screen} → ${screen} · 배율 ${before.art}→${art} · 배치 ${fit}`);
+    // 세로: 게임 화면은 늘 가로 폭 가득(정의 없을 때와 같은 크기), 버튼은 남은 칸에 들어가는 가장 큰 배율(기기 픽셀 정수 칸, 상한 4)
+    const dpr = view.dpr;
+    ok(`${key}: 세로 게임 화면 그대로(줄이지 않음), 버튼 배율 ${art}(기기 픽셀 정수)`, screen === before.screen && Number.isInteger(Math.round(art * dpr * 1000) / 1000) && art <= before.art && art <= 4, `배율 ${before.art}→${art} · 게임 화면 ${before.screen} → ${screen}`);
+    console.log(`측정 ${key}: 세로 게임 화면 ${before.screen} → ${screen} · 배율 ${before.art}→${art}`);
   }
   const column = b.C.b <= b.A.t + 0.5 && Math.abs(b.C.cx - b.A.cx) < 0.5 && b.D.b <= b.B.t + 0.5 && Math.abs(b.D.cx - b.B.cx) < 0.5;
   ok(`${key}: C 는 A 바로 위, D 는 B 바로 위`, column, JSON.stringify({ C: [b.C.cx, b.C.b], A: [b.A.cx, b.A.t], D: [b.D.cx, b.D.b], B: [b.B.cx, b.B.t] }));
@@ -857,7 +862,7 @@ for (const view of EXTRA ? EXTRA_VIEWS : []) {
   const fewHit = overlaps(few.boxes, view);
   const fewKeys = await pressBits(page, ["KeyZ", "KeyX", "KeyA", "KeyS", "Backspace", "Enter", "ArrowUp"]);
   const fewShown = ["A", "START", "DIR"].every((n) => few.boxes[n]) && ["B", "L", "R", "SELECT", "C", "D"].every((n) => !few.boxes[n]);
-  ok(`${key}: 버튼 일부 — 정의한 자리만 보임·겹침 0·키는 정의한 버튼만`, fewShown && !fewHit.hits.length && !fewHit.outside.length && few.art === before.art && fewKeys.join() === [1, 0, 0, 0, 0, 8, 64].join(),
+  ok(`${key}: 버튼 일부 — 정의한 자리만 보임·겹침 0·키는 정의한 버튼만`, fewShown && !fewHit.hits.length && !fewHit.outside.length && few.art >= before.art && fewKeys.join() === [1, 0, 0, 0, 0, 8, 64].join(),
     `보임 ${Object.keys(few.boxes).filter((n) => /^[A-Z]+$/.test(n)).join(",")} · 겹침 ${fewHit.hits.join(" ") || "0"} · 키 ${fewKeys.join(",")}`);
 
   // 역할이 다른 버튼: 터치 A 자리 → 점프(bit 8), B 자리 → bit 9, C 자리 → bit 12, D 없음, START 자리 → bit 15, 키보드 M(extra)·Q(l2)
@@ -1300,8 +1305,8 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     await measure(page, `${key}|start`, [".recent__name", ".recent__meta", ".recent__all", ".start__head", "#startList .pack__label"]);
     if (LIB_SHOTS[`${key}|start`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|start`]) });
 
-    // 라이브러리
-    if (!landscape) {
+    // 라이브러리(햄버거 메뉴 안에 있으면 메뉴를 먼저)
+    if (await page.evaluate(() => Boolean(document.querySelector("#btnLibrary").closest(".bar__group--files")) && getComputedStyle(document.querySelector("#btnMenu")).display !== "none")) {
       await page.click("#btnMenu");
       await page.waitForTimeout(250);
     }
@@ -1599,6 +1604,17 @@ async function lineUp(page, key, scope, selector) {
   return info;
 }
 
+// 기능 버튼 줄 나누기: 세로 범위가 겹치는 버튼끼리 한 줄(가로 화면은 좌·우 칸 위에 2개씩 두 줄일 수 있음).
+function barRows(list) {
+  const rows = [];
+  for (const item of [...list].sort((a, b) => a.top - b.top)) {
+    const row = rows.find((r) => item.top < r[0].bottom && r[0].top < item.bottom);
+    if (row) row.push(item);
+    else rows.push([item]);
+  }
+  return rows;
+}
+
 async function barLineUp(page, key) {
   const read = () =>
     page.evaluate(() =>
@@ -1608,7 +1624,7 @@ async function barLineUp(page, key) {
         return { id: n.id, top: r.top, bottom: r.bottom, ctop: c.top, cbottom: c.bottom, h: r.height };
       }),
     );
-  const spread = (list, a) => +(Math.max(...list.map((i) => i[a])) - Math.min(...list.map((i) => i[a]))).toFixed(2);
+  const spread = (list, a) => Math.max(...barRows(list).map((row) => +(Math.max(...row.map((i) => i[a])) - Math.min(...row.map((i) => i[a]))).toFixed(2)));
   const before = await read();
   const net = before.find((i) => i.id === "btnNet");
   ok(`${key} 상단 버튼 줄 위·아래 차이 0(멀티플레이 켜짐)`, net && spread(before, "top") === 0 && spread(before, "bottom") === 0 && spread(before, "ctop") === 0 && spread(before, "cbottom") === 0, `${before.map((i) => i.id).join(",")} 위 ${spread(before, "top")} 아래 ${spread(before, "bottom")} 그림 ${spread(before, "ctop")}/${spread(before, "cbottom")}`);
@@ -2716,14 +2732,14 @@ async function overlayChecks() {
   ok("가로 오버레이: 버튼끼리 겹침 0", hits.length === 0, hits.join(","));
   const row = { lr: [B.L.t - B.R.t, B.L.b - B.R.b], ss: [B.SELECT.t - B.START.t, B.SELECT.b - B.START.b], mid: +(B.DIR.cy - B.FACE.cy).toFixed(2) };
   ok("가로 오버레이: 같은 줄 위·아래 차이 0(L·R, SELECT·START) · 스틱·A·B 묶음 가운데 차이 0", row.lr.every((v) => v === 0) && row.ss.every((v) => v === 0) && row.mid === 0, JSON.stringify(row));
-  ok(`가로 오버레이: 원래 크기(배율 ${st.art} = 표시 ${onState.art}) · 반투명 ${st.opacity}`, st.art === onState.art && st.opacity === "0.5", "");
+  ok(`가로 오버레이: 배율 ${st.art}(표시 ${onState.art} 이상 — 표시는 게임 화면을 먼저 키워 양옆 칸이 좁음) · 반투명 ${st.opacity}`, st.art >= onState.art && st.opacity === "0.5", "");
   const through = await ov.page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id ?? "", [S.cx, S.cy]);
   ok("가로 오버레이: 게임 화면 가운데는 버튼이 받지 않음(게임 화면으로)", through === "canvas", through);
   const ovInput = await padTouch(ov.page, ov.context, B);
   const sameInput = ovInput.aDown.held === onInput.aDown.held && ovInput.dDown.held === onInput.dDown.held && ovInput.aUp.held === 0 && ovInput.dUp.held === 0;
   ok("가로 오버레이 입력 = 표시 모드(A 터치·스틱 오른쪽) · 누르는 동안 눌림 표시(불투명 0.85) · 떼면 0", sameInput && (ovInput.aDown.held & PAD_BITS.A) && (ovInput.dDown.held & PAD_BITS.RIGHT) && ovInput.aDown.a && ovInput.aDown.aOp === "0.85" && ovInput.dDown.d && ovInput.dDown.dOp === "0.85" && !ovInput.aUp.a && !ovInput.dUp.d, JSON.stringify({ ovInput, onInput }));
-  const bar = await ov.page.evaluate(() => [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).map((n) => { const r = n.getBoundingClientRect(); return [r.top, r.bottom]; }));
-  ok("가로 오버레이: 상단 버튼 줄 위·아래 차이 0", bar.length > 1 && bar.every((b) => b[0] === bar[0][0] && b[1] === bar[0][1]), JSON.stringify(bar));
+  const bar = await ov.page.evaluate(() => [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null).map((n) => { const r = n.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
+  ok("가로 오버레이: 기능 버튼 같은 줄 위·아래 차이 0", bar.length > 1 && barRows(bar).every((row) => row.every((b) => b.top === row[0].top && b.bottom === row[0].bottom)), JSON.stringify(bar));
   await ov.page.screenshot({ path: path.join(shots, "가로_844x390_오버레이.png") });
   await ov.page.keyboard.press("KeyP");
   await ov.page.waitForTimeout(200);

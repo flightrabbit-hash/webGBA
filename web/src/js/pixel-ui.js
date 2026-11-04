@@ -58,10 +58,12 @@ function lum(c) {
 }
 function contrast(a, b) { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
 function gray(c) { const [r, g, b] = rgbOf(c); const v = hex2(0.299 * r + 0.587 * g + 0.114 * b); return '#' + v + v + v; }
-function inkFor(face, ink, outline) {
-  if (contrast(face, ink) >= 3) return ink;
+function inkFor(face, ink, outline, min = 3) {
+  if (contrast(face, ink) >= min) return ink;
   const light = mix(face, '#ffffff', 0.9), dark = mix(face, outline, 0.85);
-  return contrast(face, light) > contrast(face, dark) ? light : dark;
+  const best = contrast(face, light) > contrast(face, dark) ? light : dark;
+  if (contrast(face, best) >= min) return best;
+  return contrast(face, '#ffffff') > contrast(face, '#000000') ? '#ffffff' : '#000000';
 }
 
 function hsl(c) {
@@ -79,10 +81,10 @@ function fromHsl(h, s, l) {
 }
 /** C·D 색을 정해 주지 않은 테마(커스텀 등): accent 를 색상환에서 160° 돌린 색(반대쪽 가까이 — 파랑이면 주황, 초록이면 보라),
  *  채도는 넉넉히·밝기는 비슷하게. accent 가 무채색(검정·회색)이면 빨강 계열. 글자 색은 fam() 의 inkFor 가 대비 3 이상으로 고른다. */
-function secondAccent(accent) {
+function secondAccent(accent, turn = 160) {
   const [h, s, l] = hsl(accent);
-  if (s < 0.15) return fromHsl(352, 0.8, Math.min(Math.max(l, 0.36), 0.62));
-  return fromHsl((h + 160) % 360, Math.max(s, 0.65), Math.min(Math.max(l, 0.4), 0.7));
+  if (s < 0.15) return fromHsl((352 + turn - 160) % 360, 0.8, Math.min(Math.max(l, 0.36), 0.62));
+  return fromHsl((h + turn) % 360, Math.max(s, 0.65), Math.min(Math.max(l, 0.4), 0.7));
 }
 
 const ICON_COLORS = {
@@ -112,6 +114,9 @@ function buildPalette(b, id) {
   put(pal, 'ab', fam(b.accent, b.ink));
   put(pal, 'cd', fam(b.cd ?? secondAccent(b.accent), b.ink));
   put(pal, 'pill', fam(mix(b.button, o, 0.2), b.ink));
+  const rs = fam(b.rs ?? secondAccent(b.accent, 260), b.rsInk ?? b.ink);
+  rs.ink = inkFor(rs.f, b.rsInk ?? b.ink, o, 4.5);
+  put(pal, 'rs', rs);
   const offFace = gray(mix(b.button, b.body, 0.45));
   const off = fam(offFace, offFace); off.ink = mix(offFace, o, 0.38);
   put(pal, 'off', off);
@@ -129,8 +134,8 @@ const derived = new Map();
 export function derivePalette(colors = {}, id = 'custom') {
   const b = { ...THEME_BY_ID[DEFAULT_THEME_ID].colors };
   for (const k of BASE_KEYS) if (colors[k]) { parseColor(colors[k]); b[k] = colors[k].toLowerCase(); }
-  if (colors.cd) { parseColor(colors.cd); b.cd = colors.cd.toLowerCase(); }
-  const key = id + '|' + BASE_KEYS.map((k) => b[k]).join(',') + '|' + (b.cd ?? '');
+  for (const k of ['cd', 'rs', 'rsInk']) if (colors[k]) { parseColor(colors[k]); b[k] = colors[k].toLowerCase(); }
+  const key = id + '|' + BASE_KEYS.map((k) => b[k]).join(',') + '|' + (b.cd ?? '') + '|' + (b.rs ?? '') + '|' + (b.rsInk ?? '');
   let p = derived.get(key);
   if (!p) { p = buildPalette(b, id); derived.set(key, p); }
   return p;
@@ -536,15 +541,16 @@ export function renderShoulder({ side = 'L', state = 'normal', scale = 1, palett
   });
 }
 
-/** START·SELECT 알약 버튼. */
-export function renderPill({ label = 'START', state = 'normal', scale = 1, palette } = {}) {
+/** START·SELECT 알약 버튼. tone 'rs' = RS 버튼(같은 모양, 색만 rs 계열). */
+export function renderPill({ label = 'START', state = 'normal', scale = 1, palette, tone = 'pill' } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `pill|${label}|${st}|${s}`, () => {
+  const prefix = tone === 'rs' ? 'rs' : 'pill';
+  return cached(palette, `${prefix}|${label}|${st}|${s}`, () => {
     const W = 31, H = 11;
     const inside = roundRectInside(W, H, 5.5, 5.5, 5.5, 5.5);
-    const roles = buttonRoles('pill', st);
+    const roles = buttonRoles(prefix, st);
     const { art, faceBox } = extrude({
       W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
     });
@@ -566,6 +572,7 @@ export function renderGameButton(name, opts = {}) {
     case 'a': case 'b': case 'c': case 'd': return renderRoundButton({ ...opts, label: name.toUpperCase() });
     case 'l': case 'r': return renderShoulder({ ...opts, side: name.toUpperCase() });
     case 'start': case 'select': return renderPill({ ...opts, label: name.toUpperCase() });
+    case 'rs': return renderPill({ ...opts, label: 'RS', tone: 'rs' });
     case 'stick': return renderStickBase(opts);
     case 'knob': return renderStickKnob(opts);
     default: throw new Error(`pixel-ui: 모르는 버튼: ${name}`);

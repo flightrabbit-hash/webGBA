@@ -6,7 +6,7 @@ import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
-import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, Player } from "../app/player.js";
+import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
@@ -80,7 +80,7 @@ const BLOG_URL = "https://flightrabbit.tistory.com";
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
 // 키 설정 창(과 앱 전체 키 저장)에는 C·D 칸도 둔다 — 설명서가 C·D 를 정의하지 않은 게임·게임 없음에서도 미리 지정할 수 있게(기본 빈 상태,
 // 사용자 2026-11-01). 설명서가 C·D 를 정의한 게임은 그 게임의 버튼 목록(keyLayout)을 쓰므로 이 칸은 안 보인다. GBA 게임은 C·D 가 버튼이 아니라 눌러도 입력 비트로 안 간다.
-const SETTINGS_KEY_ORDER = [...KEY_ORDER, "C", "D"];
+const SETTINGS_KEY_ORDER = [...KEY_ORDER, "C", "D", "RS"];
 
 const state = {
   info: null,
@@ -546,20 +546,25 @@ function keysFromPrefs() {
 const savedGameKeys = (input) => (input.gba || !input.gameId ? null : (state.prefs.gameKeys?.[input.gameId] ?? null));
 const keysFor = (input = state.input) => layoutKeys(input, keysFromPrefs(), savedGameKeys(input));
 
+const rsKey = () => state.game?.saveId || "";
+const rsBook = (input = state.input) => macroBook(input, rsKey() ? state.prefs.rsPresets?.[rsKey()] : null);
+const rsSteps = (input = state.input) => macroOf(rsBook(input));
+
 function applyInput(input) {
   state.input = input ?? GBA_LAYOUT;
   player.setLayout(state.input, keysFor(state.input));
   player.setDpadMode(dpadFor(state.input, state.prefs));
+  player.setMacro(rsSteps());
 }
 
 /** 키 설정 창에 넘길 버튼 목록: 순서·이름·되돌릴 기본 키·안내 글(설명서가 버튼을 정한 게임만). */
 function keyLayout(input = state.input) {
   if (input.gba) return null;
   if (input.system === "gb") {
-    const order = KEY_ORDER.filter((name) => name !== "L" && name !== "R");
+    const order = [...KEY_ORDER.filter((name) => name !== "L" && name !== "R"), "RS"];
     return { order, labels: {}, defaults: Object.fromEntries(order.map((name) => [name, [...DEFAULT_KEYS[name]]])), note: t("cfg.keys.gb") };
   }
-  const order = [...input.buttons.map((b) => b.id), "FAST"];
+  const order = [...input.buttons.map((b) => b.id), "FAST", "RS"];
   const labels = Object.fromEntries(input.buttons.map((b) => [b.id, buttonLabel(b)]));
   return { order, labels, defaults: layoutKeys(input, DEFAULT_KEYS), note: t("cfg.keys.game", { name: state.game?.label || state.game?.name || input.gameId }) };
 }
@@ -570,6 +575,8 @@ function keyName(code) {
   if (!code) return "—";
   const arrows = { ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" };
   if (arrows[code]) return arrows[code];
+  const pad = PAD_CODE_RE.exec(code);
+  if (pad) return t("cfg.keys.padButton", { n: pad[1] });
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
   if (KEY_CODES.includes(code)) return t(`keyCode.${code}`);
@@ -1217,6 +1224,7 @@ async function closeGame({ quiet = false } = {}) {
   state.scriptFrame = null;
   state.autoPaused = false;
   if (!state.input.gba || state.input.dpad) applyInput(null);
+  player.setMacro([]);
   showView("start");
   syncControls();
   renderPanel();
@@ -1641,6 +1649,13 @@ async function settingsSnapshot() {
     useDevelopKit: Boolean(ini.useDevelopKit),
     keys: keysFor(),
     keyLayout: keyLayout(),
+    rs: state.game
+      ? {
+          book: rsBook(),
+          fallback: state.input.rs ?? null,
+          slots: state.input.buttons.map((b) => b.role?.toUpperCase()).filter(Boolean),
+        }
+      : null,
     theme: state.prefs.theme ?? { mode: "dark", colors: {} },
   };
 }
@@ -1668,7 +1683,7 @@ async function applySettings(next) {
   if (input.system === "gb") patch.keys = { ...keysFromPrefs(), ...next.keys };
   if (!input.gba && input.gameId) {
     // 설명서가 버튼을 정한 게임: 버튼 키는 그 게임 id 에만, 빨리 감기(호스트 몫)는 앱 전체. 기본과 같으면 기록하지 않음.
-    patch.keys = { ...keysFromPrefs(), FAST: next.keys.FAST ?? [] };
+    patch.keys = { ...keysFromPrefs(), FAST: next.keys.FAST ?? [], RS: next.keys.RS ?? [] };
     const own = Object.fromEntries(input.buttons.map((b) => [b.id, next.keys[b.id] ?? []]));
     const plain = layoutKeys(input, patch.keys);
     const same = input.buttons.every((b) => own[b.id].join() === (plain[b.id] ?? []).join());
@@ -1679,6 +1694,10 @@ async function applySettings(next) {
   }
   const dpadPatch = gameDpadPatch(input, state.prefs, patch.dpadMode);
   if (dpadPatch) Object.assign(patch, dpadPatch, { dpadMode: DPAD_MODES.includes(state.prefs.dpadMode) ? state.prefs.dpadMode : DPAD_DEFAULT });
+  if (next.rs?.changed && rsKey()) {
+    const { active, slots } = next.rs.book;
+    patch.rsPresets = { ...(state.prefs.rsPresets ?? {}), [rsKey()]: { active, slots: slots.map((slot) => slot && { name: slot.name, steps: normalizeMacro(slot.steps) }) } };
+  }
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
   player.net.syncEnabled();
@@ -1696,6 +1715,7 @@ async function applySettings(next) {
   }
 
   player.setKeys(keysFor());
+  player.setMacro(rsSteps());
   player.setVolume(next.volume / 100);
   player.setMuted(Boolean(next.muted));
   player.fastScale = next.fastScale;
@@ -2243,6 +2263,7 @@ settings.setup({
   setTheme,
   setLang,
   keyName,
+  confirm: (title, text, ok) => openDialog({ title, body: text, actions: [{ label: "CANCEL", value: false }, { label: ok, go: true, value: true }] }).then(Boolean),
   keyOrder: SETTINGS_KEY_ORDER,
   defaultKeys: DEFAULT_KEYS,
   vars: (key) => (key === "netNick" ? { name: (netNick(), defaultNick(state.prefs.netNo)) } : {}),

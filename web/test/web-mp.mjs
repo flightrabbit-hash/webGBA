@@ -8,6 +8,7 @@
 //   wan = 인터넷 연결(멀티 켬이면 항상: STUN 후보·코드·기본 TURN 발급 요청, 멀티 끔 = 창 안 열림, 설정 줄 없음), ice = 게임별 연결 서버(credentialUrl 정상·시간 초과·잘못된 응답, 기본 TURN 미사용),
 //   anytime = 중간 참가 게임(join: "anytime" — 창 자동 열림·시간 초과 없음, 방장 혼자 창 닫기·방 유지 Upstash 명령 수, 손님 참가 알림, 다시 들어오기·인터넷 연결과 함께).
 //   nosave = 세션 중 퀵슬롯·자동 저장 막음(혼자 = 그대로, 방장 혼자 받는 중·2명·다시 들어오기 대기 = 버튼 끔 모양·클릭·탭 알림·포커스·눌림 없음·자동 저장 건너뜀, 세션 끝 = 다시 동작, 상단 버튼 잉크 위·아래 차이 0).
+//   rs = RS 버튼 입력이 멀티플레이에서 일반 입력과 같은 길로 들어가는지(유저 RS = B → 16KB 방송이 방장에 도착, 방장 RS = START → 라운드 시작·끝, 두 기기 해시 같음).
 //   크롬 개발자 도구의 오프라인은 WebRTC 를 끊지 않으므로, 끊김은 페이지의 RTCPeerConnection 을 감싸 채널 송수신을 막고(window.__netCut)
 //   동시에 오프라인(context.setOffline)으로 서버 요청도 막아 흉내 낸다.
 import fs from "node:fs";
@@ -26,7 +27,7 @@ const which = opt.browser ?? "chrome";
 const SHOTS = opt.shots ?? "";
 const CAPTURE = opt.capture ?? "";
 const REMOTE = opt.base ?? "";
-const ONLY = new Set(String(opt.only ?? "base,rejoin,hostback,wan,ice,anytime,nosave").split(","));
+const ONLY = new Set(String(opt.only ?? "base,rejoin,hostback,wan,ice,anytime,nosave,rs").split(","));
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 if (CAPTURE) fs.mkdirSync(CAPTURE, { recursive: true });
 
@@ -174,6 +175,7 @@ try {
   if (opt.turn && !REMOTE) await turnTests();
   if (ONLY.has("anytime") && !REMOTE) await anytimeTests();
   if (ONLY.has("nosave") && !REMOTE) await nosaveTests();
+  if (ONLY.has("rs") && !REMOTE) await rsTests();
   for (const p of peers) if (p.errors.length) ok(`페이지 오류 없음 ${p.name}`, false, p.errors.slice(0, 3).join(" | "));
 } catch (error) {
   ok("시험 진행", false, String(error?.stack ?? error).split("\n").slice(0, 4).join(" | "));
@@ -1183,6 +1185,43 @@ async function hitQuick(p, how) {
 
 function blockedOk(v) {
   return v.locked && v.aria === "true" && !v.htmlDisabled && v.drawnOff && v.sheet === "" && v.toast === "멀티플레이 중에는 사용할 수 없습니다" && !v.focus && !v.focusVisible && !v.pressed && !v.downPressed && v.title === "퀵슬롯";
+}
+
+async function rsTests() {
+  const preset = (keys) => ({ "com.example.netpair": { active: 0, slots: [{ name: "", steps: [{ keys, hold: 3, gap: 3 }] }, null, null, null, null] } });
+  const H = await peer("RH", { nick: "방장 R", prefs: { rsPresets: preset(["START"]) } });
+  const G = await peer("RG", { nick: "유저 R", prefs: { rsPresets: preset(["B"]) }, touch: true });
+  for (const p of [H, G]) await open(p, "pair");
+  await want(H);
+  await makeRoom(H);
+  const code = await roomCode(H);
+  await want(G);
+  await G.page.click('[data-action="net-room-join"]');
+  await G.page.fill('[data-action="net-code-in"]', code);
+  await G.page.click('[data-action="net-code-go"]');
+  const both = await waitFor(async () => (await game(H))?.count === 2 && (await game(G))?.open === 1, 25000, 200);
+  ok(`RS: 방 코드(${code})로 2명 연결`, both, JSON.stringify({ h: await game(H), g: await game(G) }));
+  await waitFor(async () => (await G.page.evaluate(() => window.webgba.state.sheet)) === "" && (await H.page.evaluate(() => window.webgba.state.sheet)) === "", 5000);
+  const rsOf = (p) => p.page.evaluate(() => ({ macro: window.webgba.player.macro, shown: document.getElementById("pad").hasAttribute("data-rs") }));
+  const big0 = await bigOk(H);
+  await G.page.evaluate(() => {
+    const p = window.webgba.player;
+    p.keyDown("Pad:RS");
+    p.keyUp("Pad:RS");
+  });
+  const got = await waitFor(async () => (await bigOk(H)) > big0, 8000);
+  ok("유저 RS(프리셋 1 = B 3프레임) → 게임이 B 로 받아 16KB 방송 → 방장 도착", Boolean(got) && (await rsOf(G)).shown, JSON.stringify(await rsOf(G)));
+  await H.page.evaluate(() => {
+    const p = window.webgba.player;
+    p.keyDown("Pad:RS");
+    p.keyUp("Pad:RS");
+  });
+  const started = await waitFor(() => Promise.all([H, G].map((p) => p.page.evaluate(() => window.webgba.player.host.ex.Net_Started()))).then((v) => v.every((s) => s === 1)), 8000);
+  ok("방장 RS(프리셋 1 = START 3프레임) → 라운드 시작(두 기기)", Boolean(started));
+  const ended = await waitFor(() => Promise.all([H, G].map((p) => p.page.evaluate(() => window.webgba.player.host.ex.Net_Ended()))).then((v) => v.every((s) => s === 1)), 30000, 300);
+  const hashes = await Promise.all([H, G].map((p) => p.page.evaluate(() => window.webgba.player.host.ex.Net_Hash() >>> 0)));
+  ok(`RS 입력으로 진행한 라운드 끝 · 두 기기 해시 같음(${hashes.map((h) => h.toString(16)).join(" / ")})`, Boolean(ended) && hashes[0] === hashes[1], JSON.stringify(hashes));
+  for (const p of [H, G]) await p.context.close();
 }
 
 async function nosaveTests() {

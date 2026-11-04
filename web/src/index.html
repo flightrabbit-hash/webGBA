@@ -90,16 +90,18 @@
     <div id="boot" aria-hidden="true"><img src="/icons/icon-192.png" alt="" width="96" height="96" /><i></i></div>
     <div class="app" id="app">
       <header class="bar" id="bar">
-        <button class="tool tool--menu" id="btnMenu" type="button" data-i18n-title="title.menu" data-i18n-aria="title.menu" aria-expanded="false"></button>
-        <div class="bar__group bar__group--files">
-          <button class="tool" id="btnOpen" type="button" data-i18n-title="web.open" data-i18n-aria="web.open"></button>
-          <button class="tool" id="btnLibrary" type="button" data-i18n-title="web.library" data-i18n-aria="web.library"></button>
-          <button class="tool" id="btnSaves" type="button" data-i18n-title="web.saves" data-i18n-aria="web.saves"></button>
+        <div class="bar__side">
+          <button class="tool tool--menu" id="btnMenu" type="button" data-i18n-title="title.menu" data-i18n-aria="title.menu" aria-expanded="false"></button>
+          <div class="bar__group bar__group--files">
+            <button class="tool" id="btnOpen" type="button" data-i18n-title="web.open" data-i18n-aria="web.open"></button>
+            <button class="tool" id="btnLibrary" type="button" data-i18n-title="web.library" data-i18n-aria="web.library"></button>
+            <button class="tool" id="btnSaves" type="button" data-i18n-title="web.saves" data-i18n-aria="web.saves"></button>
+          </div>
+          <div class="bar__group bar__group--quick">
+            <button class="tool" id="btnQuick" type="button" data-i18n-title="web.quick" data-i18n-aria="web.quick" aria-disabled="true"></button>
+          </div>
         </div>
-        <div class="bar__group bar__group--quick">
-          <button class="tool" id="btnQuick" type="button" data-i18n-title="web.quick" data-i18n-aria="web.quick" aria-disabled="true"></button>
-        </div>
-        <div class="bar__group">
+        <div class="bar__group bar__group--right">
           <button class="tool" id="btnNet" type="button" data-i18n-title="net.button" data-i18n-aria="net.button" aria-pressed="false" hidden></button>
           <button class="tool" id="btnFast" type="button" data-i18n-title="web.speed" data-i18n-aria="web.speed" aria-pressed="false"></button>
           <button class="tool" id="btnSound" type="button" data-i18n-title="rail.mute" data-i18n-aria="rail.mute" aria-pressed="false"></button>
@@ -140,6 +142,7 @@
         <div class="key key--r" data-key="R"></div>
         <div class="dpad" data-dpad data-mode="stick"></div>
         <div class="face">
+          <div class="key key--rs" data-key="RS"></div>
           <div class="key key--b" data-key="B"></div>
           <div class="key key--a" data-key="A"></div>
           <div class="key key--c" data-key="C"></div>

@@ -141,6 +141,31 @@ export const ROLE_PAD = Object.freeze({
 });
 const PAD_AXIS_RE = /^[+-]?axis\d$/;
 
+export const MACRO_KEYS = Object.freeze(["A", "B", "C", "D", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT"]);
+export const MACRO_HOLD = 3;
+export const MACRO_GAP = 3;
+export const MACRO_FRAMES_MAX = 600;
+export const MACRO_STEPS_MAX = 32;
+const macroFrames = (value, low, fallback) => (Number.isInteger(value) ? Math.min(MACRO_FRAMES_MAX, Math.max(low, value)) : fallback);
+
+export function normalizeMacro(list) {
+  if (!Array.isArray(list)) return null;
+  return list
+    .filter((step) => step && typeof step === "object" && !Array.isArray(step))
+    .slice(0, MACRO_STEPS_MAX)
+    .map((step) => ({
+      keys: MACRO_KEYS.filter((key) => Array.isArray(step.keys) && step.keys.includes(key)),
+      hold: macroFrames(step.hold, 1, MACRO_HOLD),
+      gap: macroFrames(step.gap, 0, MACRO_GAP),
+    }));
+}
+
+function manifestMacro(raw, buttons) {
+  if (!Array.isArray(raw)) return null;
+  const slotOf = new Map(buttons.filter((b) => b.role && MACRO_KEYS.includes(b.role.toUpperCase())).map((b) => [b.id, b.role.toUpperCase()]));
+  return normalizeMacro(raw.map((step) => ({ ...step, keys: Array.isArray(step?.buttons) ? step.buttons.map((id) => slotOf.get(id)).filter(Boolean) : [] })));
+}
+
 /**
  * 설명서 input → 이 게임의 버튼 목록(규격 5장). 설명서가 없으면(.gba·목차 없는 옛 .wgba·.wasm) GBA 10버튼.
  * preset 기본값은 ① "gba"·② "none". buttons 는 preset 뒤에 붙고 같은 id 면 preset 것을 바꾼다.
@@ -185,7 +210,8 @@ export function resolveInput(manifest) {
       const b = buttons[i];
       return b.id === p.id && b.role === p.role && b.bit === p.bit && !b.keys && !b.label && b.touch === "auto" && b.pad.join() === ROLE_PAD[p.role].join();
     });
-  return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons, dpad: DPAD_MODES.includes(input.dpad) ? input.dpad : null };
+  const rs = manifestMacro(input.rs, buttons);
+  return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons, dpad: DPAD_MODES.includes(input.dpad) ? input.dpad : null, rs: rs?.length ? rs : null };
 }
 
 /** ① 가 쓸 수 있는 가져오기(web-host.js 와 같은 목록 + webgba.v1). */
@@ -638,6 +664,7 @@ export function checkManifest(m, errors, warnings) {
     if (b.role) roles.set(b.role, b.id);
     for (const key of b.keys ?? []) if (HOST_KEYS.includes(key)) warnings.push(`버튼 ${b.id}: 기본 키 ${key} 는 호스트 몫 키입니다`);
   }
+  if (m.input?.rs !== undefined) checkMacro(m.input.rs, roles, errors);
   if (m.multiplayer) {
     const mp = m.multiplayer;
     if (mp.protocol !== 1) errors.push(`multiplayer.protocol 이 1 이 아닙니다: ${mp.protocol}`);
@@ -662,6 +689,20 @@ export function checkManifest(m, errors, warnings) {
   if (m.cart !== undefined) {
     if (m.cart.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(m.cart.color)) errors.push(`cart.color 는 #RRGGBB: ${m.cart.color}`);
   }
+  return undefined;
+}
+
+function checkMacro(rs, roles, errors) {
+  if (!Array.isArray(rs) || rs.length < 1 || rs.length > MACRO_STEPS_MAX) return errors.push(`input.rs 는 단계 1~${MACRO_STEPS_MAX}개 배열`);
+  const usable = new Set([...roles].filter(([role]) => MACRO_KEYS.includes(role.toUpperCase())).map(([, id]) => id));
+  rs.forEach((step, i) => {
+    const at = `input.rs[${i}]`;
+    if (!step || typeof step !== "object" || Array.isArray(step)) return errors.push(`${at} 는 객체`);
+    if (!Array.isArray(step.buttons) || step.buttons.length < 1 || new Set(step.buttons).size !== step.buttons.length) errors.push(`${at}.buttons 는 겹치지 않는 버튼 id 1개 이상`);
+    else for (const id of step.buttons) if (!usable.has(id)) errors.push(`${at}.buttons: ${id} 는 방향·a·b·c·d·l·r·start·select role 버튼 id 가 아닙니다`);
+    if (step.hold !== undefined && (!Number.isInteger(step.hold) || step.hold < 1 || step.hold > MACRO_FRAMES_MAX)) errors.push(`${at}.hold 는 1~${MACRO_FRAMES_MAX} 프레임`);
+    if (step.gap !== undefined && (!Number.isInteger(step.gap) || step.gap < 0 || step.gap > MACRO_FRAMES_MAX)) errors.push(`${at}.gap 은 0~${MACRO_FRAMES_MAX} 프레임`);
+  });
   return undefined;
 }
 
