@@ -33,6 +33,7 @@ import {
   wasmSections,
   buildId,
 } from "../src-bundle/src/js/core/wgba-format.js";
+import { pickTextKey, TEXT_LANGS } from "../src-bundle/src/js/core/lang-text.js";
 
 const n = (v) => v.toLocaleString("en-US");
 
@@ -116,11 +117,18 @@ export async function writeChecked(out, bytes) {
   }
 }
 
-const label = (m, key) => {
-  const v = m?.[key];
-  if (!v) return "";
-  return typeof v === "string" ? v : v.ko ?? v.en ?? Object.values(v)[0];
-};
+// 화면 언어(en·ko·ja)마다 보일 글. 칸이 없어 다른 칸을 쓰면 "ja → en …", 그 밖의 언어 칸은 뒤에.
+function langLine(value) {
+  if (typeof value === "string") return `${value} (모든 언어)`;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const shown = TEXT_LANGS.map((lang) => {
+    const used = pickTextKey(value, lang);
+    if (used === null) return `${lang} 없음`;
+    return used === lang ? `${lang} ${value[lang]}` : `${lang} → ${used} ${value[used]}`;
+  });
+  const others = Object.keys(value).filter((key) => !TEXT_LANGS.includes(key)).map((key) => `${key} ${value[key]}`);
+  return [...shown, ...others].join(" · ");
+}
 
 function printToc(toc) {
   console.log(`목차 형식 ${toc.major}.${toc.minor} · 파일 ${n(toc.fileLen)}바이트 · 조각 ${toc.entries.length}개`);
@@ -143,7 +151,9 @@ async function info(file) {
     let m = null;
     if (me) {
       m = JSON.parse(new TextDecoder().decode(unpackChunk(await r.readAt(me.start, me.end - me.start), me)));
-      console.log(`설명서  id ${m.id} · 버전 ${m.version} · 이름 ${label(m, "name")}${m.shortName ? ` · 짧은 이름 ${label(m, "shortName")}` : ""} · ${m.runtime}`);
+      console.log(`설명서  id ${m.id} · 버전 ${m.version} · ${m.runtime}`);
+      console.log(`이름    ${langLine(m.name)}`);
+      if (m.shortName) console.log(`짧은 이름 ${langLine(m.shortName)}`);
       console.log(`화면    ${m.screen?.width ?? 240}x${m.screen?.height ?? 160} · 표시 비율 ${m.display?.aspect ?? "화면 버퍼 그대로"} · 방향 입력 ${m.input?.dpad ?? "사용자 설정"}`);
       const cart = m.cart ?? {};
       const parts = Object.keys(CART_PARTS).map((p) => (cart[p] ? `${p} ${cart[p].width}x${cart[p].height}` : `${p} 없음`));
@@ -256,7 +266,9 @@ export async function main(argv) {
     for (const note of res.notes) console.log(`알림  ${note}`);
     const checked = await writeChecked(path.resolve(o["-o"]), res.bytes);
     const m = res.manifest;
-    console.log(`설명서  ${m.id} ${m.version} · ${label(m, "name")} · ${m.runtime}`);
+    console.log(`설명서  ${m.id} ${m.version} · ${m.runtime}`);
+    console.log(`이름    ${langLine(m.name)}`);
+    if (m.shortName) console.log(`짧은 이름 ${langLine(m.shortName)}`);
     console.log(`롬팩    ${Object.keys(CART_PARTS).map((p) => `${p} ${res.used[p] ? path.basename(res.used[p]) : "없음"}`).join(" · ")}`);
     for (const e of res.entries) console.log(`  ${e.name.padEnd(12)} ${String(KIND_NAME[e.kind]).padEnd(8)} ${String(e.start).padStart(10)}–${String(e.end).padEnd(10)} ${n(e.size).padStart(12)}바이트`);
     if (checked.rom) console.log(`롬 SHA-1 ${checked.rom.sha1}`);

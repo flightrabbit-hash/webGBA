@@ -370,14 +370,22 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
 | `wgba` | integer | Manifest spec number. Currently `1` |
 | `id` | string | **Game id — never changes.** Lowercase reverse domain (`io.github.someone.mygame`), at least one dot, 64 characters or fewer. The web version keys saves and quick slots by this id, the Windows app keys per-game key settings by it (the Windows app keeps saves in `<name>.sav` next to the opened file). Keep the same id in new versions |
 | `version` | string | **Game version**, semantic version `x.y.z` (e.g. `1.2.0`; pre-releases like `1.3.0-beta.1` are fine; `+` build metadata is not accepted). Raise it when the content changes |
-| `name` | string or object | Game name (48 characters or fewer). Per language as `{"en": "…", "ko": "…", "ja": "…"}` also works. Hosts pick the user's language → `en` → the first value |
+| `name` | string or object | Game name (library, start screen recent list, window title and so on; 48 characters or fewer per entry). A string = the same name in every language. Per language = an object with entries ① `en` (English) ② `ko` (Korean) ③ `ja` (Japanese) (see "Text per language" below) |
 | `runtime` | string | `"webapi"` (①) or `"script"` (②) |
+
+**Text per language**: `name`, `shortName`, button `label`, multiplayer text (`purposes[].name`, status menu) and every other "string or object" text follow the same rule.
+
+- Object entries = ① `"en"` English · ② `"ko"` Korean · ③ `"ja"` Japanese. Entries for other language codes are allowed too.
+- Display order: the entry for the current screen language → otherwise `en` → `ko` → `ja` → the other entries (in the order written). Empty entries (`""` or only spaces) count as missing.
+- Write only the entries you have. For example `{"en": "Demon Front", "ko": "데몬프론트"}` shows `Demon Front` on a Japanese screen.
+- A plain string (`"name": "Demon Front"`) is shown as is in every language (existing .wgba files keep working).
+- A game the user renamed in the web version's library shows the user's name.
 
 #### 3.2 Optional fields
 
 | Field | Type · default | Meaning |
 | --- | --- | --- |
-| `shortName` | string · object | Name on the cartridge spine, and on the label when there is no label picture (16 characters or fewer recommended). Defaults to `name` |
+| `shortName` | string · object | Name on the cartridge spine, and on the label when there is no label picture (16 characters or fewer per entry recommended). Same language entries and display order as `name`. Missing or every entry empty → `name` |
 | `description` | string · object | Description (500 characters or fewer) |
 | `author` | string | Author. Shown on the info screen |
 | `license` · `homepage` · `contact` | string | License (an SPDX name such as `MIT` is recommended), an `https://` address (anything else is an error), contact. Reserved for the info screen (the current webGBA does not show them) |
@@ -403,7 +411,7 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
   "wgba": 1,
   "id": "io.github.someone.pixelquest",
   "version": "1.2.0",
-  "name": { "en": "Pixel Quest", "ko": "픽셀 퀘스트" },
+  "name": { "en": "Pixel Quest", "ko": "픽셀 퀘스트", "ja": "ピクセルクエスト" },
   "runtime": "webapi",
   "author": "someone",
   "license": "MIT",
@@ -553,7 +561,7 @@ One button:
 | --- | --- |
 | `id` | Button name (`A`, `JUMP` …; letters, digits, `_`, `-`, 16 characters; unique) |
 | `role` | Position: `up` `down` `left` `right` · face `a` `b` `c` `d` (at most 4) · `l` `r` `l2` `r2` · `start` `select` · `extra`. Decides the default key, gamepad button and touch position. Except `extra`, one button per role |
-| `label` | Text shown on screen (string or per language; 6 characters or fewer recommended, up to 8). Defaults to `id` |
+| `label` | Text shown on screen (string or per language — same order as "Text per language" in 3.1; 6 characters or fewer recommended, up to 8). Defaults to `id` |
 | `bit` | **Required for ①**: bit number 0–31 in `Web_RunFrame(keys)` (pressed = 1) |
 | `code` | **Required for ②**: the `KeyboardEvent.code` the game JS listens for (e.g. `"Space"`, `"KeyZ"`). The host also fills in `key`·`keyCode` |
 | `keys` | Default keyboard keys (up to 4 `KeyboardEvent.code` values). Defaults to the role's keys |
@@ -1218,7 +1226,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - Entries: name rule and no duplicates, in order and inside the file, a `webgba.<name>` section at that position (code matches wasm section boundaries and contains no `webgba.*`), kind matches the name, unpacked size = stored length for method 0, SHA-256 matches, no unknown kind with the required flag, single-instance chunks appear once
 - `webgba.*` sections missing from the TOC → warning
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
-- Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (48 characters), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `input.dpad`, `cart.color`, `display` is an object and `display.aspect` is `"integer:integer"` (W·H 1–1024, ratio 1:4–4:1), button id rule and duplicates, role duplicates, `shortName` over 16 characters → warning
+- Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (a string or each language entry 1–48 characters, errors name the entry; no `en`·`ko`·`ja` entry at all or an entry of only spaces → warning), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `input.dpad`, `cart.color`, `display` is an object and `display.aspect` is `"integer:integer"` (W·H 1–1024, ratio 1:4–4:1), button id rule and duplicates, role duplicates, a `shortName` entry over 16 characters → warning. `info` prints `name` and `shortName` as shown for each screen language (en·ko·ja; `ja → en …` when another entry is used)
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
 - Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `join` (`"anytime"` only), `iceServers` (7.11 format = error, fixed TURN credentials = warning)
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
@@ -1252,7 +1260,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 
 [Ask me first]
 - The game wasm file, whether JS was built with it (emscripten glue etc.), the data files, and whether there is large data such as a ROM to place in game memory
-- Game name (per language is fine), game id (lowercase reverse domain, e.g. io.github.myaccount.gamename — never changes once chosen), version (x.y.z)
+- Game name (per language in English, Korean and Japanese is fine), game id (lowercase reverse domain, e.g. io.github.myaccount.gamename — never changes once chosen), version (x.y.z)
 - Screen size, the buttons used and what each does, whether there is a save, whether it uses the mouse
 - Whether there is cartridge art (label 48×32, front 54×44, spine 18×46, all at the same scale 1–4×, PNG or lossless WebP — all optional), cartridge body colour (#RRGGBB)
 - Whether I have the rights to every piece of data that goes in (if not, it does not go in)
@@ -1273,8 +1281,8 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - Limits: file 512MB, manifest 64KB, each cartridge picture 256KB (64KB recommended), JS 16MB, ROM 32MB, 256 TOC entries.
 
 [Manifest webgba.manifest — UTF-8 JSON, no BOM]
-- Required: "wgba": 1, "id" (lowercase reverse domain, at least one dot, 64 characters or fewer), "version" ("x.y.z"; pre-release "-beta.1" allowed), "name" (string or {"en":…,"ko":…}, 48 characters or fewer), "runtime" ("webapi" or "script").
-- Optional: shortName (16 characters), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, display{aspect ("W:H" display ratio, e.g. "4:3" — stretched when it differs from the screen buffer)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad ("latest"·"opposite"·"both" default for directions pressed together)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
+- Required: "wgba": 1, "id" (lowercase reverse domain, at least one dot, 64 characters or fewer), "version" ("x.y.z"; pre-release "-beta.1" allowed), "name" (string or {"en":…,"ko":…,"ja":…}, 48 characters or fewer per entry — hosts show the screen language's entry → en → ko → ja, whichever exists; write only the entries you have), "runtime" ("webapi" or "script").
+- Optional: shortName (16 characters, same language entries as name), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, display{aspect ("W:H" display ratio, e.g. "4:3" — stretched when it differs from the screen buffer)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad ("latest"·"opposite"·"both" default for directions pressed together)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
 - For runtime "webapi" without a ROM chunk you must write "rom": {"required": false} (otherwise webGBA asks the user to pick a ROM file).
 - Write cart.label/front/spine as {"chunk":"cart.label|cart.front|cart.spine","format":"png|webp","width":…,"height":…} matching the pictures, leave out entries for pictures you do not include, and put labelAt [x,y] (default [3k,5k]) on the front and textArea [x,y,w,h] (the host writes the short name vertically there; no text if absent) on the spine.
 - The current webGBA ignores screen.fps, audio and state.use (it always runs at about 59.7275 fps). It does not open games with "net" in needs.

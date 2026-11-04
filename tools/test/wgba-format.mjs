@@ -10,6 +10,7 @@ import { spawnSync } from "child_process";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import {
+  checkManifest,
   checkWgba,
   codeWasm,
   compareVersions,
@@ -304,7 +305,50 @@ const rb = await readWgba(b);
 const levels = rb && (await rb.chunk("data.levels"));
 const noChunk = await rb.chunk("code").then(() => "열림", (e) => e.code);
 ok(rb && new TextDecoder().decode(rb.js) === new TextDecoder().decode(js) && levels?.length === 4096 && levels[0] === 7 && noChunk === "data", "앱 읽기: ② js 조각(풀어서)·데이터 조각은 부를 때(data.* 만)", `js ${rb?.js?.length} · levels ${levels?.length} · code → ${noChunk}`);
-ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.name, "ja") === "Hello Web API" && pickText("포켓몬 Rapid", "en") === "포켓몬 Rapid", "이름 고르기: 사용자 언어 → en → 첫 값");
+ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.name, "ja") === "Hello Web API" && pickText("포켓몬 Rapid", "en") === "포켓몬 Rapid", "이름 고르기: 화면 언어 칸 → en → ko → ja");
+{
+  // 화면 언어 3종 × 설명서 이름 형태(세 칸·한 칸·두 칸·문자열·빈 칸·그 밖의 언어)
+  const { pickTextKey, TEXT_LANGS } = await import("../../src-bundle/src/js/core/lang-text.js");
+  const forms = [
+    { form: "세 칸", name: { en: "Bloody Roar 2", ko: "동물철권 2", ja: "ブラッディロア2" }, want: { en: "Bloody Roar 2", ko: "동물철권 2", ja: "ブラッディロア2" } },
+    { form: "en 한 칸", name: { en: "Demon Front" }, want: { en: "Demon Front", ko: "Demon Front", ja: "Demon Front" } },
+    { form: "ko 한 칸", name: { ko: "보글보글" }, want: { en: "보글보글", ko: "보글보글", ja: "보글보글" } },
+    { form: "ja 한 칸", name: { ja: "バブルボブル" }, want: { en: "バブルボブル", ko: "バブルボブル", ja: "バブルボブル" } },
+    { form: "ko·ja 두 칸", name: { ja: "三国戦紀 115", ko: "삼국전기 115" }, want: { en: "삼국전기 115", ko: "삼국전기 115", ja: "三国戦紀 115" } },
+    { form: "en·ja 두 칸", name: { ja: "ポケモン ラピッド", en: "Pokémon Rapid" }, want: { en: "Pokémon Rapid", ko: "Pokémon Rapid", ja: "ポケモン ラピッド" } },
+    { form: "en·ko 두 칸", name: { ko: "보글보글 2", en: "Bubble Bobble II" }, want: { en: "Bubble Bobble II", ko: "보글보글 2", ja: "Bubble Bobble II" } },
+    { form: "문자열", name: "Knights of Valour 115", want: { en: "Knights of Valour 115", ko: "Knights of Valour 115", ja: "Knights of Valour 115" } },
+    { form: "빈 칸·공백 칸은 없는 것", name: { en: "", ko: "  ", ja: "デーモンフロント" }, want: { en: "デーモンフロント", ko: "デーモンフロント", ja: "デーモンフロント" } },
+    { form: "그 밖의 언어는 en·ko·ja 다음", name: { fr: "Bulles", de: "Blasen", ko: "보글보글" }, want: { en: "보글보글", ko: "보글보글", ja: "보글보글" } },
+    { form: "그 밖의 언어만(적힌 순서)", name: { fr: "Bulles", de: "Blasen" }, want: { en: "Bulles", ko: "Bulles", ja: "Bulles" } },
+  ];
+  const wrong = [];
+  for (const { form, name, want } of forms) for (const lang of TEXT_LANGS) if (pickText(name, lang) !== want[lang]) wrong.push(`${form}/${lang} → ${pickText(name, lang)}`);
+  ok(wrong.length === 0, `이름 고르기 ${forms.length}형태 × 화면 언어 3종`, wrong.join(" / "));
+  ok(pickText(undefined, "ko") === "" && pickText(null, "ko") === "" && pickText(["x"], "ko") === "" && pickText({}, "ko") === "" && pickTextKey({ ko: "x" }) === "ko" && pickText({ ja: "B", en: "A" }) === "A", "이름 고르기: 값 없음·배열·빈 객체 = 빈 글, 언어 없이 부르면 en → ko → ja");
+  const { buttonLabel } = await import("../../src-bundle/src/js/app/player.js");
+  ok(buttonLabel({ id: "JUMP", label: { ko: "점프", ja: "ジャンプ" } }, "en") === "점프" && buttonLabel({ id: "JUMP", label: { ja: "ジャンプ" } }, "ko") === "ジャンプ", "버튼 label 도 같은 순서(en 없으면 ko → ja)");
+  const { boardView, boardConfig } = await import("../../src-bundle/src/js/core/net/board.js");
+  ok(typeof boardView === "function" && typeof boardConfig === "function", "멀티플레이 상태 메뉴 글(board.js)도 lang-text.js 를 씀(가져오기 성공)");
+  const check = (patch) => {
+    const errors = [];
+    const warnings = [];
+    checkManifest({ ...manifestA, ...patch }, errors, warnings);
+    return { errors, warnings };
+  };
+  const three = check({ name: { en: "Knights of Valour 115", ko: "삼국전기 115", ja: "三国戦紀 115" }, shortName: { en: "Pokémon Rapid", ko: "포켓몬스터 래피드", ja: "ポケモン ラピッド" } });
+  ok(three.errors.length === 0 && three.warnings.length === 0, "검사: 세 칸 이름·짧은 이름 통과", [...three.errors, ...three.warnings].join(" / "));
+  const long = check({ name: { en: "A".repeat(48), ko: "가".repeat(49), ja: "" } });
+  ok(long.errors.length === 2 && long.errors.some((e) => e.includes("name.ko") && e.includes("49자")) && long.errors.some((e) => e.includes("name.ja") && e.includes("비었습니다")), "검사: 칸마다 48자·빈 칸 오류(어느 언어인지)", long.errors.join(" / "));
+  const shortLong = check({ shortName: { en: "Short", ja: "あ".repeat(17) } });
+  ok(shortLong.errors.length === 0 && shortLong.warnings.length === 1 && shortLong.warnings[0].includes("shortName.ja") && shortLong.warnings[0].includes("17자"), "검사: 짧은 이름 16자 초과는 그 칸 경고", shortLong.warnings.join(" / "));
+  const emoji = check({ name: "😀".repeat(48) });
+  ok(emoji.errors.length === 0, "검사: 글자 수는 코드 포인트 기준(이모지 48개 통과)", emoji.errors.join(" / "));
+  const other = check({ name: { fr: "Bulles" } });
+  ok(other.errors.length === 0 && other.warnings.some((w) => w.includes("en·ko·ja") && w.includes("fr")), "검사: en·ko·ja 칸이 없으면 경고(그 밖의 언어 칸을 씀)", other.warnings.join(" / "));
+  const bad = [check({ name: undefined }), check({ name: {} }), check({ name: ["x"] }), check({ name: { en: 3 } })];
+  ok(bad.every((r) => r.errors.length === 1), "검사: 이름 없음·빈 객체·배열·글이 아닌 칸 = 오류", bad.map((r) => r.errors[0]).join(" / "));
+}
 // 가져오기 webgba.v1(규격 4.1.2) + 롬 없는 ① 시작
 function v1Wasm() {
   const types = sec(1, vec([[0x60, 0, 1, 0x7f], [0x60, 1, 0x7f, 1, 0x7f], [0x60, 0, 0]]));

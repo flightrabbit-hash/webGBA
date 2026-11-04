@@ -1,6 +1,7 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
 import { DPAD_MODES, GBA_PRESET, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
+import { pickText } from "../core/lang-text.js";
 import { NetHost } from "../core/net/net-host.js";
 import { lang, locale, t } from "../shell/i18n.js";
 
@@ -128,10 +129,9 @@ export function layoutKeys(layout, global = DEFAULT_KEYS, saved = null) {
   return out;
 }
 
-/** 키 설정·조작법에 보일 버튼 이름: 설명서 label(사용자 언어 → en → 첫 값) → GBA 버튼 이름 → id. */
+/** 키 설정·조작법에 보일 버튼 이름: 설명서 label(pickText 순서) → GBA 버튼 이름 → id. */
 export function buttonLabel(button, language = lang()) {
-  const label = button.label;
-  const text = typeof label === "string" ? label : label && typeof label === "object" ? (label[language] ?? label.en ?? Object.values(label).find((v) => typeof v === "string")) : "";
+  const text = pickText(button.label, language);
   if (text) return text;
   return BUTTONS.includes(button.id) ? t(`key.${button.id}`) : button.id;
 }

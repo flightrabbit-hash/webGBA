@@ -113,6 +113,8 @@ Web 版(`web/dist`)とマッチングサーバー(`api/v1/mp/[op].js`、Vercel �
 
 規格の全文と AI 向けプロンプトは英語版 README にあります: [.wgba specification 1](README.en.md#wgba-specification-1-for-other-developers) · [Prompt for AI assistants](README.en.md#prompt-for-ai-assistants)
 
+- **言語ごとの名前** — 説明書の `name`(ライブラリなどに表示する名前)・`shortName`(ロムパックの側面)は、文字列(すべての言語で同じ)か、① `"en"` 英語 ② `"ko"` 韓国語 ③ `"ja"` 日本語 の欄を持つオブジェクト(例 `{"en": "Bubble Bobble", "ko": "보글보글", "ja": "バブルボブル"}`)で書きます。表示は現在の画面の言語の欄 → なければ `en` → `ko` → `ja` → そのほかの欄の順です。必要な欄だけ書けば足り、ボタンの `label`・マルチプレイの文言も同じ順です。
+
 ---
 
 ## ショートカットキー

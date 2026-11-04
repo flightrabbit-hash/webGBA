@@ -53,7 +53,9 @@ const ONLY_SETTEXT = process.env.UI_SETTEXT_ONLY === "1";
 const CAPTURE = process.env.UI_CAPTURE || "";
 // UI_HOSTBACK_ONLY=1 이면 방장 돌아오기 화면 시험만(방장 '이전 방' 칸·주황 버튼 대비(테마 12개)·유저 '방장을 기다리는 중', 390x844·844x390·PC × 세 언어, UI_NET_WGBA 를 rejoin 으로 다시 묶음)
 const ONLY_HOSTBACK = process.env.UI_HOSTBACK_ONLY === "1";
-const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE || ONLY_OVERLAY || ONLY_SETTEXT || ONLY_HOSTBACK;
+// UI_NAMES_ONLY=1 이면 설명서 언어별 이름(name·shortName) 시험만: 세 화면 × 세 언어 × 이름 형태 9가지 — 첫 화면·옆면·꺼낸 칸 표시 글·넘침 0·잉크 가운데
+const ONLY_NAMES = process.env.UI_NAMES_ONLY === "1";
+const ONLY_OTHER = ONLY_NET || ONLY_BOARD || ONLY_ASPECT || ONLY_GB || ONLY_ANYTIME || ONLY_AUTOFIRE || ONLY_OVERLAY || ONLY_SETTEXT || ONLY_HOSTBACK || ONLY_NAMES;
 const EXTRA = !ONLY_OTHER && (ONLY_EXTRA || (!ONLY_MOTION && !ONLY_LIBRARY && !ONLY_CHOICE && process.env.UI_EXTRA !== "0"));
 const BASE_URL = process.env.UI_BASE_URL ?? "";
 const SKIP_MAIN = ONLY_MOTION || ONLY_EXTRA || ONLY_LIBRARY || ONLY_CHOICE || ONLY_OTHER;
@@ -2897,6 +2899,201 @@ async function themeRows(page, key, shot) {
 }
 
 if (ONLY_SETTEXT) await settextChecks();
+
+// ── 설명서 언어별 이름(name·shortName = 문자열 또는 en·ko·ja 칸, 사용자 2026-11-04) ──
+// 화면 언어 3종 × 이름 형태 9가지: 첫 화면 최근 줄·라이브러리 옆면·꺼낸 칸(이름 줄·앞면 라벨 글)의 표시 글, 칸 안(넘침 0), 잉크 가운데.
+// 기대 글은 규격 순서(화면 언어 → en → ko → ja)대로 손으로 적은 값(구현 함수로 계산하지 않음).
+const NAME_GAMES = [
+  { id: "n-br2", form: "세 칸", title: { en: "Bloody Roar 2", ko: "동물철권 2", ja: "ブラッディロア2" }, show: { en: "Bloody Roar 2", ko: "동물철권 2", ja: "ブラッディロア2" } },
+  { id: "n-dmn", form: "en 한 칸", title: { en: "Demon Front" }, show: "Demon Front" },
+  { id: "n-kov", form: "ko·ja 두 칸", title: { ja: "三国戦紀 115", ko: "삼국전기 115" }, show: { en: "삼국전기 115", ko: "삼국전기 115", ja: "三国戦紀 115" } },
+  { id: "n-kovs", form: "문자열", title: "Knights of Valour 115", show: "Knights of Valour 115" },
+  { id: "n-bub", form: "ko 한 칸", title: { ko: "보글보글" }, show: "보글보글" },
+  { id: "n-rapid", form: "세 칸 + 짧은 이름 en·ko", title: { en: "Pokémon Rapid", ko: "포켓몬스터 래피드", ja: "ポケモン ラピッド" }, shortName: { en: "Rapid", ko: "래피드" }, show: { en: "Pokémon Rapid", ko: "포켓몬스터 래피드", ja: "ポケモン ラピッド" }, spine: { en: "Rapid", ko: "래피드", ja: "Rapid" } },
+  { id: "n-bb2", form: "ja 한 칸", title: { ja: "バブルボブルII" }, show: "バブルボブルII" },
+  { id: "n-bb2two", form: "en·ko 두 칸", title: { ko: "보글보글 2", en: "Bubble Bobble II" }, show: { en: "Bubble Bobble II", ko: "보글보글 2", ja: "Bubble Bobble II" } },
+  { id: "n-named", form: "사용자가 바꾼 이름", title: { en: "Bubble Bobble", ko: "보글보글", ja: "バブルボブル" }, named: "내 보글보글", show: "내 보글보글" },
+];
+const nameIn = (value, lang) => (typeof value === "string" ? value : value[lang]);
+const NAME_VIEWS = [
+  { viewport: { width: 390, height: 844 } },
+  { viewport: { width: 844, height: 390 } },
+  { viewport: { width: 320, height: 568 } },
+].filter((view) => !VIEW_FILTER || VIEW_FILTER.has(`${view.viewport.width}x${view.viewport.height}`));
+
+// 옆면 이름 칸(.spine__name) 안 잉크 상자: 글이 90° 돌아 있어 글의 세로 = 화면 가로(좌·우 여백), 글 방향 = 화면 세로(위·아래 여백).
+// 기본 옆면은 몸통 그림(밝은 세로 띠 등)이 이름 칸에 겹쳐 바탕색 하나로 잴 수 없다 → 글을 숨긴 화면과 달라진 픽셀만 잉크로 본다.
+function boxInk(image, bare, dpr, box) {
+  const x0 = Math.round(box.l * dpr);
+  const x1 = Math.round(box.r * dpr);
+  const y0 = Math.round(box.t * dpr);
+  const y1 = Math.round(box.b * dpr);
+  if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+  let l = Infinity, r = -1, t = Infinity, b = -1;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const o = (y * image.width + x) * 4;
+      if (Math.max(Math.abs(image.data[o] - bare.data[o]), Math.abs(image.data[o + 1] - bare.data[o + 1]), Math.abs(image.data[o + 2] - bare.data[o + 2])) <= INK_THRESHOLD) continue;
+      l = Math.min(l, x);
+      r = Math.max(r, x);
+      t = Math.min(t, y);
+      b = Math.max(b, y);
+    }
+  }
+  if (r < 0) return null;
+  const left = (l - x0) / dpr;
+  const right = (x1 - 1 - r) / dpr;
+  const top = (t - y0) / dpr;
+  const bottom = (y1 - 1 - b) / dpr;
+  return { left, right, top, bottom, across: Math.abs(left - right), along: Math.abs(top - bottom) };
+}
+
+async function namesChecks() {
+  const shots = CAPTURE || SHOTS;
+  for (const view of NAME_VIEWS) {
+    for (const lang of LANGS) {
+      const key = `${view.viewport.width}x${view.viewport.height}|${lang}|names`;
+      const { context, page } = await aspectPage({ viewport: view.viewport, dpr: 2, mobile: true }, {}, { prefs: { lang } });
+      await page.evaluate(async (games) => {
+        const s = window.webgba.store;
+        let t = Date.now();
+        for (const [i, g] of games.entries()) {
+          const meta = { id: g.id, name: `${g.named ?? g.id}.wgba`, file: `${g.id}.wgba`, type: "wgba", gameId: `dev.example.${g.id}`, version: "1.0.0", build: String(i % 10).repeat(64), title: g.title, shortName: g.shortName ?? "", author: "", romSha1: "", cart: { color: ["#2f6f5e", "#d9a02b", "#7a3fb0", "#b03a2e"][i % 4] } };
+          if (g.named) meta.named = true;
+          await s.putGame(meta, new Uint8Array(1024 + i), { carts: [] });
+          await s.patch(s.romKey(g.id), { opened: (t -= 1000) });
+        }
+        await window.webgba.refreshStart();
+      }, NAME_GAMES);
+      await page.waitForTimeout(400);
+
+      // 첫 화면 최근 줄(최근 연 순 = NAME_GAMES 순서)
+      const start = await page.evaluate(() => {
+        const box = (n) => {
+          const r = n.getBoundingClientRect();
+          return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+        };
+        return [...document.querySelectorAll("#startList .recent__item")].filter((n) => !n.hidden).map((n) => {
+          const name = n.querySelector(".recent__name");
+          const label = n.querySelector(".pack__label");
+          const text = n.querySelector(".pack__text");
+          return { name: name.textContent, label: text?.textContent ?? null, nameBox: box(name), item: box(n), labelBox: label ? box(label) : null, textBox: text ? box(text) : null };
+        });
+      });
+      const startWrong = start.map((item, i) => {
+        const want = nameIn(NAME_GAMES[i].show, lang);
+        return item.name === want && item.label === want ? "" : `${NAME_GAMES[i].form}: ${item.name} / ${item.label} ≠ ${want}`;
+      }).filter(Boolean);
+      ok(`${key} 첫 화면 최근 ${start.length}개 이름·앞면 라벨 글 = 규격 순서`, start.length >= 2 && startWrong.length === 0, startWrong.join(" / "));
+      ok(`${key} 첫 화면 이름·라벨 글이 칸 안(넘침 0)`, start.every((item) => within([item.nameBox], item.item) && (!item.labelBox || within([item.textBox], item.labelBox))), JSON.stringify(start.map((item) => item.textBox)));
+      await measure(page, `${key}|start`, [".recent__name", "#startList .pack__label"]);
+
+      // 라이브러리 옆면: 표시 글(aria-label = 이름, 줄 글 = 짧은 이름 → 이름), 칸 안, 잉크 가운데
+      await page.evaluate(() => window.webgba.openSheet("library"));
+      await page.waitForSelector("#sheet:not([hidden]) .lib__case .spine");
+      await page.waitForTimeout(400);
+      await fits(page, `${key}|library`, ".sheet__panel");
+      const spines = await page.evaluate((ids) =>
+        ids.map((id) => {
+          const node = document.querySelector(`.lib__case .spine[data-key="rom:${id}"]`);
+          const area = node?.querySelector(".spine__name");
+          if (!area) return null;
+          const a = area.getBoundingClientRect();
+          return {
+            label: node.getAttribute("aria-label"),
+            lines: [...area.querySelectorAll(".spine__line")].map((n) => n.textContent),
+            outside: [...area.querySelectorAll(".spine__line")].filter((n) => {
+              const r = n.getBoundingClientRect();
+              return r.left < a.left - 0.5 || r.right > a.right + 0.5 || r.top < a.top - 0.5 || r.bottom > a.bottom + 0.5;
+            }).length,
+          };
+        }),
+      NAME_GAMES.map((g) => g.id));
+      const flat = (text) => text.replace(/\s+/g, "");
+      const spineWrong = spines.map((s, i) => {
+        const g = NAME_GAMES[i];
+        const want = nameIn(g.show, lang);
+        const wantSpine = nameIn(g.spine ?? g.show, lang);
+        if (!s) return `${g.form}: 옆면 없음`;
+        const got = flat(s.lines.join(""));
+        const cut = got.endsWith("…");
+        const textOk = cut ? flat(wantSpine).startsWith(got.slice(0, -1)) && got.length > 1 : got === flat(wantSpine);
+        return s.label === want && textOk ? "" : `${g.form}: ${s.label} · ${s.lines.join("|")} ≠ ${want} · ${wantSpine}`;
+      }).filter(Boolean);
+      ok(`${key} 옆면 ${spines.length}개 이름(aria-label)·세로 글(짧은 이름 → 이름) = 규격 순서`, spineWrong.length === 0, spineWrong.join(" / "));
+      ok(`${key} 옆면 세로 글이 이름 칸 안(넘침 0)`, spines.every((s) => s && s.outside === 0), JSON.stringify(spines.map((s) => s?.outside)));
+      const measured = new Set();
+      for (let round = 0; round < NAME_GAMES.length && measured.size < NAME_GAMES.length; round++) {
+        const next = NAME_GAMES.find((g) => !measured.has(g.id));
+        await page.$eval(`.lib__case .spine[data-key="rom:${next.id}"]`, (n) => n.scrollIntoView({ block: "nearest" }));
+        await page.waitForTimeout(80);
+        const image = await shoot(page);
+        const hide = await page.addStyleTag({ content: ".spine__text{visibility:hidden !important}" });
+        const bare = await shoot(page);
+        await hide.evaluate((node) => node.remove());
+        const dpr = await page.evaluate(() => devicePixelRatio);
+        const seen = await page.evaluate((ids) => {
+          const vh = window.visualViewport?.height ?? innerHeight;
+          return ids.map((id) => {
+            const area = document.querySelector(`.lib__case .spine[data-key="rom:${id}"] .spine__name`);
+            const r = area.getBoundingClientRect();
+            let top = 0, bottom = vh;
+            for (let at = area.parentElement; at; at = at.parentElement) {
+              const o = getComputedStyle(at).overflowY;
+              if (o === "auto" || o === "hidden" || o === "scroll") {
+                const c = at.getBoundingClientRect();
+                top = Math.max(top, c.top);
+                bottom = Math.min(bottom, c.bottom);
+              }
+            }
+            return r.top >= top - 0.5 && r.bottom <= bottom + 0.5 && r.left >= 0 && r.right <= innerWidth ? { id, l: r.left, r: r.right, t: r.top, b: r.bottom } : null;
+          });
+        }, NAME_GAMES.map((g) => g.id));
+        for (const box of seen) {
+          if (!box || measured.has(box.id)) continue;
+          measured.add(box.id);
+          const m = boxInk(image, bare, dpr, box);
+          const form = NAME_GAMES.find((g) => g.id === box.id).form;
+          if (!m) {
+            ok(`${key} 옆면 ${form} 잉크 있음`, false);
+            continue;
+          }
+          table.push({ key, target: `spine__name ${form}(글 세로 = 화면 가로)`, top: m.left, bottom: m.right, diff: m.across });
+          table.push({ key, target: `spine__name ${form}(글 방향 = 화면 세로)`, top: m.top, bottom: m.bottom, diff: m.along });
+          ok(`${key} 옆면 ${form} 잉크 가운데(글 세로·글 방향)`, m.across <= 1 && m.along <= 1, `좌 ${m.left} · 우 ${m.right} · 위 ${m.top} · 아래 ${m.bottom}`);
+        }
+      }
+
+      // 꺼낸 칸: 이름 줄·앞면 라벨 글, 칸 안, 잉크 가운데
+      for (const g of NAME_GAMES) {
+        if ((await page.getAttribute(".lib__card", "data-key")) !== `rom:${g.id}`) {
+          await page.$eval(`.lib__case .spine[data-key="rom:${g.id}"]`, (n) => n.click());
+          await page.waitForTimeout(200);
+        }
+        const card = await page.evaluate(() => {
+          const box = (n) => {
+            const r = n.getBoundingClientRect();
+            return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+          };
+          const card = document.querySelector(".lib__card");
+          const name = card.querySelector(".lib__name");
+          const label = card.querySelector(".pack__label");
+          const text = card.querySelector(".pack__text");
+          return { key: card.dataset.key, name: name?.textContent ?? null, label: text?.textContent ?? null, nameBox: name ? box(name) : null, line: name ? box(name.closest(".lib__line") ?? card) : null, labelBox: label ? box(label) : null, textBox: text ? box(text) : null, scroll: card.scrollWidth - card.clientWidth };
+        });
+        const want = nameIn(g.show, lang);
+        ok(`${key} 꺼낸 칸 ${g.form}: 이름 줄·앞면 라벨 글 = ${want}`, card.key === `rom:${g.id}` && card.name === want && card.label === want, `${card.key} · ${card.name} · ${card.label}`);
+        ok(`${key} 꺼낸 칸 ${g.form}: 이름·라벨 글이 칸 안(넘침 0)`, card.nameBox && within([card.nameBox], card.line) && card.textBox && within([card.textBox], card.labelBox) && card.scroll <= 0, JSON.stringify({ name: card.nameBox, line: card.line, text: card.textBox, label: card.labelBox, scroll: card.scroll }));
+        await measure(page, `${key}|card|${g.id}`, [".lib__card .lib__name", ".lib__card .pack__label"]);
+        if (lang === "ko" && view.viewport.width === 390 && g.id === "n-rapid") await page.screenshot({ path: path.join(shots, "언어별이름_라이브러리_390x844_ko.png") });
+      }
+      ok(`${key} 페이지 오류 없음`, page.errors.length === 0, page.errors.join(" | "));
+      await context.close();
+    }
+  }
+}
+
+if (ONLY_NAMES) await namesChecks();
 
 const WK_VIEW = LIB_VIEWS.find((view) => view.name === "390x844") ?? LIB_VIEWS[0];
 if (LIBRARY && WK_VIEW) {

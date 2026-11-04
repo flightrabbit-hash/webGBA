@@ -1717,6 +1717,7 @@ async function setLang(id) {
   const next = await i18n.use(id);
   await core.langSet(next);
   state.prefs.lang = next;
+  if (state.game?.info && state.game.title === state.game.label) state.game.title = state.game.label = titleLine(state.game.info, next);
   refreshTexts();
   status(t("status.langChanged"));
 }
