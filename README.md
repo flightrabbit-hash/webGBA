@@ -102,12 +102,12 @@ node tools/run.cjs   # 전체 명령 목록
   (이후에는 해당 `.wgba`를 엽니다). 롬은 SHA-1로 확인하고, 맞지 않으면 이유(이미 패치된 롬·다른 버전·다른 언어 버전·다른 게임 등)를 안내합니다. `.wgbp`와 롬을 함께 Drag & Drop하면 선택 없이 생성합니다.
   생성: `node tools/make-wgbp.mjs <빌드.wasm|.wgba> <결과 롬> <출력.wgbp> --base <원래 롬> [--label 이름] …` — 원래 롬 → 결과 롬 BPS 패치를 저장하고, wasm 안에서 원래 롬과 같은 구간은 비워 둔 후
   생성 시 사용자의 롬으로 채웁니다. 생성 후 지원하는 모든 롬으로 결과가 `pack-wgba`로 패키징한 파일과 바이트 단위까지 같은지 확인합니다. `.wgba` 압축은 앱과 도구가 같은 pako를 사용해 어느 PC에서나 같은 바이트입니다.
-- **웹 빌드의 롬 선택** — 설정 창 › 일반 › 파일 › **웹 빌드에 쓸 롬 파일 이름**. 입력하면 `.wgba`·`.wasm`과 같은 폴더(없으면 상위 폴더)에서 해당 파일명의 롬을 사용합니다.
+- **웹 빌드의 롬 선택** — 설정 창 › 일반 › 파일 › **웹 빌드용 롬 파일명**. 입력하면 `.wgba`·`.wasm`과 같은 폴더(없으면 상위 폴더)에서 해당 파일명의 롬을 사용합니다.
   비워 두면(기본) `<빌드 이름>.gba` → 같은 폴더의 유일한 `.gba` 순서로 검색하고, 여러 개라 결정할 수 없으면 처음 열 때 선택하게 한 후 각 빌드별로 기억합니다.
   게임 메뉴 › 롬 지정…으로 언제든 변경할 수 있습니다. 롬 포함 `.wgba`는 이 규칙을 사용하지 않고 내부의 롬을 사용합니다.
 - **.wgbp 파일 연결** — 탐색기에서 `.wgbp`(공유용 패치)를 더블클릭하면 webGBA로 열고 롬을 선택합니다. 관리자 권한 없이 사용자 범위(HKCU)에 등록합니다.
   더블클릭으로 게임이 바로 실행되는 `.wgba`·`.gb`·`.gbc`는 연결하지 않습니다(열기·Drag & Drop으로 실행). 이전 버전이 등록한 `.wgba`·`.gb`·`.gbc` 연결은 앱을 실행할 때 webGBA가 추가한 값만 삭제합니다.
-  연결 해제는 **설정 창 › 일반 › 파일**에서 합니다.
+  연결 해제는 **설정 창 › 일반 › 파일 › .wgbp 파일을 webGBA로 열기**에서 합니다.
 - **세이브는 연 파일 옆 한 개** — `.gba`·`.gb`·`.gbc`·`.zip`·`.wgba`·`.wasm` 모두 연 파일 옆 `<파일명>.sav` 한 개를 조회·기록합니다(VBA 등 다른 실행기의 세이브를 같은 파일명으로 두면 그대로 이어집니다).
   게임이 저장하면 약 1초 후, 창을 닫거나 다른 게임을 열 때도 해당 `.sav` 파일을 직접 Overwrite합니다. 백업 파일은 생성하지 않습니다.
   기록에 실패하면(읽기 전용 등) 상태 줄에 안내하고 다음 저장이나 닫을 때 다시 기록합니다. 다른 세이브를 사용하려면 파일 메뉴 › 세이브 가져오기…(옆 `.sav`를 가져온 파일 내용으로 Overwrite), 내보내려면 세이브 내보내기….
@@ -125,9 +125,13 @@ node tools/run.cjs   # 전체 명령 목록
 - **열기** — 열기 대화상자, 탐색기에서 Drag & Drop, 같은 폴더의 게임 목록(`.gba`·`.gb`·`.gbc`·`.wgba`·`.wasm`, 이전·다음 게임으로 이동),
   즐겨찾기, 최근 연 파일, 연결 프로그램 인자(이미 실행 중이면 해당 창에서 열기). 화면에는 경로 없이 파일명만 표시됩니다.
 - **도구 막대** — 좌측 세로 막대. 접으면 게임 화면을 가리지 않고 접은 만큼 넓어지며, 접힘 상태를 기억합니다.
-- **설정 창 (Ctrl+,)** — 일반·키·테마·언어 4개 탭. 화면 맞춤·정수 배율, 음량·빨리 감기 배수, 방향키 동시 입력, 연사, 상태 슬롯, 세이브, 파일 연결·롬 파일명, 즐겨찾기·최근 목록 비우기, 키 설정을 한 개의 창에서 변경합니다.
+- **설정 창 (Ctrl+,)** — 일반·키·테마·언어 4개 탭. 화면 맞춤·정수 배율, 음량·빨리 감기 배수, 방향키 동시 입력, 연사, 상태 슬롯, 멀티플레이 사용·닉네임, 세이브, 파일 연결·롬 파일명, 즐겨찾기·최근 목록 비우기, 키 설정·RS 버튼을 한 개의 창에서 변경합니다.
 - **테마 13개** — 아비터와 같은 테마(어두운 테마 7·밝은 테마 5·사용자 지정, 웹 버전은 사용자 지정 없이 12개 — 목록에 테마마다 대표 색 4개 표시). webGBA 화면 전체(도구 막대·목록·창·대화 상자)에 즉시 적용되고, 게임 화면은 변경하지 않습니다.
 - **언어** — 한국어(기본)·English·日本語. 설정 창 › 언어에서 변경하면 재시작 없이 즉시 적용되고 기억합니다.
+- **멀티플레이** — 지원하는 게임은 방 코드 6자리로 같은 Wi-Fi·다른 네트워크의 기기와 연결합니다(같은 Wi-Fi의 근처 방 목록, 짝 찾기 서버 없이 연결 코드·QR을 주고받는 "인터넷 없이 연결"도 사용 가능). 기기 간 직접 연결(WebRTC)을 먼저 시도하고, 직접 연결이 되지 않는 망(휴대폰 데이터·회사·학교 망 등)에서는 **Cloudflare 중계 서버(TURN)**를 거칩니다. 중계 서버를 거쳐도 게임 내용은 암호화되어(DTLS) 중계 서버가 볼 수 없습니다.
+  연결 정보에는 공인 IP(공인 주소 후보)가 들어가므로 **상대 기기에 이 기기의 공인 IP가 보입니다**. 연결 정보(공인 IP 포함)는 짝 찾기 서버(`webgba.vercel.app/api/v1/mp`)에 최대 2분 30초 저장됩니다. 설정 › 멀티플레이 › **멀티플레이 사용**(기본 켬)을 비활성화하면 멀티플레이 창을 열 수 없고 연결도 하지 않습니다(바로 적용). 다른 기기에 표시되는 닉네임(12자까지)도 같은 곳에서 변경합니다. 중계 서버 무료 한도를 지키려고 최근 31일 중계 사용량이 900GB 이상이면 중계 접속 정보 발급을 멈추고, 그동안은 STUN만으로 연결합니다.
+  세션 중에는 빨리 감기·상태 저장 슬롯·다시 시작을 사용할 수 없습니다. 플레이어 상태 표는 웹 버전 상단 "멀티플레이" 버튼, Windows 앱 도구 막대 "멀티플레이" 버튼 또는 Tab으로 엽니다.
+  다시 들어오기(`rejoin`)를 지원하는 게임은 연결이 끊긴 유저의 자리를 보관해 같은 자리로 다시 연결하고, 방장이 앱을 닫아도 방이 2분 동안 남습니다. 방장이 2분 안에 앱을 다시 열고 같은 게임을 열면 멀티플레이 창에 **이전 방으로 돌아가기**가 나오고, 같은 방 코드의 방장 자리로 돌아갑니다. 그동안 유저 화면은 "방장을 기다리는 중… m:ss 남음"으로 게임이 멈추고, 방장이 돌아오면 자동으로 다시 연결되어 유저 한 명의 게임 상태를 받아 이어서 합니다. 2분이 지나면 세션이 끝납니다.
 
 ---
 
@@ -141,6 +145,7 @@ node tools/run.cjs   # 전체 명령 목록
 | 방향 | 방향키 |
 | 빨리 감기 (누르는 동안) | Space |
 | 빨리 감기 켜기·끄기 | Tab |
+| 멀티플레이 상태 표(세션 중 — 누르는 동안 표시, 짧게 누르면 열어 둠) | Tab |
 | RS 버튼(순서 입력) | 설정 창 › 키에서 지정(기본 없음, 게임패드 버튼도 가능) |
 | 일시정지 | Pause |
 | 상태 저장 / 불러오기 | Shift+F1~F9 / F1~F9 |
@@ -162,6 +167,8 @@ node tools/run.cjs   # 전체 명령 목록
 core/          mGBA wasm 코어 빌드 — build.sh(Docker, mGBA 공식 소스 다운로드), src/ 래퍼(webgba_core.c · host_stubs.c)
 src-bundle/    화면 — src/(html · css · js · icons · i18n), ini/(설정 기본 파일), bin/core/(mgba_core.wasm · licenses/)
 src-tauri/     Rust — 창 · 파일 · 세이브 · 웹 빌드 출처 · .wgbp 연결
+web/           웹 버전(PWA) — src/(화면) · build.mjs(조립) · test/(테스트 도구)
+api/           짝 찾기 서버(Vercel 함수) — v1/mp/[op].js · _mp/(방·우편함·TURN 발급)
 tools/         npm 명령(run.cjs · scripts.cjs), 코어 빌드, wgba.mjs(.wgba 규격 패키징·검사), pack-wgba.mjs(롬 포함 .wgba 패키징), make-wgbp.mjs(롬 없는 .wgbp 생성), lib/, test/(테스트 도구)
 docs/wgba/     manifest 스키마 · 예제(.wgba 규격 본문은 이 README 아래)
 documents/     설계 문서
@@ -225,7 +232,7 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 해시를 기록합니다. GBA 게임이 아니어도 됩니다 — wasm으로 빌드한 게임이면 `.wgba`로 패키징해 webGBA(Windows 앱·웹 버전)에서
 실행할 수 있습니다.
 
-> 7장 멀티플레이는 초안이고, 현재 webGBA는 멀티플레이 연결을 지원하지 않습니다. 나머지 장은 현재 webGBA의 동작과 같습니다.
+> 모든 장(7장 멀티플레이 포함)은 현재 webGBA(v0.6.0, Windows 앱·웹 버전)의 동작과 같습니다. 7장 중 키 동기화(`sync: "inputs"`, 7.6)만 현재 webGBA가 지원하지 않습니다.
 > 아래 내용 중 "현재 webGBA"로 기재한 부분은 규격이 아니라 현재 앱의 동작입니다(다른 호스트는 달라도 됨).
 
 1. [개요](#1-개요)
@@ -234,7 +241,7 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 4. [실행 방식](#4-실행-방식) — ① Web API(JS 없음) · ② 자체 JS(격리 실행)
 5. [키 매핑](#5-키-매핑)
 6. [롬팩 그림](#6-롬팩-그림) — 라벨 · 앞면 · 옆면
-7. [멀티플레이](#7-멀티플레이) (초안)
+7. [멀티플레이](#7-멀티플레이) — 방 코드·근처 방·연결 코드, 상태 표, 다시 들어오기, 중계 서버, 중간 참가
 8. [보안 규칙](#8-보안-규칙)
 9. [생성 예시](#9-생성-예시)
 10. [검증](#10-검증)
@@ -385,7 +392,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `author` | 문자열 | 제작자. 정보 화면에 표시 |
 | `license` · `homepage` · `contact` | 문자열 | 라이선스(SPDX 이름 권장 `MIT`), `https://` 주소(다른 주소는 오류), 연락처. 정보 화면 표시용으로 예약한 필드(현재 webGBA는 표시하지 않음) |
 | `build` | 문자열 | 빌드 표시(커밋 등, 64자). 표시용 문자열이며, 빌드 식별(3.4)은 호스트가 별도로 계산 |
-| `needs` | 문자열 배열 | 이 기능이 없는 호스트는 **열지 않음**: `"pointer"`(마우스 필수), `"net"`(멀티플레이 필수), `"keyboard"`(실제 키보드 필수), `"state"`. 모르는 값이 있으면 열지 않고 "새 webGBA가 필요합니다" 안내. 현재 webGBA는 `net`을 지원하지 않아 `needs: ["net"]` 게임을 열지 않음 |
+| `needs` | 문자열 배열 | 이 기능이 없는 호스트는 **열지 않음**: `"pointer"`(마우스 필수), `"net"`(멀티플레이 필수), `"keyboard"`(실제 키보드 필수), `"state"`. 모르는 값이 있으면 열지 않고 "새 webGBA가 필요합니다" 안내. 현재 webGBA는 네 값을 모두 지원해 `needs: ["net"]` 게임도 엶(멀티플레이를 모르는 옛 webGBA는 열지 않음) |
 | `screen` | 객체 | `width`·`height`(1~1024, 기본 240·160), `scale` `"fit"`(기본, 비율 유지 최대 크기)·`"integer"`(정수 배율 권장 — 실제 배율은 webGBA 사용자 설정이 우선: 설정이 "정수 배율"일 때만 정수 배율, "영역에 맞춤"이면 이 값이어도 영역에 맞춰 표시). `fps`는 예약(현재 webGBA는 항상 GBA 속도 약 59.7275fps로 실행). 픽셀은 항상 nearest neighbor 방식으로 표시 |
 | `display` | 객체 | `aspect`: 표시 비율 `"W:H"`(예 `"4:3"`, W·H는 1~1024 정수, 비율 1:4~4:1). 화면 버퍼(`screen`)와 다른 비율로 늘려 표시합니다(원래 모니터 비율, 정사각형이 아닌 픽셀). 없으면 화면 버퍼 비율(정사각형 픽셀). 늘려도 픽셀 보간은 하지 않습니다(nearest neighbor). 설정이 "정수 배율"이면 세로만 정수 배율, 가로는 표시 비율에 맞춘 비정수 배율입니다. Windows 앱 화면·웹 버전 화면 칸 모두 이 비율(없으면 화면 버퍼 비율, GBA 게임은 3:2)을 따릅니다 |
 | `audio` | 객체 | `use` — 예약(현재 webGBA는 조회하지 않음). ①은 소리 내보내기가 있으면 소리를 출력 |
@@ -397,7 +404,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `rom` | 객체 | ①: `required`(기본 true — **롬 chunk가 없고 `false`가 아니면 호스트가 사용자에게 롬 파일을 선택하게 함. 롬 없이 실행되는 게임은 반드시 `false`**). `sha1`·`hint`는 예약(현재는 `sha1`이 롬 chunk와 다르면 검사 경고만) |
 | `entry` | 객체 | ② 필수: `style` `"module"`·`"emscripten"`, `js` chunk 이름(규격 1에서는 항상 `"js"` — 생략해도 `"js"`, 다른 값은 `check`가 경고 후 무시), `args`(emscripten `arguments`) |
 | `files` | 객체 | ②만: 게임 JS가 조회하는 파일 이름 → chunk 이름(`data.<이름>` 또는 `rom`). 예 `{"game.data": "data.game"}` |
-| `multiplayer` | 객체 | [7장](#7-멀티플레이)(초안) |
+| `multiplayer` | 객체 | 멀티플레이 — 인원·용도·호환·상태 표·다시 들어오기·중간 참가·연결 서버. [7장](#7-멀티플레이) |
 
 #### 3.3 예시 (① 롬 없는 240×160 게임)
 
@@ -467,7 +474,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `Web_StateSize()` · `Web_StateSave(at)` · `Web_StateLoad(at)` · `Web_Alloc(n)` · `Web_Free(at)` · `Web_StateUsed()` | | 퀵슬롯(상태 저장). 앞의 다섯 개가 모두 있어야 활성화. `Web_StateUsed`가 있으면 사용한 길이만 보관(불러올 때 나머지를 0으로 채움) |
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | 마우스: 게임 픽셀 좌표(화면 밖이면 -1), `MouseEvent.buttons`, 휠 칸 수 / 1이면 현재 마우스 사용 중 |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | 정지 사유 문자열(NUL 종료) 주소 / 제목 / 시간대 오프셋(UTC 기준 동쪽 방향, 초) |
-| `Web_Net*` | | 멀티플레이 — [7장](#7-멀티플레이)(초안) |
+| `Web_Net*` | | 멀티플레이 — [7장](#7-멀티플레이)(7.3, 상태 표 `Web_NetBoard` 7.9.2) |
 
 ##### 4.1.2 가져오기(호스트 제공)
 
@@ -515,7 +522,7 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 | `webgba.on("pause"·"resume"·"speed", fn)` | 일시정지·재개·빨리 감기 배수(게임이 반영해도 되고 무시해도 됨). 일시정지 동안 `requestAnimationFrame`은 틀이 보류. `on`은 리스너 해제 함수를 반환 |
 | `webgba.audioContext()` | 틀이 음량·일시정지를 제어하는 공용 `AudioContext`(권장) |
 | `webgba.ready()` · `webgba.exit(reason)` · `webgba.log(level, text)` | 시작 완료(호스트가 로딩 화면을 닫음 — 호출하지 않아도 10초 후 표시) · 정지 · 로그 |
-| `webgba.net` | 멀티플레이 — [7장](#7-멀티플레이). 현재 webGBA는 `null` |
+| `webgba.net` | 멀티플레이 — [7장](#7-멀티플레이)(7.4). manifest에 `multiplayer`가 있으면 객체, 없으면 `null`(멀티플레이를 모르는 옛 webGBA도 `null`) |
 
 ##### 4.2.3 시작 방식 `entry.style`
 
@@ -613,7 +620,8 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 
 - **C·D를 정의하지 않은 게임**(`preset: "gba"`만 사용하는 게임, manifest가 없는 레거시 `.wgba`·`.wasm`, `.gba`): 터치 화면에는 **A·B만** 표시됩니다. 호스트가 C·D를 별도로 생성하지 않습니다.
 - **화면 배치**: C·D는 **A·B 바로 위 한 행**에, A·B와 같은 크기·간격·모양으로 배치합니다(세로·가로 모두). C는 A 위, D는 B 위(`c`만 있으면 A 위에 C 한 개).
-- **좁은 세로 화면**(너비 320·360 등)에서 C·D 행을 배치할 공간이 부족하면, 호스트는 **게임 화면 크기를 유지하고** 버튼 배율(정수)·배치를 다시 맞춰 공간을 확보합니다(버튼 그림은 정수 배율로만 표시하고, 축소해 흐리게 표시하지 않음).
+- **웹 버전 화면 배치**: 게임 화면을 먼저 채운 뒤(세로 화면은 가로 폭, 가로 화면은 높이 기준) 방향 패드·버튼을 남은 칸에 들어가는 가장 큰 크기로 배치합니다. C·D 행 등으로 공간이 부족하면 **게임 화면 크기는 유지하고** 간격 → 버튼 배율 순으로 필요한 만큼만 줄입니다. 배율은 기기 픽셀 단위(버튼 그림 한 픽셀 = 기기 픽셀 정수 개)라 흐리게 표시하지 않습니다. 가로 화면에서는 기능 버튼(파일·퀵슬롯·빨리 감기·소리·설정 등)을 양옆 칸 위에 한 줄로 배치합니다.
+- **A·B 함께 누르기**(웹 버전): A·B 버튼 사이를 누르거나 한 손가락이 두 버튼에 함께 닿으면 role `a`·`b` 버튼을 함께 누릅니다(설정 › A·B 함께 누르기, 기본 켬).
 - 키보드·게임패드는 정의된 모든 버튼을 항상 사용할 수 있습니다. 터치는 role 위치가 있는 버튼만(5.2) 표시됩니다.
 
 #### 5.5 호스트 예약 키
@@ -715,7 +723,7 @@ webGBA 웹 버전의 라이브러리는 각 게임별로 롬팩(카트리지) �
 
 ### 7. 멀티플레이
 
-> 멀티플레이 규약 1(초안). 현재 webGBA는 **방 코드 6자리**(같은 Wi-Fi·다른 네트워크 모두)와 같은 Wi-Fi의 **근처 방 목록**(짝 찾기 서버)으로 연결하고, 서버에 연결할 수 없으면 **연결 코드(·QR)를 두 번 주고받는 방식**으로 연결합니다. `needs: ["net"]` 게임도 열고, `Web_NetHost(1, 1)`을 호출하며, ②에는 `webgba.net`을 제공합니다.
+> 멀티플레이 규약 1. 현재 webGBA(Windows 앱·웹 버전)는 **방 코드 6자리**(같은 Wi-Fi·다른 네트워크 모두)와 같은 Wi-Fi의 **근처 방 목록**(짝 찾기 서버)으로 연결하고, 서버에 연결할 수 없으면 **연결 코드(·QR)를 두 번 주고받는 방식**으로 연결합니다. 직접 연결이 되지 않는 망에서는 Cloudflare 중계 서버(TURN)를 거칩니다(7.11). `needs: ["net"]` 게임도 열고, `Web_NetHost(1, 1)`(`rejoin` 게임은 `Web_NetHost(1, 5)`)을 호출하며, ②에는 manifest에 `multiplayer`가 있으면 `webgba.net`을 제공합니다. 키 동기화(`sync: "inputs"`, 7.6)는 지원하지 않습니다(`flags` 비트 1 = 0).
 > 멀티플레이를 모르는 옛 webGBA에서는 `Web_NetHost`가 호출되지 않고 `webgba.net`이 `null`이므로 게임은 통신 메뉴를 숨기면 됩니다(7.8). 규약은 바뀔 수 있습니다.
 > 규약 1 확장(선택): 게임은 자체 연결 서버(`multiplayer.iceServers`)를 지정할 수 있습니다(7.11). 게임이 `multiplayer.rejoin`을 켜면 연결이 끊긴 사람이 같은 자리로 **다시 들어오기**를 할 수 있습니다(7.10). 언제든 참가를 받는 게임은 `multiplayer.join: "anytime"`으로 창 자동 열림·시간 초과 없이, 방장이 방을 만들거나 갱신한 뒤 2분 30초 동안 참가를 받습니다(7.12).
 
@@ -746,11 +754,12 @@ webGBA는 같은 Wi-Fi(같은 공유기) 안의 기기끼리, 그리고 방 코�
 | `purposes[].name` | 다국어 이름 | 예 | — | 창에 표시되는 이름(예: 교환, 대전) |
 | `purposes[].players` | `[min, max]` | 아니요 | `players` | 해당 용도의 인원 |
 | `compat` | 문자열 | 아니요 | `"exact"` | 함께 실행할 수 있는 상대. `"exact"` = 같은 `id` + 빌드 식별(3.4)이 같음(manifest·롬팩 그림만 다른 파일끼리는 가능). 다른 문자열 = `id`와 해당 문자열이 같은 게임끼리(예: 통신 규칙이 같은 여러 버전) |
-| `sync` | `"messages"` \| `"inputs"` | 아니요 | `"messages"` | `"inputs"` = 호스트가 매 프레임 모든 참가자의 키를 동기화(7.6, 선택 기능) |
+| `sync` | `"messages"` \| `"inputs"` | 아니요 | `"messages"` | `"inputs"` = 호스트가 매 프레임 모든 참가자의 키를 동기화(7.6, 선택 기능 — 현재 webGBA는 지원하지 않아 `"messages"`로 동작) |
 | `inputDelay` | 정수 | 아니요 | `3` | `sync: "inputs"`일 때 키를 적용할 지연 프레임 수(1~10) |
 | `rejoin` | 불리언 | 아니요 | `false` | `true` = 다시 들어오기(7.10). 연결이 끊긴 유저의 자리를 세션 끝까지 보관하고 같은 자리로 돌아오게 함 |
 | `join` | `"anytime"` | 아니요 | 없음(7.7 동작) | `"anytime"` = 중간 참가 게임(7.12). 게임이 요청해도 창을 자동으로 열지 않고 시간 초과 없음, 방장이 방을 만들거나 "갱신"한 뒤 2분 30초 동안 참가를 받음(창을 닫아도 유지, 방장 혼자서도 창 닫기 가능) |
 | `iceServers` | 배열 | 아니요 | 없음(webGBA 기본 STUN + Cloudflare TURN) | 게임별 연결 서버(STUN·TURN, 7.11). 지정하면 webGBA 기본 서버 대신 이 목록만 사용 |
+| `board` | 객체 | 아니요 | 없음(사람 목록만) | 플레이어 상태 표의 게임 값 열(7.9.1) |
 
 ```json
 "multiplayer": {
@@ -765,7 +774,7 @@ webGBA는 같은 Wi-Fi(같은 공유기) 안의 기기끼리, 그리고 방 코�
 }
 ```
 
-모르는 키는 무시합니다. `multiplayer.protocol`이 호스트가 지원하는 번호보다 크면 호스트는 멀티플레이를 비활성화하고 게임은 그대로 실행합니다.
+모르는 키는 무시합니다. `multiplayer.protocol`이 호스트가 지원하는 번호보다 크면 호스트는 멀티플레이를 비활성화하고 게임은 그대로 실행합니다. 다만 현재 webGBA는 파일을 열 때 manifest 검사에서 `protocol`이 1이 아니면 오류로 처리해 열지 않습니다(10장).
 
 #### 7.3 ① Web API — 내보내기 함수
 
@@ -774,7 +783,7 @@ webGBA는 같은 Wi-Fi(같은 공유기) 안의 기기끼리, 그리고 방 코�
 
 | 함수 | 시그니처 | 호출 시점 | 설명 |
 |---|---|---|---|
-| `Web_NetHost` | `(u32 protocol, u32 flags)` | `Web_Init` 후 한 번 | 호스트가 멀티플레이 규약 `protocol`을 지원함. `flags` 비트 0 = 순서 보장 Broadcast 지원, 비트 1 = `sync: "inputs"` 지원, 비트 2 = 다시 들어오기(7.10) 지원(manifest `rejoin: true`인 게임에만 설정). **호출되지 않으면 통신을 지원하지 않는 호스트** → 게임은 "친구와 하기" 등의 메뉴를 숨기는 것을 권장. 선택 |
+| `Web_NetHost` | `(u32 protocol, u32 flags)` | `Web_Init` 후 한 번 | 호스트가 멀티플레이 규약 `protocol`을 지원함. `flags` 비트 0 = 순서 보장 Broadcast 지원, 비트 1 = `sync: "inputs"` 지원(현재 webGBA는 0), 비트 2 = 다시 들어오기(7.10) 지원(manifest `rejoin: true`인 게임에만 설정). **호출되지 않으면 통신을 지원하지 않는 호스트** → 게임은 "친구와 하기" 등의 메뉴를 숨기는 것을 권장. 선택 |
 | `Web_NetWanted` | `() → u32` | 매 프레임 `Web_RunFrame` 후 | 0 = 통신 불필요. 0이 아니면 요청(7.3.1) |
 | `Web_NetEvent` | `(u32 kind, u32 a, u32 b)` | 이벤트 발생 시, 프레임 사이 | 이벤트(7.3.3) |
 | `Web_NetOut` | `() → ptr` | 매 프레임 `Web_RunFrame` 후 | 송신 레코드의 위치(7.3.2) |
@@ -855,12 +864,12 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 
 | 호스트 → 게임 | 설명 |
 |---|---|
-| `webgba.net.host` | `{ protocol, ordered, inputs, rejoin }` — ①의 `Web_NetHost`(`rejoin` = 비트 2) |
+| `webgba.net.host` | `{ protocol, ordered, inputs, rejoin }` — ①의 `Web_NetHost`(`rejoin` = 비트 2, 현재 webGBA의 `inputs`는 false) |
 | `webgba.net.onevent = (kind, a, b) => …` | 7.3.3과 같은 번호 |
 | `webgba.net.onrecv = (from, bytes) => …` | 수신 메시지(순서 유지) |
 | `webgba.net.onstate = (from, bytes) => …` | 수신 상태 묶음(7.10). 같은 송신자의 메시지와 순서 유지 |
 
-멀티플레이를 모르는 호스트에서는 `webgba.net` 자체가 `null`입니다.
+멀티플레이를 모르는 호스트에서는 `webgba.net` 자체가 `null`입니다. 현재 webGBA도 manifest에 `multiplayer`가 없는 게임에는 `null`을 제공합니다.
 
 #### 7.5 한도
 
@@ -877,6 +886,8 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 #### 7.6 선택 기능: 키 동기화 (`sync: "inputs"`)
 
 자체 통신 코드가 없는 단순한 ① 게임용. 게임이 같은 키 입력에 같은 화면을 생성하면(결정적) 호스트가 모든 참가자의 키를 매 프레임 동기화합니다.
+
+> **현재 webGBA는 이 기능을 지원하지 않습니다**(① `Web_NetHost` `flags` 비트 1 = 0, ② `webgba.net.host.inputs` = false, `Web_NetKeys`를 호출하지 않음). `sync: "inputs"`를 기재해도 `"messages"`와 같이 동작합니다. 키를 맞춰야 하는 게임은 아래와 같은 방식(지연 프레임 + 모든 참가자의 키가 모일 때까지 대기)을 게임이 메시지로 직접 구현하세요(7.8).
 
 - 추가 내보내기: `Web_NetKeys(u32 slot, u32 keys)` — 호스트가 `Web_RunFrame` 직전에 다른 참가자별로 호출. `Web_RunFrame(keys)`의 `keys`는 본인 키.
 - 호스트는 프레임 f의 본인 키를 f + `inputDelay`에 적용하도록 송신하고, 모든 참가자의 f 키가 모일 때까지 프레임 f를 실행하지 않음(그동안 화면 정지, 1초 넘으면 `STALL`).
@@ -924,7 +935,7 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 - 최대 인원 전까지 방장 측에는 작은 표시("2/4 · 기다리는 중")가 유지되고, 참가자가 더 들어오면 `JOIN`.
 - `JOIN`·인원·방 목록의 인원은 유저 기기가 자리 안내를 받아들였다고 알린 뒤에만 바뀝니다. 그 전에 끊긴 유저는 자리에 남지 않습니다(`HOLD` 없음).
 - 취소 → `CLOSED(CANCEL)`. 제한 시간 안에 찾지 못하면(기본 3분) `CLOSED(TIMEOUT)`. 게임이 먼저 통신 종료를 알리면 안내 없이 창을 닫음. `join: "anytime"` 게임은 다름(7.12).
-- 연결 실패 시 안내: "같은 와이파이인지, 게스트·공용 와이파이가 아닌지, VPN이 꺼져 있는지 확인하세요."
+- 연결 실패 시 안내: 원인 배너(대칭 NAT 안내 포함, 7.11) + "확인할 것" 목록(같은 와이파이인지 · 게스트·공용 와이파이 · VPN·모바일 데이터 · 메시 와이파이·기기 격리 · PC 방화벽).
 
 세션 중 호스트가 지키는 사항: 빨리 감기·속도 변경 비활성화(1배), 퀵슬롯(상태 저장·불러오기)·웹 버전 자동 저장·초기화 차단(게임 안 세이브는 그대로), 다른 게임 열기 = 세션 종료(`LEFT`). 일시정지·앱 이탈 → 상대에게 `STALL`(PC에서 탭만 숨긴 경우는 프레임을 계속 실행하므로 해당 없음), 복귀하면 `RESUME`, 일정 시간(기본 15초) 넘게 복귀하지 않으면 연결 해제(`LOST`). 화면 구석에 작은 상태 표시(인원·연결 상태). 닉네임은 사용자 설정 값이고 IP·기기 이름은 어디에도 표시되지 않습니다.
 
@@ -932,6 +943,8 @@ Web_NetWanted → 창 열기·닫기·세션 종료 (7.7)
 
 - 같은 키 입력·같은 메시지에 같은 결과가 나오도록(난수는 게임 내부 seed 사용) 제작하면 `TO_ORDERED` 한 가지로 모두 같은 상태를 유지할 수 있습니다.
 - 수신 메시지는 프레임 사이에 도착하므로, 게임은 수신한 메시지를 Queue에 추가하고 프레임 안에서 처리하세요.
+- 키 입력을 맞추는 게임(lockstep)은 프레임 f의 본인 키를 프레임 번호와 함께 보내 f + 지연(7.6의 기본값 3프레임 등)에 적용하고, 모든 참가자의 f 키가 모일 때까지 프레임 f를 진행하지 마세요(7.6과 같은 방식, 현재 webGBA는 호스트 키 동기화를 지원하지 않으므로 게임이 구현). 모두 같은 키가 모인 프레임만 진행하므로 느린 기기가 있어도 기기 사이 진행 차이가 지연 프레임 수를 넘지 않습니다. 시작 프레임은 방장이 보낸 "시작" 메시지로 맞추세요.
+- `STALL`은 일시적일 수 있으므로 바로 끊지 말고 기다리세요. 기본 15초 넘게 돌아오지 않으면 호스트가 `LEAVE(LOST)`(방장이 끊긴 경우 `CLOSED`, 다시 들어오기 게임은 `HOLD`, 7.10)를 전달합니다.
 - 호스트가 멀티플레이를 모르면(`Web_NetHost`가 호출되지 않음 / `webgba.net`이 `null`) 통신 메뉴를 숨기세요(옛 webGBA).
 - 예제: `docs/wgba/examples/net-webapi/`(① 작은 C, 롬 없음)·`net-script/`(② JS 한 개) — A로 상대 찾기, 방장 START로 한 라운드, 모두 같은 해시, 플레이어 상태 표(7.9). 멀티플레이 없는 ② 예제는 `hello-script/`(그리기·키·세이브·퀵슬롯).
 - 같은 게임 빌드끼리만 연결되는 것이 기본입니다(`compat: "exact"`). 버전이 달라도 통신 규칙이 같다면 `compat`에 같은 문자열을 사용하세요.
@@ -1266,7 +1279,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - `rom`이 있으면 맨 끝, WGRM 헤더·크기·SHA-1 일치(`--quick`이면 압축 해제 생략), manifest `rom.sha1`이 다르면 경고
 - manifest: 64KB 이하 JSON, `wgba` 1, `id` 규칙, `version`이 `x.y.z`, `name`(문자열 또는 언어 칸마다 1~48자, 칸 이름과 함께 오류 표시, `en`·`ko`·`ja` 칸이 하나도 없거나 공백뿐인 칸은 경고), `runtime`, 모르는 `needs` 없음, `homepage`는 `https://`, `screen`·`save`·`input.preset`·`input.dpad`·`cart.color` 값, `display`는 객체·`display.aspect`는 `"정수:정수"`(W·H 1~1024, 비율 1:4~4:1), 버튼 id 규칙·중복, role 중복, `shortName` 칸이 16자 초과면 경고. `info`는 `name`·`shortName`을 화면 언어(en·ko·ja)마다 표시할 글로 출력(다른 칸을 쓰면 `ja → en …`)
 - ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31이고 중복 없음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 실행되는데(`rom.required: false`) `webgba.v1`이 없으면 경고, `js` chunk가 있으면 경고(사용하지 않음)
-- 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고)
+- 멀티플레이: `multiplayer.protocol` 1, `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고), `board`(7.9.1 형식 = 오류, 모르는 키 = 경고), ①에서 `Web_NetBoard`와 `multiplayer.board` 중 한쪽만 있으면 경고
 - ②: `js` chunk 있음, `entry.style`, `entry.js`가 `"js"`가 아니면 경고, 버튼별 `code`, 가져온 공유 메모리(스레드) 없음
 - 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 초과 시 경고), 격자(48×32 · 54×44 · 18×46) × k(1~4)가 아니면 경고, 세 그림의 k가 다르면 경고, manifest의 형식·크기와 다르면 경고, `labelAt`·`textArea`가 그림 밖이면 경고, manifest에 있는데 chunk가 없으면 오류, chunk가 있는데 manifest에 없으면 경고
 - 기본 키(`keys`)에 호스트 예약 키(`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12`)가 있으면 경고
@@ -1282,6 +1295,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 | manifest `wgba`(현재 1) | 기존 필드의 의미가 변경되거나 삭제될 때만(새 필드는 올리지 않음) | 더 높으면 열지 않음 |
 | `needs` | 번호 대신 "이 기능이 반드시 필요함"을 기재 | 모르는 값이면 열지 않음 |
 | 틀 API `webgba.version`(현재 1) | 기존 함수의 의미가 변경될 때만 | 게임이 확인해 대응 |
+| 멀티플레이 규약 `multiplayer.protocol`(현재 1) | 통신 규약이 변경될 때 | 규격: 호스트가 지원하는 번호보다 크면 멀티플레이만 비활성화하고 게임은 실행(7.2). 현재 webGBA는 1이 아니면 manifest 오류로 열지 않음 |
 | 롬 chunk WGRM 형식(현재 1) | 롬 헤더가 변경될 때 | 모르면 열지 않음 |
 | 게임 `version` | 제작자 재량(콘텐츠 변경 시) | 업데이트 여부 구분·표시에만 사용 |
 
@@ -1301,6 +1315,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 게임 이름(영어·한국어·일본어 언어별 가능), 게임 id(소문자 역도메인, 예 io.github.내아이디.게임이름 — 한 번 정하면 변경하지 않음), 버전(x.y.z)
 - 화면 크기, 사용하는 버튼과 각 버튼의 의미, 세이브 유무, 마우스 사용 여부
 - 롬팩 그림 유무(라벨 48×32·앞면 54×44·옆면 18×46의 같은 배수 1~4배, PNG 또는 무손실 WebP — 모두 선택), 롬팩 몸통 색(#RRGGBB)
+- 멀티플레이 사용 여부: 인원(2~8)·용도(교환·대전 등), 멀티플레이 없이도 실행되는지, 끊긴 유저의 다시 들어오기·중간 참가가 필요한지, 게임 상태를 맞추는 방식(메시지 순서 / 키 lockstep)
 - 포함할 데이터에 대한 권리 보유 여부(없으면 포함하지 않는다)
 
 [파일 구조]
@@ -1320,23 +1335,23 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 
 [manifest webgba.manifest — UTF-8 JSON, BOM 없음]
 - 필수: "wgba": 1, "id"(소문자 역도메인, 점 1개 이상, 64자 이하), "version"("x.y.z", 테스트 버전 "-beta.1" 가능), "name"(문자열 또는 {"en":…,"ko":…,"ja":…}, 칸마다 48자 이하 — 호스트는 화면 언어 칸 → en → ko → ja 순서로 있는 칸을 표시, 필요한 칸만 작성), "runtime"("webapi" 또는 "script").
-- 선택: shortName(16자, name과 같은 언어 칸), description, author, license, homepage(https://만), contact, build, needs(["pointer","net","keyboard","state"] 중), screen{width,height(1~1024, 기본 240·160), scale("fit"·"integer")}, display{aspect("W:H" 표시 비율, 예 "4:3" — 화면 버퍼와 다르면 늘려 표시)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad("latest"·"opposite"·"both" 방향 동시 입력 기본값)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. 모르는 필드는 무시되고, 규격에 없는 값이 반드시 필요하면 "x-"로 시작하는 이름을 사용한다.
+- 선택: shortName(16자, name과 같은 언어 칸), description, author, license, homepage(https://만), contact, build, needs(["pointer","net","keyboard","state"] 중), screen{width,height(1~1024, 기본 240·160), scale("fit"·"integer")}, display{aspect("W:H" 표시 비율, 예 "4:3" — 화면 버퍼와 다르면 늘려 표시)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad("latest"·"opposite"·"both" 방향 동시 입력 기본값)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer(아래 [멀티플레이]). 모르는 필드는 무시되고, 규격에 없는 값이 반드시 필요하면 "x-"로 시작하는 이름을 사용한다.
 - runtime "webapi"인데 롬 chunk가 없으면 반드시 "rom": {"required": false} (없으면 webGBA가 롬 파일 선택을 요청한다).
 - cart.label/front/spine은 {"chunk":"cart.label|cart.front|cart.spine","format":"png|webp","width":…,"height":…}를 그림과 같게 작성하고, 포함하지 않는 그림의 항목은 제외하며, 앞면에 labelAt [x,y](기본 [3k,5k]), 옆면에 textArea [x,y,w,h](호스트가 짧은 이름을 세로로 표시, 없으면 문자열 없음)를 설정한다.
-- 현재 webGBA는 screen.fps·audio·state.use를 조회하지 않는다(항상 약 59.7275fps). needs에 "net"이 포함되면 현재 webGBA는 열지 않는다.
+- 현재 webGBA는 screen.fps·audio·state.use를 조회하지 않는다(항상 약 59.7275fps). needs의 네 값은 현재 webGBA가 모두 지원한다. "net"은 멀티플레이 없이는 실행할 수 없는 게임에만 추가한다(멀티플레이를 모르는 옛 webGBA는 열지 않는다).
 
 [runtime "webapi" — JS 없음, 호스트가 wasm을 직접 실행]
 - 내보내기 필수: memory, Web_Init() -> i32(0 실패), Web_RunFrame(keys) -> i32(0 정지, keys = 눌린 버튼 비트), Web_GetFramebuffer() -> i32(width×height 픽셀, 픽셀당 R,G,B,A 바이트).
-- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec).
+- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]).
 - 가져오기는 다음 항목만: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1(() -> (), 동작 없음). 다른 가져오기가 있으면 runtime "script"로 제작한다.
 - 240×160·GBA 버튼이 아니거나 롬 없이 실행되는 게임은 가져오기 webgba.v1을 추가한다(이전 버전 webGBA가 열지 않도록). C에서는 __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void);를 선언하고 Web_Init에서 한 번 호출한다.
 - 순서: 인스턴스 → __wasm_call_ctors(없으면 _initialize) → 롬 → 세이브 → Web_Init → 매 프레임 Web_RunFrame. Web_Init 후에는 메모리를 크게 늘리지 않는다.
 - 버튼별 bit(0~31). GBA와 같으면 "input": {"preset":"gba"} (A=0 B=1 SELECT=2 START=3 RIGHT=4 LEFT=5 UP=6 DOWN=7 R=8 L=9). GBA와 다르면 반드시 "input": {"preset":"none", "buttons":[…모든 버튼…]} — webapi의 preset 기본값은 "gba"라서 preset을 생략하면 내 버튼이 GBA 10버튼 뒤에 추가되어 bit·role이 중복된다(검사 오류). GBA 10버튼에 몇 개만 추가하려면 preset "gba" + 추가할 버튼(중복되지 않는 bit·role, 예 c=10 d=11).
 
 [runtime "script" — 자체 JS가 있는 게임]
-- JS는 출처 없는 sandbox iframe(srcdoc) 안에서 실행된다. 네트워크(fetch·XHR·WebSocket·WebRTC)·IndexedDB·쿠키·실제 localStorage·팝업·상위 창 이동·스레드(SharedArrayBuffer·pthreads)를 사용할 수 없다. localStorage는 메모리 기반 대체 객체다.
+- JS는 출처 없는 sandbox iframe(srcdoc) 안에서 실행된다. 네트워크(fetch·XHR·WebSocket·WebRTC)·IndexedDB·쿠키·실제 localStorage·팝업·상위 창 이동·스레드(SharedArrayBuffer·pthreads)를 사용할 수 없다(멀티플레이는 webgba.net). localStorage는 메모리 기반 대체 객체다.
 - entry 필수. JS chunk 이름은 항상 "js"(entry.js는 생략). entry.style "module": JS가 export default async function start(webgba){…}를 내보낸다. "emscripten": emscripten Glue(일반·MODULARIZE·EXPORT_ES6) — 틀이 Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort}를 전달한다. 데이터 파일은 files 매핑({"파일 이름":"data.<이름>" 또는 "rom"})으로 지정하고, --preload-file의 .data도 같은 방식. 권장 빌드 -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
-- webgba 객체: version(1), manifest, lang, canvas(#canvas, screen 크기), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: 주소, save.read()/save.write(bytes)(save.kind "storage"일 때만), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false)(둘 다 호출해야 퀵슬롯 활성화), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready()(시작 완료 시 호출), exit(reason), log(level,text), net(현재 null).
+- webgba 객체: version(1), manifest, lang, canvas(#canvas, screen 크기), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: 주소, save.read()/save.write(bytes)(save.kind "storage"일 때만), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false)(둘 다 호출해야 퀵슬롯 활성화), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready()(시작 완료 시 호출), exit(reason), log(level,text), net(manifest에 multiplayer가 있으면 멀티플레이 객체, 없으면 null — 아래 [멀티플레이]).
 - save.kind: "storage"(기본, webgba.save), "localStorage"(틀 localStorage 전체를 세이브로), "files"(emscripten FS의 save.files[0] 경로, FS 내보내기 필요), "none". maxSize 기본 1MB, 16MB까지.
 - 버튼별 code(게임이 수신하는 KeyboardEvent.code). 호스트가 사용자가 누른 키를 이 code의 keydown/keyup으로 변환해 전달한다(isTrusted는 false이므로 검사하지 않는다). preset 기본값은 "none".
 
@@ -1346,21 +1361,36 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 기본 키는 role로 결정된다(a=Z·K, b=X·J, c=C·I, d=V·U, l=A, r=S, l2=Q, r2=W, start=Enter, select=Backspace·우측 Shift, 방향=방향키). keys에 호스트 예약 키(Space, Tab, Escape, Pause, F1~F12, P)를 포함하지 않는다.
 - (선택) input.rs = RS 버튼 기본 입력: 단계 배열 [{buttons:[버튼 id…](동시에 누름, role이 방향·a·b·c·d·l·r·start·select인 버튼만), hold(누름 프레임 1~600, 기본 3), gap(다음 단계까지 프레임 0~600, 기본 3)}] 1~32개. 예: 잡기 A+B = [{"buttons":["P","K"],"hold":6}].
 
-[멀티플레이 — 규약 초안, 현재 webGBA는 연결을 지원하지 않음]
-- manifest multiplayer{protocol:1, players{min,max}, purposes[{id,name,players}], compat, sync}. webapi는 Web_NetWanted·Web_NetEvent·Web_NetOut·Web_NetOutLen·Web_NetOutClear·Web_NetInBuffer·Web_NetIn 일곱 개를 내보내고, script는 webgba.net(현재 null)을 사용한다. 호스트가 Web_NetHost를 호출하지 않거나 webgba.net이 null이면 통신 메뉴를 숨긴다. 게임 JS가 직접 네트워크를 열지 않는다.
+[멀티플레이 — 규약 1, 현재 webGBA(Windows 앱·웹 버전)가 지원]
+- 연결은 webGBA가 담당한다: 방 코드 6자리·같은 Wi-Fi 근처 방·연결 코드(QR). 기기 간 직접 연결(WebRTC)을 먼저 시도하고, 직접 연결이 되지 않는 망에서는 Cloudflare 중계 서버(TURN, 내용은 DTLS 암호화)를 거친다. 게임은 "통신 상대가 필요함" 요청·바이트 송수신·사건 처리만 한다. 게임이 직접 네트워크(WebSocket·WebRTC·fetch)를 열지 않는다.
+- 세션 = 방 1개, 2~8명. 방장 = 슬롯 0, 참가 순서대로 1·2…. 메시지는 누락 없이 송신자별 순서 유지, 한 개 16384바이트까지, 한 프레임 송신 합계 65536바이트 이하 권장. 같은 게임끼리만 연결된다(compat).
+- manifest "multiplayer": protocol 1(필수) · players{min,max}(2~8, 기본 2·2) · purposes[{id(영문 소문자·숫자·-, 32자), name(언어별 글), players[min,max]}](배열 순서 = 용도 번호 1부터, 서로 다른 용도끼리는 연결하지 않음, 없으면 용도 1개) · compat("exact" 기본 = 같은 id + 같은 빌드 식별 / 다른 문자열 = id와 그 문자열이 같은 게임끼리) · rejoin(true = 다시 들어오기) · join("anytime" = 중간 참가) · iceServers([{urls: stun:·turn:·turns: 주소(모두 합쳐 4개), username·credential 또는 credentialUrl(https, 연결할 때 호스트가 GET → {username, credential, ttl}, CORS로 https://webgba.vercel.app·http://ui.localhost 허용)}] — 지정하면 webGBA 기본 STUN·TURN 대신 이 목록만 사용, 고정 접속 정보는 파일에서 누구나 꺼낼 수 있어 credentialUrl 권장) · board(상태 표, 아래). sync "inputs"·inputDelay는 규격에 있지만 현재 webGBA는 지원하지 않으므로 사용하지 않는다.
+- webapi 내보내기(일곱 개가 모두 있어야 멀티플레이 지원): Web_NetWanted()→u32 · Web_NetEvent(kind,a,b) · Web_NetOut()→ptr · Web_NetOutLen()→u32 · Web_NetOutClear() · Web_NetInBuffer(len)→ptr(0 = 현재 공간 없음 → 호스트가 다음 프레임에 순서대로 다시 시도) · Web_NetIn(from,len)(from 비트 8 = 0x100이면 상태 묶음). 선택: Web_NetHost(protocol,flags)(Web_Init 후 한 번, flags 비트 0 = 순서 보장, 비트 1 = 키 동기화(현재 0), 비트 2 = 다시 들어오기 — 호출되지 않으면 통신 메뉴를 숨긴다) · Web_NetBoard()→ptr · Web_NetCompat()→ptr(NUL 종료 ASCII 64자까지의 호환 키, compat 뒤에 연결해 비교). 새 가져오기는 없다.
+- 호스트의 한 프레임: 수신 메시지마다 Web_NetInBuffer(len) → 기록 → Web_NetIn(from,len) → Web_RunFrame(keys) → Web_NetOut·Web_NetOutLen 레코드 송신 → Web_NetOutClear() → Web_NetWanted() 확인(창 열기·세션 종료).
+- Web_NetWanted 값: 비트 0~7 용도 번호(0 = 첫 용도) · 8~11 최소 인원(0 = 2) · 12~15 최대 인원(0 = 최소와 같음) · 16~17 역할(0 무관, 1 방 생성만, 2 참가만) · 18~23 = 0 · 24~31 요청 번호(새로 상대를 찾을 때마다 +1, 255 다음 1). 세션 동안 같은 값을 계속 반환하고, 0 = 통신 종료(호스트가 남은 송신 후 세션을 닫고 CLOSED(LEFT)).
+- 송신 레코드(little endian, 연속 배치): u16 내용 길이 n(1~16384) · u8 받는 곳(0~7 = 슬롯, 0xFE = TO_ORDERED 본인 포함 모두가 같은 순서로 수신, 0xFF = TO_ALL 본인 제외 모두) · u8 종류(0 메시지, rejoin 게임만 1 = 상태 묶음 조각·2 = 마지막 조각) · 내용 n바이트, 다음 레코드는 4바이트 경계. 세션이 없을 때 쌓인 레코드는 버려진다.
+- 사건 Web_NetEvent(kind,a,b): 1 OPEN(본인 슬롯, 인원 — 방장은 혼자 먼저 시작) · 2 JOIN(슬롯, 인원) · 3 LEAVE(슬롯, 사유) · 4 CLOSED(사유, 0) · 5 STALL(슬롯 — 1초 넘게 응답 없음·앱 이탈) · 6 RESUME(슬롯). rejoin 게임만: 7 HOLD(슬롯, 인원 — 끊긴 자리 보관, 끊긴 기기 자신은 본인 슬롯, 유저 기기에서 a = 0이면 방장이 앱을 닫아 돌아오기를 기다림) · 8 BACK(슬롯, 인원 — 보관 자리가 다시 연결됨, 항상 HOLD 뒤. 유저 기기에서 a = 0이면 방장이 돌아옴 → 이 기기가 상태 묶음을 슬롯 0으로 보냄) · 9 REJOINED(본인 슬롯, 인원 — 돌아온 기기에 OPEN 대신, 돌아온 방장은 a = 0. 이후 끊긴 동안 바뀐 JOIN·LEAVE·HOLD·BACK이 이어짐). 사유: 1 CANCEL · 2 TIMEOUT · 3 INCOMPATIBLE · 4 LOST · 5 FULL · 6 LEFT · 7 HOST_LEFT · 8 NO_NETWORK · 9 SOLO(끊긴 사용자가 "혼자 이어 하기" 선택).
+- 게임이 지킬 것: CLOSED(CANCEL)은 게임 안 취소와 같게 처리하고 Web_NetWanted를 0으로. STALL은 일시적일 수 있으므로 바로 끊지 않고 기다린다(기본 15초 넘게 돌아오지 않으면 호스트가 LEAVE(LOST)·CLOSED, rejoin 게임은 HOLD). HOST_LEFT = 세션 종료(방장 위임 없음). 세션 중 호스트는 빨리 감기·퀵슬롯·다시 시작을 막는다(게임 안 세이브는 그대로).
+- script: webgba.net(manifest에 multiplayer가 있을 때만, 없으면 null) — want({purpose: 용도 id, min, max, role: "any"|"make"|"join"})(호출할 때마다 새 요청) · unwant() · send(to: 슬롯 0~7 | "ordered" | "all", bytes 16384바이트까지) · sendState(to: 슬롯, bytes 1~262144바이트, rejoin 게임만) · board(table | null) · host{protocol, ordered, inputs(현재 false), rejoin} · onevent = (kind,a,b) => …(위 번호) · onrecv = (from,bytes) => … · onstate = (from,bytes) => …. 바이트는 ArrayBuffer·Uint8Array.
+- 같은 상태 유지(권장 = lockstep): 게임을 결정적으로 제작한다(같은 입력·메시지에 같은 결과, 난수는 게임 내부 seed). TO_ORDERED 메시지는 본인에게도 돌아오므로(from = 본인 슬롯) 모든 기기가 돌아온 순서대로만 적용하면 같은 상태가 된다. 키를 맞추는 게임은 프레임 f의 본인 키를 프레임 번호와 함께 보내 f + 지연(예: 3프레임)에 적용하고, 모든 참가자의 f 키가 모일 때까지 프레임 f를 진행하지 않는다 — 느린 기기가 있어도 기기 사이 진행 차이가 지연 프레임 수를 넘지 않는다. 시작 프레임은 방장이 보낸 "시작" 메시지로 맞춘다. 수신은 프레임 사이에 오므로 Queue에 추가하고 프레임 안에서 처리한다.
+- 다시 들어오기(rejoin: true, 방 코드 세션만 — 연결 코드·QR 세션은 LEAVE(LOST)): 끊긴 유저 자리는 세션 끝까지 보관된다(HOLD). 끊긴 동안의 메시지는 전달되지 않으므로 BACK(s)를 받은 방장 게임이 상태 묶음(1~262144바이트, 호스트가 16384바이트씩 나눠 보내고 합침)을 슬롯 s로 보낸다. ① 송신 = 레코드 종류 1(조각, 16384바이트까지, 여러 프레임에 나눠도 됨)·2(마지막 조각), ① 수신 = 묶음 전체가 모이면 Web_NetInBuffer(묶음 크기) → Web_NetIn(from | 0x100, len)이므로 묶음 최대 크기만큼 받기 공간을 준비한다. 묶음에 게임이 적용한 순서 메시지 번호를 기록하고, 돌아온 기기는 그보다 큰 번호만 적용한다. 방장이 앱을 닫으면 방이 2분 남고, 방장이 돌아오면 방장 기기는 REJOINED(0), webGBA가 고른 유저 한 명은 BACK(0)을 받아 상태 묶음을 슬롯 0으로 보내며, 나머지 유저는 REJOINED(본인 슬롯) 후 방장 게임이 보내는 묶음을 기다린다.
+- 중간 참가(join: "anytime"): 게임이 시작부터 요청을 유지해도 창을 자동으로 열지 않고 시간 초과도 없다. 사용자가 "멀티플레이" 버튼으로 창을 열어 방을 생성하고, 방장이 방을 생성하거나 갱신한 뒤 2분 30초 동안 참가를 받는다. 들어온 유저는 JOIN으로 알리므로, 그 유저에게 필요한 게임 상태는 게임이 메시지(rejoin 게임은 상태 묶음도 가능)로 보낸다.
+- 상태 표(선택): multiplayer.board{columns[1~6]{id(영문 소문자·숫자·-, 16자), type "bar"|"number"|"rank"|"status", name(12자), max(bar 필수, 1~65535), tone("hp"|"accent"), prefix·suffix(4자), labels(status 필수, 1~15개 {name(8자), tone "normal"|"good"|"warn"|"bad"|"dim", dimRow})}, names(사람이 아닌 줄 이름), captions(머리 글 {0}·{1}), mark(강조 줄 의미), scope("all" 게임이 모든 줄 | "self" 기기마다 자기 줄), sort{column, order}}. ① Web_NetBoard() = 세션 동안 같은 위치의 400바이트 버퍼: 0 serial u32(바꿀 때마다 +1, 0 건너뜀, 다른 칸을 모두 기록한 후 마지막에) · 4 format u8 = 1 · 5 rows u8(0~8) · 6 flags u8(비트 0 = 최종 결과) · 7 caption u8(1부터, 0 없음) · 8 arg0 s32 · 12 arg1 s32 · 16 + 48×i 줄{slot u8(0~7, 0xFF = 사람 아님) · flags u8(비트 0 흐리게, 비트 1 강조) · nameLabel u8 · nameLen u8(0~20) · values s32×6 · name 20바이트 UTF-8}. 값: bar = 하위 16비트 현재·상위 16비트 최대(0 = max), number = s32, rank = 0 또는 1~99, status = 0 또는 labels 번호. ② webgba.net.board({caption, args:[…], final, rows:[{slot, values, nameLabel, name, dim, mark}]}). 초당 4번까지만 바꾼다. 사람 줄 이름은 항상 webGBA 닉네임이다.
+- 예제: webGBA 저장소 docs/wgba/examples/net-webapi(① C, 롬 없음)·net-script(② JS 한 개).
 
 [작업 순서]
 1. wasm의 가져오기·내보내기를 확인해 runtime을 선택한다(webapi 규약에 맞으면 webapi, 아니면 script).
-2. manifest JSON을 작성한다(필수 필드 누락 없이, 모르는 값은 확인한다).
+2. manifest JSON을 작성한다(필수 필드 누락 없이, 모르는 값은 확인한다). 멀티플레이 게임이면 multiplayer를 작성하고, webapi는 Web_Net* 일곱 개를, script는 webgba.net을 구현한다.
 3. 패키징한다. webGBA 저장소(https://github.com/flightrabbit-hash/webGBA)를 다운로드할 수 있으면 해당 폴더에서
    node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --manifest manifest.json [--cart-dir 그림폴더(label.png·front.png·spine.png)] [--js game.js] [--data 이름=파일] [--rom 롬]
    을 실행한다(node 18+, 설치 불필요, cart.*의 chunk·format·width·height는 도구가 채운다). 도구를 사용할 수 없으면 위 [파일 구조]대로 패키징하는 짧은 스크립트(node 또는 python)를 작성한다: webgba.* section 제외 → chunk 준비 → TOC 길이 계산 → 오프셋 순서대로 결정 → SHA-256 → 기록.
-4. 검증: node tools/wgba.mjs check game.wgba로 오류 0을 확인한다. 도구가 없으면 직접 확인: WebAssembly.validate, 첫 section이 webgba.toc, TOC 파일 길이 = 실제 길이, 항목별 위치·section 이름·종류·SHA-256, rom은 맨 끝, manifest 필수 필드·version 형식, webapi이면 필수 내보내기·가져오기 목록·bit 중복 없음, script이면 js chunk·entry.style·버튼 code, 롬팩 그림 크기·형식.
+4. 검증: node tools/wgba.mjs check game.wgba로 오류 0을 확인한다. 도구가 없으면 직접 확인: WebAssembly.validate, 첫 section이 webgba.toc, TOC 파일 길이 = 실제 길이, 항목별 위치·section 이름·종류·SHA-256, rom은 맨 끝, manifest 필수 필드·version 형식, webapi이면 필수 내보내기·가져오기 목록·bit 중복 없음, script이면 js chunk·entry.style·버튼 code, 롬팩 그림 크기·형식, 멀티플레이이면 protocol 1·purposes id 규칙·중복 없음·인원 2~8·rejoin 불리언·join "anytime"만·iceServers 형식·board 형식·Web_Net* 일곱 개가 모두 있음(일부만 있으면 경고).
 5. 생성한 파일 이름·크기·TOC 표·검증 결과를 나에게 보고한다.
 
 [금지 사항]
 - 나에게 권리가 없는 롬·그림·음악·데이터를 포함하지 않는다. 다른 회사 상표(게임기 이름·로고 등)를 롬팩 그림에 포함하지 않고, 실제 카트리지 모양·상자 그림을 모방하지 않는다.
 - 게임 JS에 네트워크 요청·eval로 외부 코드 수신·호스트(parent·top) 접근·IndexedDB를 포함하지 않는다.
+- 멀티플레이 통신은 webGBA가 제공하는 것(Web_Net*·webgba.net)만 사용한다. 게임이 직접 WebSocket·WebRTC·fetch로 연결하지 않는다(script 틀은 네트워크를 차단하고, webapi는 네트워크 가져오기가 존재하지 않는다). 롬·타인의 저작물을 메시지로 보내지 않는다.
 - 같은 게임의 새 버전에서 id를 변경하지 않는다(세이브 연결이 끊김). 버전은 x.y.z로 올린다 — 같은 id의 높은 버전은 webGBA가 확인 없이 업데이트하고, 낮은 버전만 경고한다. 다른 게임에는 다른 id를 사용한다.
 - 규격에 없는 필드를 지어내지 않는다(반드시 필요하면 "x-"로 시작하는 이름).
 - 스레드(SharedArrayBuffer·pthreads)를 사용하는 빌드로 제작하지 않는다.

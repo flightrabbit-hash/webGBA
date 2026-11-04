@@ -85,7 +85,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
 
 - **.gba / .zip** — runs on the app's `bin\core\mgba_core.wasm` (mGBA 0.10.1). 240x160 screen (fits the right-hand area, keeps the aspect ratio; integer scaling in settings), sound, key bindings, gamepad,
   fast-forward (2x/3x/4x/8x), pause, reset, saves (`<ROM name>.sav` next to the ROM, same format as VBA and mGBA),
-  save-state slots 1–9 (neither saving nor loading is available during multiplayer). For `.zip`, the first `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` inside is opened.
+  save-state slots 1–9 (neither saving nor loading is available during multiplayer). For `.zip`, the `.gba`/`.agb`/`.gb`/`.gbc`/`.bin` inside is extracted and opened (when it holds several games, you pick them from a list to add).
 - **.gb / .gbc (GB and GBC)** — run on the same mGBA core. The system is told from the ROM header, not the extension (same rule as mGBA; GBC-only and GB/GBC-compatible games get GBC colors, monochrome GB games get mGBA's default four grays).
   160x144 screen (10:9, and the screen area is 10:9 too). Keys are the eight A, B, START, SELECT and directions (no L/R — hidden from the touch buttons, key settings and controls list as well; changed keys are the app-wide keys shared with GBA games).
   Battery saves (`<ROM name>.sav` next to the ROM, same place and name as for .gba), the cartridge clock (MBC3 RTC — runs on real time and is stored in the last 48 bytes of the save, the same format as mGBA and VBA-M), save-state slots and the web version's auto-save.
@@ -108,7 +108,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   You can change it any time with Game › Choose ROM…. A `.wgba` with a packed ROM ignores these rules and uses its own ROM.
 - **.wgbp file association** — double-click a `.wgbp` (shared patch) in Explorer to open it in webGBA and pick a ROM. Registered per user (HKCU) without administrator rights.
   `.wgba`, `.gb` and `.gbc` start a game right away, so they are not associated (open them or drag and drop them instead). On start, webGBA deletes only the values it added for `.wgba`, `.gb` and `.gbc` in earlier versions.
-  To remove the association, use **Settings › General › Files**.
+  To remove the association, use **Settings › General › Files › Open .wgbp files with webGBA**.
 - **One save, next to the opened file** — for `.gba`, `.gb`, `.gbc`, `.zip`, `.wgba` and `.wasm` alike, webGBA reads and writes a single `<file name>.sav` right next to the opened file (put a VBA or other emulator save there under that name and it just continues).
   About a second after the game saves, and also when you close the window or open another game, that `.sav` file itself is overwritten in place. No backup file is made.
   If it cannot be written (read-only, for example) the status bar says so and it is tried again on the next save or on close. To use another save, File › Import save… (overwrites the `.sav` next to the game with it); to take one out, Export save….
@@ -126,9 +126,13 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
 - **Toolbar** — vertical bar on the left. When collapsed it no longer covers the game, which gets the extra width; the collapsed state is remembered.
-- **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, auto fire, state slot, saves, file association and ROM name, clearing favorites/recent files, and key bindings — all in one window.
+- **Settings window (Ctrl+,)** — four pages: General, Keys, Theme, Language. Screen fit and integer scaling, volume and fast-forward speed, two directions at once, auto fire, state slot, multiplayer on/off and nickname, saves, file association and ROM name, clearing favorites/recent files, key bindings and the RS button — all in one window.
 - **13 themes** — the same theme set as Arbiter (7 dark, 5 light, custom; the web version has the 12 without custom, each shown with 4 key colours in the list). Applied instantly to the whole webGBA UI (toolbar, lists, windows, dialogs); the game screen itself is not changed.
 - **Languages** — 한국어 (default), English, 日本語. Switching in Settings › Language applies immediately without a restart and is remembered.
+- **Multiplayer** — supported games connect with a 6-digit room code, on the same Wi-Fi or across networks (plus a nearby-room list on the same Wi-Fi, and "Connect without internet", which swaps connection codes / QR without the matchmaking server). A direct device-to-device connection (WebRTC) is tried first; networks where that does not work (mobile data, company or school networks, …) go through a **Cloudflare relay server (TURN)**. Game data stays encrypted (DTLS) through the relay, so the relay cannot read it.
+  Connection details include public IP candidates, so **the other device can see this device's public IP**. They (public IP included) are stored on the matchmaking server (`webgba.vercel.app/api/v1/mp`) for at most 2 min 30 s. Turning off Settings › Multiplayer › **Use multiplayer** (on by default) means the multiplayer window cannot be opened and nothing connects (applies immediately). The nickname shown on other devices (up to 12 characters) is set in the same place. To stay inside the relay server's free quota, relay credentials stop being issued when the relay usage of the last 31 days reaches 900 GB; until then connections use STUN only.
+  During a session fast-forward, save-state slots and reset are unavailable. The player status table opens from the "Multiplayer" button at the top of the web version, or the "Multiplayer" toolbar button or Tab in the Windows app.
+  In games that support rejoin (`rejoin`), a dropped user's seat is kept and the user reconnects to it, and the room stays for 2 minutes even if the host closes the app. If the host reopens the app within 2 minutes and opens the same game, the multiplayer window shows **Return to previous room**, which puts the host back into the host seat of the same room code. Meanwhile the users' games pause with "Waiting for the host… m:ss left"; when the host returns they reconnect automatically and the host receives one user's game state to continue. After 2 minutes the session ends.
 
 ---
 
@@ -142,6 +146,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
 | D-pad | Arrow keys |
 | Fast-forward (while held) | Space |
 | Toggle fast-forward | Tab |
+| Multiplayer status (in a session: hold, or tap to keep open) | Tab |
 | RS button (sequence input) | Set in Settings › Keys (none by default; a gamepad button also works) |
 | Pause | Pause |
 | Save / load state | Shift+F1–F9 / F1–F9 |
@@ -163,6 +168,8 @@ Game keys can be changed in Settings › Keys; gamepads are mapped automatically
 core/          mGBA wasm core build — build.sh (Docker, downloads the official mGBA source), src/ wrappers (webgba_core.c · host_stubs.c)
 src-bundle/    UI — src/ (html · css · js · icons · i18n), ini/ (settings seeds), bin/core/ (mgba_core.wasm · licenses/)
 src-tauri/     Rust — windows · files · saves · web-build origins · .wgbp association
+web/           web version (PWA) — src/ (UI) · build.mjs (assembly) · test/ (test tools)
+api/           matchmaking server (Vercel function) — v1/mp/[op].js · _mp/ (rooms, mailbox, TURN credentials)
 tools/         npm commands (run.cjs · scripts.cjs), core build, wgba.mjs (pack and check .wgba files), pack-wgba.mjs (pack a ROM into a .wgba), make-wgbp.mjs (make a ROM-free .wgbp), lib/, test/ (test tools)
 docs/wgba/     manifest schema · example (the .wgba spec text is further down in this README)
 documents/     design documents (Korean)
@@ -226,7 +233,7 @@ inside it carry the manifest, cartridge art, JS and data, and a **table of conte
 and hash of every chunk. It does not have to be a GBA game — any game built as wasm can be packed into a `.wgba` and run in
 webGBA (Windows app and web version).
 
-> Chapter 7 (multiplayer) is still a draft, and the current webGBA does not connect players yet. All other chapters describe what the current webGBA does.
+> Every chapter (multiplayer in chapter 7 included) describes what the current webGBA (v0.6.0, Windows app and web version) does. Within chapter 7, only input sync (`sync: "inputs"`, 7.6) is not supported by the current webGBA.
 > Wherever this specification says "the current webGBA", it describes the app's behaviour, not a rule of the spec (other hosts may differ).
 
 Terms used in this specification:
@@ -248,7 +255,7 @@ Terms used in this specification:
 4. [Runtimes](#4-runtimes) — ① Web API (no JS) · ② own JS (isolated)
 5. [Key mapping](#5-key-mapping)
 6. [Cartridge art](#6-cartridge-art) — label · front · spine
-7. [Multiplayer](#7-multiplayer) (draft)
+7. [Multiplayer](#7-multiplayer) — room codes, nearby rooms, connection codes, status board, rejoin, relay servers, drop-in
 8. [Security rules](#8-security-rules)
 9. [Making one](#9-making-one)
 10. [Validation](#10-validation)
@@ -396,7 +403,7 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
 | `author` | string | Author. Shown on the info screen |
 | `license` · `homepage` · `contact` | string | License (an SPDX name such as `MIT` is recommended), an `https://` address (anything else is an error), contact. Reserved for the info screen (the current webGBA does not show them) |
 | `build` | string | Build label (commit etc., 64 characters). Text for people only; the build id (3.4) is computed by the host separately |
-| `needs` | string array | Hosts without the feature **do not open** the game: `"pointer"` (unplayable without a mouse), `"net"` (unplayable without multiplayer), `"keyboard"` (needs a real keyboard), `"state"`. An unknown word means "not opened — a newer webGBA is required". The current webGBA has no `net`, so it does not open games with `needs: ["net"]` |
+| `needs` | string array | Hosts without the feature **do not open** the game: `"pointer"` (unplayable without a mouse), `"net"` (unplayable without multiplayer), `"keyboard"` (needs a real keyboard), `"state"`. An unknown word means "not opened — a newer webGBA is required". The current webGBA supports all four, so games with `needs: ["net"]` open too (an older webGBA without multiplayer does not open them) |
 | `screen` | object | `width`·`height` (1–1024, default 240·160), `scale` `"fit"` (default, fill while keeping the aspect ratio) · `"integer"` (integer scaling preferred — the webGBA user setting comes first: integer scale only when the setting is "Integer scale"; with "Fit to area" the game is fitted even with this value). `fps` is reserved (the current webGBA always runs at GBA speed, about 59.7275 fps). Pixels are always drawn nearest-neighbour |
 | `display` | object | `aspect`: display aspect ratio `"W:H"` (e.g. `"4:3"`, W·H integers 1–1024, ratio between 1:4 and 4:1). The screen buffer (`screen`) is stretched to this ratio (the original monitor ratio, non-square pixels). Without it, the screen buffer's own ratio (square pixels). No pixel interpolation when stretching (nearest-neighbour). With the "Integer scale" setting only the height is an integer multiple; the width follows the display ratio (non-integer). Both the Windows app screen and the web screen box follow this ratio (without it, the screen buffer ratio; GBA games stay 3:2) |
 | `audio` | object | `use` — reserved (the current webGBA ignores it). A ① game makes sound when it has the audio exports |
@@ -408,7 +415,7 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
 | `rom` | object | ①: `required` (default true — **if there is no ROM chunk and this is not `false`, the host asks the user to pick a ROM file. Games that run without a ROM must set `false`**). `sha1` and `hint` are reserved (currently a mismatching `sha1` only gives a validation warning) |
 | `entry` | object | Required for ②: `style` `"module"`·`"emscripten"`, `js` chunk name (always `"js"` in spec 1 — leaving it out also means `"js"`; any other value gets a `check` warning and is ignored), `args` (emscripten `arguments`) |
 | `files` | object | ② only: file name the game JS asks for → chunk name (`data.<name>` or `rom`). E.g. `{"game.data": "data.game"}` |
-| `multiplayer` | object | [Chapter 7](#7-multiplayer) (draft) |
+| `multiplayer` | object | Multiplayer — players, purposes, compatibility, status board, rejoin, drop-in, connection servers. [Chapter 7](#7-multiplayer) |
 
 #### 3.3 Example (① 240×160 game without a ROM)
 
@@ -478,7 +485,7 @@ A game of this kind therefore cannot touch any other host feature (files, storag
 | `Web_StateSize()` · `Web_StateSave(at)` · `Web_StateLoad(at)` · `Web_Alloc(n)` · `Web_Free(at)` · `Web_StateUsed()` | | Quick slots (save states). Enabled only when the first five all exist. With `Web_StateUsed`, only the used length is kept (zero-filled on load) |
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | Mouse: game pixel coordinates (-1 when outside), `MouseEvent.buttons`, wheel steps / 1 when the game wants the mouse now |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | Address of the stop reason text (NUL terminated) / title / local time offset (seconds east of UTC) |
-| `Web_Net*` | | Multiplayer — [chapter 7](#7-multiplayer) (draft) |
+| `Web_Net*` | | Multiplayer — [chapter 7](#7-multiplayer) (7.3; status board `Web_NetBoard` 7.9.2) |
 
 ##### 4.1.2 Imports (provided by the host)
 
@@ -526,7 +533,7 @@ Safari (WebKit) limits screen updates of a frame the user has not tapped yet to 
 | `webgba.on("pause"·"resume"·"speed", fn)` | Pause, resume, fast-forward factor (the game may follow or ignore them). While paused the frame holds back `requestAnimationFrame`. `on` returns a function that removes the listener |
 | `webgba.audioContext()` | A shared `AudioContext` whose volume and pause the frame controls (recommended) |
 | `webgba.ready()` · `webgba.exit(reason)` · `webgba.log(level, text)` | Start-up finished (the host hides the loading screen — shown anyway after 10 seconds) · stop · log |
-| `webgba.net` | Multiplayer — [chapter 7](#7-multiplayer). `null` in the current webGBA |
+| `webgba.net` | Multiplayer — [chapter 7](#7-multiplayer) (7.4). An object when the manifest has `multiplayer`, otherwise `null` (also `null` in an older webGBA without multiplayer) |
 
 ##### 4.2.3 Start styles `entry.style`
 
@@ -624,7 +631,8 @@ There are at most 4 face buttons, roles `a` `b` `c` `d`. **Touch C·D buttons ap
 
 - **Games that do not define C·D** (games with only `preset: "gba"`, older `.wgba`·`.wasm` without a manifest, `.gba`): the touch screen shows **only A·B**. The host never adds C·D on its own.
 - **Layout**: C·D sit in **one row right above A·B**, with the same size, spacing and shape as A·B (portrait and landscape). C above A, D above B (with only `c`, a single C above A).
-- **Narrow portrait screens** (width 320, 360, …): if there is not enough room for the C·D row, the host **keeps the game screen size** and re-fits the button scale (integer) and arrangement instead (button art is drawn only at integer scale, never smoothed).
+- **Web version layout**: the game screen is filled first (by width on portrait screens, by height on landscape screens), then the D-pad and buttons take the largest size that fits the space left. When space runs short (a C·D row, for example), the host **keeps the game screen size** and shrinks the gaps first, then the button scale, only as much as needed. The scale steps in device pixels (one pixel of button art = a whole number of device pixels), so buttons are never smoothed. On landscape screens the function buttons (file, quick slots, fast-forward, sound, settings, …) sit in one row each above the left and right columns.
+- **Press A and B together** (web version): pressing between the A and B buttons, or one finger touching both, presses the role `a` and `b` buttons together (Settings › Press A and B together, on by default).
 - Keyboard and gamepad always work for every defined button. Touch shows only buttons whose role has a touch position (5.2).
 
 #### 5.5 Host keys
@@ -726,7 +734,7 @@ Missing pictures (sizes or formats outside the rules, broken pictures, or a diff
 
 ### 7. Multiplayer
 
-> Multiplayer protocol 1 (draft). The current webGBA connects players with **a 6-digit room code** (same Wi-Fi or other networks) and the same Wi-Fi's **nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)`, and gives ② games `webgba.net`.
+> Multiplayer protocol 1. The current webGBA (Windows app and web version) connects players with **a 6-digit room code** (same Wi-Fi or other networks) and the same Wi-Fi's **nearby-room list** (matchmaking server), and when the server cannot be reached, by **exchanging connection codes (or QR) twice**. On networks where a direct connection does not work it goes through a Cloudflare relay server (TURN) (7.11). It opens games with `needs: ["net"]`, calls `Web_NetHost(1, 1)` (`Web_NetHost(1, 5)` for `rejoin` games), and gives ② games `webgba.net` when the manifest has `multiplayer`. Input sync (`sync: "inputs"`, 7.6) is not supported (`flags` bit 1 = 0).
 > An older webGBA that does not know multiplayer never calls `Web_NetHost` and its `webgba.net` is `null`, so games should hide their link menus there (7.8). The protocol may change.
 > Protocol 1 extensions (optional): a game can name its own connection servers (`multiplayer.iceServers`, 7.11). When a game sets `multiplayer.rejoin`, a player whose connection dropped can **rejoin** the same seat (7.10). A game that takes players at any time sets `multiplayer.join: "anytime"`: no automatic dialog, no timeout, and players are taken for 2 min 30 s after the host creates or renews the room (7.12).
 
@@ -757,11 +765,12 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 | `purposes[].name` | name per language | yes | — | Name shown in the dialog (e.g. Trade, Battle) |
 | `purposes[].players` | `[min, max]` | no | `players` | Player count for this purpose |
 | `compat` | string | no | `"exact"` | Who you can play with. `"exact"` = same `id` + same build id (3.4) (files that differ only in manifest or cartridge art can connect). Any other string = games with the same `id` and the same string (e.g. several versions with the same link rules) |
-| `sync` | `"messages"` \| `"inputs"` | no | `"messages"` | `"inputs"` = the host lines up everyone's keys every frame (7.6, optional feature) |
+| `sync` | `"messages"` \| `"inputs"` | no | `"messages"` | `"inputs"` = the host lines up everyone's keys every frame (7.6, optional feature — not supported by the current webGBA, which behaves as `"messages"`) |
 | `inputDelay` | integer | no | `3` | With `sync: "inputs"`, how many frames later keys take effect (1–10) |
 | `rejoin` | boolean | no | `false` | `true` = rejoin (7.10). A dropped guest's seat is kept until the session ends and the same device can come back to it |
 | `join` | `"anytime"` | no | none (7.7 behavior) | `"anytime"` = drop-in game (7.12). The dialog does not open by itself when the game asks, there is no timeout, and players are taken for 2 min 30 s after the host creates the room or presses Renew (also with the dialog closed; the host can close it alone) |
 | `iceServers` | array | no | none (webGBA default STUN + Cloudflare TURN) | The game's own connection servers (STUN/TURN, 7.11). When given, only this list is used instead of webGBA's defaults |
+| `board` | object | no | none (people list only) | Game value columns of the player status board (7.9.1) |
 
 ```json
 "multiplayer": {
@@ -776,7 +785,7 @@ Absent means the game does not use multiplayer (a ① game with the exports but 
 }
 ```
 
-Unknown keys are ignored. If `multiplayer.protocol` is higher than the host knows, the host turns multiplayer off and runs the game as usual.
+Unknown keys are ignored. If `multiplayer.protocol` is higher than the host knows, the host turns multiplayer off and runs the game as usual. The current webGBA, however, treats a `protocol` other than 1 as a manifest error when opening the file and does not open it (chapter 10).
 
 #### 7.3 ① Web API — exported functions
 
@@ -785,7 +794,7 @@ The game counts as supporting multiplayer only when all seven exist: `Web_NetWan
 
 | Function | Shape | Called | Meaning |
 |---|---|---|---|
-| `Web_NetHost` | `(u32 protocol, u32 flags)` | Once after `Web_Init` | The host supports multiplayer protocol `protocol`. `flags` bit 0 = ordered broadcast available, bit 1 = `sync: "inputs"` available, bit 2 = rejoin (7.10) available (set only for games with manifest `rejoin: true`). **Not called means the host has no link** → the game should hide menus like "Play with friends". Optional |
+| `Web_NetHost` | `(u32 protocol, u32 flags)` | Once after `Web_Init` | The host supports multiplayer protocol `protocol`. `flags` bit 0 = ordered broadcast available, bit 1 = `sync: "inputs"` available (0 in the current webGBA), bit 2 = rejoin (7.10) available (set only for games with manifest `rejoin: true`). **Not called means the host has no link** → the game should hide menus like "Play with friends". Optional |
 | `Web_NetWanted` | `() → u32` | Every frame after `Web_RunFrame` | 0 = no link needed. Non-zero = a request (7.3.1) |
 | `Web_NetEvent` | `(u32 kind, u32 a, u32 b)` | When something happens, between frames | Event (7.3.3) |
 | `Web_NetOut` | `() → ptr` | Every frame after `Web_RunFrame` | Where the records to send are (7.3.2) |
@@ -866,12 +875,12 @@ Use the `webgba.net` object the isolated frame provides (between frame and host 
 
 | Host → game | Meaning |
 |---|---|
-| `webgba.net.host` | `{ protocol, ordered, inputs, rejoin }` — the ① `Web_NetHost` (`rejoin` = bit 2) |
+| `webgba.net.host` | `{ protocol, ordered, inputs, rejoin }` — the ① `Web_NetHost` (`rejoin` = bit 2; `inputs` is false in the current webGBA) |
 | `webgba.net.onevent = (kind, a, b) => …` | Same numbers as 7.3.3 |
 | `webgba.net.onrecv = (from, bytes) => …` | A received message (in order) |
 | `webgba.net.onstate = (from, bytes) => …` | A received state bundle (7.10). In order with that sender's messages |
 
-On hosts that do not know multiplayer, `webgba.net` itself is `null`.
+On hosts that do not know multiplayer, `webgba.net` itself is `null`. The current webGBA also gives `null` to games whose manifest has no `multiplayer`.
 
 #### 7.5 Limits
 
@@ -888,6 +897,8 @@ On hosts that do not know multiplayer, `webgba.net` itself is `null`.
 #### 7.6 Optional feature: input sync (`sync: "inputs"`)
 
 For simple ① games with no link code of their own. If the game produces the same screen for the same key input (deterministic), the host lines up everyone's keys every frame.
+
+> **The current webGBA does not support this feature** (① `Web_NetHost` `flags` bit 1 = 0, ② `webgba.net.host.inputs` = false, `Web_NetKeys` is never called). A game with `sync: "inputs"` behaves as `"messages"`. Games that need matching keys should build the same scheme (delay frames + wait until everyone's keys have arrived) themselves with messages (7.8).
 
 - Extra export: `Web_NetKeys(u32 slot, u32 keys)` — the host calls it for every other player right before `Web_RunFrame`. The `keys` of `Web_RunFrame(keys)` are your own.
 - The host sends your keys for frame f to be used at f + `inputDelay`, and does not run frame f until everyone's keys for f have arrived (the screen pauses meanwhile; `STALL` after 1 second).
@@ -908,15 +919,25 @@ It does not open:
 - For `join: "anytime"` games (7.12) when the game asks. The user opens it with the "Multiplayer" button above the screen.
 
 ```text
-┌ Multiplayer · Trade (2 players) ──────────┐
-│  Nickname [ Player 4821 ]                  │
-│  [ Host a room ]   [ Join ]                │
-│                                [ Cancel ]  │
-└────────────────────────────────────────────┘
+┌ Multiplayer            [Trade · 2 players] [×] ┐
+│ [ Join | Host a room ]                          │
+│ Open rooms · updates automatically         [↻] │
+│ ┌ Player 4821  ■□ 1/2 players      [Join] ┐    │
+│ Join with room code                             │
+│ [9][2][ ][ ][ ][ ]                  [> Join]   │
+├─────────────────────────────────────────────────┤
+│ My name Player 7730 [Change]  [> Connect without internet] │
+└─────────────────────────────────────────────────┘
 
-Host:  ① give the host code (111 characters · QR) to the other player → ② enter their answer code and connect
-Guest: ① enter the host code and press Next → ② give the answer code (· QR) to the host
+Host a room tab: [+ Host a room] → My room (big room code · Copy code · QR · user seats 1P~ · empty seats dashed)
+                 bottom [Close room] [Renew] … [Back to game]  (× = close the window only, Close room = the room is gone)
+Connection failed: cause + [Try again] [Connect without internet (code / QR)] [Start over] + things to check
+Connect without internet — host:  ① give the host code (111 characters · QR) to the other player → ② enter their answer code and connect
+                           join:  ① enter the host code and press Next → ② give the answer code (· QR) to the host
 ```
+
+- The last tab picked (Join · Host a room) is remembered and opens next time. A room code goes into 6 cells as digits; from pasted text only the digits are used. A wrong code turns the cells red and can be retyped in place.
+- In the PC version (exe) popup buttons are upper-case English: JOIN (open room) · ENTER (room code) · EDIT (name) · OFFLINE (connect without internet) · CREATE (host a room) · COPY · QR · CLOSE ROOM · RENEW · DONE · RETRY · BACK, and LEAVE · INVITE on the status board. Help texts use the same button names (e.g. "press RENEW").
 
 - Connection codes never pass through a server. A code carries local addresses (mDNS names, private IPv4, IPv6 ULA, link-local) and public address candidates from STUN (no matchmaking server is used, so no default TURN credentials — 7.11). A prflx candidate (learned from a connectivity check when the other side could not resolve an mDNS name, as happens between a PC and a phone on the same Wi-Fi) is accepted too.
 - A code is for one person, once. For 3 or more players the host makes a new host code per player (used codes and answer codes for another invite are refused).
@@ -925,7 +946,7 @@ Guest: ① enter the host code and press Next → ② give the answer code (· Q
 - Until the maximum is reached, the room host keeps a small indicator ("2/4 · waiting"); more players arrive as `JOIN`.
 - `JOIN`, the player count and the count in the room list change only after the joining device reports that it accepted its seat. A player who drops before that does not keep a seat (no `HOLD`).
 - Cancel → `CLOSED(CANCEL)`. Not found in time (3 minutes by default) → `CLOSED(TIMEOUT)`. If the game ends the link first, the dialog closes quietly. `join: "anytime"` games differ (7.12).
-- Help when connecting fails: "Check that you are on the same Wi-Fi, that it is not a guest or public Wi-Fi, and that VPN is off."
+- Help when connecting fails: a cause banner (including the symmetric NAT notice, 7.11) + a "Things to check" list (same Wi-Fi · guest or public Wi-Fi · VPN and mobile data · mesh Wi-Fi and client isolation · PC firewall).
 
 During a session the host keeps to: fast-forward and speed changes off (1×), quick slots (saving and loading states), web auto save and reset blocked (the game's own save stays as it is), opening another game = end of session (`LEFT`). Pausing or leaving the app → `STALL` to the others (not when only the tab is hidden on a PC: frames keep running), `RESUME` on return, dropped (`LOST`) if not back within a set time (15 seconds by default). A small status in a screen corner (players, connection state). The nickname is a user setting; IP addresses and device names are never shown.
 
@@ -933,6 +954,8 @@ During a session the host keeps to: fast-forward and speed changes off (1×), qu
 
 - If the same keys and messages always give the same result (random numbers from a seed inside the game), `TO_ORDERED` alone keeps everyone in the same state.
 - Messages arrive between frames, so queue them and process them inside a frame.
+- Games that keep keys in step (lockstep) send their own keys for frame f with the frame number, apply them at f + a delay (such as 7.6's default of 3 frames), and do not advance frame f until everyone's keys for f have arrived (the same scheme as 7.6; the current webGBA has no host input sync, so the game does it). Only frames with everyone's keys advance, so even with a slow device the devices never drift apart by more than the delay. Line up the first frame with a "start" message from the room host.
+- `STALL` can be temporary, so wait instead of dropping the player at once. If the player is not back within 15 seconds (default), the host sends `LEAVE(LOST)` (`CLOSED` when the room host dropped, `HOLD` in rejoin games, 7.10).
 - If the host does not know multiplayer (`Web_NetHost` never called / `webgba.net` is `null`), hide the link menus (older webGBA).
 - Examples: `docs/wgba/examples/net-webapi/` (① small C, no ROM) and `net-script/` (② one JS file) — A looks for players, the host's START runs one round, everyone ends with the same hash, and both fill the player status board (7.9). A ② example without multiplayer is `hello-script/` (drawing, keys, save, quick slots).
 - By default only the same game build can connect (`compat: "exact"`). If different versions share the same link rules, put the same string in `compat`.
@@ -942,7 +965,9 @@ During a session the host keeps to: fast-forward and speed changes off (1×), qu
 
 During a session webGBA shows the current players in the "Multiplayer" menu. webGBA fills the seat number, nickname, room host, connection state and latency (round trip to the room host, ms); the game may add values per player (HP, level, rank, state, …). The list shows even if the game gives nothing.
 
-Opening it: web = the "Multiplayer" button above the screen during a session (where fast-forward was), PC version (exe) = the "Multiplayer" button in the left tool bar or Tab (shown while held; a short press keeps it open). The game keeps running while the menu is open, and the menu never opens by itself when a game ends.
+Opening it: web = the "Multiplayer" button above the screen during a session (where fast-forward was), PC version (exe) = the "Multiplayer" button in the left tool bar or Tab (shown while held; a short press keeps it open). The game keeps running while the menu is open, and the menu never opens by itself when a game ends (closed by default).
+
+Where it shows: on a landscape web screen in a column right of the game screen (the game screen shrinks by that much so nothing is covered; with on-screen buttons the layout is [D-pad | game | status board | A·B buttons], so you can play with it open), on a portrait web screen as a sheet below the game screen (covering the on-screen buttons — close it to play again), and in the PC version as the left panel. The header shows "Room <code>" and the player count; rows are the same user seats as in the connection window's waiting room (seat, nickname, host, me, lost, latency, empty seats dashed — no empty seats in games with AI rows); one line under the table shows the game caption (`captions`) and the `mark` legend; at the bottom are "Leave room" ("Close room" for the host) and the host's "Invite code" (when a seat is free; opens the room code / connection code screens of the connection window).
 
 ##### 7.9.1 Manifest `multiplayer.board`
 
@@ -1257,7 +1282,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - If `rom` exists: it is last, and the WGRM header, size and SHA-1 are right (not unpacked with `--quick`); a different manifest `rom.sha1` → warning
 - Manifest: JSON of 64KB or less, `wgba` 1, `id` rule, `version` is `x.y.z`, `name` (a string or each language entry 1–48 characters, errors name the entry; no `en`·`ko`·`ja` entry at all or an entry of only spaces → warning), `runtime`, no unknown `needs`, `homepage` is `https://`, values of `screen`, `save`, `input.preset`, `input.dpad`, `cart.color`, `display` is an object and `display.aspect` is `"integer:integer"` (W·H 1–1024, ratio 1:4–4:1), button id rule and duplicates, role duplicates, a `shortName` entry over 16 characters → warning. `info` prints `name` and `shortName` as shown for each screen language (en·ko·ja; `ja → en …` when another entry is used)
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
-- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `join` (`"anytime"` only), `iceServers` (7.11 format = error, fixed TURN credentials = warning)
+- Multiplayer: `multiplayer.protocol` 1, `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `join` (`"anytime"` only), `iceServers` (7.11 format = error, fixed TURN credentials = warning), `board` (7.9.1 format = error, unknown keys = warning), and in ① a warning when only one of `Web_NetBoard` and `multiplayer.board` exists
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
 - Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 18×46) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
 - Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning
@@ -1273,6 +1298,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 | Manifest `wgba` (now 1) | Only when the meaning of an existing field changes or a field is removed (new fields do not raise it) | Not opened if higher |
 | `needs` | Lists "this feature is required" instead of a number | Not opened if a word is unknown |
 | Frame API `webgba.version` (now 1) | Only when the meaning of an existing function changes | The game checks it |
+| Multiplayer protocol `multiplayer.protocol` (now 1) | When the link protocol changes | Spec: if higher than the host supports, only multiplayer is turned off and the game runs (7.2). The current webGBA does not open a manifest whose value is not 1 (manifest error) |
 | ROM chunk WGRM format (now 1) | When the ROM header changes | Unknown → not opened |
 | Game `version` | Up to the author (when content changes) | Used only to decide updates and for display |
 
@@ -1292,6 +1318,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - Game name (per language in English, Korean and Japanese is fine), game id (lowercase reverse domain, e.g. io.github.myaccount.gamename — never changes once chosen), version (x.y.z)
 - Screen size, the buttons used and what each does, whether there is a save, whether it uses the mouse
 - Whether there is cartridge art (label 48×32, front 54×44, spine 18×46, all at the same scale 1–4×, PNG or lossless WebP — all optional), cartridge body colour (#RRGGBB)
+- Whether it has multiplayer: players (2–8) and purposes (trade, battle, …), whether the game also runs without multiplayer, whether dropped users need to rejoin or players need to drop in, and how the game keeps devices in the same state (message order / key lockstep)
 - Whether I have the rights to every piece of data that goes in (if not, it does not go in)
 
 [File layout]
@@ -1311,23 +1338,23 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 
 [Manifest webgba.manifest — UTF-8 JSON, no BOM]
 - Required: "wgba": 1, "id" (lowercase reverse domain, at least one dot, 64 characters or fewer), "version" ("x.y.z"; pre-release "-beta.1" allowed), "name" (string or {"en":…,"ko":…,"ja":…}, 48 characters or fewer per entry — hosts show the screen language's entry → en → ko → ja, whichever exists; write only the entries you have), "runtime" ("webapi" or "script").
-- Optional: shortName (16 characters, same language entries as name), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, display{aspect ("W:H" display ratio, e.g. "4:3" — stretched when it differs from the screen buffer)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad ("latest"·"opposite"·"both" default for directions pressed together)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer. Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
+- Optional: shortName (16 characters, same language entries as name), description, author, license, homepage (https:// only), contact, build, needs (from ["pointer","net","keyboard","state"]), screen{width,height (1–1024, default 240·160), scale ("fit"·"integer")}, display{aspect ("W:H" display ratio, e.g. "4:3" — stretched when it differs from the screen buffer)}, save{kind,maxSize,files}, pointer{use}, input{preset,buttons,keyboard,dpad ("latest"·"opposite"·"both" default for directions pressed together)}, cart{color, label, front{labelAt}, spine{textArea}}, rom{required}, entry{style,js,args}, files, multiplayer (see [Multiplayer] below). Unknown fields are ignored; if a value outside the spec is really needed, use a name starting with "x-".
 - For runtime "webapi" without a ROM chunk you must write "rom": {"required": false} (otherwise webGBA asks the user to pick a ROM file).
 - Write cart.label/front/spine as {"chunk":"cart.label|cart.front|cart.spine","format":"png|webp","width":…,"height":…} matching the pictures, leave out entries for pictures you do not include, and put labelAt [x,y] (default [3k,5k]) on the front and textArea [x,y,w,h] (the host writes the short name vertically there; no text if absent) on the spine.
-- The current webGBA ignores screen.fps, audio and state.use (it always runs at about 59.7275 fps). It does not open games with "net" in needs.
+- The current webGBA ignores screen.fps, audio and state.use (it always runs at about 59.7275 fps). It supports all four needs values. Put "net" in needs only for a game that cannot run without multiplayer (an older webGBA without multiplayer does not open it).
 
 [runtime "webapi" — no JS, the host runs the wasm directly]
 - Required exports: memory, Web_Init() -> i32 (0 = failure), Web_RunFrame(keys) -> i32 (0 = stopped; keys = bits of pressed buttons), Web_GetFramebuffer() -> i32 (width×height pixels, R,G,B,A bytes each).
-- Optional: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount() (float32 stereo interleaved, count = number of left/right pairs) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty() (save) / Web_RomBuffer(size) (where to place the ROM) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at) (quick slots need all five; Web_StateUsed() optional) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec).
+- Optional: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount() (float32 stereo interleaved, count = number of left/right pairs) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty() (save) / Web_RomBuffer(size) (where to place the ROM) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at) (quick slots need all five; Web_StateUsed() optional) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net* (multiplayer, see [Multiplayer] below).
 - Only these imports: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1 (() -> (), does nothing). Any other import → make it runtime "script".
 - Games that are not 240×160 with GBA buttons, or that run without a ROM, import webgba.v1 (so older webGBA refuses them). In C: __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void); called once in Web_Init.
 - Sequence: instantiate → __wasm_call_ctors (or else _initialize) → ROM → save → Web_Init → Web_RunFrame every frame. Do not grow memory a lot after Web_Init.
 - Every button has a bit (0–31). If the buttons are the GBA ones, use "input": {"preset":"gba"} (A=0 B=1 SELECT=2 START=3 RIGHT=4 LEFT=5 UP=6 DOWN=7 R=8 L=9). If not, you must write "input": {"preset":"none", "buttons":[…every button…]} — the webapi preset default is "gba", so leaving preset out appends my buttons after the 10 GBA buttons and bits and roles collide (validation error). To add only a few buttons to the 10 GBA ones, use preset "gba" + the extra buttons (unused bits and roles, e.g. c=10 d=11).
 
 [runtime "script" — games with their own JS]
-- The JS runs inside an origin-less sandbox iframe (srcdoc). It cannot use the network (fetch, XHR, WebSocket, WebRTC), IndexedDB, cookies, real localStorage, popups, top-window navigation or threads (SharedArrayBuffer, pthreads). localStorage is an in-memory substitute.
+- The JS runs inside an origin-less sandbox iframe (srcdoc). It cannot use the network (fetch, XHR, WebSocket, WebRTC), IndexedDB, cookies, real localStorage, popups, top-window navigation or threads (SharedArrayBuffer, pthreads) (multiplayer goes through webgba.net). localStorage is an in-memory substitute.
 - entry is required. The JS chunk is always named "js" (leave out entry.js). entry.style "module": the JS exports export default async function start(webgba){…}. "emscripten": emscripten glue (plain, MODULARIZE or EXPORT_ES6) — the frame passes Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort}. Data files go through the files table ({"file name":"data.<name>" or "rom"}), including the .data of --preload-file. Recommended build: -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
-- The webgba object: version (1), manifest, lang, canvas (#canvas, screen size), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: address, save.read()/save.write(bytes) (only with save.kind "storage"), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false) (both needed for quick slots), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready() (call it when start-up is done), exit(reason), log(level,text), net (null for now).
+- The webgba object: version (1), manifest, lang, canvas (#canvas, screen size), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: address, save.read()/save.write(bytes) (only with save.kind "storage"), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false) (both needed for quick slots), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready() (call it when start-up is done), exit(reason), log(level,text), net (the multiplayer object when the manifest has multiplayer, otherwise null — see [Multiplayer] below).
 - save.kind: "storage" (default, webgba.save), "localStorage" (the frame's whole localStorage is the save), "files" (path save.files[0] in emscripten FS, FS must be exported), "none". maxSize default 1MB, up to 16MB.
 - Every button has a code (the KeyboardEvent.code the game listens for). The host turns the keys the user presses into keydown/keyup events with this code (isTrusted is false, so do not check it). The preset default is "none".
 
@@ -1337,21 +1364,36 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - Default keys come from the role (a=Z·K, b=X·J, c=C·I, d=V·U, l=A, r=S, l2=Q, r2=W, start=Enter, select=Backspace·right Shift, directions=arrow keys). Do not put host keys (Space, Tab, Escape, Pause, F1–F12, P) in keys.
 - (Optional) input.rs = default RS button input: an array of 1–32 steps [{buttons:[button id…] (pressed together; only buttons whose role is a direction, a, b, c, d, l, r, start or select), hold (frames held, 1–600, default 3), gap (frames before the next step, 0–600, default 3)}]. Example: a throw with A+B = [{"buttons":["P","K"],"hold":6}].
 
-[Multiplayer — draft protocol; the current webGBA does not connect players]
-- Manifest multiplayer{protocol:1, players{min,max}, purposes[{id,name,players}], compat, sync}. webapi exports the seven Web_NetWanted·Web_NetEvent·Web_NetOut·Web_NetOutLen·Web_NetOutClear·Web_NetInBuffer·Web_NetIn; script uses webgba.net (null for now). If the host never calls Web_NetHost or webgba.net is null, hide the link menus. Game JS never opens network connections itself.
+[Multiplayer — protocol 1, supported by the current webGBA (Windows app and web version)]
+- webGBA does the connecting: 6-digit room code, nearby rooms on the same Wi-Fi, connection codes (QR). A direct device-to-device connection (WebRTC) is tried first; networks where that fails go through a Cloudflare relay server (TURN; content stays DTLS-encrypted). The game only asks for "I need players", sends and receives bytes, and handles events. The game never opens network connections itself (WebSocket, WebRTC, fetch).
+- Session = one room, 2–8 players. Room host = slot 0, then 1, 2, … in join order. Messages are never lost and keep each sender's order; one message is up to 16384 bytes; keep each frame's total sends at 65536 bytes or less. Only the same game connects (compat).
+- Manifest "multiplayer": protocol 1 (required) · players{min,max} (2–8, default 2·2) · purposes[{id (lowercase letters, digits, -, 32 characters), name (per-language text), players[min,max]}] (array order = purpose number from 1; different purposes never connect; absent = one purpose) · compat ("exact" default = same id + same build id / any other string = games with the same id and that string) · rejoin (true = rejoin) · join ("anytime" = drop-in) · iceServers ([{urls: stun:/turn:/turns: addresses (4 in total), username·credential or credentialUrl (https; the host GETs it when connecting → {username, credential, ttl}; CORS must allow https://webgba.vercel.app and http://ui.localhost)}] — when given, only this list is used instead of webGBA's default STUN/TURN; fixed credentials can be pulled out of the file by anyone, so credentialUrl is recommended) · board (status board, below). sync "inputs" and inputDelay are in the spec but not supported by the current webGBA, so do not use them.
+- webapi exports (all seven are needed for multiplayer): Web_NetWanted()→u32 · Web_NetEvent(kind,a,b) · Web_NetOut()→ptr · Web_NetOutLen()→u32 · Web_NetOutClear() · Web_NetInBuffer(len)→ptr (0 = no room right now → the host retries next frame, in order) · Web_NetIn(from,len) (from bit 8 = 0x100 means a state bundle). Optional: Web_NetHost(protocol,flags) (once after Web_Init; flags bit 0 = ordered, bit 1 = input sync (0 now), bit 2 = rejoin — if it is never called, hide the link menus) · Web_NetBoard()→ptr · Web_NetCompat()→ptr (NUL-terminated ASCII compatibility key up to 64 characters, appended to compat for comparison). No new imports.
+- The host's frame: for each received message Web_NetInBuffer(len) → write → Web_NetIn(from,len) → Web_RunFrame(keys) → send the records from Web_NetOut·Web_NetOutLen → Web_NetOutClear() → check Web_NetWanted() (open the window, end the session).
+- Web_NetWanted value: bits 0–7 purpose number (0 = first purpose) · 8–11 minimum players (0 = 2) · 12–15 maximum players (0 = same as minimum) · 16–17 role (0 any, 1 host only, 2 join only) · 18–23 = 0 · 24–31 request number (+1 every time the game looks for new players, 1 after 255). Keep returning the same value during a session; 0 = end of link (the host finishes pending sends, closes the session and sends CLOSED(LEFT)).
+- Send records (little endian, back to back): u16 content length n (1–16384) · u8 target (0–7 = slot, 0xFE = TO_ORDERED everyone including me, all in the same order, 0xFF = TO_ALL everyone except me) · u8 type (0 message; rejoin games only: 1 = state bundle piece, 2 = last piece) · n content bytes; the next record starts on a 4-byte boundary. Records queued without a session are dropped.
+- Events Web_NetEvent(kind,a,b): 1 OPEN (own slot, players — the room host starts alone first) · 2 JOIN (slot, players) · 3 LEAVE (slot, reason) · 4 CLOSED (reason, 0) · 5 STALL (slot — no reply for over 1 second, or the app was left) · 6 RESUME (slot). Rejoin games only: 7 HOLD (slot, players — the dropped seat is kept; the dropped device itself gets its own slot; on a user device a = 0 means the room host closed the app and is awaited) · 8 BACK (slot, players — the kept seat is connected again, always after HOLD; on a user device a = 0 means the room host is back → this device sends its state bundle to slot 0) · 9 REJOINED (own slot, players — sent to a returning device instead of OPEN; a returning room host gets a = 0; the JOIN, LEAVE, HOLD and BACK missed while away follow). Reasons: 1 CANCEL · 2 TIMEOUT · 3 INCOMPATIBLE · 4 LOST · 5 FULL · 6 LEFT · 7 HOST_LEFT · 8 NO_NETWORK · 9 SOLO (the dropped user chose "Play alone").
+- The game must: treat CLOSED(CANCEL) like a cancel inside the game and return 0 from Web_NetWanted. Wait on STALL instead of dropping at once (if not back within 15 seconds by default, the host sends LEAVE(LOST) or CLOSED; HOLD in rejoin games). HOST_LEFT = end of session (no host hand-over). During a session the host blocks fast-forward, quick slots and reset (the game's own save stays).
+- script: webgba.net (only when the manifest has multiplayer, otherwise null) — want({purpose: purpose id, min, max, role: "any"|"make"|"join"}) (every call is a new request) · unwant() · send(to: slot 0–7 | "ordered" | "all", bytes up to 16384) · sendState(to: slot, bytes 1–262144, rejoin games only) · board(table | null) · host{protocol, ordered, inputs (false now), rejoin} · onevent = (kind,a,b) => … (numbers as above) · onrecv = (from,bytes) => … · onstate = (from,bytes) => …. Bytes are ArrayBuffer or Uint8Array.
+- Keeping the same state (recommended = lockstep): make the game deterministic (same input and messages → same result; random numbers from a seed inside the game). TO_ORDERED messages come back to the sender too (from = own slot), so if every device applies them only in the order they arrive, all devices end in the same state. A game that keeps keys in step sends its own keys for frame f with the frame number, applies them at f + a delay (e.g. 3 frames), and does not advance frame f until everyone's keys for f have arrived — even with a slow device, the devices never drift apart by more than the delay. Line up the first frame with a "start" message from the room host. Messages arrive between frames, so queue them and process them inside a frame.
+- Rejoin (rejoin: true, room-code sessions only — connection-code / QR sessions get LEAVE(LOST)): a dropped user's seat is kept until the session ends (HOLD). Messages sent while the user was away are not delivered, so the room host's game sends a state bundle (1–262144 bytes; the host splits it into 16384-byte pieces and joins them) to slot s when it gets BACK(s). ① sending = record type 1 (piece, up to 16384 bytes, may be spread over frames) and 2 (last piece); ① receiving = once the whole bundle is in, Web_NetInBuffer(bundle size) → Web_NetIn(from | 0x100, len), so keep receive space for the largest bundle. Put the number of the last ordered message the game applied into the bundle; the returning device applies only higher numbers. If the room host closes the app the room stays 2 minutes; when the host returns, the host device gets REJOINED(0), one user picked by webGBA gets BACK(0) and sends its state bundle to slot 0, and the other users get REJOINED (own slot) and wait for the bundle from the host's game.
+- Drop-in (join: "anytime"): even if the game keeps its request from the start, the window does not open by itself and there is no timeout. The user hosts a room with the "Multiplayer" button, and the room host takes players for 2 min 30 s after creating the room or pressing Renew. A new user arrives as JOIN; the game sends that user the game state it needs with messages (state bundles also work in rejoin games).
+- Status board (optional): multiplayer.board{columns[1–6]{id (lowercase letters, digits, -, 16 characters), type "bar"|"number"|"rank"|"status", name (12 characters), max (required for bar, 1–65535), tone ("hp"|"accent"), prefix·suffix (4 characters), labels (required for status, 1–15 {name (8 characters), tone "normal"|"good"|"warn"|"bad"|"dim", dimRow})}, names (names of non-human rows), captions (header text with {0}·{1}), mark (meaning of highlighted rows), scope ("all" the game fills every row | "self" each device gives its own row), sort{column, order}}. ① Web_NetBoard() = a 400-byte buffer at the same address for the whole session: 0 serial u32 (+1 on every change, skip 0, written last after every other field) · 4 format u8 = 1 · 5 rows u8 (0–8) · 6 flags u8 (bit 0 = final result) · 7 caption u8 (from 1, 0 none) · 8 arg0 s32 · 12 arg1 s32 · 16 + 48×i row{slot u8 (0–7, 0xFF = not a person) · flags u8 (bit 0 dim, bit 1 highlight) · nameLabel u8 · nameLen u8 (0–20) · values s32×6 · name 20 bytes UTF-8}. Values: bar = low 16 bits current, high 16 bits max (0 = max), number = s32, rank = 0 or 1–99, status = 0 or a labels number. ② webgba.net.board({caption, args:[…], final, rows:[{slot, values, nameLabel, name, dim, mark}]}). Change it at most 4 times a second. Human rows always show the webGBA nickname.
+- Examples: webGBA repository docs/wgba/examples/net-webapi (① C, no ROM) and net-script (② one JS file).
 
 [Steps]
 1. Look at the wasm imports and exports and choose the runtime (webapi if it follows the webapi convention, otherwise script).
-2. Write the manifest JSON (every required field; ask me for values you do not know).
+2. Write the manifest JSON (every required field; ask me for values you do not know). For a multiplayer game write multiplayer, and implement the seven Web_Net* exports (webapi) or webgba.net (script).
 3. Pack. If you can get the webGBA repository (https://github.com/flightrabbit-hash/webGBA), run in that folder
    node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --manifest manifest.json [--cart-dir art-folder (label.png·front.png·spine.png)] [--js game.js] [--data name=file] [--rom rom]
    (node 18+, nothing to install; the tool fills chunk, format, width and height of cart.*). If not, write a short script (node or python) that packs by the [File layout] above: drop webgba.* sections → prepare chunks → compute the TOC length → assign offsets in order → SHA-256 → write.
-4. Validate: node tools/wgba.mjs check game.wgba must report 0 errors. Without the tool, check by hand: WebAssembly.validate, first section is webgba.toc, TOC file length = real length, every entry's position, section name, kind and SHA-256, rom is last, required manifest fields and version format, for webapi the required exports, the import list and no shared bits, for script the js chunk, entry.style and button codes, cartridge picture sizes and formats.
+4. Validate: node tools/wgba.mjs check game.wgba must report 0 errors. Without the tool, check by hand: WebAssembly.validate, first section is webgba.toc, TOC file length = real length, every entry's position, section name, kind and SHA-256, rom is last, required manifest fields and version format, for webapi the required exports, the import list and no shared bits, for script the js chunk, entry.style and button codes, cartridge picture sizes and formats, for multiplayer protocol 1, purpose id rule and no duplicates, players 2–8, rejoin boolean, join "anytime" only, iceServers format, board format, and all seven Web_Net* exports (only some = warning).
 5. Show me the file name, size, the TOC table and the validation result.
 
 [Do not]
 - Include ROMs, art, music or data I have no rights to. Put other companies' trademarks (console names, logos …) on cartridge art, or copy real cartridge shapes or box art.
 - Put network requests, eval of outside code, access to the host (parent, top) or IndexedDB into game JS.
+- Use anything but webGBA's link (Web_Net*, webgba.net) for multiplayer. The game never connects by itself with WebSocket, WebRTC or fetch (the script frame blocks the network, and webapi has no network imports). Send ROMs or other people's works in messages.
 - Change the id in a new version of the same game (saves would be lost). Raise the version as x.y.z — webGBA updates a higher version of the same id without asking and warns only for a lower one. Use a different id for a different game.
 - Invent fields that are not in the spec (if really needed, use a name starting with "x-").
 - Build with threads (SharedArrayBuffer, pthreads).
