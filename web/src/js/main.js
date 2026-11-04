@@ -2330,13 +2330,13 @@ function packNode(rom, look, { running = false } = {}) {
 /** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
 function spineArt(rom, look) {
   const { model, images, body } = look;
-  const { canvas, band } = cartArt.drawSpine(model, images, body);
+  const { canvas, band, textArea } = cartArt.drawSpine(model, images, body);
   const art = make("span", "spine__art");
   art.style.width = `${cssOf(model, canvas.width)}px`;
   art.style.height = `${cssOf(model, canvas.height)}px`;
   art.append(sizeCanvas(canvas, model));
-  if (model.textArea) {
-    const [x, y, w, h] = model.textArea.map((v) => Math.round(cssOf(model, v)));
+  if (textArea) {
+    const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
     const name = make("span", band ? "spine__name is-band" : "spine__name");
     Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
     if (!band) name.style.color = model.spineInk ?? cartArt.LABEL_INK;

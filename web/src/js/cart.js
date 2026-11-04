@@ -249,39 +249,60 @@ const BAND_SHARE = 0.6;
 const BAND_NEAR = 48;
 const bandCache = new WeakMap();
 
+const brightness = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+
 function spineBand(model, bitmap) {
   const key = `${model.color}|${model.textArea.join()}`;
   let byKey = bandCache.get(bitmap);
   if (!byKey) bandCache.set(bitmap, (byKey = new Map()));
   if (byKey.has(key)) return byKey.get(key);
-  const canvas = canvasOf(bitmap.width, bitmap.height);
+  const { width, height } = bitmap;
+  const canvas = canvasOf(width, height);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
-  const [ax, ay, aw, ah] = model.textArea;
-  const image = ctx.getImageData(ax, ay, aw, ah);
+  const image = ctx.getImageData(0, 0, width, height);
   const { data } = image;
+  const at = (x, y) => (y * width + x) * 4;
+  const rgbAt = (o) => [data[o], data[o + 1], data[o + 2]];
+  const paint = (o, rgb) => {
+    data.set(rgb, o);
+    data[o + 3] = 255;
+  };
+  const [ax, ay, aw, ah] = model.textArea;
   const count = new Map();
-  for (let o = 0; o < data.length; o += 4) {
-    if (data[o + 3] < 255) continue;
-    const rgb = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
-    count.set(rgb, (count.get(rgb) ?? 0) + 1);
-  }
+  for (let y = ay; y < ay + ah; y++)
+    for (let x = ax; x < ax + aw; x++) {
+      const o = at(x, y);
+      if (data[o + 3] < 255) continue;
+      const rgb = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
+      count.set(rgb, (count.get(rgb) ?? 0) + 1);
+    }
   let paper = 0;
   let most = 0;
   for (const [rgb, n] of count) if (n > most) [paper, most] = [rgb, n];
   let band = null;
   if (most >= aw * ah * BAND_SHARE) {
     const base = [paper >> 16, (paper >> 8) & 255, paper & 255];
-    const color = rgbOf(model.color) ?? BLACK;
-    const tone = WHITE.map((v, i) => v + (color[i] - v) * BAND_ALPHA);
-    for (let o = 0; o < data.length; o += 4) {
-      if (data[o + 3] < 255) continue;
-      const delta = [0, 1, 2].map((i) => data[o + i] - base[i]);
-      if (delta.some((d) => Math.abs(d) > BAND_NEAR)) continue;
-      for (let i = 0; i < 3; i++) data[o + i] = Math.max(0, Math.min(255, Math.round(tone[i] + delta[i])));
+    const body = rgbOf(model.color) ?? BLACK;
+    const tone = WHITE.map((v, i) => Math.round(v + (body[i] - v) * BAND_ALPHA));
+    for (let y = ay; y < ay + ah; y++)
+      for (let x = ax; x < ax + aw; x++) {
+        const o = at(x, y);
+        if (data[o + 3] === 255 && [0, 1, 2].every((i) => Math.abs(data[o + i] - base[i]) <= BAND_NEAR)) paint(o, body);
+      }
+    for (const top of [ay - model.k, ay + ah]) {
+      if (top < 0 || top + model.k > height) continue;
+      const strip = [];
+      for (let y = top; y < top + model.k; y++) for (let x = ax; x < ax + aw; x++) strip.push(at(x, y));
+      const first = rgbAt(strip[0]);
+      const one = strip.every((o) => data[o + 3] === 255 && [0, 1, 2].every((i) => data[o + i] === first[i]));
+      if (one && brightness(first) > brightness(body)) strip.forEach((o) => paint(o, body));
     }
-    ctx.putImageData(image, ax, ay);
-    band = canvas;
+    const area = CART_DEFAULT_TEXT_AREA.map((v) => v * model.k);
+    const [bx, by, bw, bh] = area;
+    for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) paint(at(x, y), tone);
+    ctx.putImageData(image, 0, 0);
+    band = { canvas, textArea: area };
   }
   byKey.set(key, band);
   return band;
@@ -357,7 +378,7 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(18k×46k). 이름 자리는 model.textArea, band = 이름 자리 종이를 롬팩 색 띠로 바꿔 칠함. */
+/** 옆면 canvas(18k×46k) + 이름 자리. band = 종이를 롬팩 색으로 바꾸고 기본 이름 자리에 띠를 칠함(이름 자리도 기본 자리). */
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
@@ -365,9 +386,9 @@ export function drawSpine(model, images, body) {
   ctx.imageSmoothingEnabled = false;
   if (!images.spine) {
     blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
-    return { canvas, band: false };
+    return { canvas, band: false, textArea: model.textArea };
   }
   const band = model.textArea ? spineBand(model, images.spine) : null;
-  ctx.drawImage(band ?? images.spine, 0, 0);
-  return { canvas, band: Boolean(band) };
+  ctx.drawImage(band?.canvas ?? images.spine, 0, 0);
+  return { canvas, band: Boolean(band), textArea: band?.textArea ?? model.textArea };
 }
