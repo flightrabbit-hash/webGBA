@@ -4404,6 +4404,71 @@ async function boot() {
   document.documentElement.dataset.ready = "1";
   registerWorker();
   if (!state.storeBroken) store.persist();
+  if (touchDebugOn()) startTouchDebug();
+}
+
+function touchDebugOn() {
+  try {
+    return new URLSearchParams(location.search).get("touch") === "debug";
+  } catch {
+    return false;
+  }
+}
+
+function startTouchDebug() {
+  const box = document.createElement("pre");
+  box.className = "touch-debug";
+  box.setAttribute("aria-hidden", "true");
+  document.documentElement.append(box);
+  const count = { touchstart: 0, touchcancel: 0, pointerdown: 0, pointercancel: 0, lostpointercapture: 0 };
+  for (const type of Object.keys(count)) window.addEventListener(type, () => count[type]++, { capture: true, passive: true });
+  const press = { a: -1, b: -1 };
+  let prev = 0;
+  let gap = "-";
+  let same = 0;
+  let tries = 0;
+  const bitOf = (role) => {
+    const button = state.input.buttons.find((b) => b.role === role);
+    return button && Number.isInteger(button.bit) ? 1 << button.bit : 0;
+  };
+  const names = (keys) => state.input.buttons.filter((b) => Number.isInteger(b.bit) && keys & (1 << b.bit)).map((b) => b.id).join("+") || "0";
+  let hooked = null;
+  let frame = 0;
+  const observe = (keys) => {
+    frame++;
+    const a = bitOf("a");
+    const b = bitOf("b");
+    if (a && keys & a && !(prev & a)) press.a = frame;
+    if (b && keys & b && !(prev & b)) press.b = frame;
+    if (a && b && (keys & (a | b)) === (a | b) && (prev & (a | b)) !== (a | b)) {
+      tries++;
+      const diff = Math.abs(press.a - press.b);
+      if (diff === 0) same++;
+      gap = `${diff}f`;
+    }
+    prev = keys;
+  };
+  const draw = () => {
+    const host = player.host;
+    if (host && host !== hooked && typeof host.runFrame === "function") {
+      hooked = host;
+      const run = host.runFrame.bind(host);
+      host.runFrame = (keys) => (observe(keys >>> 0), run(keys));
+    }
+    const keys = player.running ? prev : 0;
+    const fingers = pad.fingers();
+    const lines = [`fingers ${fingers.length} · touches ${pad.touchCount} · path ${pad.touchSeen ? "touch" : "pointer"}`];
+    for (const f of fingers) lines.push(`${f.src}#${f.id} ${Math.round(f.x)},${Math.round(f.y)} ${f.owner} ${f.keys.join("+") || "-"}`);
+    lines.push(`down ${[...pad.down].join("+") || "-"}`);
+    lines.push(`cancel touch ${count.touchcancel} · pointer ${count.pointercancel} · lostcapture ${count.lostpointercapture}`);
+    lines.push(`start touch ${count.touchstart} · pointer ${count.pointerdown}`);
+    lines.push(`game ${names(keys)} 0x${keys.toString(16)} · frame ${frame} · autofire ${player.fireRate || "off"}`);
+    lines.push(`A+B gap ${gap} · same frame ${same}/${tries}`);
+    const text = lines.join("\n");
+    if (box.textContent !== text) box.textContent = text;
+    requestAnimationFrame(draw);
+  };
+  requestAnimationFrame(draw);
 }
 
 window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };

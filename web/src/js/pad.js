@@ -99,6 +99,9 @@ export class VirtualPad {
     this.vibrateDir = vibrateDir;
     this.mode = "stick";
     this.pointers = new Map();
+    this.touches = new Map();
+    this.touchSeen = false;
+    this.touchCount = 0;
     this.down = new Set();
     this.dirMask = 0;
     this.dirSince = -Infinity;
@@ -106,13 +109,58 @@ export class VirtualPad {
     this.rects = null;
     this.enabled = true;
     this.handle = this.handle.bind(this);
+    this.onTouch = this.onTouch.bind(this);
     root.addEventListener("pointerdown", (event) => this.start(event));
     window.addEventListener("pointermove", this.handle, { passive: false });
     window.addEventListener("pointerup", this.handle);
     window.addEventListener("pointercancel", this.handle);
-    root.addEventListener("touchstart", (event) => event.preventDefault(), { passive: false });
+    for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) root.addEventListener(type, this.onTouch, { passive: false });
+    for (const type of ["gesturestart", "gesturechange", "gestureend"]) root.addEventListener(type, (event) => event.preventDefault(), { passive: false });
     root.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("blur", () => this.releaseAll());
+  }
+
+  fingers() {
+    const out = [];
+    for (const [id, entry] of this.touches) out.push({ src: "touch", id, ...entry });
+    for (const [id, entry] of this.pointers) out.push({ src: "pointer", id, ...entry });
+    return out;
+  }
+
+  ownerAt(x, y) {
+    const stickBusy = [...this.pointers.values(), ...this.touches.values()].some((entry) => entry.owner === "stick");
+    const onKey = this.keyAt(x, y, true).length > 0 || this.inCombo(x, y);
+    return this.mode === "stick" && !stickBusy && !onKey && this.inDir(x, y) ? "stick" : "keys";
+  }
+
+  onTouch(event) {
+    if (!this.touchSeen) for (const [id, entry] of this.pointers) if (entry.touch) this.pointers.delete(id);
+    this.touchSeen = true;
+    if (event.cancelable) event.preventDefault();
+    const live = new Map();
+    for (const touch of event.touches) live.set(touch.identifier, touch);
+    this.touchCount = live.size;
+    if (event.type === "touchstart" && this.enabled) {
+      for (const touch of event.changedTouches) {
+        if (this.touches.has(touch.identifier) || !live.has(touch.identifier) || !this.root.contains(touch.target)) continue;
+        this.touches.set(touch.identifier, { owner: this.ownerAt(touch.clientX, touch.clientY), keys: [], x: NaN, y: NaN });
+      }
+    }
+    let stickLeft = false;
+    for (const [id, entry] of this.touches) {
+      const touch = live.get(id);
+      if (!touch) {
+        this.touches.delete(id);
+        if (entry.owner === "stick") stickLeft = true;
+        continue;
+      }
+      if (touch.clientX === entry.x && touch.clientY === entry.y) continue;
+      entry.x = touch.clientX;
+      entry.y = touch.clientY;
+      entry.keys = this.hit(entry.x, entry.y, entry.owner);
+    }
+    if (stickLeft) this.onStick(0, 0, false);
+    this.commit();
   }
 
   setMode(mode) {
@@ -207,10 +255,8 @@ export class VirtualPad {
     if (!this.enabled) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
-    const stickBusy = [...this.pointers.values()].some((entry) => entry.owner === "stick");
-    const onKey = this.keyAt(event.clientX, event.clientY, true).length > 0 || this.inCombo(event.clientX, event.clientY);
-    const owner = this.mode === "stick" && !stickBusy && !onKey && this.inDir(event.clientX, event.clientY) ? "stick" : "keys";
-    this.pointers.set(event.pointerId, { owner, keys: [] });
+    if (event.pointerType === "touch" && this.touchSeen) return;
+    this.pointers.set(event.pointerId, { owner: this.ownerAt(event.clientX, event.clientY), keys: [], x: event.clientX, y: event.clientY, touch: event.pointerType === "touch" });
     this.track(event);
   }
 
@@ -229,14 +275,16 @@ export class VirtualPad {
 
   track(event) {
     const entry = this.pointers.get(event.pointerId);
-    const keys = this.hit(event.clientX, event.clientY, entry.owner);
-    entry.keys = keys;
+    entry.x = event.clientX;
+    entry.y = event.clientY;
+    entry.keys = this.hit(entry.x, entry.y, entry.owner);
     this.commit();
   }
 
   commit() {
     const next = new Set();
     for (const entry of this.pointers.values()) for (const name of entry.keys) next.add(name);
+    for (const entry of this.touches.values()) for (const name of entry.keys) next.add(name);
     for (const name of this.down) {
       if (!next.has(name)) {
         this.onChange(name, false);
@@ -267,8 +315,9 @@ export class VirtualPad {
   }
 
   releaseAll() {
-    const hadStick = [...this.pointers.values()].some((entry) => entry.owner === "stick");
+    const hadStick = [...this.pointers.values(), ...this.touches.values()].some((entry) => entry.owner === "stick");
     this.pointers.clear();
+    this.touches.clear();
     if (hadStick) this.onStick(0, 0, false);
     this.commit();
   }
