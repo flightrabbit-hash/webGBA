@@ -1005,7 +1005,7 @@ body[data-layout="landscape"][data-tools="inline"] .bar__group--files {
 }
 
 body[data-layout="landscape"][data-tools="inline"] #btnQuit {
-  display: none;
+  order: 1;
 }
 
 body[data-layout="landscape"][data-pad="on"] .pad {

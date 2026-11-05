@@ -13,7 +13,7 @@ const TOOL_ICONS = {
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
 };
 
-const TOOL_WARN = new Set(["btnQuit"]);
+const TOOL_DANGER = new Set(["btnQuit"]);
 
 const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs" };
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
@@ -205,7 +205,7 @@ export class Skin {
 
   refreshColors() {
     this.palette = PX.paletteOf(baseColors());
-    this.warnBase = null;
+    this.dangerBase = null;
     uiColors(this.palette);
     this.redraw();
   }
@@ -376,7 +376,7 @@ export class Skin {
     if (!info) return;
     const scale = this.scaleOf(info.size ?? this.icon);
     const state = info.disabled ? "disabled" : info.on ? (info.pressed ? "onPressed" : "on") : info.pressed ? "pressed" : "normal";
-    const palette = TOOL_WARN.has(node.id) ? this.warnPalette() : this.palette;
+    const palette = TOOL_DANGER.has(node.id) ? this.dangerPalette() : this.palette;
     const make = (st) => (info.menu ? this.menuButton(st, scale) : PX.renderIconButton({ name: TOOL_ICONS[node.id]?.(info) ?? "close", state: st, scale, palette }));
     const normal = make("normal");
     const canvas = this.paint(node, make(state));
@@ -386,13 +386,13 @@ export class Skin {
     canvas.style.translate = shift ? `0 ${shift / this.dpr}px` : "";
   }
 
-  warnPalette() {
-    if (this.warnBase === this.palette) return this.warn;
+  dangerPalette() {
+    if (this.dangerBase === this.palette) return this.danger;
     const p = this.palette;
-    const f = PX.family(hexOf(getComputedStyle(document.documentElement).getPropertyValue("--global")) || p.base.accent, p.base.ink, p.outline);
-    this.warn = { ...p, fb: f.f, fbHi: f.hi, fbLo: f.lo, fbSide: f.side };
-    this.warnBase = p;
-    return this.warn;
+    const f = PX.family(hexOf(getComputedStyle(document.documentElement).getPropertyValue("--danger")) || p.base.accent, p.base.ink, p.outline);
+    this.danger = { ...p, fb: f.f, fbHi: f.hi, fbLo: f.lo, fbSide: f.side };
+    this.dangerBase = p;
+    return this.danger;
   }
 
   background() {

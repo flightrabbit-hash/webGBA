@@ -842,7 +842,7 @@ const TOOL_MIN = 32;
 function toolPlan(side, dpr) {
   const fit = (n) => Math.min(skin.px(2), Math.floor(((side - TOOL_PAD * 2 - (n - 1) * TOOL_GAP) / (TOOL_ART.w * n)) * dpr)) / dpr;
   const plan = (size, slots) => ({ size, slots, h: TOOL_TOP + TOOL_ART.h * size });
-  const all = Math.max(4, TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length);
+  const all = Math.max(5, TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length);
   if (TOOL_ART.w * fit(all) >= TOOL_MIN) return plan(fit(all), 0);
   for (let n = all - 1; n > 2; n--) if (TOOL_ART.w * fit(n) >= TOOL_MIN) return plan(fit(n), n);
   return plan(fit(2), 2);

@@ -365,11 +365,11 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       const list = await toolBoxes();
       const blockers = await page.evaluate(() => [document.getElementById("screen"), ...document.querySelectorAll("[data-key], [data-dpad]")].map((n) => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
       const hits = list.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b));
-      // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두, 게임 종료는 햄버거가 있을 때만 메뉴 마지막
+      // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두, 게임 종료는 햄버거가 있으면 메뉴 마지막·없으면 상단 좌측 묶음
       const inMenu = await page.evaluate(() => (getComputedStyle(document.querySelector("#btnMenu")).display === "none" ? [] : [...document.querySelectorAll(".bar__group--files .tool")].filter((b) => !b.hidden).map((b) => b.id)));
       const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu" && id !== "btnQuit"));
       const oneRow = new Set(list.map((x) => Math.round(x.t))).size === 1;
-      const quitPlace = inMenu.length ? inMenu.at(-1) === "btnQuit" : !list.some((x) => x.id === "btnQuit");
+      const quitPlace = inMenu.length ? inMenu.at(-1) === "btnQuit" : list.some((x) => x.id === "btnQuit");
       ok(`${base}|bar 가로: 한 줄 기능 버튼(32px 이상)·나머지는 메뉴 안(모두 ${all.size}개)·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, oneRow && all.size === 8 && quitPlace && list.every((x) => x.r - x.l >= 32) && (inMenu.length === 0 || list[0]?.id === "btnMenu") && !overlap(list) && list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height) && !hits, JSON.stringify({ shown: list.map((x) => x.id), inMenu }));
       await snap(page, `${base}|bar`);
     } else {
@@ -601,8 +601,8 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
   await page.mouse.down();
   const held = await page.evaluate(() => window.webgba.player.held);
   await page.mouse.up();
-  // 가로는 게임 화면을 먼저 키우고 양옆 칸 위 한 줄 — 좁으면 메뉴 + 퀵슬롯 + 설정·전체 화면(나머지는 메뉴 안), 넓으면 8개
-  const want = info.layout === "landscape" ? (info.tools >= 4 && info.tools <= 8 ? info.tools : 4) : 6;
+  // 가로는 게임 화면을 먼저 키우고 양옆 칸 위 한 줄 — 좁으면 메뉴 + 퀵슬롯 + 설정·전체 화면(나머지는 메뉴 안), 넓으면 게임 종료 포함 9개
+  const want = info.layout === "landscape" ? (info.tools >= 4 && info.tools <= 9 ? info.tools : 4) : 6;
   await page.click("#btnSettings");
   await page.waitForTimeout(200);
   const span = await page.evaluate(() => { const r = document.querySelector(".sheet__body").getBoundingClientRect(); return [r.left + 10, r.top + 10, r.right - 10, r.bottom - 10]; });
