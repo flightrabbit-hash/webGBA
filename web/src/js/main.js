@@ -46,6 +46,7 @@ const el = {
   btnLibrary: $("btnLibrary"),
   menuPanel: document.querySelector(".bar__group--files"),
   btnSaves: $("btnSaves"),
+  btnQuit: $("btnQuit"),
   btnQuick: $("btnQuick"),
   btnNet: $("btnNet"),
   btnFast: $("btnFast"),
@@ -841,7 +842,7 @@ const TOOL_MIN = 32;
 function toolPlan(side, dpr) {
   const fit = (n) => Math.min(skin.px(2), Math.floor(((side - TOOL_PAD * 2 - (n - 1) * TOOL_GAP) / (TOOL_ART.w * n)) * dpr)) / dpr;
   const plan = (size, slots) => ({ size, slots, h: TOOL_TOP + TOOL_ART.h * size });
-  const all = Math.max(4, TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length);
+  const all = Math.max(5, TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length);
   if (TOOL_ART.w * fit(all) >= TOOL_MIN) return plan(fit(all), 0);
   for (let n = all - 1; n > 2; n--) if (TOOL_ART.w * fit(n) >= TOOL_MIN) return plan(fit(n), n);
   return plan(fit(2), 2);
@@ -881,6 +882,7 @@ function placeTools(slots) {
     const have = [...parent.children].filter((node) => target.has(node));
     if (list.length !== have.length || list.some((node, i) => node !== have[i])) for (const node of list) parent.append(node);
   }
+  if (el.menuPanel.lastElementChild !== el.btnQuit) el.menuPanel.append(el.btnQuit);
 }
 
 function padParts() {
@@ -1149,6 +1151,7 @@ function syncControls() {
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
+  if (el.btnQuit.disabled !== !running) el.btnQuit.disabled = !running;
   const netLive = running && Boolean(player.net.request || player.net.active);
   const netOn = netLive || (running && player.net.newer);
   if (el.btnNet.hidden !== !netOn || el.btnFast.hidden !== netLive) {
@@ -4607,6 +4610,7 @@ function wire() {
   el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
+  el.btnQuit.addEventListener("click", () => closeGame());
   el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
   el.btnNet.addEventListener("click", onNetButton);
