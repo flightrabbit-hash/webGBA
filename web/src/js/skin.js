@@ -4,6 +4,7 @@ const TOOL_ICONS = {
   btnOpen: () => "open",
   btnLibrary: () => "library",
   btnSaves: () => "saves",
+  btnQuit: () => "close",
   btnQuick: () => "quickslot",
   btnNet: () => "multiplayer",
   btnFast: (s) => (s.fast ? "fastForwardOn" : "fastForwardOff"),
@@ -11,6 +12,8 @@ const TOOL_ICONS = {
   btnSettings: () => "settings",
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
 };
+
+const TOOL_WARN = new Set(["btnQuit"]);
 
 const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs" };
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
@@ -202,6 +205,7 @@ export class Skin {
 
   refreshColors() {
     this.palette = PX.paletteOf(baseColors());
+    this.warnBase = null;
     uiColors(this.palette);
     this.redraw();
   }
@@ -372,13 +376,23 @@ export class Skin {
     if (!info) return;
     const scale = this.scaleOf(info.size ?? this.icon);
     const state = info.disabled ? "disabled" : info.on ? (info.pressed ? "onPressed" : "on") : info.pressed ? "pressed" : "normal";
-    const make = (st) => (info.menu ? this.menuButton(st, scale) : PX.renderIconButton({ name: TOOL_ICONS[node.id]?.(info) ?? "close", state: st, scale, palette: this.palette }));
+    const palette = TOOL_WARN.has(node.id) ? this.warnPalette() : this.palette;
+    const make = (st) => (info.menu ? this.menuButton(st, scale) : PX.renderIconButton({ name: TOOL_ICONS[node.id]?.(info) ?? "close", state: st, scale, palette }));
     const normal = make("normal");
     const canvas = this.paint(node, make(state));
     const face = normal.faceBox;
     const rows = normal.height / scale;
     const shift = face ? Math.round(((rows - 1 - face.y1 - face.y0) / 2) * scale) : 0;
     canvas.style.translate = shift ? `0 ${shift / this.dpr}px` : "";
+  }
+
+  warnPalette() {
+    if (this.warnBase === this.palette) return this.warn;
+    const p = this.palette;
+    const f = PX.family(hexOf(getComputedStyle(document.documentElement).getPropertyValue("--global")) || p.base.accent, p.base.ink, p.outline);
+    this.warn = { ...p, fb: f.f, fbHi: f.hi, fbLo: f.lo, fbSide: f.side };
+    this.warnBase = p;
+    return this.warn;
   }
 
   background() {

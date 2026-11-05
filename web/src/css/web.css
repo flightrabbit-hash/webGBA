@@ -1004,6 +1004,10 @@ body[data-layout="landscape"][data-tools="inline"] .bar__group--files {
   pointer-events: auto;
 }
 
+body[data-layout="landscape"][data-tools="inline"] #btnQuit {
+  display: none;
+}
+
 body[data-layout="landscape"][data-pad="on"] .pad {
   display: contents;
 }

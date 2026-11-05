@@ -46,6 +46,7 @@ const el = {
   btnLibrary: $("btnLibrary"),
   menuPanel: document.querySelector(".bar__group--files"),
   btnSaves: $("btnSaves"),
+  btnQuit: $("btnQuit"),
   btnQuick: $("btnQuick"),
   btnNet: $("btnNet"),
   btnFast: $("btnFast"),
@@ -881,6 +882,7 @@ function placeTools(slots) {
     const have = [...parent.children].filter((node) => target.has(node));
     if (list.length !== have.length || list.some((node, i) => node !== have[i])) for (const node of list) parent.append(node);
   }
+  if (el.menuPanel.lastElementChild !== el.btnQuit) el.menuPanel.append(el.btnQuit);
 }
 
 function padParts() {
@@ -1149,6 +1151,7 @@ function syncControls() {
   setLabel(el.btnFull, full ? "web.fullscreenExit" : "web.fullscreen");
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
+  if (el.btnQuit.disabled !== !running) el.btnQuit.disabled = !running;
   const netLive = running && Boolean(player.net.request || player.net.active);
   const netOn = netLive || (running && player.net.newer);
   if (el.btnNet.hidden !== !netOn || el.btnFast.hidden !== netLive) {
@@ -4607,6 +4610,7 @@ function wire() {
   el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
+  el.btnQuit.addEventListener("click", () => closeGame());
   el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
   el.btnNet.addEventListener("click", onNetButton);

@@ -365,11 +365,12 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       const list = await toolBoxes();
       const blockers = await page.evaluate(() => [document.getElementById("screen"), ...document.querySelectorAll("[data-key], [data-dpad]")].map((n) => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
       const hits = list.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b));
-      // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두
+      // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두, 게임 종료는 햄버거가 있을 때만 메뉴 마지막
       const inMenu = await page.evaluate(() => (getComputedStyle(document.querySelector("#btnMenu")).display === "none" ? [] : [...document.querySelectorAll(".bar__group--files .tool")].filter((b) => !b.hidden).map((b) => b.id)));
-      const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu"));
+      const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu" && id !== "btnQuit"));
       const oneRow = new Set(list.map((x) => Math.round(x.t))).size === 1;
-      ok(`${base}|bar 가로: 한 줄 기능 버튼(32px 이상)·나머지는 메뉴 안(모두 ${all.size}개)·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, oneRow && all.size === 8 && list.every((x) => x.r - x.l >= 32) && (inMenu.length === 0 || list[0]?.id === "btnMenu") && !overlap(list) && list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height) && !hits, JSON.stringify({ shown: list.map((x) => x.id), inMenu }));
+      const quitPlace = inMenu.length ? inMenu.at(-1) === "btnQuit" : !list.some((x) => x.id === "btnQuit");
+      ok(`${base}|bar 가로: 한 줄 기능 버튼(32px 이상)·나머지는 메뉴 안(모두 ${all.size}개)·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, oneRow && all.size === 8 && quitPlace && list.every((x) => x.r - x.l >= 32) && (inMenu.length === 0 || list[0]?.id === "btnMenu") && !overlap(list) && list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height) && !hits, JSON.stringify({ shown: list.map((x) => x.id), inMenu }));
       await snap(page, `${base}|bar`);
     } else {
       const closed = await toolBoxes();
@@ -377,7 +378,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       await page.click("#btnMenu");
       await page.waitForTimeout(250);
       const opened = await page.evaluate(() => [...document.querySelectorAll(".bar__group--files .tool")].map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
-      ok(`${base}|menu 햄버거: 파일 열기·라이브러리·세이브 3개 펼침·화면 안`, opened.length === 3 && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
+      ok(`${base}|menu 햄버거: 파일 열기·라이브러리·세이브·게임 종료 4개 펼침·화면 안`, opened.length === 4 && opened[3].id === "btnQuit" && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
       await fits(page, `${base}|menu`, ".bar__group--files");
       await snap(page, `${base}|menu`);
       await page.click("#btnMenu");
@@ -555,7 +556,7 @@ for (const width of SKIP_MAIN ? [] : [320, 360, 375, 390, 414, 430]) {
   await page.click("#btnMenu");
   await page.waitForTimeout(250);
   const files = await boxesOf(".bar__group--files .tool");
-  ok(`너비 ${width}: 햄버거 메뉴 3개 겹침 0·화면 밖 0`, files.length === 3 && !overlap(files) && files.every((x) => x.l >= 0 && x.r <= width));
+  ok(`너비 ${width}: 햄버거 메뉴 4개 겹침 0·화면 밖 0`, files.length === 4 && !overlap(files) && files.every((x) => x.l >= 0 && x.r <= width));
   if (width === 320) await page.screenshot({ path: path.join(SHOTS, "세로_320x760_햄버거.png") });
   await context.close();
 }
