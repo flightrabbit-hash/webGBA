@@ -23,7 +23,7 @@ WebView가, 파일·창은 Rust가 담당합니다. `.gba`·`.gb`·`.gbc`는 내
 - [저장소 폴더 구조](#저장소-폴더-구조) · [배포 후 폴더 구조](#배포-후-폴더-구조)
 - [라이선스](#라이선스)
 - [.wgba 규격 1 (다른 개발자용)](#wgba-규격-1-다른-개발자용) — 다른 개발자가 자신의 wasm 게임을 `.wgba`로 패키징할 때 보는 규격 전문
-- [AI 전용 프롬프트](#ai-전용-프롬프트) — AI에 붙여 넣으면 이 규격대로 `.wgba`를 생성
+- [AI 전용 프롬프트](#ai-전용-프롬프트) — AI에 붙여 넣으면 이 규격대로 `.wgba`를 생성(12장 온라인 업데이트 배포 포함)
 
 ---
 
@@ -133,6 +133,8 @@ node tools/run.cjs   # 전체 명령 목록
   세션 중에는 빨리 감기·상태 저장 슬롯·다시 시작을 사용할 수 없습니다. 플레이어 상태 표는 웹 버전 상단 "멀티플레이" 버튼, Windows 앱 도구 막대 "멀티플레이" 버튼 또는 Tab으로 엽니다.
   다시 들어오기(`rejoin`)를 지원하는 게임은 연결이 끊긴 유저의 자리를 보관해 같은 자리로 다시 연결하고, 방장이 앱을 닫아도 방이 2분 동안 남습니다. 방장이 2분 안에 앱을 다시 열고 같은 게임을 열면 멀티플레이 창에 **이전 방으로 돌아가기**가 나오고, 같은 방 코드의 방장 자리로 돌아갑니다. 그동안 유저 화면은 "방장을 기다리는 중… m:ss 남음"으로 게임이 멈추고, 방장이 돌아오면 자동으로 다시 연결되어 유저 한 명의 게임 상태를 받아 이어서 합니다. 2분이 지나면 세션이 끝납니다. 유저가 게임 도중 앱을 닫은 경우에도 방장이 자리를 보관하고, 같은 기기에서 같은 게임을 다시 열면 **이전 방으로 돌아가기**로 같은 자리에 돌아갑니다.
   멀티플레이 규약 번호가 이 webGBA보다 새로운 게임은 멀티플레이 없이 실행하고, 멀티플레이 버튼·연결 창에 "이 게임의 멀티플레이는 새 webGBA가 필요합니다"를 출력합니다.
+
+- **온라인 업데이트** — 앱을 실행할 때마다 한 번, 인터넷에 연결되어 있으면 라이브러리(Windows 앱은 즐겨찾기·최근·같은 폴더)의 `.wgba`에 새 버전이 있는지 확인합니다. 새 버전이 있을 때만 업데이트 창을 표시하고, "업데이트"를 누르면 차이 패치를 받아 적용합니다(서명·SHA-1 확인, 실패하면 기존 파일 그대로, 세이브 유지). 다른 버전에서 만든 퀵슬롯은 불러오지 않습니다. 제작자용 규격은 [12장](#12-온라인-업데이트-update-규격-1-확장).
 
 ---
 
@@ -247,7 +249,8 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 9. [생성 예시](#9-생성-예시)
 10. [검증](#10-검증)
 11. [형식 번호와 버전](#11-형식-번호와-버전)
-12. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
+12. [온라인 업데이트](#12-온라인-업데이트-update-규격-1-확장) — 버전 파일·차이 패치·배포 도구
+13. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
 
 ---
 
@@ -406,6 +409,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `entry` | 객체 | ② 필수: `style` `"module"`·`"emscripten"`, `js` chunk 이름(규격 1에서는 항상 `"js"` — 생략해도 `"js"`, 다른 값은 `check`가 경고 후 무시), `args`(emscripten `arguments`) |
 | `files` | 객체 | ②만: 게임 JS가 조회하는 파일 이름 → chunk 이름(`data.<이름>` 또는 `rom`). 예 `{"game.data": "data.game"}` |
 | `multiplayer` | 객체 | 멀티플레이 — 인원·용도·호환·상태 표·다시 들어오기·중간 참가·연결 서버. [7장](#7-멀티플레이) |
+| `update` | 객체 | 온라인 업데이트 — `feed`(버전 파일 `https://` 주소)·`key`(서명 공개 키). [12장](#12-온라인-업데이트-update-규격-1-확장) |
 
 #### 3.3 예시 (① 롬 없는 240×160 게임)
 
@@ -1291,6 +1295,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - ①: 필수 내보내기 4개, 모르는 가져오기 없음, 버튼 `bit` 0~31이고 중복 없음, `Web_Net*` 일곱 개(7.3) 중 일부만 있으면 경고, 240×160·GBA 버튼이 아니거나 롬 없이 실행되는데(`rom.required: false`) `webgba.v1`이 없으면 경고, `js` chunk가 있으면 경고(사용하지 않음)
 - 멀티플레이: `multiplayer.protocol` 1(1보다 큰 정수 = 경고 — 멀티플레이 없이 실행, 나머지 `multiplayer` 항목은 검사하지 않음 / 없음·1 이상 정수가 아님 = 오류), `purposes[].id` 규칙·중복 없음, 인원 2~8, `rejoin` 불리언, `join`(`"anytime"`만), `iceServers`(7.11 형식 = 오류, 고정 TURN 접속 정보 = 경고), `board`(7.9.1 형식 = 오류, 모르는 키 = 경고), ①에서 `Web_NetBoard`와 `multiplayer.board` 중 한쪽만 있으면 경고
 - ②: `js` chunk 있음, `entry.style`, `entry.js`가 `"js"`가 아니면 경고, 버튼별 `code`, 가져온 공유 메모리(스레드) 없음
+- `update`(있을 때): 객체, `feed`는 `https://` 주소(512자 이하), `key`는 P-256 공개 키 base64(88자, `04`로 시작) — 아니면 오류
 - 롬팩 그림(라벨·앞면·옆면): PNG·무손실 WebP, 256KB 상한(64KB 초과 시 경고), 격자(48×32 · 54×44 · 18×46) × k(1~4)가 아니면 경고, 세 그림의 k가 다르면 경고, manifest의 형식·크기와 다르면 경고, `labelAt`·`textArea`가 그림 밖이면 경고, manifest에 있는데 chunk가 없으면 오류, chunk가 있는데 manifest에 없으면 경고
 - 기본 키(`keys`)에 호스트 예약 키(`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`~`F12`)가 있으면 경고
 
@@ -1310,6 +1315,98 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 | 게임 `version` | 제작자 재량(콘텐츠 변경 시) | 업데이트 여부 구분·표시에만 사용 |
 
 레거시 파일: TOC·manifest가 없는 `.wgba`(wasm 그대로, 또는 끝에 `webgba.rom`만 있는 파일)도 webGBA는 계속 지원합니다. 이때는 ① · 240×160 · GBA 버튼 · 이름은 파일 이름으로 처리합니다.
+
+---
+
+### 12. 온라인 업데이트 (`update`, 규격 1 확장)
+
+배포한 `.wgba`의 새 버전을 사용자가 파일을 다시 받지 않고 적용하게 하는 선택 기능입니다. 제작자는 정적 파일 서버(예: Cloudflare R2 공개 버킷)에 **버전 파일**과 **차이 패치**를 올리고, webGBA는 앱을 실행할 때마다 한 번 확인한 뒤 사용자가 "업데이트"를 누를 때만 적용합니다. 서버 프로그램은 필요하지 않습니다(정적 파일 `GET`만).
+
+#### 12.1 manifest `update`
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `feed` | 문자열 | 버전 파일 주소. `https://`만(512자 이하). 예 `https://pub-0123abcd.r2.dev/io.github.someone.mygame/latest.json` |
+| `key` | 문자열 | 서명 공개 키 — ECDSA P-256, 압축하지 않은 점 65바이트(`04` ‖ X ‖ Y)의 base64(표준, `=` 포함 88자). `wgba.mjs keygen`이 출력 |
+
+- 서버는 버전 파일·패치·`.wgbp`에 CORS `GET`을 허용합니다(출처 `https://webgba.vercel.app`·`http://ui.localhost`, 또는 `*`).
+- 응답 머리: 버전 파일 `Cache-Control: no-cache`, 패치·`.wgbp`는 내용 해시 이름 + `public, max-age=31536000, immutable`.
+- webGBA 안의 알려진 게임 id 표(제작자 요청으로 추가)에 있는 게임은 표의 주소·키를 먼저 사용합니다 — `update`가 없는 이미 배포한 `.wgba`도 확인하고, 서버 주소를 옮길 때 webGBA 업데이트로 바꿀 수 있습니다.
+- 비밀 키를 잃으면 같은 `key`로 새 버전 파일을 낼 수 없습니다. 키를 바꾸면 사용자가 새 `key`가 든 `.wgba`를 한 번 직접 받아야 합니다.
+
+#### 12.2 버전 파일 `latest.json`
+
+봉투(UTF-8 JSON):
+
+```json
+{ "wgbaFeed": 1, "signed": "<서명한 JSON 글>", "signature": "<base64, 64바이트>" }
+```
+
+- `signature` = `signed` 글(UTF-8 바이트 그대로)의 ECDSA P-256·SHA-256 서명. r ‖ s 각 32바이트(IEEE P1363 — WebCrypto `verify`가 받는 형식).
+- 호스트는 서명이 맞을 때만 `signed`를 JSON으로 조회합니다. 봉투의 다른 필드·공백은 서명 대상이 아닙니다. `wgbaFeed`가 모르는 번호면 무시합니다.
+
+`signed` 내용:
+
+| 필드 | 설명 |
+| --- | --- |
+| `id` | 게임 id(manifest `id`와 같아야 함) |
+| `version` | 새 버전 `x.y.z` |
+| `time` | 선택. 생성 시각(ISO 8601) |
+| `wgba` | `{ "sha1", "size" }` — 새 `.wgba` 파일 전체의 SHA-1(소문자 16진수 40자)·크기 |
+| `from` | 배열(256개까지). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = 파일 SHA-1이 `sha1`인 `.wgba`에 `patch`를 적용하면 SHA-1 `to`가 됩니다. `to`가 새 버전이 아니면 `to`로 다시 찾아 이어서 적용합니다(건너뛴 버전 연쇄, 64단계까지). 같은 `sha1`이 여러 개면 `to`가 새 버전인 항목을 먼저 사용 |
+| `full` | 선택. `{ "url", "size", "sha256" }` — 전체 설치용 `.wgbp`. `from` 표에 없는 파일은 원본 롬을 선택해 이 `.wgbp`로 새로 만듭니다 |
+| `notes` | 선택. 언어별 글(예약 — 현재 webGBA는 표시하지 않음) |
+
+- `url`은 버전 파일 주소 기준 상대 주소 또는 `https://` 절대 주소입니다. `sha256`은 받은 파일 전체의 SHA-256(소문자 16진수 64자)입니다.
+
+#### 12.3 차이 패치 `.wgbd`
+
+little endian:
+
+| 위치 | 크기 | 내용 |
+| --- | --- | --- |
+| 0 | 4 | `WGBD` |
+| 4 | 2 | 머리 길이(72 + meta 길이) |
+| 6 | 1 | 형식 번호 1 |
+| 7 | 1 | flag: 비트 0 = 확장 바탕, 비트 1 = 롬 다시 묶기 |
+| 8 · 12 | 4 · 4 | 옛 파일 크기 · 새 파일 크기 |
+| 16 · 36 | 20 · 20 | 옛 파일 SHA-1 · 새 파일 SHA-1 |
+| 56 · 60 | 4 · 4 | 몸통 길이 · 몸통 압축 해제 길이 |
+| 64 | 4 | 앞부분 길이(비트 1일 때) |
+| 68 · 69 | 1 · 1 | 롬 압축 level · 롬 압축(0 무압축 · 1 zlib) (비트 1일 때) |
+| 70 | 2 | meta 길이 n |
+| 72 | n | meta — UTF-8 JSON `{ "id", "from", "to" }`(표시용) |
+| 72 + n | 나머지 | 몸통 = zlib(RFC 1950)으로 압축한 BPS 패치 |
+
+- 바탕(BPS source) = 옛 파일. 비트 0이면 옛 파일 ‖ 옛 롬 chunk를 푼 롬.
+- 비트 1이 없으면 BPS 결과 = 새 파일. 비트 1이면 BPS 결과 = 새 파일의 앞부분(롬 chunk 내용 시작 전까지, 길이 = 64번) ‖ 새 롬이고, 새 롬을 WGRM 1(2.2절, 압축 = 69번, level = 68번, pako)로 다시 묶어 붙입니다. 롬 chunk는 zlib로 저장되어 롬이 조금만 바뀌어도 압축 바이트 대부분이 바뀌므로, 푼 롬끼리 비교합니다.
+- 적용 후 크기·SHA-1이 머리와 같아야 합니다(BPS 자체 CRC32도 확인).
+
+#### 12.4 호스트 동작
+
+- 앱 실행(웹 페이지 열기·Windows 앱 시작) 때마다 한 번, 온라인이면 확인합니다. 대상 = 웹 버전 라이브러리의 `.wgba`, Windows 앱의 즐겨찾기·최근·같은 폴더의 `.wgba`. 같은 버전 파일은 한 번만 받습니다. 실행 중에는 다시 확인하지 않습니다.
+- 오프라인·받기 실패·서명 불일치는 알림 없이 넘어갑니다(기록만).
+- 새 버전이 있을 때만 업데이트 창을 표시합니다: 줄마다 롬팩 그림·이름·현재 버전 → 새 버전·크기와 "업데이트" 버튼, 아래에 전체(체크한 게임) 업데이트·나중에. 창을 닫은 뒤에도 같은 실행 동안 라이브러리(Windows 앱은 첫 화면·옆 목록의 줄)·정보 화면에 업데이트 표시와 버튼이 남습니다.
+- 적용 = 받기(크기·SHA-256) → 적용 → 결과 SHA-1 = 버전 파일 `wgba.sha1` → 교체(Windows 앱은 임시 파일에 쓴 뒤 바꿈). 실패하면 기존 파일을 그대로 둡니다.
+- 세이브는 그대로 이어집니다(웹 = 게임 id, Windows 앱 = 파일 옆 `.sav`). 퀵슬롯은 만든 버전을 기록하고, 다른 버전에서 만든 칸은 불러오지 않습니다(덮어쓸 때까지 남음).
+- 실행 중인 게임은 게임을 종료한 뒤 업데이트합니다.
+- 업데이트 동안 webGBA 웹 서버에는 요청하지 않습니다 — 버전 파일·패치는 `feed` 서버에서 직접 받습니다.
+
+#### 12.5 배포 도구
+
+```text
+node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem>
+node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]…
+node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> --patch <패치.wgbd>… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>]
+node tools/wgba.mjs verify <발행 폴더> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
+node tools/wgba.mjs upload <발행 폴더> [--dry-run]
+```
+
+- `keygen`: 비밀 키는 git 저장소 밖에만 저장합니다(저장소 안이면 거절). 화면에는 공개 키만 출력합니다.
+- `diff`: 같은 id·더 높은 버전만. 만든 뒤 적용해 새 파일과 바이트 단위까지 같은지 확인합니다. `--orig`를 주면 패치에 새로 들어가는 바이트에 원작 롬과 32바이트 이상 같은 구간이 있는지 검사하고, 있으면 패치를 쓰지 않습니다(그 버전은 `.wgbp` 전체 설치로만 배포).
+- `feed`: 발행 폴더 = 버킷의 `<게임 id>/`와 같은 구조(`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). 발행 폴더의 이전 `latest.json`(`--prev`로 다른 파일 지정 가능)의 `from` 표를 이어받고, 모든 이전 버전이 새 버전까지 이어지는지 확인한 뒤 서명합니다.
+- `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다.
+- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 마지막에 올립니다(이미 같은 크기로 있으면 건너뜀). 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 
 ---
 
@@ -1387,6 +1484,13 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 중간 참가(join: "anytime"): 게임이 시작부터 요청을 유지해도 창을 자동으로 열지 않고 시간 초과도 없다. 사용자가 "멀티플레이" 버튼으로 창을 열어 방을 생성하고, 방장이 방을 생성하거나 갱신한 뒤 2분 30초 동안 참가를 받는다. 들어온 유저는 JOIN으로 알리므로, 그 유저에게 필요한 게임 상태는 게임이 메시지(rejoin 게임은 상태 묶음도 가능)로 보낸다.
 - 상태 표(선택): multiplayer.board{columns[1~6]{id(영문 소문자·숫자·-, 16자), type "bar"|"number"|"rank"|"status", name(12자), max(bar 필수, 1~65535), tone("hp"|"accent"), prefix·suffix(4자), labels(status 필수, 1~15개 {name(8자), tone "normal"|"good"|"warn"|"bad"|"dim", dimRow})}, names(사람이 아닌 줄 이름), captions(머리 글 {0}·{1}), mark(강조 줄 의미), scope("all" 게임이 모든 줄 | "self" 기기마다 자기 줄), sort{column, order}}. ① Web_NetBoard() = 세션 동안 같은 위치의 400바이트 버퍼: 0 serial u32(바꿀 때마다 +1, 0 건너뜀, 다른 칸을 모두 기록한 후 마지막에) · 4 format u8 = 1 · 5 rows u8(0~8) · 6 flags u8(비트 0 = 최종 결과) · 7 caption u8(1부터, 0 없음) · 8 arg0 s32 · 12 arg1 s32 · 16 + 48×i 줄{slot u8(0~7, 0xFF = 사람 아님) · flags u8(비트 0 흐리게, 비트 1 강조) · nameLabel u8 · nameLen u8(0~20) · values s32×6 · name 20바이트 UTF-8}. 값: bar = 하위 16비트 현재·상위 16비트 최대(0 = max), number = s32, rank = 0 또는 1~99, status = 0 또는 labels 번호. ② webgba.net.board({caption, args:[…], final, rows:[{slot, values, nameLabel, name, dim, mark}]}). 초당 4번까지만 바꾼다. 사람 줄 이름은 항상 webGBA 닉네임이다.
 - 예제: webGBA 저장소 docs/wgba/examples/net-webapi(① C, 롬 없음)·net-script(② JS 한 개).
+
+[온라인 업데이트 — 선택(규격 12장)]
+- 새 버전을 사용자가 파일을 다시 받지 않고 적용하게 하려면 manifest에 "update": {"feed": "https://<정적 서버>/<게임 id>/latest.json", "key": "<공개 키>"}를 추가한다. 서버는 정적 파일만(예: Cloudflare R2 공개 버킷), CORS GET 허용, latest.json은 Cache-Control: no-cache, 패치·.wgbp는 내용 해시 이름 + 1년 immutable.
+- 열쇠: node tools/wgba.mjs keygen -o <git 저장소 밖 경로>/key.pem — 공개 키(base64 88자)만 manifest에 넣고, 비밀 키는 저장소·채팅·로그에 넣지 않는다. 비밀 키를 잃으면 이 key로는 새 버전을 낼 수 없다.
+- 새 버전마다: node tools/wgba.mjs diff <직전.wgba> <새.wgba> -o p.wgbd [--orig <원작 롬>] → node tools/wgba.mjs feed --dir <발행 폴더> --key key.pem --wgba <새.wgba> --patch p.wgbd [--full <새.wgbp>] → node tools/wgba.mjs verify <발행 폴더> --key key.pem --wgba <직전.wgba> → node tools/wgba.mjs upload <발행 폴더>(환경 변수 R2_ACCOUNT_ID·R2_ACCESS_KEY_ID·R2_SECRET_ACCESS_KEY·R2_BUCKET). 직전 버전 .wgba를 보관해 둔다(없으면 그 버전 사용자는 .wgbp 전체 설치로만 받는다).
+- 버전 파일 형식을 직접 만들 때: {"wgbaFeed":1,"signed":"<JSON 글: id·version·wgba{sha1,size}·from[{sha1,version,to,patch{url,size,sha256}}]·full{url,size,sha256}>","signature":"<signed 글 UTF-8 바이트의 ECDSA P-256·SHA-256 서명 r‖s 64바이트 base64>"}. 차이 패치 .wgbd 형식은 12.3절 그대로(직접 만들지 말고 도구를 쓴다).
+- 같은 id·더 높은 version으로만 낸다. 세이브 형식이 바뀌면 게임 쪽에서 옛 세이브를 이어 읽게 한다(퀵슬롯은 버전이 다르면 webGBA가 불러오지 않는다).
 
 [작업 순서]
 1. wasm의 가져오기·내보내기를 확인해 runtime을 선택한다(webapi 규약에 맞으면 webapi, 아니면 script).

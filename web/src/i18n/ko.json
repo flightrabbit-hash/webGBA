@@ -199,5 +199,10 @@
   "web.wgba.olderOldText": "{name}: 라이브러리에는 {now} 이(가) 있고, 이 파일은 버전 정보가 없는 옛 .wgba 입니다. 옛 파일로 바꿀까요? 세이브·퀵슬롯은 그대로 이어집니다",
   "web.wgba.migratedSave": "{name} {version} — 옛 .wgba 의 세이브를 이어받았습니다",
   "web.wgba.migratedStates": "{name} {version} — 옛 .wgba 의 퀵슬롯을 이어받았습니다",
-  "wgba.newer": "새 규격으로 만든 .wgba 입니다. 페이지를 새로 고쳐 새 버전을 받아 주세요"
+  "wgba.newer": "새 규격으로 만든 .wgba 입니다. 페이지를 새로 고쳐 새 버전을 받아 주세요",
+
+  "web.update.later": "나중에",
+  "web.update.all": "전체 업데이트",
+  "web.update.chosen": "선택 업데이트 {n}",
+  "web.update.close": "닫기"
 }

@@ -199,5 +199,10 @@
   "web.wgba.olderOldText": "{name}: your library has {now}, and this file is an old .wgba with no version. Change to the old file? Saves and quick slots carry over",
   "web.wgba.migratedSave": "{name} {version} — took over the save of the old .wgba",
   "web.wgba.migratedStates": "{name} {version} — took over the quick slots of the old .wgba",
-  "wgba.newer": "This .wgba was made with a newer format. Reload the page to get the new version"
+  "wgba.newer": "This .wgba was made with a newer format. Reload the page to get the new version",
+
+  "web.update.later": "Later",
+  "web.update.all": "Update all",
+  "web.update.chosen": "Update {n}",
+  "web.update.close": "Close"
 }

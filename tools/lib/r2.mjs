@@ -1,0 +1,67 @@
+// Cloudflare R2(S3 호환 API) 올리기 — wgba.mjs upload 가 씀. 바깥 의존성 없음(AWS 서명 4판을 node crypto 로 직접).
+// 계정·키는 환경 변수 R2_ACCOUNT_ID · R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_BUCKET 에서만 읽고, 값을 출력·기록하지 않는다.
+import crypto from "crypto";
+
+export const R2_ENV = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"];
+
+const hmac = (key, text) => crypto.createHmac("sha256", key).update(text).digest();
+export const sha256Hex = (data) => crypto.createHash("sha256").update(data).digest("hex");
+const encodeSegment = (part) => encodeURIComponent(part).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/** 서명 열쇠(날짜·지역·서비스). */
+export function signingKey(secret, date, region, service) {
+  return hmac(hmac(hmac(hmac(`AWS4${secret}`, date), region), service), "aws4_request");
+}
+
+/**
+ * 요청 서명 → 붙일 머리(Authorization 포함). headers 는 소문자 이름, body 해시는 payloadHash(빈 몸통이면 빈 글의 SHA-256).
+ * 시험 벡터(AWS S3 문서 "GET Object" 예)와 같은 계산.
+ */
+export function signRequest({ method, host, path, query = "", headers = {}, payloadHash, accessKey, secret, region = "auto", service = "s3", amzDate }) {
+  const date = amzDate.slice(0, 8);
+  const all = { ...headers, host, "x-amz-content-sha256": payloadHash, "x-amz-date": amzDate };
+  const names = Object.keys(all).map((n) => n.toLowerCase()).sort();
+  const lower = Object.fromEntries(Object.entries(all).map(([k, v]) => [k.toLowerCase(), String(v).trim().replace(/\s+/g, " ")]));
+  const canonicalHeaders = names.map((n) => `${n}:${lower[n]}\n`).join("");
+  const signedHeaders = names.join(";");
+  const canonicalUri = path.split("/").map(encodeSegment).join("/");
+  const canonical = [method, canonicalUri, query, canonicalHeaders, signedHeaders, payloadHash].join("\n");
+  const scope = `${date}/${region}/${service}/aws4_request`;
+  const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonical)].join("\n");
+  const signature = hmac(signingKey(secret, date, region, service), toSign).toString("hex");
+  return {
+    headers: { ...all, authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` },
+    canonical,
+    signature,
+  };
+}
+
+export function r2Config(env = process.env) {
+  const missing = R2_ENV.filter((name) => !env[name]);
+  if (missing.length) throw new Error(`환경 변수가 없습니다: ${missing.join(", ")} (값은 R2_설정안내의 "환경 변수 등록"대로 넣습니다)`);
+  return { account: env.R2_ACCOUNT_ID, accessKey: env.R2_ACCESS_KEY_ID, secret: env.R2_SECRET_ACCESS_KEY, bucket: env.R2_BUCKET, host: `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` };
+}
+
+const amzNow = () => new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+
+async function call(config, method, key, { body = null, headers = {} } = {}) {
+  const path = `/${config.bucket}/${key}`;
+  const payloadHash = sha256Hex(body ?? "");
+  const signed = signRequest({ method, host: config.host, path, headers, payloadHash, accessKey: config.accessKey, secret: config.secret, amzDate: amzNow() });
+  const { host, ...send } = signed.headers;
+  const response = await fetch(`https://${host}${path.split("/").map(encodeSegment).join("/")}`, { method, headers: send, body });
+  return response;
+}
+
+/** 이미 같은 크기로 있으면 true(HEAD). */
+export async function r2Has(config, key, size) {
+  const response = await call(config, "HEAD", key);
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`HEAD ${key}: HTTP ${response.status}`);
+  return Number(response.headers.get("content-length")) === size;
+}
+
+export async function r2Put(config, key, bytes, { contentType, cacheControl }) {
+  const response = await call(config, "PUT", key, { body: bytes, headers: { "content-type": contentType, "cache-control": cacheControl } });
+  if (!response.ok) throw new Error(`PUT ${key}: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
+}

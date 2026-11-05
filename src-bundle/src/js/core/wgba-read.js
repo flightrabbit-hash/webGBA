@@ -138,6 +138,7 @@ export function gameInfo(wgba) {
     author: typeof m.author === "string" ? m.author : "",
     romSha1: wgba.romSha1,
     cart,
+    update: m.update && typeof m.update === "object" ? { feed: String(m.update.feed ?? ""), key: String(m.update.key ?? "") } : null,
   };
 }
 

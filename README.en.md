@@ -135,6 +135,8 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   In games that support rejoin (`rejoin`), a dropped user's seat is kept and the user reconnects to it, and the room stays for 2 minutes even if the host closes the app. If the host reopens the app within 2 minutes and opens the same game, the multiplayer window shows **Return to previous room**, which puts the host back into the host seat of the same room code. Meanwhile the users' games pause with "Waiting for the host… m:ss left"; when the host returns they reconnect automatically and the host receives one user's game state to continue. After 2 minutes the session ends. When a user closes the app during a game, the host also keeps that seat; opening the same game again on the same device shows **Return to previous room**, which puts the user back into the same seat.
   A game whose multiplayer protocol is newer than this webGBA runs without multiplayer, and the multiplayer button and connection window show "This game's multiplayer needs a newer webGBA".
 
+- **Online updates** — once each time the app starts, when online, webGBA checks whether the `.wgba` files in the library (in the Windows app: favorites, recent files and the current folder) have a new version. The update window appears only when one exists; pressing "Update" downloads and applies a delta patch (signature and SHA-1 checked, the current file kept on failure, saves kept). Quick slots made in another version are not loaded. Spec for authors: [chapter 12](#12-online-updates-update-spec-1-extension).
+
 ---
 
 ## Keyboard shortcuts
@@ -261,7 +263,8 @@ Terms used in this specification:
 9. [Making one](#9-making-one)
 10. [Validation](#10-validation)
 11. [Format numbers and versions](#11-format-numbers-and-versions)
-12. [Prompt for AI assistants](#prompt-for-ai-assistants) — at the end of this README
+12. [Online updates](#12-online-updates-update-spec-1-extension) — version file, delta patches, release tools
+13. [Prompt for AI assistants](#prompt-for-ai-assistants) — at the end of this README
 
 ---
 
@@ -417,6 +420,7 @@ JSON schema for validation: [wgba-manifest.schema.json](docs/wgba/wgba-manifest.
 | `entry` | object | Required for ②: `style` `"module"`·`"emscripten"`, `js` chunk name (always `"js"` in spec 1 — leaving it out also means `"js"`; any other value gets a `check` warning and is ignored), `args` (emscripten `arguments`) |
 | `files` | object | ② only: file name the game JS asks for → chunk name (`data.<name>` or `rom`). E.g. `{"game.data": "data.game"}` |
 | `multiplayer` | object | Multiplayer — players, purposes, compatibility, status board, rejoin, drop-in, connection servers. [Chapter 7](#7-multiplayer) |
+| `update` | object | Online updates — `feed` (`https://` address of the version file) and `key` (signing public key). [Chapter 12](#12-online-updates-update-spec-1-extension) |
 
 #### 3.3 Example (① 240×160 game without a ROM)
 
@@ -1294,6 +1298,7 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 - ①: the 4 required exports, no unknown imports, button `bit` within 0–31 and not shared, only some of the seven `Web_Net*` (7.3) → warning, not 240×160 with GBA buttons, or runs without a ROM (`rom.required: false`), but no `webgba.v1` → warning, a `js` chunk → warning (unused)
 - Multiplayer: `multiplayer.protocol` 1 (an integer above 1 = warning — runs without multiplayer and the other `multiplayer` entries are not checked / missing or not an integer of 1 or more = error), `purposes[].id` rule and no duplicates, players 2–8, `rejoin` boolean, `join` (`"anytime"` only), `iceServers` (7.11 format = error, fixed TURN credentials = warning), `board` (7.9.1 format = error, unknown keys = warning), and in ① a warning when only one of `Web_NetBoard` and `multiplayer.board` exists
 - ②: a `js` chunk exists, `entry.style`, `entry.js` other than `"js"` → warning, a `code` on every button, no imported shared memory (threads)
+- `update` (when present): an object, `feed` an `https://` address (up to 512 characters), `key` a base64 P-256 public key (88 characters, starting with `04`) — otherwise an error
 - Cartridge art (label, front, spine): PNG or lossless WebP, 256KB limit (warning over 64KB), not grid (48×32 · 54×44 · 18×46) × k (1–4) → warning, different k between them → warning, format or size different from the manifest → warning, `labelAt`·`textArea` outside the picture → warning, listed in the manifest but no chunk → error, a chunk not listed in the manifest → warning
 - Host keys (`Space`·`Tab`·`Escape`·`Pause`·`KeyP`·`F1`–`F12`) in default keys (`keys`) → warning
 
@@ -1313,6 +1318,98 @@ What `wgba.mjs check` looks at (check the same things when you pack by hand). An
 | Game `version` | Up to the author (when content changes) | Used only to decide updates and for display |
 
 Older files: webGBA keeps opening `.wgba` files with no TOC or manifest (plain wasm, or with only `webgba.rom` at the end). They are treated as ① · 240×160 · GBA buttons, named after the file.
+
+---
+
+### 12. Online updates (`update`, spec 1 extension)
+
+An optional feature that lets players apply a new version of a `.wgba` you released without downloading the file again. You put a **version file** and **delta patches** on a static file server (for example a public Cloudflare R2 bucket); webGBA checks once each time the app starts and applies an update only when the player presses "Update". No server program is needed (plain static `GET`).
+
+#### 12.1 Manifest `update`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `feed` | string | Address of the version file. `https://` only (up to 512 characters). E.g. `https://pub-0123abcd.r2.dev/io.github.someone.mygame/latest.json` |
+| `key` | string | Signing public key — ECDSA P-256, the uncompressed 65-byte point (`04` ‖ X ‖ Y) in base64 (standard, with `=`, 88 characters). Printed by `wgba.mjs keygen` |
+
+- The server allows CORS `GET` on the version file, patches and `.wgbp` (origins `https://webgba.vercel.app` and `http://ui.localhost`, or `*`).
+- Response headers: version file `Cache-Control: no-cache`; patches and `.wgbp` use content-hash names and `public, max-age=31536000, immutable`.
+- Games in the table of known game ids inside webGBA (added at the author's request) use the table's address and key first — so released `.wgba` files without `update` are checked too, and the server address can be moved with a webGBA update.
+- If you lose the private key you cannot publish new version files for that `key`. Changing the key means players download a `.wgba` with the new `key` once by hand.
+
+#### 12.2 Version file `latest.json`
+
+Envelope (UTF-8 JSON):
+
+```json
+{ "wgbaFeed": 1, "signed": "<signed JSON text>", "signature": "<base64, 64 bytes>" }
+```
+
+- `signature` = ECDSA P-256 / SHA-256 signature over the `signed` text (its UTF-8 bytes as is), r ‖ s 32 bytes each (IEEE P1363 — the format WebCrypto `verify` takes).
+- The host parses `signed` as JSON only when the signature matches. Other envelope fields and whitespace are not signed. An unknown `wgbaFeed` number is ignored.
+
+`signed` content:
+
+| Field | Description |
+| --- | --- |
+| `id` | Game id (must equal the manifest `id`) |
+| `version` | New version `x.y.z` |
+| `time` | Optional. Creation time (ISO 8601) |
+| `wgba` | `{ "sha1", "size" }` — SHA-1 (40 lowercase hex digits) and size of the whole new `.wgba` file |
+| `from` | Array (up to 256). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = applying `patch` to the `.wgba` whose file SHA-1 is `sha1` gives SHA-1 `to`. If `to` is not the new version, the host looks `to` up again and continues (skipped versions are chained, up to 64 steps). With several entries for the same `sha1`, the one whose `to` is the new version is used first |
+| `full` | Optional. `{ "url", "size", "sha256" }` — a `.wgbp` for a full install. A file missing from `from` is rebuilt with this `.wgbp` from the original ROM the player picks |
+| `notes` | Optional. Text per language (reserved — current webGBA does not show it) |
+
+- `url` is relative to the version file address, or an absolute `https://` address. `sha256` is the SHA-256 (64 lowercase hex digits) of the whole downloaded file.
+
+#### 12.3 Delta patch `.wgbd`
+
+Little endian:
+
+| Offset | Size | Content |
+| --- | --- | --- |
+| 0 | 4 | `WGBD` |
+| 4 | 2 | Header length (72 + meta length) |
+| 6 | 1 | Format number 1 |
+| 7 | 1 | Flags: bit 0 = expanded source, bit 1 = rebuild the ROM |
+| 8 · 12 | 4 · 4 | Old file size · new file size |
+| 16 · 36 | 20 · 20 | Old file SHA-1 · new file SHA-1 |
+| 56 · 60 | 4 · 4 | Body length · unpacked body length |
+| 64 | 4 | Prefix length (with bit 1) |
+| 68 · 69 | 1 · 1 | ROM compression level · ROM compression (0 none · 1 zlib) (with bit 1) |
+| 70 | 2 | Meta length n |
+| 72 | n | Meta — UTF-8 JSON `{ "id", "from", "to" }` (for display) |
+| 72 + n | rest | Body = a BPS patch compressed with zlib (RFC 1950) |
+
+- Source (BPS source) = the old file. With bit 0: old file ‖ the unpacked ROM of the old ROM chunk.
+- Without bit 1 the BPS result is the new file. With bit 1 the BPS result is the start of the new file (up to where the ROM chunk content begins, length at offset 64) ‖ the new ROM; the new ROM is packed again as WGRM 1 (2.2, compression at offset 69, level at offset 68, pako) and appended. The ROM chunk is stored with zlib, so even a small ROM change alters most compressed bytes — unpacked ROMs are compared instead.
+- After applying, the size and SHA-1 must match the header (the BPS CRC32s are checked too).
+
+#### 12.4 Host behavior
+
+- Once each time the app starts (opening the web page, starting the Windows app), when online. Checked files = `.wgba` in the web version's library; in the Windows app, `.wgba` among favorites, recent files and the current folder. Each version file is downloaded once. No further checks while the app runs.
+- Offline, failed downloads and signature mismatches are skipped without a notice (logged only).
+- The update window appears only when a new version exists: per row the cartridge art, name, current version → new version, size and an "Update" button; below, update the checked games and later. After closing it, for the rest of that run the library (in the Windows app, rows on the start screen and side list) and the info screen keep an update mark and button.
+- Apply = download (size, SHA-256) → apply → result SHA-1 = `wgba.sha1` of the version file → replace (the Windows app writes a temporary file first, then swaps it in). On failure the current file stays as it is.
+- Saves carry over (web = by game id, Windows app = `.sav` next to the file). Quick slots record the version they were made in; slots from another version are not loaded (they stay until overwritten).
+- A running game is updated after quitting it.
+- No request goes to the webGBA web server during an update — the version file and patches come straight from the `feed` server.
+
+#### 12.5 Release tools
+
+```text
+node tools/wgba.mjs keygen -o <private key outside the repository.pem>
+node tools/wgba.mjs diff <old.wgba> <new.wgba> -o <patch.wgbd> [--orig <original ROM>]…
+node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> --patch <patch.wgbd>… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>]
+node tools/wgba.mjs verify <publish folder> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
+node tools/wgba.mjs upload <publish folder> [--dry-run]
+```
+
+- `keygen`: stores the private key only outside a git repository (refused inside one) and prints only the public key.
+- `diff`: same id and a higher version only. Applies the result and checks that it matches the new file byte for byte. With `--orig`, checks whether the bytes newly carried by the patch contain a run of 32 bytes or more equal to the original ROM, and writes no patch if so (that version is released as a `.wgbp` full install only).
+- `feed`: publish folder = the same layout as `<game id>/` in the bucket (`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). Carries over the `from` table of the previous `latest.json` in the publish folder (`--prev` picks another file), checks that every previous version reaches the new one, then signs.
+- `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1.
+- `upload`: S3-compatible API (R2); patches and `.wgbp` first, `latest.json` last (skips files already there at the same size). Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
 
 ---
 
@@ -1390,6 +1487,13 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 - Drop-in (join: "anytime"): even if the game keeps its request from the start, the window does not open by itself and there is no timeout. The user hosts a room with the "Multiplayer" button, and the room host takes players for 2 min 30 s after creating the room or pressing Renew. A new user arrives as JOIN; the game sends that user the game state it needs with messages (state bundles also work in rejoin games).
 - Status board (optional): multiplayer.board{columns[1–6]{id (lowercase letters, digits, -, 16 characters), type "bar"|"number"|"rank"|"status", name (12 characters), max (required for bar, 1–65535), tone ("hp"|"accent"), prefix·suffix (4 characters), labels (required for status, 1–15 {name (8 characters), tone "normal"|"good"|"warn"|"bad"|"dim", dimRow})}, names (names of non-human rows), captions (header text with {0}·{1}), mark (meaning of highlighted rows), scope ("all" the game fills every row | "self" each device gives its own row), sort{column, order}}. ① Web_NetBoard() = a 400-byte buffer at the same address for the whole session: 0 serial u32 (+1 on every change, skip 0, written last after every other field) · 4 format u8 = 1 · 5 rows u8 (0–8) · 6 flags u8 (bit 0 = final result) · 7 caption u8 (from 1, 0 none) · 8 arg0 s32 · 12 arg1 s32 · 16 + 48×i row{slot u8 (0–7, 0xFF = not a person) · flags u8 (bit 0 dim, bit 1 highlight) · nameLabel u8 · nameLen u8 (0–20) · values s32×6 · name 20 bytes UTF-8}. Values: bar = low 16 bits current, high 16 bits max (0 = max), number = s32, rank = 0 or 1–99, status = 0 or a labels number. ② webgba.net.board({caption, args:[…], final, rows:[{slot, values, nameLabel, name, dim, mark}]}). Change it at most 4 times a second. Human rows always show the webGBA nickname.
 - Examples: webGBA repository docs/wgba/examples/net-webapi (① C, no ROM) and net-script (② one JS file).
+
+[Online updates — optional (spec chapter 12)]
+- To let players apply a new version without downloading the file again, add "update": {"feed": "https://<static server>/<game id>/latest.json", "key": "<public key>"} to the manifest. The server serves static files only (e.g. a public Cloudflare R2 bucket), allows CORS GET, sends Cache-Control: no-cache for latest.json, and uses content-hash names with a 1-year immutable cache for patches and .wgbp.
+- Keys: node tools/wgba.mjs keygen -o <path outside any git repository>/key.pem — put only the public key (88 base64 characters) in the manifest; never put the private key in a repository, chat or log. Losing the private key means no new versions for that key.
+- For every new version: node tools/wgba.mjs diff <previous.wgba> <new.wgba> -o p.wgbd [--orig <original ROM>] → node tools/wgba.mjs feed --dir <publish folder> --key key.pem --wgba <new.wgba> --patch p.wgbd [--full <new.wgbp>] → node tools/wgba.mjs verify <publish folder> --key key.pem --wgba <previous.wgba> → node tools/wgba.mjs upload <publish folder> (environment variables R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET). Keep the previous .wgba (without it, players on that version can only do a .wgbp full install).
+- Writing the version file by hand: {"wgbaFeed":1,"signed":"<JSON text: id, version, wgba{sha1,size}, from[{sha1,version,to,patch{url,size,sha256}}], full{url,size,sha256}>","signature":"<base64 of the 64-byte r‖s ECDSA P-256/SHA-256 signature over the UTF-8 bytes of signed>"}. The .wgbd delta format is exactly 12.3 (use the tool rather than writing it by hand).
+- Publish only the same id with a higher version. If the save format changes, make the game read old saves (webGBA does not load quick slots from another version).
 
 [Steps]
 1. Look at the wasm imports and exports and choose the runtime (webapi if it follows the webapi convention, otherwise script).

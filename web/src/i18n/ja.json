@@ -199,5 +199,10 @@
   "web.wgba.olderOldText": "{name}: ライブラリには {now} があり、このファイルはバージョン情報のない旧 .wgba です。旧ファイルに変えますか? セーブ・クイックスロットはそのまま引き継がれます",
   "web.wgba.migratedSave": "{name} {version} — 以前の .wgba のセーブを引き継ぎました",
   "web.wgba.migratedStates": "{name} {version} — 以前の .wgba のクイックスロットを引き継ぎました",
-  "wgba.newer": "新しい規格で作られた .wgba です。ページを再読み込みして新しいバージョンを取得してください"
+  "wgba.newer": "新しい規格で作られた .wgba です。ページを再読み込みして新しいバージョンを取得してください",
+
+  "web.update.later": "後で",
+  "web.update.all": "すべてアップデート",
+  "web.update.chosen": "選択をアップデート {n}",
+  "web.update.close": "閉じる"
 }

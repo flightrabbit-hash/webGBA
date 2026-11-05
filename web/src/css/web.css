@@ -2878,6 +2878,106 @@ body[data-layout="landscape"] .lib__shelf {
   color: var(--text-faint);
 }
 
+.upick__item {
+  height: auto;
+  padding: var(--gap-2);
+  border-bottom: var(--px) solid var(--line);
+}
+
+.upick__item.is-off {
+  cursor: default;
+}
+
+.upick__check {
+  display: flex;
+  flex: none;
+  align-items: center;
+  outline: none;
+  cursor: pointer;
+}
+
+.upick__check[aria-disabled="true"] {
+  cursor: default;
+}
+
+.upick__check:not([aria-disabled="true"]):active > .cbox,
+.upick__check.is-down > .cbox,
+.upick__item:not(.is-off):active > .upick__check > .cbox {
+  --edge: var(--px-acc-side);
+  --press: var(--px);
+}
+
+.upick__check:focus-visible > .cbox {
+  --ol: var(--accent);
+}
+
+.upick__art {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.upick__art[hidden] {
+  display: none;
+}
+
+.upick__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--gap-1);
+  min-width: 0;
+}
+
+.upick__name,
+.upick__meta {
+  flex: none;
+  max-width: 100%;
+  height: 20px;
+}
+
+.upick__foot {
+  display: flex;
+  align-items: center;
+  height: 32px;
+}
+
+.upick__btn[hidden],
+.upick__bar[hidden] {
+  display: none;
+}
+
+.upick__bar {
+  display: block;
+  flex: 1 1 auto;
+  height: calc(var(--px) * 5);
+  margin: 0 var(--px);
+  overflow: hidden;
+  background: var(--px-well);
+  box-shadow: 0 calc(var(--px) * -1) 0 0 var(--px-ol), 0 var(--px) 0 0 var(--px-ol), calc(var(--px) * -1) 0 0 0 var(--px-ol), var(--px) 0 0 0 var(--px-ol);
+}
+
+.upick__fill {
+  display: block;
+  width: calc(var(--progress, 0) * 100%);
+  height: 100%;
+  background: var(--px-acc);
+  box-shadow: inset 0 var(--px) 0 0 var(--px-acc-hi);
+}
+
+.upick__item[data-state="done"] .upick__meta {
+  color: var(--text-dim);
+}
+
+.spine__upd {
+  position: absolute;
+  top: -10px;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--px-warn);
+}
+
 .cbox {
   --ol: var(--px-ol);
   --edge: var(--px-pan-hi);

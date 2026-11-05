@@ -21,7 +21,7 @@ function shownText(node) {
   return `${shown.trim()}…`;
 }
 
-const centerTexts = (nodes) => centerBoardNodes(nodes, (node) => measureInk(node, shownText(node)));
+export const centerTexts = (nodes) => centerBoardNodes(nodes, (node) => measureInk(node, shownText(node)));
 
 const make = (tag, className, text) => {
   const node = document.createElement(tag);
