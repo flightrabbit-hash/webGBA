@@ -1,4 +1,4 @@
-// 시험용 PNG 읽기(8비트 RGB·RGBA, 비월 없음) — 브라우저 캡처를 픽셀로 보려고. 외부 패키지 없음.
+// 시험용 PNG 읽기(8비트 RGB·RGBA·팔레트, 비월 없음) — 브라우저 캡처를 픽셀로 보려고. 외부 패키지 없음.
 import zlib from "node:zlib";
 
 export function decodePng(buffer) {
@@ -6,6 +6,8 @@ export function decodePng(buffer) {
   let width = 0;
   let height = 0;
   let type = 0;
+  let palette = null;
+  let alpha = null;
   const parts = [];
   while (at < buffer.length) {
     const length = buffer.readUInt32BE(at);
@@ -16,11 +18,13 @@ export function decodePng(buffer) {
       height = data.readUInt32BE(4);
       if (data[8] !== 8 || data[12] !== 0) throw new Error("8비트 비월 없는 PNG 만 읽습니다");
       type = data[9];
-    } else if (kind === "IDAT") parts.push(data);
+    } else if (kind === "PLTE") palette = data;
+    else if (kind === "tRNS") alpha = data;
+    else if (kind === "IDAT") parts.push(data);
     else if (kind === "IEND") break;
     at += 12 + length;
   }
-  const channels = type === 6 ? 4 : type === 2 ? 3 : 0;
+  const channels = type === 6 ? 4 : type === 2 ? 3 : type === 3 && palette ? 1 : 0;
   if (!channels) throw new Error(`PNG 색 형식 ${type} 은 읽지 않습니다`);
   const raw = zlib.inflateSync(Buffer.concat(parts));
   const stride = width * channels;
@@ -49,6 +53,14 @@ export function decodePng(buffer) {
     }
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
+      if (channels === 1) {
+        const n = line[x];
+        out[o] = palette[n * 3];
+        out[o + 1] = palette[n * 3 + 1];
+        out[o + 2] = palette[n * 3 + 2];
+        out[o + 3] = alpha && n < alpha.length ? alpha[n] : 255;
+        continue;
+      }
       out[o] = line[x * channels];
       out[o + 1] = line[x * channels + 1];
       out[o + 2] = line[x * channels + 2];
