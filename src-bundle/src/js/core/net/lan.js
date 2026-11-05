@@ -338,4 +338,4 @@ export async function selectedPair(pc) {
   };
 }
 
-export const pairText = (pair) => (pair ? `${pair.local}/${pair.remote}${pair.turn ? ` · 중계${pair.via ? `(${pair.via})` : ""}` : ""}` : "?");
+export const pairText = (pair) => (pair ? `${pair.local}/${pair.remote} · ${pair.turn ? `TURN 중계${pair.via ? `(${pair.via})` : ""}` : "직접"}` : "?");

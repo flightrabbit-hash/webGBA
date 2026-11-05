@@ -3,6 +3,31 @@ const invoke = (cmd, args, options) => tauri.core.invoke(cmd, args, options);
 
 const bytesOf = (data) => (data instanceof Uint8Array ? data : new Uint8Array(data));
 
+const LOG_FLUSH_MS = 250;
+const LOG_QUEUE_MAX = 2000;
+const logQueue = [];
+let logTimer = 0;
+let logDropped = 0;
+
+function sendLog(beat) {
+  clearTimeout(logTimer);
+  logTimer = 0;
+  if (logDropped) {
+    logQueue.push({ level: "WARN", text: `[기록] 화면 쪽 대기 줄이 넘쳐 ${logDropped}줄 버림`, at: Date.now() });
+    logDropped = 0;
+  }
+  const lines = logQueue.splice(0, logQueue.length);
+  if (!lines.length && beat === undefined) return Promise.resolve();
+  return invoke("log_lines", { lines, beat }).catch(() => {});
+}
+
+function queueLog(level, text) {
+  if (logQueue.length >= LOG_QUEUE_MAX) logDropped++;
+  else logQueue.push({ level, text: String(text), at: Date.now() });
+  if (!logTimer) logTimer = setTimeout(sendLog, LOG_FLUSH_MS);
+  return Promise.resolve();
+}
+
 export const core = {
   runtimeInfo: () => invoke("runtime_info"),
   prefsGet: () => invoke("prefs_get"),
@@ -33,7 +58,9 @@ export const core = {
   assocSet: (link) => invoke("assoc_set", { link }),
   webInspect: (path, romName = null, allowNet = false) => invoke("web_inspect", { path, romName, allowNet }),
   webSetRom: (key, rom) => invoke("web_set_rom", { key, rom }),
-  log: (level, text) => invoke("log_write", { level, text }).catch(() => {}),
+  log: queueLog,
+  logFlush: () => sendLog(),
+  logBeat: (on) => sendLog(Boolean(on)),
 };
 
 export const win = {

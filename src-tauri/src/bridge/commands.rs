@@ -1,7 +1,7 @@
 //! 화면이 부르는 명령. 큰 바이트(롬·코어·세이브·상태)는 JSON 배열로 바꾸지 않고 원시 ArrayBuffer 로 오간다
 //! (`ipc::Response` 로 보내고, 쓰기는 원시 본문 + 헤더로 받는다).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
@@ -38,6 +38,7 @@ pub struct RuntimeInfo {
     bin_dir: String,
     state_dir: String,
     web_dir: String,
+    log_dir: String,
     core_path: String,
     launch_file: Option<String>,
     settings: settings::Settings,
@@ -50,6 +51,7 @@ pub fn runtime_info(state: tauri::State<'_, crate::AppState>) -> RuntimeInfo {
         bin_dir: ui::bin_root().to_string_lossy().into_owned(),
         state_dir: ui::dir(ui::STATE_DIR).to_string_lossy().into_owned(),
         web_dir: ui::dir(ui::WEB_DIR).to_string_lossy().into_owned(),
+        log_dir: ui::dir(ui::LOG_DIR).to_string_lossy().into_owned(),
         core_path: ui::dir(ui::CORE_DIR).join(ui::CORE_FILE).to_string_lossy().into_owned(),
         launch_file: state.take_launch_file(),
         settings: settings::load(),
@@ -217,7 +219,16 @@ pub async fn save_read(game: String) -> Result<Response> {
 pub async fn save_write(request: Request<'_>) -> Result<store::Written> {
     let game = header(&request, "x-game")?;
     let bytes = raw_body(&request)?;
-    offload(move || store::write(&store::beside_of(&game), &bytes)).await
+    let size = bytes.len();
+    let done = offload(move || store::write(&store::beside_of(&game), &bytes)).await?;
+    // 게임에 따라 몇 초마다 세이브를 쓴다 — 같은 파일은 1분에 한 줄만.
+    if done.action == "written" {
+        if let Some(more) = crate::logging::every(&done.path, std::time::Duration::from_secs(60)) {
+            let more = if more > 0 { format!(" · 지난 줄 뒤 {more}번 더 씀") } else { String::new() };
+            crate::logging::write("INFO", &format!("[세이브] 씀 {} · {}KB{more}", done.path, size.div_ceil(1024)));
+        }
+    }
+    Ok(done)
 }
 
 /// 메뉴 "세이브 가져오기": 고른 파일의 내용으로 옆 `.sav` 를 직접 덮어쓴다.
@@ -292,4 +303,22 @@ pub fn web_set_rom(key: String, rom: Option<String>) -> Result<()> {
 #[tauri::command]
 pub fn log_write(level: String, text: String) {
     crate::logging::write(&level, &text);
+}
+
+#[derive(Deserialize)]
+pub struct LogLine {
+    level: String,
+    text: String,
+    at: Option<f64>,
+}
+
+/// 화면이 모아 보낸 줄(시각은 화면 기준)과 화면 신호(`beat`, `logging::beat`).
+#[tauri::command]
+pub async fn log_lines(lines: Vec<LogLine>, beat: Option<bool>) {
+    for line in lines {
+        crate::logging::write_ms(line.at, &line.level, &line.text);
+    }
+    if let Some(on) = beat {
+        crate::logging::beat(on);
+    }
 }

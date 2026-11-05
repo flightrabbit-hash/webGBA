@@ -11,6 +11,10 @@ const SAVE_DELAY_MS = 1000;
 const POINTER_BUTTONS = 7;
 const POINTER_WHEEL_STEP = 40;
 const AUDIO_STALL_MS = 2000;
+const METER_SLOW_MS = 16.7;
+const METER_LATE_MS = 25;
+const METER_STALL_MS = 1000;
+const METER_LOW_FPS = 55;
 const CLOCK_WORKER = "let t=0;onmessage=(e)=>{clearInterval(t);t=e.data>0?setInterval(()=>postMessage(0),e.data):0};";
 
 // iOS·Safari 의 Web Audio 는 기본이 ambient 라 무음 모드(벨소리 끔)에서 소리가 나지 않는다.
@@ -28,6 +32,10 @@ export function audioSessionType() {
 }
 
 const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+
+export const meterLimits = { slowMs: METER_SLOW_MS, lateMs: METER_LATE_MS, stallMs: METER_STALL_MS, lowFps: METER_LOW_FPS };
+
+export const freshMeter = () => ({ run: 0, frames: 0, cost: 0, worst: 0, slow: 0, gapMax: 0, late: 0, stall: 0, fast: 0, fps: 0, fpsN: 0, fpsMin: Infinity, low: 0, zero: 0, statAt: 0, skip: true });
 
 function sameBytes(a, b) {
   if (!a || !b || a.length !== b.length) return false;
@@ -223,9 +231,11 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false }) {
+  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false, meter = false }) {
     this.canvas = canvas;
     this.hiddenClock = hiddenClock;
+    this.meter = meter ? freshMeter() : null;
+    this.lastStateSize = 0;
     this.clock = null;
     this.clockOn = false;
     this.net = new NetHost({
@@ -242,6 +252,7 @@ export class Player {
       enabled: () => netEnabled?.() ?? true,
     });
     globalThis.document?.addEventListener?.("visibilitychange", () => {
+      if (this.meter) this.meter.skip = true;
       this.syncClock();
       this.syncAway();
     });
@@ -877,7 +888,10 @@ export class Player {
         this.running = false;
         this.onHalt(why);
       };
-      host.onStats = ({ fps }) => this.onStats({ fps, speed: this.runSpeed });
+      host.onStats = ({ fps }) => {
+        this.onStats({ fps, speed: this.runSpeed });
+        if (this.meter) this.noteFrameStats(fps);
+      };
       host.onChange = () => this.onChange();
       host.setVolume(this.muted ? 0 : this.volume);
     } else {
@@ -893,6 +907,7 @@ export class Player {
     this.acc = 0;
     this.frames = 0;
     this.statAt = this.last;
+    if (this.meter) this.meter = freshMeter();
     this.raf = requestAnimationFrame(this.tick);
     this.pushScript();
     this.syncAway();
@@ -1032,10 +1047,16 @@ export class Player {
   tick(now) {
     if (!this.running) return;
     if (!this.clockOn) this.raf = requestAnimationFrame(this.tick);
-    this.watchAudio(now, now - this.last);
-    const dt = Math.min(now - this.last, 100);
+    const gap = now - this.last;
+    this.watchAudio(now, gap);
+    const dt = Math.min(gap, 100);
     this.last = now;
-    if (this.paused || this.netHold) return;
+    const m = this.meter;
+    if (this.paused || this.netHold) {
+      if (m) m.skip = true;
+      return;
+    }
+    if (m) this.noteGap(m, gap);
     if (this.host.script) {
       // ② 는 게임이 스스로 돈다 — 게임패드만 읽어 바뀐 버튼을 넘기고, 세이브가 오면 모아 쓴다(프레임 수는 틀이 셈)
       const padBits = this.padBits();
@@ -1072,10 +1093,19 @@ export class Player {
       }
       this.sent = input;
       this.net.beforeFrame();
-      if (!this.host.runFrame(this.withMacro(this.fireKeys(input), this.macroStep()))) {
+      const begin = m ? performance.now() : 0;
+      let ok = false;
+      let trap = null;
+      try {
+        ok = this.host.runFrame(this.withMacro(this.fireKeys(input), this.macroStep()));
+      } catch (error) {
+        trap = error;
+        this.host.halted = `${error?.name ?? "Error"}: ${error?.message ?? error}`;
+      }
+      if (!ok) {
         this.running = false;
         this.net.leave();
-        this.onHalt(this.host.halted);
+        this.onHalt(this.host.halted, trap);
         return;
       }
       this.frameNo++;
@@ -1084,6 +1114,7 @@ export class Player {
       const samples = this.host.audio();
       if (samples && this.audio) this.playAudio(samples, squeeze);
       if (this.host.takeSaveDirty()) this.queueSave();
+      if (m) this.noteFrame(m, performance.now() - begin);
     }
     this.notePace(ran, dt);
     if (this.acc > FRAME_MS * MAX_FRAMES_PER_TICK) this.acc = 0;
@@ -1097,6 +1128,46 @@ export class Player {
       this.frames = 0;
       this.statAt = now;
     }
+  }
+
+  noteGap(m, gap) {
+    if (m.skip || this.clockOn) {
+      m.skip = false;
+      return;
+    }
+    m.run += gap;
+    if (gap > m.gapMax) m.gapMax = gap;
+    if (gap > METER_LATE_MS) m.late++;
+    if (gap >= METER_STALL_MS && gap > m.stall) m.stall = gap;
+    if (this.speed > 1 && !this.net.locked) m.fast += gap;
+  }
+
+  noteFrame(m, cost) {
+    m.frames++;
+    m.cost += cost;
+    if (cost > m.worst) m.worst = cost;
+    if (cost > METER_SLOW_MS) m.slow++;
+  }
+
+  noteFrameStats(fps) {
+    const m = this.meter;
+    m.statAt = performance.now();
+    if (this.paused || this.netHold || globalThis.document?.visibilityState === "hidden") {
+      m.zero = 0;
+      return;
+    }
+    m.fps += fps;
+    m.fpsN++;
+    if (fps < m.fpsMin) m.fpsMin = fps;
+    if (fps < METER_LOW_FPS) m.low++;
+    m.zero = fps < 1 ? m.zero + 1 : 0;
+  }
+
+  takeMeter() {
+    const m = this.meter;
+    if (!m) return null;
+    this.meter = { ...freshMeter(), statAt: m.statAt, zero: m.zero, skip: false };
+    return m;
   }
 
   queueSave() {
@@ -1135,6 +1206,7 @@ export class Player {
     const bytes = this.host.script ? await this.host.stateSave() : this.host.stateSave();
     if (!bytes) return false;
     if (this.host?.script && this.host.thumb) this.image = this.host.thumb;
+    this.lastStateSize = bytes.byteLength ?? bytes.length ?? 0;
     await core.storeWrite(this.saveId, slot, bytes);
     return true;
   }
@@ -1142,6 +1214,7 @@ export class Player {
   async loadState(slot) {
     if (!this.canState || this.net.locked) return false;
     const bytes = await core.storeRead(this.saveId, slot);
+    this.lastStateSize = bytes.length;
     if (!bytes.length) return null;
     if (this.host.script) return this.host.stateLoad(bytes);
     const ok = this.host.stateLoad(bytes);

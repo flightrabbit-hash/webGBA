@@ -91,6 +91,7 @@ fn restore_main<R: Runtime>(app: &tauri::AppHandle<R>) {
 /// 창 이벤트: 끌어 놓기 → 화면 DOM 이벤트, 닫기 요청 → 화면이 세이브를 마저 쓰게, 최대화 → 버튼 모양.
 fn window_events<R: Runtime>() -> impl Fn(&tauri::Window<R>, &WindowEvent) + Send + Sync + 'static {
     let last_max: Mutex<Option<bool>> = Mutex::new(None);
+    let last_min = std::sync::atomic::AtomicBool::new(false);
     move |window, event| {
         let Some(webview) = window.app_handle().get_webview_window(window.label()) else { return };
         match event {
@@ -117,6 +118,11 @@ fn window_events<R: Runtime>() -> impl Fn(&tauri::Window<R>, &WindowEvent) + Sen
                 });
             }
             WindowEvent::Resized(_) => {
+                // 최소화해도 웹뷰는 보임·초점을 그대로 두어(visibilitychange·blur 없음) 화면 쪽에서는 알 수 없다.
+                let minimized = window.is_minimized().unwrap_or(false);
+                if last_min.swap(minimized, std::sync::atomic::Ordering::Relaxed) != minimized {
+                    logging::write("INFO", if minimized { "[실행] 창 최소화" } else { "[실행] 창 최소화 풀림" });
+                }
                 let Ok(maximized) = window.is_maximized() else { return };
                 let mut seen = last_max.lock().unwrap_or_else(|p| p.into_inner());
                 if *seen != Some(maximized) {
@@ -135,7 +141,9 @@ pub fn run() {
         // 두 번째 실행은 기존 창만 보이고, 넘겨받은 파일을 연다. 반드시 첫 번째로 등록한다.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             restore_main(app);
-            if let Some(file) = launched_file(&argv) {
+            let file = launched_file(&argv);
+            logging::write("INFO", &format!("[앱] 두 번째 실행 → 켜진 창으로{}", file.as_deref().map(|f| format!(" · 파일 {f}")).unwrap_or_default()));
+            if let Some(file) = file {
                 bridge::events::open_file(app, &file);
             }
         }))
@@ -182,11 +190,12 @@ pub fn run() {
             bridge::commands::web_inspect,
             bridge::commands::web_set_rom,
             bridge::commands::log_write,
+            bridge::commands::log_lines,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             ui::ensure_layout(&handle);
-            logging::write("INFO", &format!("webGBA {} 시작 · 앱 폴더 {}", env!("CARGO_PKG_VERSION"), ui::bin_root().display()));
+            logging::write("INFO", &format!("[앱] webGBA {} 시작 · 앱 폴더 {} · 프로세스 {}", env!("CARGO_PKG_VERSION"), ui::bin_root().display(), std::process::id()));
             // 오류·대화상자 형식 이름·.wgba 형식 이름을 지난번 언어로(연결보다 먼저).
             i18n::set(config::prefs().get("lang").and_then(|v| v.as_str()).unwrap_or("ko"));
             // .wgba 를 이 exe 로 연결(해제를 고르지 않았으면). 폴더를 옮겨도 켤 때 고쳐 쓴다.
@@ -200,6 +209,12 @@ pub fn run() {
             ui::open_main_window(&handle, &ini, config::window_spot())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("webGBA 를 시작하지 못했습니다");
+        .build(tauri::generate_context!())
+        .expect("webGBA 를 시작하지 못했습니다")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                logging::write("INFO", &format!("[앱] webGBA {} 종료", env!("CARGO_PKG_VERSION")));
+                logging::flush(true);
+            }
+        });
 }

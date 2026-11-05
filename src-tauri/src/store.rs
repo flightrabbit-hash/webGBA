@@ -140,7 +140,7 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<Written> {
         return Ok(Written { action: "same", path: shown });
     }
     if let Err(e) = crate::files::write_in_place(path, bytes) {
-        crate::logging::write("WARN", &format!("세이브를 쓰지 못했습니다 {shown}: {e}"));
+        crate::logging::write("WARN", &format!("[세이브] 쓰지 못함 {shown}: {e}"));
         return Err(e);
     }
     Ok(Written { action: "written", path: shown })
