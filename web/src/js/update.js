@@ -1,4 +1,4 @@
-import { checkGames, fetchChecked, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
+import { buildGauge, checkGames, fetchChecked, GAUGE, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./app/update-pick.js";
 import { runPatchJob } from "./app/patch-loader.js";
 import { sha1Hex } from "./core/wgbp.js";
@@ -67,6 +67,7 @@ export function createUpdater(d) {
       apply: (source, delta, options) => applyInWorker(source, delta, options),
     });
     await d.importGame(item.rom.name, out, { sha1: item.feed.wgba.sha1, file: item.rom.file });
+    progress({ stage: "apply", fraction: 1 });
     d.log("INFO", `업데이트 완료 ${item.rom.gameId} ${item.from} → ${item.to} (${plan.steps.length}단계)`);
     d.refresh();
     return true;
@@ -77,16 +78,17 @@ export function createUpdater(d) {
     const file = files?.[0];
     if (!file) return false;
     progress({ stage: "download", fraction: 0 });
-    const patch = await fetchChecked(item.feed.full, { onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * 0.5 }) });
-    progress({ stage: "rom", fraction: 0.5 });
+    const patch = await fetchChecked(item.feed.full, { onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * GAUGE.download }) });
+    progress({ stage: "rom", fraction: GAUGE.download });
     let made;
     try {
-      made = await runPatchJob(patch, await d.readPatchRom(file), (stage, fraction) => progress({ stage: "rom", fraction: 0.5 + 0.5 * Math.min(1, fraction) }));
+      made = await runPatchJob(patch, await d.readPatchRom(file), (stage, fraction) => progress({ stage: "rom", fraction: buildGauge(stage, fraction) }));
     } catch (error) {
       throw new Error(d.patchText(error, file.name));
     }
     if (made.sha1 !== item.feed.wgba.sha1) throw new UpdateError("fullMismatch");
     await d.importGame(item.rom.name, made.wgba, { sha1: made.sha1, file: item.rom.file });
+    progress({ stage: "rom", fraction: 1 });
     d.log("INFO", `업데이트 전체 설치 ${item.rom.gameId} ${item.from} → ${item.to} (${file.name})`);
     d.refresh();
     return true;

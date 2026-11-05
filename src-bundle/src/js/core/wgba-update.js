@@ -390,17 +390,42 @@ export async function applyDelta(source, delta, { onProgress = () => {} } = {}) 
   return out;
 }
 
+export const GAUGE = Object.freeze({ download: 0.8, built: 0.99 });
+export const DELTA_SPANS = Object.freeze({ check: [0, 0.25], patch: [0.25, 0.6], verify: [0.6, 0.85] });
+export const BUILD_SPANS = Object.freeze({ check: [0, 0.1], patch: [0.1, 0.4], verify: [0.4, 0.55], pack: [0.55, 1] });
+
+export function spanOf(spans, stage, fraction) {
+  const span = spans[stage];
+  if (!span) return 0;
+  const value = Math.min(1, Math.max(0, Number(fraction) || 0));
+  return span[0] + (span[1] - span[0]) * value;
+}
+
+export function buildGauge(stage, fraction) {
+  return GAUGE.download + (GAUGE.built - GAUGE.download) * spanOf(BUILD_SPANS, stage, fraction);
+}
+
 export async function runSteps(source, plan, feed, { fetchImpl = globalThis.fetch, onProgress = () => {}, signal = null, apply = applyDelta } = {}) {
-  let bytes = source;
-  const count = Math.max(1, plan.steps.length);
-  for (const [index, step] of plan.steps.entries()) {
-    const at = index / count;
-    const patch = await fetchChecked(step.patch, { fetchImpl, signal, onProgress: (got) => onProgress(at + (0.6 * got) / step.patch.size / count, "download") });
+  const steps = plan.steps;
+  const total = Math.max(1, steps.reduce((sum, step) => sum + step.patch.size, 0));
+  const patches = [];
+  let got = 0;
+  for (const step of steps) {
+    patches.push(await fetchChecked(step.patch, { fetchImpl, signal, onProgress: (filled) => onProgress((GAUGE.download * (got + filled)) / total, "download") }));
+    got += step.patch.size;
     if (signal?.aborted) throw new UpdateError("cancelled");
-    bytes = await apply(bytes, patch, { onProgress: (stage, fraction) => onProgress(at + (0.6 + 0.4 * fraction) / count, "apply") });
-    if ((await sha1Hex(bytes)) !== step.to) throw new UpdateError("deltaResult");
   }
-  onProgress(1, "verify");
-  if (bytes.length !== feed.wgba.size || (await sha1Hex(bytes)) !== feed.wgba.sha1) throw new UpdateError("deltaResult");
+  const share = (GAUGE.built - GAUGE.download) / Math.max(1, steps.length);
+  let bytes = source;
+  let sha1 = steps.length ? "" : await sha1Hex(bytes);
+  for (const [index, step] of steps.entries()) {
+    const at = GAUGE.download + share * index;
+    bytes = await apply(bytes, patches[index], { onProgress: (stage, fraction) => onProgress(at + share * spanOf(DELTA_SPANS, stage, fraction), "apply") });
+    patches[index] = null;
+    sha1 = await sha1Hex(bytes);
+    if (sha1 !== step.to) throw new UpdateError("deltaResult");
+    onProgress(at + share, "apply");
+  }
+  if (bytes.length !== feed.wgba.size || sha1 !== feed.wgba.sha1) throw new UpdateError("deltaResult");
   return bytes;
 }

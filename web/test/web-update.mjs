@@ -96,6 +96,42 @@ const rapid = (page) => page.evaluate(async (id) => {
 }, GAME_ID);
 const waitRows = (page, done) => page.waitForFunction((done) => [...document.querySelectorAll("#dialog .upick__item")].every((n) => done.includes(n.dataset.state)), done, { timeout: 180000 });
 
+// 진행 막대 값(aria-valuenow)을 바뀐 순서 그대로 모음(MutationObserver oldValue) + 같은 순간 줄 글의 % 와 막대 값이 같은지.
+const watchGauge = (page) => page.evaluate(() => {
+  const rows = new Map();
+  const track = (bar) => {
+    if (!rows.has(bar)) rows.set(bar, { values: [], mismatch: [] });
+    return rows.get(bar);
+  };
+  const take = (records) => {
+    for (const record of records) if (record.attributeName === "aria-valuenow" && record.oldValue !== null) track(record.target).values.push(Number(record.oldValue));
+  };
+  const observer = new MutationObserver((records) => {
+    take(records);
+    for (const bar of document.querySelectorAll('#dialog .upick__item [role="progressbar"]')) {
+      const li = bar.closest(".upick__item");
+      if (li.dataset.state !== "busy") continue;
+      const shown = /(\d+)%/.exec(li.querySelector(".upick__meta").textContent)?.[1];
+      if (shown !== undefined && shown !== bar.getAttribute("aria-valuenow")) track(bar).mismatch.push(`${shown}≠${bar.getAttribute("aria-valuenow")}`);
+    }
+  });
+  observer.observe(document.getElementById("dialog"), { subtree: true, attributes: true, attributeOldValue: true, childList: true, characterData: true });
+  window.__gauge = () => {
+    take(observer.takeRecords());
+    observer.disconnect();
+    return [...rows.entries()].map(([bar, row]) => ({ values: [...row.values, Number(bar.getAttribute("aria-valuenow"))], mismatch: row.mismatch }));
+  };
+});
+async function gaugeCheck(page, label) {
+  const list = await page.evaluate(() => window.__gauge());
+  for (const [index, row] of list.entries()) {
+    const drops = row.values.filter((v, i) => i > 0 && v < row.values[i - 1]).length;
+    const steps = row.values.filter((v, i) => i === 0 || v !== row.values[i - 1]);
+    ok(`${label} 진행 막대 줄 ${index + 1} 줄어들지 않음 · 끝 100 · 글 % = 막대`, drops === 0 && steps.at(-1) === 100 && row.mismatch.length === 0, `기록 ${row.values.length}번 · 줄어듦 ${drops} · ${steps.join("→")}${row.mismatch.length ? ` · 다름 ${row.mismatch.slice(0, 5).join(" ")}` : ""}`);
+  }
+  if (!list.length) ok(`${label} 진행 막대 기록`, false, "기록 없음");
+}
+
 async function putMarker(page) {
   return page.evaluate(async (id) => {
     const bytes = new Uint8Array(131072);
@@ -203,8 +239,10 @@ try {
     await rowAlign(page, "A");
     await oneLine(page, "A ko");
     const start = Date.now();
+    await watchGauge(page);
     await page.click('#dialogActions [data-action="update-all"]');
     await waitRows(page, ["done", "failed"]);
+    await gaugeCheck(page, "A 1단계");
     const after = await rapid(page);
     const shownAfter = await rows(page);
     ok("A 업데이트 완료 → 1.3.1 · SHA-1 일치", after?.version === "1.3.1" && after.sha1 === SHA.v131 && shownAfter[0].state === "done", `${JSON.stringify(after)} · ${shownAfter[0].meta}`);
@@ -243,8 +281,10 @@ try {
     await boot(page);
     await waitDialog(page);
     const shown = await rows(page);
+    await watchGauge(page);
     await page.click('#dialogActions [data-action="update-all"]');
     await waitRows(page, ["done", "failed"]);
+    await gaugeCheck(page, "B 연쇄 2단계");
     const after = await rapid(page);
     const log = await r2Log();
     ok("B 1.2.1 → 두 단계 → 1.3.1 SHA-1 일치", after?.sha1 === SHA.v131 && log.filter((l) => l.path.includes("/patches/")).length === 2, `${shown[0]?.meta} · ${after?.version}`);
@@ -325,9 +365,11 @@ try {
       await page.waitForTimeout(1500);
       console.log("디버그", JSON.stringify(await page.evaluate(() => ({ inputs: document.querySelectorAll("input[type=file]").length, rows: [...document.querySelectorAll("#dialog .upick__item")].map((n) => n.dataset.state + " " + n.querySelector(".upick__meta").textContent), toast: document.getElementById("toast").textContent }))));
     }
+    await watchGauge(page);
     const [chooser] = await Promise.all([page.waitForEvent("filechooser", { timeout: 10000 }), page.click('#dialog [data-action="update-row"]')]);
     await chooser.setFiles(opt.rom);
     await waitRows(page, ["done", "failed"]);
+    await gaugeCheck(page, "F 전체 설치");
     const after = await rapid(page);
     const done = await rows(page);
     ok("F 원본 롬 + .wgbp → 1.3.1 SHA-1 일치", after?.sha1 === SHA.v131 && done[0].state === "done", `${done[0].meta} · ${after?.sha1}`);
