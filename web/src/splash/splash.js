@@ -25,15 +25,18 @@
   const LOOP_SMALL = 10;
   const TEXT_BOTTOM = 16;
   const LATE_MS = 1000;
-  const STRIPS = { meadow: { src: "/splash/meadow.png", rows: 64 }, sunset: { src: "/splash/sunset.png", rows: 52 } };
+  const HOME_VP_X = 199;
+  const HOME_VP_Y = 150;
+  const STRIPS = { meadow: { src: "/splash/meadow.png", rows: 64 }, sunset: { src: "/splash/sunset.png", rows: 52 }, home: { src: "/splash/home.png" } };
   const CAT_SRC = "/splash/cat.png";
   const TEXT_SRC = "/splash/text.png";
-  const NAMES = ["sky", "cloud", "cloud-shade", "sun-rim", "sun-mid", "sun-core", "sun-band", "ground-far", "ground-mid", "ground-near", "ground-a", "ground-b", "band", "path", "path-edge", "pebble", "flower-a", "flower-b", "flower-c", "flower-d", "flower-core", "tuft", "wood", "wood-dark", "pole", "lamp", "lamp-core", "shadow"];
+  const NAMES = ["sky", "cloud", "cloud-shade", "sun-rim", "sun-mid", "sun-core", "sun-band", "ground-far", "ground-mid", "ground-near", "ground-a", "ground-b", "band", "path", "path-edge", "pebble", "flower-a", "flower-b", "flower-c", "flower-d", "flower-core", "tuft", "wood", "wood-dark", "pole", "lamp", "lamp-core", "shadow", "fill"];
   const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const bayer = (x, y) => BAYER[(y & 3) * 4 + (x & 3)];
 
   const hour = new Date().getHours();
-  const variant = hour >= 6 && hour < 18 ? "meadow" : "sunset";
+  const variant = hour >= 17 && hour < 23 ? "home" : hour >= 4 && hour < 17 ? "meadow" : "sunset";
+  const home = variant === "home";
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let finish = () => {};
   const api = {
@@ -71,7 +74,7 @@
     const n = parseInt(hex.slice(1), 16);
     return [n >> 16, (n >> 8) & 255, n & 255];
   };
-  const skyStops = P.sky.split(",").map((item) => {
+  const skyStops = home ? [] : P.sky.split(",").map((item) => {
     const [at, color] = item.trim().split(/\s+/);
     return { at: Number(at), rgb: rgb(color) };
   });
@@ -214,7 +217,8 @@
     place(front, fw, fh, fx, fy, 1);
     place(text, tw, th, tx, ty, 1);
     for (const c of [bctx, fctx, tctx]) c.imageSmoothingEnabled = false;
-    skyLayer = paintSky();
+    skyLayer = home ? null : paintSky();
+    backDrawn = false;
     drawn = null;
     patterns = null;
     drawText();
@@ -520,15 +524,24 @@
     tctx.drawImage(work, 0, 0, w * tk, h * tk);
   }
 
+  let backDrawn = false;
   function render(t) {
     ctx = bctx;
-    const C = camera(t);
-    bctx.drawImage(skyLayer, 0, 0);
-    clouds(t);
-    drawStrip();
-    ground(C);
-    path();
-    drawItems(C);
+    if (home) {
+      if (!backDrawn) {
+        rect(0, 0, view.LW, view.LH, P.fill);
+        bctx.drawImage(strip, view.AX - HOME_VP_X, view.hyL - HOME_VP_Y);
+        backDrawn = true;
+      }
+    } else {
+      const C = camera(t);
+      bctx.drawImage(skyLayer, 0, 0);
+      clouds(t);
+      drawStrip();
+      ground(C);
+      path();
+      drawItems(C);
+    }
     drawFront(t);
   }
 
@@ -590,8 +603,10 @@
       measureCat(catImage);
       strip = stripImage;
       mask = textImage;
-      buildItems();
-      buildClouds();
+      if (!home) {
+        buildItems();
+        buildClouds();
+      }
       fit();
       render(0);
       delete splash.dataset.variant;

@@ -2,6 +2,7 @@
 // 스플래시는 글꼴을 받기 전에 그려야 하므로 글자를 그림으로 넣는다(빌드가 index.html 에 data URI 로 넣음).
 // 12px 로 그리면 가로 안티에일리어싱이 섞이므로 8배(96px)로 그려 칸마다 가운데 화소만 본다.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/tools/splash-text.mjs [--chrome <chrome.exe>]
+// 만든 뒤 node web/tools/png-palette.mjs web/src/splash/text.png web/src/splash/text.png 로 줄인다.
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";

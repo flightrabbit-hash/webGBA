@@ -49,6 +49,9 @@
   --sp-sunset-lamp: #ffb35a;
   --sp-sunset-lamp-core: #fff2c4;
   --sp-sunset-shadow: #b9807a;
+
+  --sp-home-fill: #2a1a12;
+  --sp-home-shadow: #b07f55;
 }
 
 .splash {
@@ -68,6 +71,10 @@
 
 .splash[data-variant="sunset"] {
   background: linear-gradient(var(--sp-sunset-sky-flat) 40%, var(--sp-sunset-ground-near) 40%);
+}
+
+.splash[data-variant="home"] {
+  background: var(--sp-home-fill);
 }
 
 .splash canvas {

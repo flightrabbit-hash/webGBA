@@ -1,7 +1,7 @@
-// 웹 시작 스플래시 시험(로컬 전용) — 휴대폰(터치 전용·짧은 변 600px 이하)에서만 보이는지, 낮·밤 배경, 부드러운 확대,
+// 웹 시작 스플래시 시험(로컬 전용) — 휴대폰(터치 전용·짧은 변 600px 이하)에서만 보이는지, 시간대별 배경(낮·밤·집), 부드러운 확대,
 // 도착 고양이 잉크 세로 가운데, 하단 주소, 디졸브 뒤 앱·설치 안내, 느린 로딩 제자리 달리기, 움직임 줄이기.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-splash.mjs <주소> <캡처 폴더> [--chrome <chrome.exe>]
-// 시각은 Date.prototype.getHours 를 바꿔 흉내, 느린 로딩은 /js/main.js 응답을 늦춰 흉내.
+// 시각은 Date 를 원하는 시:분으로 옮겨(시간은 흐름) 흉내, 느린 로딩은 /js/main.js 응답을 늦춰 흉내.
 // 캡처는 CDP Page.captureScreenshot — page.screenshot 은 main.js 를 늦춘 동안 앱 준비 뒤까지 기다려 스플래시를 못 찍음.
 import fs from "node:fs";
 import path from "node:path";
@@ -28,16 +28,30 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const PORTRAIT = { width: 390, height: 844 };
 const LANDSCAPE = { width: 844, height: 390 };
 const MIN_MS = 2000;
+const DAY = [10, 0];
+const NIGHT = [1, 0];
+const HOME = [19, 0];
+const NAME = { meadow: "낮 초원(1안)", sunset: "밤 노을(2안)", home: "집 안(4안)" };
 const FADE_MS = 240;
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, hour = 10, reduce = false, standalone = true, slow = 0 } = {}) {
+async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, time = DAY, reduce = false, standalone = true, slow = 0 } = {}) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: dpr, isMobile: mobile, hasTouch: touch, reducedMotion: reduce ? "reduce" : "no-preference" });
   await context.addInitScript(
-    ([h, alone]) => {
-      Date.prototype.getHours = function () {
-        return h;
+    ([[h, m], alone]) => {
+      const Real = Date;
+      const target = new Real();
+      target.setHours(h, m, 30, 0);
+      const shift = target.getTime() - Real.now();
+      window.Date = class extends Real {
+        constructor(...args) {
+          if (args.length) super(...args);
+          else super(Real.now() + shift);
+        }
+        static now() {
+          return Real.now() + shift;
+        }
       };
       try {
         localStorage.setItem("webgba.installHint", "1");
@@ -47,7 +61,7 @@ async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true,
         if (!window.__readyAt && document.documentElement?.dataset.ready === "1") window.__readyAt = performance.now();
       }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-ready"] });
     },
-    [hour, standalone],
+    [time, standalone],
   );
   const page = await context.newPage();
   const errors = [];
@@ -161,6 +175,36 @@ function inkUnion(ms) {
   });
 }
 
+function scaleTrace(ms) {
+  const front = document.querySelectorAll("#splash canvas")[1];
+  const shadow = getComputedStyle(document.documentElement).getPropertyValue(`--sp-${window.webgbaSplash.variant}-shadow`).trim().toLowerCase();
+  const [sr, sg, sb] = [1, 3, 5].map((i) => parseInt(shadow.slice(i, i + 2), 16));
+  const list = [];
+  const end = performance.now() + ms;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (!front.isConnected || performance.now() > end) return resolve(list);
+      const d = front.getContext("2d").getImageData(0, 0, front.width, front.height).data;
+      let lowest = -1;
+      let width = 0;
+      for (let y = front.height - 1; y >= 0 && lowest < 0; y--) {
+        let n = 0;
+        for (let x = 0; x < front.width; x++) {
+          const i = (y * front.width + x) * 4;
+          if (d[i + 3] && d[i] === sr && d[i + 1] === sg && d[i + 2] === sb) n++;
+        }
+        if (n) {
+          lowest = y;
+          width = n;
+        }
+      }
+      if (width && list.at(-1) !== width / 20) list.push(width / 20);
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
 const sheetColors = (() => {
   const image = decodePng(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "splash", "cat.png")));
   const set = new Set();
@@ -186,19 +230,20 @@ async function capture(page) {
 }
 const shot = async (page, name) => (shots[name] = decodePng(await capture(page)));
 
-for (const [hour, want] of [[5, "sunset"], [6, "meadow"], [17, "meadow"], [18, "sunset"]]) {
-  const { context, page } = await open({ hour });
+for (const [time, want] of [[[3, 59], "sunset"], [[4, 0], "meadow"], [[16, 59], "meadow"], [[17, 0], "home"], [[22, 59], "home"], [[23, 0], "sunset"]]) {
+  const { context, page } = await open({ time });
   await startOf(page);
   const got = await info(page);
-  ok(`시각 ${hour}시 → ${want === "meadow" ? "1안 낮 초원" : "2안 노을"}`, got.api?.variant === want, got.api?.variant);
+  ok(`시각 ${time[0]}:${String(time[1]).padStart(2, "0")} → ${NAME[want]}`, got.api?.variant === want, got.api?.variant);
   await context.close();
 }
 
-{
-  const { context, page } = await open({ hour: 10 });
+for (const time of [DAY, HOME]) {
+  const { context, page } = await open({ time, slow: 3000 });
   await startOf(page);
-  const list = await samples(page, 1900);
-  const ks = list.map((s) => s.shadowK);
+  const variant = (await info(page)).api.variant;
+  const ks = await page.evaluate(scaleTrace, 2000);
+  const list = await samples(page, 200);
   const distinct = new Set(ks.map((k) => k.toFixed(3)));
   const fractional = ks.filter((k) => Math.abs(k - Math.round(k)) > 0.02).length;
   let monotonic = true;
@@ -207,17 +252,17 @@ for (const [hour, want] of [[5, "sunset"], [6, "meadow"], [17, "meadow"], [18, "
     if (ks[i] + 0.05 < ks[i - 1]) monotonic = false;
     jump = Math.max(jump, ks[i] - ks[i - 1]);
   }
-  ok("세로 부드러운 확대: 크기가 정수 단계가 아니라 이어서 커짐", distinct.size >= 15 && fractional > ks.length / 2 && monotonic, `표본 ${ks.length} · 서로 다른 크기 ${distinct.size} · 정수 아님 ${fractional} · 한 번에 최대 +${jump.toFixed(2)} · ${ks[0]?.toFixed(2)} → ${ks.at(-1)?.toFixed(2)}`);
+  ok(`${NAME[variant]} 세로 부드러운 확대: 크기가 정수 단계가 아니라 이어서 커짐`, distinct.size >= 15 && fractional > ks.length / 2 && monotonic, `표본 ${ks.length} · 서로 다른 크기 ${distinct.size} · 정수 아님 ${fractional} · 한 번에 최대 +${jump.toFixed(2)} · ${ks[0]?.toFixed(2)} → ${ks.at(-1)?.toFixed(2)}`);
   const extra = new Set(list.flatMap((s) => s.colors).filter((c) => !sheetColors.has(c)));
   const soft = list.reduce((sum, s) => sum + s.soft + s.text.soft, 0);
-  ok("도트 번짐 없음: 고양이 색 = 시트 15색만, 반투명 화소 0, 캔버스 pixelated", !extra.size && !soft && list[0].rendering.every((r) => r === "pixelated"), `시트에 없는 색 ${extra.size} · 반투명 ${soft} · ${list[0].rendering.join(",")}`);
+  ok(`${NAME[variant]} 도트 번짐 없음: 고양이 색 = 시트 15색만, 반투명 화소 0, 캔버스 pixelated`, !extra.size && !soft && list[0].rendering.every((r) => r === "pixelated"), `시트에 없는 색 ${extra.size} · 반투명 ${soft} · ${list[0].rendering.join(",")}`);
   await readyOf(page);
-  ok("오류 없음", !page.errors.length, page.errors.join(" | "));
+  ok(`${NAME[variant]} 오류 없음`, !page.errors.length, page.errors.join(" | "));
   await context.close();
 }
 
-for (const [viewport, label, hour, key] of [[PORTRAIT, "세로 낮", 10, "pd"], [PORTRAIT, "세로 밤", 20, "pn"], [LANDSCAPE, "가로 낮", 10, "ld"], [LANDSCAPE, "가로 밤", 20, "ln"]]) {
-  const { context, page } = await open({ viewport, hour, slow: 5000 });
+for (const [viewport, label, time, key] of [[PORTRAIT, "세로 낮", DAY, "pd"], [PORTRAIT, "세로 밤", NIGHT, "pn"], [PORTRAIT, "세로 집", HOME, "ph"], [LANDSCAPE, "가로 낮", DAY, "ld"], [LANDSCAPE, "가로 밤", NIGHT, "ln"], [LANDSCAPE, "가로 집", HOME, "lh"]]) {
+  const { context, page } = await open({ viewport, time, slow: 5000 });
   await startOf(page);
   await sleep(2100);
   const list = await samples(page, 300);
@@ -232,7 +277,7 @@ for (const [viewport, label, hour, key] of [[PORTRAIT, "세로 낮", 10, "pd"], 
   const bottomGap = s.vh - (t.y + t.h);
   const lineH = 15 * Math.round(s.dpr);
   ok(`${label} 주소 한 줄·하단 여백 16px·가로 가운데·흰 글자 + 검은 테두리만`, t.h === lineH && bottomGap === 16 * Math.round(s.dpr) && t.x >= 0 && t.x + t.w <= s.vw && Math.abs(t.x + t.w / 2 - s.vw / 2) <= 1 && t.colors.length === 2 && t.colors.includes("#ffffff") && t.colors.includes("#000000"), `높이 ${t.h}/${lineH} · 하단 ${bottomGap} · 좌 ${t.x} 우 ${s.vw - t.x - t.w} · 색 ${t.colors.join(",")}`);
-  if (key === "pd" || key === "ln") {
+  if (key === "pd" || key === "ln" || key === "ph") {
     const late = await samples(page, 700);
     const frames = new Set(late.map((v) => `${v.cat.x0},${v.cat.y0},${v.cat.x1},${v.cat.y1}`));
     const sizes = new Set(late.map((v) => v.shadowK));
@@ -256,7 +301,7 @@ for (const [viewport, label, hour, key] of [[PORTRAIT, "세로 낮", 10, "pd"], 
 }
 
 {
-  const { context, page } = await open({ hour: 10 });
+  const { context, page } = await open({ time: DAY });
   await startOf(page);
   await page.waitForFunction(() => window.webgbaSplash.readyAt, null, { polling: 10 });
   const steps = await page.evaluate(
@@ -294,7 +339,7 @@ for (const [viewport, label, hour, key] of [[PORTRAIT, "세로 낮", 10, "pd"], 
 }
 
 {
-  const { context, page } = await open({ hour: 20, standalone: false });
+  const { context, page } = await open({ time: HOME, standalone: false });
   await startOf(page);
   const first = await info(page);
   await readyOf(page);
@@ -305,7 +350,7 @@ for (const [viewport, label, hour, key] of [[PORTRAIT, "세로 낮", 10, "pd"], 
 }
 
 {
-  const { context, page } = await open({ hour: 10, reduce: true });
+  const { context, page } = await open({ time: DAY, reduce: true });
   await startOf(page);
   await sleep(500);
   const a = await capture(page);
@@ -348,6 +393,7 @@ if (shots.pd && shots.pn && shots.ld && shots.ln) {
   sheet([shots.pd, shots.pn], "스플래시_세로_낮밤.png");
   sheet([shots.ld, shots.ln], "스플래시_가로_낮밤.png");
 }
+if (shots.ph && shots.lh) sheet([shots.ph, shots.lh], "스플래시_집안_세로가로.png");
 if (shots.app && shots.gate) sheet([shots.app, shots.gate], "스플래시_뒤_앱_설치안내.png");
 
 await browser.close();
