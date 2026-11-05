@@ -44,6 +44,10 @@ export function createUpdater(d) {
       }
       const plan = planUpdate(feed, sha1);
       if (plan.kind === "latest") continue;
+      if (plan.kind === "none") {
+        d.log("INFO", `업데이트 경로 없음(표시 안 함) ${game.gameId} ${game.rom.version} → ${feed.version} SHA-1 ${sha1.slice(0, 8)}`);
+        continue;
+      }
       items.set(game.key, { key: game.key, rom: game.rom, feed, plan, name: d.displayName(game.rom), from: game.rom.version, to: feed.version, kind: plan.kind, size: plan.size, state: "ready", stage: "", fraction: 0, reason: "", running: false });
       d.log("INFO", `업데이트 있음 ${game.gameId} ${game.rom.version} → ${feed.version} (${plan.kind}${plan.steps.length ? ` ${plan.steps.length}단계` : ""} ${plan.size}바이트)`);
     }

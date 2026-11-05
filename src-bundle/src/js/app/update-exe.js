@@ -77,8 +77,13 @@ export function createExeUpdater(d) {
       } catch {
         continue;
       }
-      const plan = planUpdate(feed, await sha1Hex(bytes));
+      const sha1 = await sha1Hex(bytes);
+      const plan = planUpdate(feed, sha1);
       if (plan.kind === "latest") continue;
+      if (plan.kind === "none") {
+        d.log("INFO", `업데이트 경로 없음(표시 안 함) ${game.gameId} ${game.version} → ${feed.version} SHA-1 ${sha1.slice(0, 8)} ${game.info.path}`);
+        continue;
+      }
       let label = null;
       try {
         const wgba = await readWgba(bytes);

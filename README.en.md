@@ -1390,6 +1390,7 @@ Little endian:
 - Once each time the app starts (opening the web page, starting the Windows app), when online. Checked files = `.wgba` in the web version's library; in the Windows app, `.wgba` among favorites, recent files and the current folder. Each version file is downloaded once. No further checks while the app runs.
 - Offline, failed downloads and signature mismatches are skipped without a notice (logged only).
 - The update window appears only when a new version exists: per row the cartridge art, name, current version → new version, size and an "Update" button; below, update the checked games and later. After closing it, for the rest of that run the library (in the Windows app, rows on the start screen and side list) and the info screen keep an update mark and button.
+- If the file SHA-1 is not in `from` and there is no `full`, nothing is shown in the update window, library or info screen (log only). Only players who have a `.wgba` with a patch path see the update.
 - Apply = download (size, SHA-256) → apply → result SHA-1 = `wgba.sha1` of the version file → replace (the Windows app writes a temporary file first, then swaps it in). On failure the current file stays as it is.
 - Saves carry over (web = by game id, Windows app = `.sav` next to the file). Quick slots record the version they were made in; slots from another version are not loaded (they stay until overwritten).
 - A running game is updated after quitting it.
