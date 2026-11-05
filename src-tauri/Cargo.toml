@@ -1,6 +1,6 @@
 [package]
 name = "webgba"
-version = "0.7.0"
+version = "0.7.1"
 description = "webGBA — GBA 실행기"
 authors = ["flightrabbit"]
 license = "MIT"
