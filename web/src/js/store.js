@@ -189,8 +189,8 @@ export function putSave(id, data, game = "") {
 export const saveBytes = (id) => bytes(saveKey(id));
 
 // 퀵슬롯(상태 저장): 게임 id 마다 칸 1~9. 목록 기록에 저장 순간 화면(PNG 바이트)을 함께 둔다.
-export function putState(id, slot, data, { game = "", thumb = null, auto = false } = {}) {
-  return put({ key: stateKey(id, slot), kind: KIND_STATE, id, slot, game, auto, thumb, saved: Date.now() }, data);
+export function putState(id, slot, data, { game = "", thumb = null, auto = false, version = "" } = {}) {
+  return put({ key: stateKey(id, slot), kind: KIND_STATE, id, slot, game, auto, thumb, version, saved: Date.now() }, data);
 }
 
 export const stateBytes = (id, slot) => bytes(stateKey(id, slot));

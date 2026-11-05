@@ -1178,6 +1178,128 @@ html.is-rail-collapsed .sidepanel {
   color: var(--text-faint);
 }
 
+.upick__item {
+  height: auto;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.upick__item.is-off {
+  cursor: default;
+}
+
+.upick__check {
+  display: flex;
+  flex: none;
+  align-items: center;
+  outline: none;
+  cursor: pointer;
+}
+
+.upick__check[aria-disabled="true"] {
+  cursor: default;
+}
+
+.upick__check:not([aria-disabled="true"]):active > .cbox,
+.upick__check.is-down > .cbox,
+.upick__item:not(.is-off):active > .upick__check > .cbox {
+  --edge: var(--accent-line);
+  --press: var(--dot);
+}
+
+.upick__check:focus-visible > .cbox {
+  --ol: var(--accent);
+}
+
+.upick__art {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.upick__art[hidden] {
+  display: none;
+}
+
+.upick__img {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.upick__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.upick__name,
+.upick__meta {
+  flex: none;
+  max-width: 100%;
+  height: 20px;
+}
+
+.upick__foot {
+  display: flex;
+  align-items: center;
+  height: var(--btn-h-sm);
+}
+
+.upick__btn[hidden],
+.upick__bar[hidden] {
+  display: none;
+}
+
+.btn.upick__btn {
+  min-width: 0;
+  height: var(--btn-h-sm);
+  padding: 0 12px;
+}
+
+.btn.row__upd {
+  flex: none;
+  min-width: 0;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.upick__label {
+  display: block;
+  height: 100%;
+  line-height: calc(var(--btn-h-sm) - 2px);
+  white-space: nowrap;
+}
+
+.row__upd .upick__label {
+  line-height: 18px;
+}
+
+.upick__bar {
+  display: block;
+  flex: 1 1 auto;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg-hover);
+}
+
+.upick__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left center;
+}
+
+.upick__item[data-state="done"] .upick__meta {
+  color: var(--text-dim);
+}
+
 .cbox {
   --dot: 2px;
   --ol: var(--bg-sunken);

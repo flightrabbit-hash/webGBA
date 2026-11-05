@@ -122,6 +122,15 @@
       }
     },
     "files": { "type": "object", "maxProperties": 64, "additionalProperties": { "type": "string", "pattern": "^(data\\.[a-z0-9._-]{1,27}|rom)$" } },
+    "update": {
+      "type": "object",
+      "description": "Online updates (README chapter 12): the host checks the signed version file once per app start and applies delta patches only when the player presses Update",
+      "required": ["feed", "key"],
+      "properties": {
+        "feed": { "type": "string", "maxLength": 512, "pattern": "^https://[^\\s/]+/", "description": "Version file (latest.json) address, https only" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}[AEIMQUYcgkosw048]=$", "description": "ECDSA P-256 public key: the uncompressed 65-byte point (04 || X || Y) in standard base64" }
+      }
+    },
     "multiplayer": {
       "type": "object",
       "required": ["protocol"],

@@ -224,6 +224,25 @@ export const WEBAPI_NET = Object.freeze(["Web_NetWanted", "Web_NetEvent", "Web_N
 export const HOST_KEYS = Object.freeze(["Space", "Tab", "Escape", "Pause", "KeyP", ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)]);
 
 export const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+
+export const FEED_LOOPBACK_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//;
+export function feedUrlOk(url, { loopback = false } = {}) {
+  if (typeof url !== "string" || url.length > 512) return false;
+  if (/^https:\/\/[^\s/]+\//.test(url)) return true;
+  return loopback && FEED_LOOPBACK_RE.test(url);
+}
+
+export function keyOk(key) {
+  if (typeof key !== "string" || !/^[A-Za-z0-9+/]{86}[AEIMQUYcgkosw048]=$/.test(key)) return false;
+  return atob(key).charCodeAt(0) === 4;
+}
+
+export function checkUpdateField(update, errors) {
+  if (!update || typeof update !== "object" || Array.isArray(update)) return errors.push("update 는 객체({feed, key})");
+  if (!feedUrlOk(update.feed)) errors.push(`update.feed 는 https:// 주소(512자 이하): ${JSON.stringify(update.feed)}`);
+  if (!keyOk(update.key)) errors.push("update.key 는 ECDSA P-256 공개 키(압축하지 않은 점 65바이트)의 base64");
+  return undefined;
+}
 export const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 export const CHUNK_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 export const DATA_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,26}$/;
@@ -686,6 +705,7 @@ export function checkManifest(m, errors, warnings) {
       for (const w of ice.warnings) warnings.push(`multiplayer.${w}`);
     }
   }
+  if (m.update !== undefined) checkUpdateField(m.update, errors);
   if (m.runtime === "script" && !["module", "emscripten"].includes(m.entry?.style)) errors.push(`entry.style 이 module·emscripten 이 아닙니다: ${m.entry?.style}`);
   // 규격 1 의 JS 조각 이름은 늘 "js"(묶기 도구·읽기 모두) — 다른 값은 무시된다
   if (m.entry?.js !== undefined && m.entry.js !== "js") warnings.push(`entry.js 는 "js" 만 됩니다(규격 1) — 무시하고 조각 js 를 씁니다: ${m.entry.js}`);

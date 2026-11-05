@@ -1,6 +1,6 @@
 import * as store from "./store.js";
 
-export const context = { game: "" };
+export const context = { game: "", version: "" };
 
 const quota = (error) => error?.name === "QuotaExceededError" || /quota/i.test(String(error?.message ?? ""));
 
@@ -35,7 +35,7 @@ export const core = {
       thumb = (await extra.thumb) ?? null;
     } catch {}
     try {
-      await store.putState(id, slot, bytes, { game: context.game, auto: Boolean(extra.auto), thumb });
+      await store.putState(id, slot, bytes, { game: context.game, auto: Boolean(extra.auto), thumb, version: context.version });
     } catch (error) {
       const wrapped = new Error(quota(error) ? context.quotaText || "quota" : String(error?.message ?? error));
       wrapped.quota = quota(error);

@@ -5,7 +5,8 @@ import { bootScript } from "../core/script-host.js";
 import { readPatch, sha1Hex, WgbpError } from "../core/wgbp.js";
 import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
-import { openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
+import { centerTexts, openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
+import { createExeUpdater } from "../app/update-exe.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
@@ -1296,6 +1297,21 @@ function makeRow(item, { removable = false, missing = false } = {}) {
     where.textContent = item.where;
     row.append(where);
   }
+  if (updater.pending(item.path)) {
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "btn btn--go row__upd";
+    update.dataset.action = "update";
+    const label = Object.assign(document.createElement("span"), { className: "upick__label", textContent: t("update.btn.one") });
+    update.append(label);
+    requestAnimationFrame(() => centerTexts([label]));
+    update.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openUpdate(item.path);
+    });
+    update.addEventListener("dblclick", (event) => event.stopPropagation());
+    row.append(update);
+  }
   if (removable) {
     const remove = document.createElement("button");
     remove.type = "button";
@@ -1603,7 +1619,8 @@ async function showInfo() {
     ? [
         Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: t("info.game", { name: state.game.label }) }),
         t("info.gameMeta", { id: game.gameId, author: game.author || "-", build: game.build.slice(0, 8) }),
-      ]
+        updater.pending(state.game.path) ? t("update.info.new", { version: updater.pending(state.game.path).to }) : "",
+      ].filter(Boolean)
     : [];
   await openDialog({
     title: t("info.title"),
@@ -1797,8 +1814,10 @@ async function saveStateTo(index) {
     return;
   }
   try {
-    if (await player.saveState(index)) status(t("status.stateSaved", { slot: index }));
-    else status(t("status.stateSaveFailed"), "error");
+    if (await player.saveState(index)) {
+      await rememberSlot(index);
+      status(t("status.stateSaved", { slot: index }));
+    } else status(t("status.stateSaveFailed"), "error");
   } catch (error) {
     status(t("status.stateSaveFailedWhy", { reason: reason(error) }), "error");
   }
@@ -1811,6 +1830,11 @@ async function loadStateFrom(index) {
   }
   if (!player.canState) {
     status(t("status.noStateSupport"), "warn");
+    return;
+  }
+  const saved = slotVersion(index);
+  if (saved && gameVersion() && saved !== gameVersion()) {
+    status(t("update.quick.other", { slot: t("update.quick.slot", { n: index }), saved, now: gameVersion() }), "warn");
     return;
   }
   try {
@@ -2285,6 +2309,53 @@ settings.setup({
   onError: (text) => status(text, "error"),
 });
 
+/* ── 온라인 업데이트 ── */
+
+const gameVersion = () => state.game?.info?.version ?? "";
+const slotVersion = (index) => (state.game?.saveId ? state.prefs.slotVersions?.[state.game.saveId]?.[index] ?? "" : "");
+
+async function rememberSlot(index) {
+  const id = state.game?.saveId;
+  if (!id) return;
+  const all = { ...(state.prefs.slotVersions ?? {}) };
+  const own = { ...(all[id] ?? {}) };
+  if (gameVersion()) own[index] = gameVersion();
+  else delete own[index];
+  all[id] = own;
+  await savePrefs({ slotVersions: all });
+}
+
+const updater = createExeUpdater({
+  t,
+  core,
+  el,
+  log: (level, text) => core.log(level, text),
+  status,
+  lang: () => i18n.lang(),
+  baseOf,
+  prefs: () => state.prefs,
+  savePrefs,
+  openDialog,
+  testMode: () => Boolean(state.info?.settings?.useDevelopKit),
+  running: (path) => Boolean(state.game && samePath(state.game.path, path)),
+  closeGame: () => closeGame(),
+  pickRom: (item) => core.pickFile({ title: t("pick.patchRom", { title: item.name }), filters: PATCH_ROM_EXT, filterName: t("pick.romFilter"), start: dirOf(item.path) }),
+  readRom: (rom) => (extOf(rom) === "zip" ? readZip(rom) : loadRomBytes(rom)),
+  patchText: (error, rom) => patchError(error, { file: "", rom }),
+  refresh: () => {
+    renderPanel();
+    if (!el.start.hidden) renderStart();
+  },
+});
+
+function openUpdate(path) {
+  const item = updater.pending(path);
+  if (!item || updater.showing) return;
+  updater.open([item.key], { start: item.kind === "patch" && !(state.game && samePath(state.game.path, path)) });
+}
+
+const updatePaths = () => [...favorites(), ...(state.prefs.recent ?? []), ...state.entries];
+
 /* ── 시작 ── */
 
 async function boot() {
@@ -2293,7 +2364,7 @@ async function boot() {
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, updater, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);
@@ -2312,6 +2383,7 @@ async function boot() {
   await refreshLink();
   status(t("status.ready"));
   if (state.info.launchFile) await openPath(state.info.launchFile);
+  updater.check(updatePaths()).catch((error) => core.log("WARN", `업데이트 확인 실패: ${reason(error)}`));
 }
 
 boot().catch((error) => {

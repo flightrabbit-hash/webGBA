@@ -21,6 +21,7 @@ import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
+import { createUpdater } from "./update.js";
 
 const { t } = i18n;
 const $ = (id) => document.getElementById(id);
@@ -1598,6 +1599,10 @@ function openDialog({ title, body = [], actions, input = null, kind = "" }) {
     };
     state.dialogDone = done;
     const press = (action) => {
+      if (action.run) {
+        action.run();
+        return;
+      }
       if (action.pick) {
         const picked = pickFile({ multiple: false });
         done(picked.then((files) => ({ files })));
@@ -2006,6 +2011,7 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   const saveId = saveIdOf(meta);
   state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), names: meta.gameId ? meta.title : null, author: meta.author ?? "", build: meta.build ?? "", kind };
   context.game = meta.name;
+  context.version = meta.gameId ? meta.version ?? "" : "";
   state.quick.played = 0;
   holds.delete("user");
   // ② 자체 JS 게임은 격리 틀(#screen 안 iframe)이 화면 — 캔버스는 숨김(web.css)
@@ -2540,6 +2546,7 @@ async function closeGame({ quiet = false } = {}) {
   state.scriptFrame = null;
   delete document.body.dataset.runtime;
   context.game = "";
+  context.version = "";
   holds.delete("user");
   pad.releaseAll();
   const reshape = Boolean(state.screen);
@@ -2957,6 +2964,7 @@ async function renderLibrary() {
     slot.title = displayName(rom);
     const art = spineArt(rom, byKey.get(rom.key).look);
     if (state.game?.id === rom.id) art.append(make("span", "spine__run"));
+    if (updater.pending(rom.key)) art.append(make("span", "spine__upd"));
     slot.append(art);
     slot.addEventListener("click", () => pickSpine(rom.key));
     spines.set(rom.key, slot);
@@ -3021,7 +3029,9 @@ function fillCard(key) {
   const side = make("div", "lib__text");
   const nameRow = make("div", "lib__line");
   nameRow.append(make("span", "lib__name", displayName(rom)), button({ kind: "tool", icon: "info", title: t("web.lib.info"), action: "info", onClick: () => showGameInfo(rom) }));
-  const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? ".wgba" : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : ""));
+  const update = updater.pending(rom.key);
+  if (update) nameRow.append(button({ label: t("update.btn.one"), kind: "small btn--primary", action: "update", onClick: () => openUpdate(rom) }));
+  const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? ".wgba" : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : "", update ? t("update.lib.new", { version: update.to }) : ""));
   const btns = make("div", "lib__btns");
   const act = (label, icon, action, onClick, kind = "") => button({ label, icon, action, kind, onClick });
   const list = running
@@ -3244,6 +3254,7 @@ function openGameSaves(rom) {
 function showGameInfo(rom) {
   const lines = [
     rom.gameId ? t("web.lib.infoVersion", { version: versionText(rom) }) : "",
+    updater.pending(rom.key) ? t("update.info.new", { version: updater.pending(rom.key).to }) : "",
     rom.gameId && rom.author ? t("web.lib.infoAuthor", { author: rom.author }) : "",
     rom.gameId ? t("web.lib.infoId", { id: rom.gameId }) : "",
     t("web.lib.infoFile", { file: rom.name, type: `.${rom.type}`, size: fmtSize(rom.size) }),
@@ -3482,10 +3493,17 @@ async function quickSave(slot, { auto = false } = {}) {
   }
 }
 
+const otherVersion = (info) => Boolean(info?.version && state.game?.version && info.version !== state.game.version);
+
 async function quickLoad(slot) {
   if (!canQuick()) return false;
   if (player.net.locked) {
     toast(t("net.blockQuick"), "warn");
+    return false;
+  }
+  const info = (await store.states(state.game.saveId).catch(() => [])).find((item) => item.slot === slot);
+  if (otherVersion(info)) {
+    toast(t("update.quick.other", { slot: slotLabel(slot), saved: info.version, now: state.game.version }), "warn");
     return false;
   }
   try {
@@ -3526,7 +3544,7 @@ function revokeQuickUrls() {
 
 function slotUsable(slot) {
   if (player.net.locked) return false;
-  return state.quick.tab === "save" ? slot !== AUTO_SLOT : state.quick.info.has(slot);
+  return state.quick.tab === "save" ? slot !== AUTO_SLOT : state.quick.info.has(slot) && !otherVersion(state.quick.info.get(slot));
 }
 
 function applyQuickTab() {
@@ -3615,6 +3633,7 @@ async function renderQuick() {
       failed ? make("p", "note note--warn", t("web.noStore")) : null,
       make("p", "note", minutes ? t("web.quick.noteAuto", { n: minutes }) : t("web.quick.noteAutoOff")),
       make("p", "note", t("web.quick.noteSav")),
+      [...state.quick.info.values()].some(otherVersion) ? make("p", "note note--warn", t("update.quick.note", { version: game.version })) : null,
       player.net.locked ? make("p", "note note--warn", t("net.blockQuick")) : null,
     ),
   );
@@ -4933,6 +4952,40 @@ async function settle() {
 
 setTimeout(revealApp, BOOT_LIMIT_MS);
 
+const updateLooks = new Map();
+const updater = createUpdater({
+  t,
+  store,
+  el,
+  log: logLine,
+  displayName,
+  button,
+  openDialog,
+  centerInk,
+  pickFile: () => pickFile({ multiple: false }),
+  readPatchRom,
+  patchText: (error, rom) => patchError(error, { file: "", rom }),
+  importGame: (name, bytes, options) => importGame(name, bytes, options),
+  closeGame: () => closeGame(),
+  runningKey: () => state.game?.key ?? "",
+  prepareArt: async (roms) => {
+    const body = cartArt.themeBody();
+    await Promise.all(roms.map(async (rom) => updateLooks.set(rom.key, await cartLook(rom, body).catch(() => null))));
+  },
+  packArt: (rom) => (updateLooks.get(rom.key) ? packNode(rom, updateLooks.get(rom.key)) : null),
+  refresh: () => {
+    refreshStart();
+    if (state.sheet === "library") renderSheet();
+  },
+});
+
+function openUpdate(rom) {
+  const item = updater.pending(rom.key);
+  if (!item) return;
+  closeSheet();
+  updater.open([rom.key], { start: item.kind === "patch" && state.game?.key !== rom.key });
+}
+
 async function boot() {
   const fonts = fontsReady();
   applyTheme(state.prefs.theme);
@@ -4975,6 +5028,7 @@ async function boot() {
   await splashClosed();
   document.documentElement.dataset.ready = "1";
   if (!state.storeBroken) store.persist();
+  if (!state.storeBroken) updater.check().catch((error) => logLine("WARN", `업데이트 확인 실패: ${reason(error)}`));
   if (touchDebugOn()) startTouchDebug();
 }
 
@@ -5043,7 +5097,7 @@ function startTouchDebug() {
   requestAnimationFrame(draw);
 }
 
-window.webgba = { player, pad, skin, store, state, layout, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
+window.webgba = { player, pad, skin, store, state, layout, updater, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);
