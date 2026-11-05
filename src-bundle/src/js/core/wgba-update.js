@@ -16,7 +16,10 @@ export const STEPS_MAX = 64;
 export const TEST_KEY = "webgba.updateTest";
 
 export const KNOWN_FEEDS = Object.freeze({
-  "com.flightrabbit.rapid": Object.freeze({ feed: "", key: "" }),
+  "com.flightrabbit.rapid": Object.freeze({
+    feed: "https://pub-da193dc1ff6540a4a6654def95a1a92f.r2.dev/com.flightrabbit.rapid/latest.json",
+    key: "BFhhvxjl7AcTB5l5YA648fDFzdgTvC2Il3FO+yu4KPfaH2iYD85g6vUOsQ7JHBOpg+6nBN1LpO5WbPfbm0MJ/cY=",
+  }),
 });
 
 export class UpdateError extends Error {
