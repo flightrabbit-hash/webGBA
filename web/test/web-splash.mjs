@@ -1,5 +1,6 @@
 // 웹 시작 스플래시 시험(로컬 전용) — 휴대폰(터치 전용·짧은 변 600px 이하)에서만 보이는지, 시간대별 배경(낮·밤·집), 부드러운 확대,
-// 도착 고양이 잉크 세로 가운데, 하단 주소, 디졸브 뒤 앱·설치 안내, 느린 로딩 제자리 달리기, 움직임 줄이기.
+// 도착 고양이 잉크 세로 가운데, 하단 주소, 디졸브 뒤 앱·설치 안내, 느린 로딩 제자리 달리기,
+// 움직임 줄이기도 같은 연출, 주 스레드가 멈춰도 다가오기를 건너뛰지 않음, ?splash=debug 진단 표시.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-splash.mjs <주소> <캡처 폴더> [--chrome <chrome.exe>]
 // 시각은 Date 를 원하는 시:분으로 옮겨(시간은 흐름) 흉내, 느린 로딩은 /js/main.js 응답을 늦춰 흉내.
 // 캡처는 CDP Page.captureScreenshot — page.screenshot 은 main.js 를 늦춘 동안 앱 준비 뒤까지 기다려 스플래시를 못 찍음.
@@ -36,7 +37,7 @@ const FADE_MS = 240;
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, time = DAY, reduce = false, standalone = true, slow = 0 } = {}) {
+async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, time = DAY, reduce = false, standalone = true, slow = 0, query = "" } = {}) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: dpr, isMobile: mobile, hasTouch: touch, reducedMotion: reduce ? "reduce" : "no-preference" });
   await context.addInitScript(
     ([[h, m], alone]) => {
@@ -67,7 +68,7 @@ async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true,
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   if (slow) await page.route("**/js/main.js", async (route) => (await sleep(slow), route.continue()));
-  await page.goto(URL_BASE, { waitUntil: "commit" });
+  await page.goto(URL_BASE + query, { waitUntil: "commit" });
   page.errors = errors;
   return { context, page };
 }
@@ -76,7 +77,7 @@ const startOf = (page) => page.waitForFunction(() => window.webgbaSplash?.startA
 const readyOf = (page) => page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
 const info = (page) => page.evaluate(() => {
   const s = window.webgbaSplash;
-  return { shown: Boolean(document.getElementById("splash")), api: s ? { variant: s.variant, reduce: s.reduce, startAt: s.startAt, readyAt: s.readyAt, closedAt: s.closedAt } : null, readyFlag: window.__readyAt || 0, boot: Boolean(document.getElementById("boot")) };
+  return { shown: Boolean(document.getElementById("splash")), api: s ? { variant: s.variant, held: s.stat.held, startAt: s.startAt, readyAt: s.readyAt, closedAt: s.closedAt } : null, readyFlag: window.__readyAt || 0, boot: Boolean(document.getElementById("boot")) };
 });
 
 function probe() {
@@ -287,7 +288,7 @@ for (const [viewport, label, time, key] of [[PORTRAIT, "세로 낮", DAY, "pd"],
   await shot(page, key);
   await readyOf(page);
   const end = await info(page);
-  const closeAt = Math.max(end.api.startAt + MIN_MS, end.api.readyAt);
+  const closeAt = Math.max(end.api.startAt + MIN_MS + end.api.held, end.api.readyAt);
   ok(`${label} 앱 준비가 늦으면 준비 뒤 디졸브로 닫힘`, end.api.readyAt > end.api.startAt + 3000 && Math.abs(end.api.closedAt - closeAt - FADE_MS) < 80, `준비 ${Math.round(end.api.readyAt - end.api.startAt)}ms · 닫힘 = 준비 + ${Math.round(end.api.closedAt - end.api.readyAt)}ms`);
   await context.close();
 }
@@ -311,7 +312,7 @@ for (const [viewport, label, time, key] of [[PORTRAIT, "세로 낮", DAY, "pd"],
         const seen = [];
         const tick = () => {
           const canvas = document.querySelector("#splash canvas");
-          const closeAt = Math.max(s.startAt + 2000, s.readyAt);
+          const closeAt = Math.max(s.startAt + 2000 + s.stat.held, s.readyAt);
           const now = performance.now();
           if (!canvas) return resolve(seen);
           if (now >= closeAt) {
@@ -330,10 +331,10 @@ for (const [viewport, label, time, key] of [[PORTRAIT, "세로 낮", DAY, "pd"],
   ok("닫힐 때 도트 디졸브(4단계 · 단계마다 1/4씩 빠짐)", right && levels.filter((v) => v > 0).length >= 3, `빠진 비율 ${levels.join("% · ")}%`);
   await readyOf(page);
   const end = await info(page);
-  const closeAt = Math.max(end.api.startAt + MIN_MS, end.api.readyAt);
+  const closeAt = Math.max(end.api.startAt + MIN_MS + end.api.held, end.api.readyAt);
   ok("빠른 로딩: 2.0초 + 디졸브 뒤 닫힘·그 뒤 data-ready", end.api.readyAt < end.api.startAt + MIN_MS && Math.abs(end.api.closedAt - closeAt - FADE_MS) < 80 && end.readyFlag >= end.api.closedAt, `앱 준비 ${Math.round(end.api.readyAt - end.api.startAt)}ms · 닫힘 ${Math.round(end.api.closedAt - end.api.startAt)}ms · data-ready ${Math.round(end.readyFlag - end.api.startAt)}ms(스플래시 시작 기준)`);
-  const app = await page.evaluate(() => ({ splash: Boolean(document.getElementById("splash")), boot: Boolean(document.getElementById("boot")), booting: document.body.hasAttribute("data-booting"), start: getComputedStyle(document.getElementById("start")).visibility, gate: document.body.dataset.gate || "" }));
-  ok("디졸브 뒤 앱 첫 화면 정상(스플래시·부팅 화면 없음, 첫 화면 보임)", !app.splash && !app.boot && !app.booting && app.start === "visible" && !app.gate, JSON.stringify(app));
+  const app = await page.evaluate(() => ({ splash: Boolean(document.getElementById("splash")), boot: Boolean(document.getElementById("boot")), booting: document.body.hasAttribute("data-booting"), start: getComputedStyle(document.getElementById("start")).visibility, gate: document.body.dataset.gate || "", debug: Boolean(document.querySelector(".splash-debug")) }));
+  ok("디졸브 뒤 앱 첫 화면 정상(스플래시·부팅 화면·진단 표시 없음, 첫 화면 보임)", !app.splash && !app.boot && !app.booting && app.start === "visible" && !app.gate && !app.debug, JSON.stringify(app));
   await shot(page, "app");
   await context.close();
 }
@@ -350,18 +351,59 @@ for (const [viewport, label, time, key] of [[PORTRAIT, "세로 낮", DAY, "pd"],
 }
 
 {
-  const { context, page } = await open({ time: DAY, reduce: true });
+  const { context, page } = await open({ time: DAY, reduce: true, slow: 3000 });
   await startOf(page);
-  await sleep(500);
-  const a = await capture(page);
-  await sleep(1000);
-  const b = await capture(page);
+  const media = await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const ks = await page.evaluate(scaleTrace, 2000);
+  let monotonic = true;
+  for (let i = 1; i < ks.length; i++) if (ks[i] + 0.05 < ks[i - 1]) monotonic = false;
+  const late = await samples(page, 500);
+  const poses = new Set(late.map((v) => `${v.cat.x0},${v.cat.y0},${v.cat.x1},${v.cat.y1}`));
+  const distinct = new Set(ks.map((k) => k.toFixed(3))).size;
+  ok("움직임 줄이기: 같은 달려오기 연출(멀리서 작게 → 커짐, 도착 뒤 제자리 달리기)", media && distinct >= 15 && monotonic && ks[0] < ks.at(-1) / 2 && poses.size >= 3, `reduce ${media} · 서로 다른 크기 ${distinct} · ${ks[0]?.toFixed(2)} → ${ks.at(-1)?.toFixed(2)} · 도착 뒤 동작 ${poses.size}`);
   await readyOf(page);
   const end = await info(page);
-  const closeAt = Math.max(end.api.startAt + MIN_MS, end.api.readyAt);
-  ok("움직임 줄이기: 정지 그림(0.5초·1.5초 화면 같음)", end.api.reduce && a.equals(b), `같음 ${a.equals(b)}`);
-  ok("움직임 줄이기: 디졸브 없이 바로 닫힘", Math.abs(end.api.closedAt - closeAt) < 40, `닫힘 = 닫을 때 + ${Math.round(end.api.closedAt - closeAt)}ms`);
+  const closeAt = Math.max(end.api.startAt + MIN_MS + end.api.held, end.api.readyAt);
+  ok("움직임 줄이기: 디졸브로 닫힘(보통과 같음)", Math.abs(end.api.closedAt - closeAt - FADE_MS) < 80, `닫힘 = 닫을 때 + ${Math.round(end.api.closedAt - closeAt)}ms`);
   await context.close();
+}
+
+{
+  const { context, page } = await open({ time: DAY, slow: 4000 });
+  await startOf(page);
+  const tracing = page.evaluate(scaleTrace, 2600);
+  await sleep(300);
+  await page.evaluate((ms) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end);
+  }, 1200);
+  const ks = await tracing;
+  let jump = 0;
+  for (let i = 1; i < ks.length; i++) jump = Math.max(jump, ks[i] - ks[i - 1]);
+  const share = jump / (ks.at(-1) - ks[0]);
+  await readyOf(page);
+  const end = await info(page);
+  ok("주 스레드 1.2초 멈춤: 다가오기를 건너뛰지 않고 멈춘 자리에서 이어짐", share < 0.2 && end.api.held > 900 && ks.length >= 15, `한 번에 최대 +${jump.toFixed(2)}(전체 커짐의 ${Math.round(share * 100)}%) · 보정 ${Math.round(end.api.held)}ms · 표본 ${ks.length}`);
+  await context.close();
+}
+
+{
+  const { context, page } = await open({ time: DAY, query: "?splash=debug" });
+  await startOf(page);
+  const during = await page.evaluate(() => document.querySelector(".splash-debug")?.textContent || "");
+  await readyOf(page);
+  await sleep(100);
+  const after = await page.evaluate(() => {
+    const box = document.querySelector(".splash-debug");
+    return box ? { text: box.textContent, events: getComputedStyle(box).pointerEvents } : null;
+  });
+  ok("?splash=debug: DPR·조건·움직임 줄이기·변형·크기·첫 그림·경과 표시, 닫힌 뒤에도 남음", /dpr 3 /.test(during) && /reduce false/.test(during) && /variant meadow/.test(during) && /N \d+/.test(during) && after && /first \+\d+ms/.test(after.text) && /closed \+\d+ms/.test(after.text) && /approach \d+/.test(after.text) && after.events === "none", JSON.stringify(after?.text.split("\n")));
+  await context.close();
+  const pc = await open({ viewport: { width: 1280, height: 800 }, dpr: 1, mobile: false, touch: false, query: "?splash=debug" });
+  await readyOf(pc.page);
+  const off = await pc.page.evaluate(() => document.querySelector(".splash-debug")?.textContent || "");
+  ok("?splash=debug PC: 스플래시 없음 + 조건 표시", /splash off/.test(off) && /coarse\+nohover false/.test(off), JSON.stringify(off.split("\n")));
+  await pc.context.close();
 }
 
 for (const [label, opt] of [
