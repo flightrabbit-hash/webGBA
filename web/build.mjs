@@ -49,13 +49,33 @@ function listFiles(dir, base = dir) {
     .sort();
 }
 
+// 휴대폰 시작 스플래시는 첫 그림이 바로 나오도록 index.html 안에 넣는다(css·js 그대로, 그림은 data URI). splash/ 폴더는 복사하지 않음.
+function inlineSplash() {
+  const dir = path.join(src, "splash");
+  const file = path.join(out, "index.html");
+  const LINK = '<link rel="stylesheet" href="/splash/splash.css" />';
+  const SCRIPT = '<script src="/splash/splash.js"></script>';
+  let html = fs.readFileSync(file, "utf8");
+  if (!html.includes(LINK) || !html.includes(SCRIPT)) fail("index.html 에 스플래시 자리가 없습니다");
+  let js = fs.readFileSync(path.join(dir, "splash.js"), "utf8").trim();
+  for (const m of [...js.matchAll(/"\/splash\/([\w-]+\.png)"/g)]) {
+    const data = fs.readFileSync(path.join(dir, m[1])).toString("base64");
+    js = js.replace(m[0], () => JSON.stringify(`data:image/png;base64,${data}`));
+  }
+  if (js.includes("/splash/") || js.includes("</script")) fail("splash.js 를 index.html 에 넣지 못했습니다");
+  const css = fs.readFileSync(path.join(dir, "splash.css"), "utf8").trim();
+  html = html.replace(LINK, () => `<style>\n${css}\n    </style>`).replace(SCRIPT, () => `<script>\n${js}\n    </script>`);
+  fs.writeFileSync(file, html);
+}
+
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const slots = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
 
 fs.rmSync(out, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 fs.mkdirSync(out, { recursive: true });
 
-copyTree(src, out, (file) => [path.join(src, "sw.js"), path.join(src, "i18n")].includes(file));
+copyTree(src, out, (file) => [path.join(src, "sw.js"), path.join(src, "i18n"), path.join(src, "splash")].includes(file));
+inlineSplash();
 for (const rel of SHARED) copy(path.join(app, "js", rel), path.join(out, "js", rel));
 const iconNames = new Set(ICON_NAMES);
 const iconUses = [

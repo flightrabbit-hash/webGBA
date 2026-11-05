@@ -83,11 +83,14 @@
         } catch {}
       })();
     </script>
+    <link rel="stylesheet" href="/splash/splash.css" />
     <link rel="stylesheet" href="/css/web.css" />
     <script type="module" src="/js/main.js"></script>
   </head>
   <body data-layout="portrait" data-pad="off" data-view="start" data-booting>
     <div id="boot" aria-hidden="true"><img src="/icons/icon-192.png" alt="" width="96" height="96" /><i></i></div>
+    <div class="splash" id="splash" aria-hidden="true" hidden></div>
+    <script src="/splash/splash.js"></script>
     <div class="app" id="app">
       <header class="bar" id="bar">
         <div class="bar__side">

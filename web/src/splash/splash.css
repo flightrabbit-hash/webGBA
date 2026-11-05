@@ -1,0 +1,76 @@
+:root {
+  --sp-text: #ffffff;
+  --sp-text-edge: #000000;
+
+  --sp-meadow-sky: 0 #3d8fe0, 0.45 #69b3ef, 0.8 #a9dcfb, 1 #d6f1ff;
+  --sp-meadow-sky-flat: #69b3ef;
+  --sp-meadow-cloud: #ffffff;
+  --sp-meadow-cloud-shade: #cfe6f8;
+  --sp-meadow-sun-rim: #ffe27a;
+  --sp-meadow-sun-core: #fff8d6;
+  --sp-meadow-ground-far: #5f9d58;
+  --sp-meadow-ground-near: #74bf4f;
+  --sp-meadow-ground-a: #7ac853;
+  --sp-meadow-ground-b: #6cb848;
+  --sp-meadow-band: 0.6;
+  --sp-meadow-path: #efd5a6;
+  --sp-meadow-path-edge: #c9a26e;
+  --sp-meadow-pebble: #d2ae7c;
+  --sp-meadow-flower-a: #ffffff;
+  --sp-meadow-flower-b: #ffd84a;
+  --sp-meadow-flower-c: #ff8fb4;
+  --sp-meadow-flower-core: #f2a93b;
+  --sp-meadow-tuft: #4f9e3c;
+  --sp-meadow-wood: #b07c4c;
+  --sp-meadow-wood-dark: #7a5232;
+  --sp-meadow-shadow: #c49c68;
+
+  --sp-sunset-sky: 0 #2e2160, 0.35 #6b3a8c, 0.62 #c8577d, 0.84 #f2915a, 1 #ffd27a;
+  --sp-sunset-sky-flat: #6b3a8c;
+  --sp-sunset-cloud: #f59a8c;
+  --sp-sunset-cloud-shade: #d0607e;
+  --sp-sunset-sun-rim: #ffb35a;
+  --sp-sunset-sun-mid: #ffd56b;
+  --sp-sunset-sun-core: #fff2c4;
+  --sp-sunset-sun-band: #f2915a;
+  --sp-sunset-ground-far: #2a1450;
+  --sp-sunset-ground-mid: #4a2a68;
+  --sp-sunset-ground-near: #5e3a78;
+  --sp-sunset-band: 0;
+  --sp-sunset-path: #f6d6b5;
+  --sp-sunset-path-edge: #c9907e;
+  --sp-sunset-pebble: #e5b99b;
+  --sp-sunset-flower-a: #ff7aa8;
+  --sp-sunset-flower-b: #ffa04a;
+  --sp-sunset-flower-c: #ffe066;
+  --sp-sunset-flower-d: #fff3e0;
+  --sp-sunset-flower-core: #c8577d;
+  --sp-sunset-pole: #2b1a3e;
+  --sp-sunset-lamp: #ffb35a;
+  --sp-sunset-lamp-core: #fff2c4;
+  --sp-sunset-shadow: #b9807a;
+}
+
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.splash[data-variant="meadow"] {
+  background: linear-gradient(var(--sp-meadow-sky-flat) 40%, var(--sp-meadow-ground-near) 40%);
+}
+
+.splash[data-variant="sunset"] {
+  background: linear-gradient(var(--sp-sunset-sky-flat) 40%, var(--sp-sunset-ground-near) 40%);
+}
+
+.splash canvas {
+  position: absolute;
+  image-rendering: pixelated;
+}

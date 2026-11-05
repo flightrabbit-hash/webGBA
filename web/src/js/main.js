@@ -4906,9 +4906,12 @@ function fontsReady() {
   return Promise.race([Promise.all(loads), new Promise((resolve) => setTimeout(resolve, BOOT_LIMIT_MS))]);
 }
 
+const splashClosed = () => window.webgbaSplash?.closed ?? Promise.resolve();
+
 function revealApp() {
   if (!document.body.hasAttribute("data-booting")) return;
   document.body.removeAttribute("data-booting");
+  window.webgbaSplash?.ready();
   const screen = document.getElementById("boot");
   if (!screen) return;
   requestAnimationFrame(() => {
@@ -4941,8 +4944,9 @@ async function boot() {
     await fonts;
     await settle();
     revealApp();
-    document.documentElement.dataset.ready = "1";
     registerWorker();
+    await splashClosed();
+    document.documentElement.dataset.ready = "1";
     return;
   }
   context.quotaText = t("web.quota");
@@ -4963,8 +4967,9 @@ async function boot() {
   layout();
   await settle();
   revealApp();
-  document.documentElement.dataset.ready = "1";
   registerWorker();
+  await splashClosed();
+  document.documentElement.dataset.ready = "1";
   if (!state.storeBroken) store.persist();
   if (touchDebugOn()) startTouchDebug();
 }
