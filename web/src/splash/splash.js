@@ -2,8 +2,28 @@
   const splash = document.getElementById("splash");
   if (!splash) return;
   const plan = window.webgbaSplashPlan;
+  const debug = new URLSearchParams(location.search).get("splash") === "debug" ? document.createElement("pre") : null;
+  function startDebug(extra, live) {
+    if (!debug) return;
+    const media = (query) => matchMedia(query).matches;
+    debug.className = "splash-debug";
+    debug.setAttribute("aria-hidden", "true");
+    document.documentElement.append(debug);
+    const draw = () => {
+      const going = live();
+      const text = [
+        `dpr ${window.devicePixelRatio || 1} · css ${innerWidth}x${innerHeight} · screen ${screen.width}x${screen.height}`,
+        `coarse+nohover ${media("(pointer: coarse) and (hover: none)")} · short ${Math.min(screen.width, screen.height)} · reduce ${media("(prefers-reduced-motion: reduce)")}`,
+        ...extra(),
+      ].join("\n");
+      if (debug.textContent !== text) debug.textContent = text;
+      if (going) requestAnimationFrame(draw);
+    };
+    draw();
+  }
   if (!plan) {
     splash.remove();
+    startDebug(() => ["splash off"], () => false);
     return;
   }
 
@@ -25,6 +45,8 @@
   const LOOP_SMALL = 10;
   const TEXT_BOTTOM = 16;
   const LATE_MS = 1000;
+  const STEP_MAX_MS = 120;
+  const LONG_MS = 4000;
   const HOME_VP_X = 199;
   const HOME_VP_Y = 150;
   const STRIP_ROWS = { meadow: 64, sunset: 52 };
@@ -34,11 +56,11 @@
 
   const variant = plan.variant;
   const home = variant === "home";
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const stat = { frames: 0, approach: 0, gap: 0, held: 0, clock: 0 };
   let finish = () => {};
   const api = {
     variant,
-    reduce,
+    stat,
     startAt: 0,
     readyAt: 0,
     closedAt: 0,
@@ -46,7 +68,18 @@
     ready() {
       if (api.readyAt) return;
       api.readyAt = performance.now();
-      setTimeout(close, MIN_MS + FADE_STEPS * FADE_STEP_MS + LATE_MS);
+      let seen = -1;
+      let idle = 0;
+      const guard = setInterval(() => {
+        if (api.closedAt) return clearInterval(guard);
+        if (!api.startAt) {
+          if (performance.now() - api.readyAt >= MIN_MS + FADE_STEPS * FADE_STEP_MS + LATE_MS) close();
+          return;
+        }
+        idle = stat.frames === seen ? idle + 1 : 0;
+        seen = stat.frames;
+        if (idle >= 2) close();
+      }, LATE_MS);
     },
   };
   window.webgbaSplash = api;
@@ -232,7 +265,6 @@
   const nearDepth = () => (view.Dl / (view.LH - view.hyL)) * 0.7;
 
   function camera(t) {
-    if (reduce) return 0;
     const p = Math.min(1, t / APPROACH_MS);
     return CAMERA_SPEED * APPROACH_MS * p * p * 0.5 + CAMERA_SPEED * Math.max(0, t - APPROACH_MS);
   }
@@ -308,7 +340,7 @@
     const span = view.LW + 80;
     for (const c of cloudList) {
       const y = Math.round(8 + c.ry * (view.hyL - 40));
-      const x = ((c.rx * span + (reduce ? 0 : t * c.speed)) % span) - 40;
+      const x = ((c.rx * span + t * c.speed) % span) - 40;
       if (c.sprite) ctx.drawImage(c.sprite.canvas, Math.round(x) - c.sprite.ox, y - c.sprite.oy);
       else {
         rect(x, y, c.w, 2, P.cloud);
@@ -454,7 +486,7 @@
   function approach(t) {
     const { k0, N } = view;
     const z0 = N / k0;
-    const p = reduce ? 1 : Math.min(1, t / APPROACH_MS);
+    const p = Math.min(1, t / APPROACH_MS);
     const eased = 1 - (1 - p) * (1 - p);
     const z = z0 + (1 - z0) * eased;
     return { k: N / z, feet: view.hy + (view.feetEnd - view.hy) / z };
@@ -466,6 +498,7 @@
     fctx.setTransform(1, 0, 0, 1, -view.fx, -view.fy);
     if (drawn) fctx.clearRect(drawn[0], drawn[1], drawn[2], drawn[3]);
     const { k, feet } = approach(t);
+    if (k < view.N) stat.approach++;
     const u = cat.union;
     const bottom = Math.round(feet);
     const left = Math.round(view.axis - (u.w * k) / 2);
@@ -480,7 +513,7 @@
       const x0 = Math.round(view.axis - (w * k) / 2);
       fctx.fillRect(x0, y0, Math.round(view.axis + (w * k) / 2) - x0, Math.max(1, y1 - y0));
     }
-    const frame = reduce ? CONTACT_FRAME : (Math.floor(t / FRAME_MS) + CONTACT_FRAME) % FRAMES;
+    const frame = (Math.floor(t / FRAME_MS) + CONTACT_FRAME) % FRAMES;
     const S = cat.size;
     const dx = Math.round(left - u.x0 * k);
     const dy = Math.round(top - u.y0 * k);
@@ -565,14 +598,22 @@
 
   let lastTick = -1;
   let dirty = true;
-  function loop(now) {
+  let prev = 0;
+  let fadeAt = -1;
+  function loop() {
     if (api.closedAt) return;
-    const t = now - api.startAt;
-    const closeAt = api.readyAt ? Math.max(api.startAt + MIN_MS, api.readyAt) : Infinity;
-    if (now >= closeAt && reduce) return close();
+    const now = performance.now();
+    if (!api.startAt) api.startAt = prev = now;
+    const gap = now - prev;
+    prev = now;
+    stat.frames++;
+    stat.gap = Math.max(stat.gap, gap);
+    stat.held += Math.max(0, gap - STEP_MAX_MS);
+    const t = (stat.clock += Math.min(gap, STEP_MAX_MS));
+    if (fadeAt < 0 && api.readyAt && (t >= MIN_MS || now - api.startAt >= LONG_MS)) fadeAt = t;
     const tick = Math.floor(t / TICK_MS);
-    if (now >= closeAt) {
-      const step = Math.floor((now - closeAt) / FADE_STEP_MS) + 1;
+    if (fadeAt >= 0) {
+      const step = Math.floor((t - fadeAt) / FADE_STEP_MS) + 1;
       if (step > FADE_STEPS) return close();
       if (tick !== lastTick || dirty || !patterns || patterns.level !== (16 * step) / FADE_STEPS) {
         lastTick = tick;
@@ -580,13 +621,25 @@
         render(tick * TICK_MS);
         dissolve(step);
       }
-    } else if (dirty || (!reduce && tick !== lastTick)) {
+    } else if (dirty || tick !== lastTick) {
       lastTick = tick;
       dirty = false;
       render(tick * TICK_MS);
     }
     requestAnimationFrame(loop);
   }
+
+  startDebug(() => {
+    const ms = (v) => (v ? `+${Math.round(v)}ms` : "-");
+    const u = cat.union;
+    return [
+      `variant ${variant} · device ${view.vw ?? "-"}x${view.vh ?? "-"} · s ${view.s ?? "-"} · k0 ${view.k0 ?? "-"} · N ${view.N ?? "-"}`,
+      `cat ${u && view.N ? `${u.w * view.N}x${u.h * view.N} top ${view.top}` : "-"} · text ${view.tw ?? "-"}x${view.th ?? "-"}`,
+      `first ${ms(api.startAt)} · elapsed ${api.startAt ? Math.round((api.closedAt || performance.now()) - api.startAt) : "-"}ms · anim ${Math.round(stat.clock)}ms`,
+      `frames ${stat.frames} · approach ${stat.approach} · max gap ${Math.round(stat.gap)}ms · held ${Math.round(stat.held)}ms`,
+      `ready ${ms(api.readyAt)} · closed ${ms(api.closedAt)}`,
+    ];
+  }, () => !api.closedAt);
 
   plan.images
     .then(([catImage, stripImage, textImage]) => {
@@ -603,7 +656,6 @@
       delete splash.dataset.variant;
       dirty = false;
       lastTick = 0;
-      api.startAt = performance.now();
       addEventListener("resize", () => {
         if (api.closedAt) return;
         fit();
