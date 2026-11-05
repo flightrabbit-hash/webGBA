@@ -265,6 +265,7 @@
   "menu.mute": "소리 끄기",
   "menu.openIni": "설정 파일 열기 (setting.ini)",
   "menu.openAppDir": "앱 폴더 열기",
+  "menu.openLogDir": "로그 폴더 열기",
   "menu.howto": "조작법",
   "menu.info": "정보",
   "menu.devtools": "개발자 도구",

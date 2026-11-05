@@ -265,6 +265,7 @@
   "menu.mute": "Mute",
   "menu.openIni": "Open settings file (setting.ini)",
   "menu.openAppDir": "Open app folder",
+  "menu.openLogDir": "Open log folder",
   "menu.howto": "Controls",
   "menu.info": "About",
   "menu.devtools": "Developer tools",

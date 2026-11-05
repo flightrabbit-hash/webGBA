@@ -265,6 +265,7 @@
   "menu.mute": "ミュート",
   "menu.openIni": "設定ファイルを開く (setting.ini)",
   "menu.openAppDir": "アプリのフォルダーを開く",
+  "menu.openLogDir": "ログのフォルダーを開く",
   "menu.howto": "操作方法",
   "menu.info": "情報",
   "menu.devtools": "開発者ツール",

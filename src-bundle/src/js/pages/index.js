@@ -7,10 +7,11 @@ import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
-import { GB_SCREEN, kindKey, systemKind } from "../core/rom-kind.js";
+import { GB_SCREEN, kindKey, romType, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
 import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
+import { errorText, Journal } from "../app/journal.js";
 import { APP_API, Signal } from "../core/net/signal.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -108,14 +109,16 @@ const player = new Player({
     const stats = t("status.stats", { fps: fps.toFixed(1), speed, slot: slot() });
     el.statusRight.textContent = player.net.active ? `${netStatus()} · ${stats}` : stats;
   },
-  onHalt: (why) => {
+  onHalt: (why, trap) => {
     status(t("status.halted", { reason: why || t("status.haltUnknown") }), "error");
-    core.log("ERROR", `게임이 멈췄습니다 ${state.game?.path ?? ""}: ${why}`);
+    journal.error("오류", `게임 멈춤 · ${trap ? `코어 trap ${errorText(trap)}` : why || "이유 없음"} · ${state.game?.path ?? ""}`);
+    journal.watch(false);
     syncControls();
   },
   onChange: () => syncControls(),
   onNetWant: (request) => netWant(request),
   onNetChange: (snap) => {
+    noteHold();
     netWin?.update(snap);
     syncControls();
     queueMp();
@@ -134,7 +137,52 @@ const player = new Player({
   netNick: () => netNick(),
   netEnabled: () => state.prefs.netOn !== false,
   hiddenClock: true,
+  meter: true,
 });
+
+const journal = new Journal(player);
+let heldLogged = false;
+
+function noteHold() {
+  if (player.netHold === heldLogged) return;
+  heldLogged = player.netHold;
+  journal.info("실행", heldLogged ? "일시정지 · 멀티플레이 방장 기다림" : "재개 · 멀티플레이 방장 기다림 끝");
+}
+
+const shaOf = (bytes) =>
+  sha1Hex(bytes)
+    .then((hex) => hex.slice(0, 8))
+    .catch(() => "?");
+
+const RUNTIME_TEXT = { core: "mGBA 코어", web: "내장 호스트(Web_*)", script: "자체 JS(격리 틀)", frame: "원래 페이지·글루(틀)" };
+
+async function noteOpen(sha) {
+  const game = state.game;
+  if (!game) return;
+  game.openedAt = performance.now();
+  const hash = await sha;
+  const info = game.info;
+  const head = info ? `${info.gameId} ${info.version} · ${titleLine(info, "ko")} · .wgba SHA-1 ${hash} · 빌드 ${info.build.slice(0, 8)}` : `${game.kind === "core" ? romType(game.system).toUpperCase() : "WASM"} · ${game.name} · ${game.kind === "core" ? "롬" : "파일"} SHA-1 ${hash}`;
+  journal.info("게임", `열기 · ${head} · runtime ${RUNTIME_TEXT[game.kind] ?? game.kind}${game.romEmbedded ? " · 롬 내장" : game.rom ? ` · 롬 ${game.rom}` : ""} · ${game.path}`);
+}
+
+function noteClose(game, why) {
+  const ran = game.openedAt ? Math.round((performance.now() - game.openedAt) / 1000) : 0;
+  journal.info("게임", `종료 · ${game.info ? `${game.info.gameId} ${game.info.version}` : game.name} · ${Math.floor(ran / 60)}분 ${ran % 60}초 · ${why}`);
+}
+
+function syncWatch() {
+  journal.watch(player.running && document.visibilityState === "visible");
+}
+
+async function webviewVersion() {
+  try {
+    const list = (await navigator.userAgentData?.getHighEntropyValues(["fullVersionList"]))?.fullVersionList ?? [];
+    const hit = list.find((item) => /WebView2/i.test(item.brand)) ?? list.find((item) => /Edge/i.test(item.brand));
+    if (hit) return hit.version;
+  } catch {}
+  return /Edg\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? "?";
+}
 
 function netNick() {
   let no = state.prefs.netNo;
@@ -849,7 +897,7 @@ async function unpackZip(path, dir, games) {
 }
 
 function hostLog(level, line) {
-  if (level === "error") core.log("WARN", `[코어] ${line}`);
+  if (level === "error") journal.coreLine(line);
 }
 
 async function rememberRecent(path) {
@@ -885,7 +933,7 @@ async function openPath(path, options = {}) {
       path = picked;
       ext = extOf(path);
     }
-    await closeGame({ quiet: true });
+    await closeGame({ quiet: true, why: "다른 게임 열기" });
     if (ext === PATCH_EXT) {
       made = await makeFromPatch(path, options);
       if (!made) {
@@ -910,7 +958,7 @@ async function openPath(path, options = {}) {
     return true;
   } catch (error) {
     status(t("status.openFailed", { reason: reason(error) }), "error");
-    core.log("ERROR", `열지 못했습니다 ${path}: ${reason(error)}`);
+    journal.error("게임", `열지 못함 · ${reason(error)} · ${path}`);
     if (!state.game) showView("start");
     if (made?.loader) await made.loader.fail(reason(error), "open");
     return false;
@@ -933,6 +981,8 @@ async function startHosted(host, game) {
   syncControls();
   el.stage.focus();
   netWin.offerBack();
+  heldLogged = false;
+  syncWatch();
 }
 
 /** 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 본 창에서 누른 것과 같은 길로. */
@@ -943,7 +993,7 @@ function frameKey(event) {
 }
 
 // ② 자체 JS(runtime script): 격리 틀에서 돈다. 세이브는 다른 게임처럼 연 파일 옆 <이름>.sav, 퀵슬롯은 빌드 저장 칸.
-async function openScript(path, wgba, info, label) {
+async function openScript(path, wgba, info, label, sha) {
   const build = await core.webInspect(path, state.prefs.webRom || null, allowsNet(wgba));
   const { save, name } = await openSave(path);
   const input = resolveInput(wgba.manifest);
@@ -970,7 +1020,7 @@ async function openScript(path, wgba, info, label) {
   });
   await startHosted(host, { path, saveId: build.saveId, kind: "script", info, label, input, screen: state.screen, net: { manifest: wgba.manifest, build: wgba.build } });
   status(join(label || baseOf(path), saveNote(hadSave, name)));
-  core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기(자체 JS ${wgba.manifest.entry?.style}) ${path}`);
+  await noteOpen(sha);
   return true;
 }
 
@@ -979,6 +1029,7 @@ const scriptReserved = () => [...new Set([...(keysFor().FAST ?? []), "Tab", "Pau
 
 async function openRom(path) {
   const rom = await loadRomBytes(path);
+  const sha = shaOf(rom);
   const module = await coreModule();
   const saveId = `gba/${stemOf(path)}`;
   const { save, name } = await openSave(path);
@@ -987,6 +1038,7 @@ async function openRom(path) {
   const gb = system.system === "gb";
   await startHosted(host, { path, saveId, kind: "core", system, input: gb ? GB_LAYOUT : null, screen: gb ? GB_SCREEN : null });
   status(join(baseOf(path), gb ? t(kindKey(system)) : "", saveNote(hadSave, name)));
+  await noteOpen(sha);
   return true;
 }
 
@@ -1138,6 +1190,7 @@ const allowsNet = (wgba) => Boolean(wgba?.manifest?.multiplayer);
 async function openWasm(path, { preferPage = false } = {}) {
   const bytes = await core.fileReadBytes(path);
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: baseOf(path) }));
+  const sha = shaOf(bytes);
   // 목차(webgba.toc)가 있는 .wgba: 설명서를 보고 code 조각만 컴파일, 롬은 rom 조각에서. 없으면(옛 .wgba·.wasm) 지금 그대로.
   let wgba = null;
   try {
@@ -1150,7 +1203,7 @@ async function openWasm(path, { preferPage = false } = {}) {
   if (problem) throw new Error(problemText(problem));
   const info = wgba ? gameInfo(wgba) : null;
   const label = info ? titleLine(info, i18n.lang()) : "";
-  if (wgba?.manifest.runtime === "script") return openScript(path, wgba, info, label);
+  if (wgba?.manifest.runtime === "script") return openScript(path, wgba, info, label, sha);
   const build = await core.webInspect(path, state.prefs.webRom || null, allowsNet(wgba));
   if (build.movedFrom) {
     const builds = { ...(state.prefs.webBuilds ?? {}) };
@@ -1187,7 +1240,7 @@ async function openWasm(path, { preferPage = false } = {}) {
     const { host, hadSave } = await bootHost({ module, rom: romEmbedded ? embedded.rom : rom ? await loadRomBytes(rom) : null, save, log: hostLog, screen });
     await startHosted(host, { path, saveId: build.saveId, kind: "web", build, rom, romEmbedded, info, label, input: wgba ? resolveInput(wgba.manifest) : null, screen, net: { manifest: wgba?.manifest ?? null, build: wgba ? wgba.build : report.canNet ? await sha256Hex(bytes) : "" } });
     status(join(label || baseOf(path), romNote(rom), saveNote(hadSave, name)));
-    if (info) core.log("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 열기 ${path}`);
+    await noteOpen(sha);
     return true;
   }
   module = null;
@@ -1201,6 +1254,7 @@ async function openWasm(path, { preferPage = false } = {}) {
       openFrame(`${build.origin}/__webgba__/wasm-host.html?js=${encodeURIComponent(build.glue)}&lang=${i18n.lang()}`, { path, build, rom, romEmbedded });
       status(join(t("status.openGlue", { name: baseOf(path), glue: build.glue }), romEmbedded ? romNote(rom) : ""));
     }
+    await noteOpen(sha);
     return true;
   }
   throw new Error(t("status.needsGlue", { why: unknownWhy() }));
@@ -1222,10 +1276,12 @@ function focusFrame() {
   } catch {}
 }
 
-async function closeGame({ quiet = false } = {}) {
+async function closeGame({ quiet = false, why = "닫기" } = {}) {
   if (!state.game) return "";
   const game = state.game;
+  journal.watch(false);
   if (player.active) await player.stop();
+  noteClose(game, why);
   if (game.kind === "frame") el.frame.src = "about:blank";
   state.game = null;
   state.screen = null;
@@ -1668,6 +1724,18 @@ async function settingsSnapshot() {
   };
 }
 
+const SETTING_HIDDEN = new Set(["netNick", "webRom", "favorites", "recent", "keys", "gameKeys", "rsPresets"]);
+
+function settingChanges(patch, before) {
+  const out = [];
+  for (const [key, value] of Object.entries(patch)) {
+    const old = before[key];
+    if (JSON.stringify(old ?? null) === JSON.stringify(value ?? null)) continue;
+    out.push(SETTING_HIDDEN.has(key) || typeof value === "object" ? `${key} 바뀜` : `${key} ${old ?? "기본"} → ${value}`);
+  }
+  return out;
+}
+
 async function applySettings(next) {
   const patch = {
     scaleMode: next.scaleMode === "integer" ? "integer" : "fit",
@@ -1706,6 +1774,7 @@ async function applySettings(next) {
     const { active, slots } = next.rs.book;
     patch.rsPresets = { ...(state.prefs.rsPresets ?? {}), [rsKey()]: { active, slots: slots.map((slot) => slot && { name: slot.name, steps: normalizeMacro(slot.steps) }) } };
   }
+  const changed = settingChanges(patch, state.prefs);
   await core.prefsSet(patch);
   Object.assign(state.prefs, patch);
   player.net.syncEnabled();
@@ -1715,6 +1784,9 @@ async function applySettings(next) {
   for (const key of ["pauseWhenHidden", "useDevelopKit"]) {
     if (Boolean(next[key]) !== Boolean(ini[key])) iniPatch[key] = Boolean(next[key]);
   }
+  for (const [key, value] of Object.entries(iniPatch)) changed.push(`${key} ${!value} → ${value}`);
+  if (Boolean(next.wgbaLink) !== state.link.linked) changed.push(`wgbaLink ${state.link.linked} → ${Boolean(next.wgbaLink)}`);
+  if (changed.length) journal.info("설정", `저장 · ${changed.join(" · ")}`);
   if (Object.keys(iniPatch).length) state.info.settings = await core.settingsSave(iniPatch);
 
   if (Boolean(next.wgbaLink) !== state.link.linked) {
@@ -1796,12 +1868,27 @@ async function saveStateTo(index) {
     status(t("status.noStateSupport"), "warn");
     return;
   }
+  const begin = performance.now();
+  player.lastStateSize = 0;
   try {
-    if (await player.saveState(index)) status(t("status.stateSaved", { slot: index }));
-    else status(t("status.stateSaveFailed"), "error");
+    if (await player.saveState(index)) {
+      status(t("status.stateSaved", { slot: index }));
+      noteState("저장", index, "성공", begin);
+    } else {
+      status(t("status.stateSaveFailed"), "error");
+      noteState("저장", index, "실패(게임이 상태를 주지 않음)", begin);
+    }
   } catch (error) {
     status(t("status.stateSaveFailedWhy", { reason: reason(error) }), "error");
+    noteState("저장", index, `실패 ${reason(error)}`, begin);
   }
+}
+
+function noteState(action, index, result, begin) {
+  const size = player.lastStateSize ? ` · ${Math.ceil(player.lastStateSize / 1024)}KB` : "";
+  const line = `${action} ${index}번 · ${result}${size} · ${Math.round(performance.now() - begin)}ms`;
+  if (result.startsWith("실패")) journal.warn("퀵슬롯", line);
+  else journal.info("퀵슬롯", line);
 }
 
 async function loadStateFrom(index) {
@@ -1813,13 +1900,17 @@ async function loadStateFrom(index) {
     status(t("status.noStateSupport"), "warn");
     return;
   }
+  const begin = performance.now();
+  player.lastStateSize = 0;
   try {
     const result = await player.loadState(index);
     if (result === null) status(t("status.stateEmpty", { slot: index }), "warn");
     else if (result) status(t("status.stateLoaded", { slot: index }));
     else status(t("status.stateLoadFailed"), "error");
+    noteState("불러오기", index, result === null ? "빈 칸" : result ? "성공" : "실패(게임이 상태를 받지 않음)", begin);
   } catch (error) {
     status(t("status.stateLoadFailedWhy", { reason: reason(error) }), "error");
+    noteState("불러오기", index, `실패 ${reason(error)}`, begin);
   }
 }
 
@@ -1849,9 +1940,13 @@ async function importSave(source) {
   }
   if (!(await confirmDialog(t("confirm.importTitle"), t("confirm.importText")))) return;
   const game = state.game;
-  if (player.active) await player.stop();
+  if (player.active) {
+    journal.watch(false);
+    await player.stop();
+    noteClose(game, "세이브 가져오기");
+  }
   const done = await core.saveImport(game.path, path);
-  core.log("INFO", `세이브 가져오기 ${path} → ${done.path}`);
+  journal.info("세이브", `가져오기 ${path} → ${done.path}`);
   if (game.kind === "frame") {
     el.frame.src = el.frame.src;
     status(t("status.saveImported"));
@@ -1879,10 +1974,11 @@ async function chooseWebRom() {
 
 /* ── 게임 조작 ── */
 
-function togglePause() {
+function togglePause(source) {
   if (!player.active) return;
   player.setPaused(!player.paused);
   state.autoPaused = false;
+  journal.info("실행", `${player.paused ? "일시정지" : "재개"} · 사용자(${source})`);
   syncControls();
   status(t(player.paused ? "status.paused" : "status.resumed"));
 }
@@ -1894,6 +1990,7 @@ function toggleFast() {
   }
   if (!player.active) return;
   player.setFast(!player.fast);
+  journal.info("실행", player.fast ? `빨리 감기 켬 · ${player.fastScale}배` : "빨리 감기 끔 · 1배");
   syncControls();
   status(player.fast ? t("status.fastOn", { scale: player.fastScale }) : t("status.fastOff"));
 }
@@ -1905,6 +2002,7 @@ async function resetGame() {
   }
   if (!state.game) return;
   if (!(await confirmDialog(t("confirm.resetTitle"), t("confirm.resetText")))) return;
+  journal.info("게임", `다시 시작 · ${state.game.info ? `${state.game.info.gameId} ${state.game.info.version}` : state.game.name}`);
   if (state.game.kind === "frame") {
     el.frame.src = el.frame.src;
     status(t("status.frameReloaded"));
@@ -1928,8 +2026,9 @@ async function shutdown() {
   try {
     await netWin.pageHide();
     settings.close();
-    await closeGame({ quiet: true });
+    await closeGame({ quiet: true, why: "앱 종료" });
   } finally {
+    await core.logFlush();
     await win.close();
   }
 }
@@ -1966,7 +2065,7 @@ function menuItems(name) {
   if (name === "game") {
     const build = game?.build;
     return [
-      { label: t(player.paused ? "menu.resume" : "menu.pause"), keys: "Pause", run: togglePause, disabled: !hosted },
+      { label: t(player.paused ? "menu.resume" : "menu.pause"), keys: "Pause", run: () => togglePause("메뉴"), disabled: !hosted },
       { label: t("menu.reset"), keys: "Ctrl+R", run: resetGame, disabled: !game || player.net.locked },
       player.net.active ? { label: t("board.open"), keys: "Tab", run: () => (mp.open ? closeMp() : openMp()), disabled: !mpWanted(), checked: mp.open } : { label: t("menu.fast"), keys: "Tab", run: toggleFast, disabled: !hosted || player.net.locked, checked: player.fast },
       { sep: true },
@@ -1995,6 +2094,7 @@ function menuItems(name) {
       { sep: true },
       { label: t("menu.openIni"), run: () => core.revealPath(`${state.info.binDir}\\ini\\setting.ini`) },
       { label: t("menu.openAppDir"), run: () => core.revealPath(state.info.binDir) },
+      { label: t("menu.openLogDir"), run: () => core.revealPath(state.info.logDir) },
     ];
   }
   return [
@@ -2119,7 +2219,7 @@ function hotkey(event) {
     return true;
   }
   if (event.key === "Pause" && player.active) {
-    togglePause();
+    togglePause("Pause 키");
     return true;
   }
   if (event.key === "Tab" && player.active) {
@@ -2179,29 +2279,58 @@ function onKeyUp(event) {
 document.addEventListener("keydown", onKeyDown, true);
 document.addEventListener("keyup", onKeyUp, true);
 
+let hiddenAt = 0;
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) player.releaseAll();
+  syncWatch();
+  if (!player.active) return;
+  if (document.hidden) {
+    hiddenAt = performance.now();
+    journal.info("실행", `창 숨김(최소화·가려짐) · ${player.clockOn ? "멀티플레이 중이라 숨긴 창 시계로 계속" : "화면 갱신 멈춤"}`);
+  } else if (hiddenAt) {
+    journal.info("실행", `창 다시 보임 · ${((performance.now() - hiddenAt) / 1000).toFixed(1)}초 숨김`);
+    hiddenAt = 0;
+  }
 });
 
-window.addEventListener("pagehide", () => netWin.pageHide());
+window.addEventListener("pagehide", () => {
+  journal.watch(false);
+  netWin.pageHide();
+});
+
+window.addEventListener("error", (event) => journal.fault("예외", event.error ?? event.message, event.filename ? `${event.filename}:${event.lineno}:${event.colno}` : ""));
+window.addEventListener("unhandledrejection", (event) => journal.fault("처리되지 않은 Promise 오류", event.reason));
 
 // ② 게임 틀을 눌러 초점이 틀로 가도 본 창 blur 가 온다 — 그때는 키를 놓거나 멈추지 않는다(틀이 키를 넘겨줌)
 const focusInScript = () => Boolean(state.scriptFrame) && document.activeElement === state.scriptFrame;
 
+let focusLost = false;
+
 window.addEventListener("blur", () => {
   if (focusInScript()) return;
   player.releaseAll();
+  if (player.active && !focusLost) {
+    focusLost = true;
+    journal.info("실행", "창 초점 잃음 · 누른 키 모두 놓음");
+  }
   if (state.info?.settings?.pauseWhenHidden && player.active && !player.paused && !player.net.request && !player.net.active) {
     player.setPaused(true);
     state.autoPaused = true;
+    journal.info("실행", "일시정지 · 창 초점 잃음(설정 pauseWhenHidden)");
     syncControls();
   }
 });
 
 window.addEventListener("focus", () => {
+  if (focusLost) {
+    focusLost = false;
+    if (player.active) journal.info("실행", "창 초점 돌아옴");
+  }
   if (state.autoPaused && player.active) {
     player.setPaused(false);
     state.autoPaused = false;
+    journal.info("실행", "재개 · 창 초점 돌아옴(설정 pauseWhenHidden)");
     syncControls();
   }
 });
@@ -2214,7 +2343,7 @@ window.addEventListener("message", (event) => {
     syncControls();
   } else if (data?.type === "webgba:error" && data.message) {
     status(t("status.webError", { message: data.message }), "error");
-    core.log("WARN", `웹 빌드 오류 ${state.game.path}: ${data.message}`);
+    journal.fault("웹 빌드 오류", data.message, state.game.path);
   }
 });
 
@@ -2230,7 +2359,7 @@ el.btnFiles.addEventListener("click", () => showPanel("files"));
 el.btnFavorites.addEventListener("click", () => showPanel("favorites"));
 el.btnStar.addEventListener("click", () => toggleFavorite());
 el.railToggle.addEventListener("click", () => toggleRail());
-el.btnPause.addEventListener("click", togglePause);
+el.btnPause.addEventListener("click", () => togglePause("버튼"));
 el.btnReset.addEventListener("click", resetGame);
 el.btnFast.addEventListener("click", toggleFast);
 el.btnStateSave.addEventListener("click", () => saveStateTo(slot()));
@@ -2302,6 +2431,7 @@ async function boot() {
   player.fastMute = Boolean(state.prefs.fastMute);
   player.setDpadMode(state.prefs.dpadMode);
   player.setAutoFire({ on: state.prefs.autoFire === true, level: state.prefs.autoFireLevel ?? AUTO_FIRE_LEVEL });
+  webviewVersion().then((version) => journal.info("앱", `화면 준비 · WebView2 ${version} · CPU ${navigator.hardwareConcurrency ?? "?"}개 · 화면 ${screen.width}×${screen.height} 배율 ${devicePixelRatio} · 언어 ${i18n.lang()} · pauseWhenHidden ${Boolean(state.info.settings?.pauseWhenHidden)}`));
   if (state.prefs.panel === undefined) state.prefs.panel = "files";
   setMaximized(await win.isMaximized());
   state.root = state.prefs.lastDir ?? "";
@@ -2317,5 +2447,5 @@ async function boot() {
 boot().catch((error) => {
   i18n.use("ko").catch(() => {});
   status(t("status.bootFailed", { reason: reason(error) }), "error");
-  core.log("ERROR", `시작하지 못했습니다: ${reason(error)}`);
+  journal.error("앱", `화면을 시작하지 못함 · ${errorText(error)}`);
 });
