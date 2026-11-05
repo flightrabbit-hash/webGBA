@@ -210,22 +210,43 @@ export function fetchFeed(url, { fetchImpl = globalThis.fetch, timeout = 10000 }
   });
 }
 
-export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {} } = {}) {
+function groupSources(games, overrides) {
   const wanted = new Map();
   for (const game of games) {
     if (!game.gameId || !game.version) continue;
     const source = updateSource(game, overrides);
     if (!source) continue;
     const id = `${source.feed}\n${source.key}`;
-    if (!wanted.has(id)) wanted.set(id, { source, games: [] });
+    if (!wanted.has(id)) wanted.set(id, { id, source, games: [] });
     wanted.get(id).games.push(game);
   }
+  return wanted;
+}
+
+function loadFeed({ id, source }, { fetchImpl, timeout, cache }) {
+  const hit = cache?.get(id);
+  if (hit) return hit;
+  const work = fetchFeed(source.feed, { fetchImpl, timeout }).then((text) => verifyFeed(text, source.key, source.feed));
+  if (cache) {
+    cache.set(id, work);
+    work.catch(() => {});
+  }
+  return work;
+}
+
+export function prefetchFeeds(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, cache } = {}) {
+  for (const group of groupSources(games, overrides).values()) loadFeed(group, { fetchImpl, timeout, cache });
+}
+
+export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {}, cache = null } = {}) {
+  const wanted = groupSources(games, overrides);
   const found = [];
   await Promise.all(
-    [...wanted.values()].map(async ({ source, games: list }) => {
+    [...wanted.values()].map(async (group) => {
+      const { source, games: list } = group;
       let feed;
       try {
-        feed = await verifyFeed(await fetchFeed(source.feed, { fetchImpl, timeout }), source.key, source.feed);
+        feed = await loadFeed(group, { fetchImpl, timeout, cache });
       } catch (error) {
         log("WARN", `업데이트 확인 실패 ${source.feed}: ${error?.code ?? error?.name ?? ""} ${error?.message ?? error}`);
         return;

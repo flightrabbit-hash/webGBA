@@ -7,6 +7,7 @@ export function createUpdater(d) {
   const { t } = d;
   const items = new Map();
   let checked = false;
+  let gathered = null;
   let shown = null;
 
   const pending = (key) => {
@@ -23,18 +24,18 @@ export function createUpdater(d) {
     return sha1;
   }
 
-  async function check() {
-    if (checked) return 0;
-    checked = true;
-    if (navigator.onLine === false) return 0;
+  async function gather(ready) {
+    if (navigator.onLine === false) return [];
     let roms = [];
     try {
       roms = await d.store.list(d.store.KIND_ROM);
     } catch {
-      return 0;
+      return [];
     }
     const games = roms.filter((rom) => rom.gameId && rom.version).map((rom) => ({ key: rom.key, gameId: rom.gameId, version: rom.version, update: rom.update, rom }));
     const found = await checkGames(games, { overrides: readOverrides(), log: d.log });
+    if (found.some(({ game }) => !game.rom.sha1)) await ready;
+    const out = [];
     for (const { game, feed } of found) {
       let sha1 = "";
       try {
@@ -42,6 +43,23 @@ export function createUpdater(d) {
       } catch {
         sha1 = "";
       }
+      out.push({ game, feed, sha1 });
+    }
+    return out;
+  }
+
+  function prepare({ ready = Promise.resolve() } = {}) {
+    if (!gathered) gathered = gather(ready).catch((error) => {
+      d.log("WARN", `업데이트 확인 실패: ${error?.message ?? error}`);
+      return [];
+    });
+    return gathered;
+  }
+
+  async function check() {
+    if (checked) return 0;
+    checked = true;
+    for (const { game, feed, sha1 } of await prepare()) {
       const plan = planUpdate(feed, sha1);
       if (plan.kind === "latest") continue;
       if (plan.kind === "none") {
@@ -165,6 +183,7 @@ export function createUpdater(d) {
   }
 
   return {
+    prepare,
     check,
     open,
     pending,

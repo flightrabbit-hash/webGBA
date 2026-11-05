@@ -4988,6 +4988,9 @@ function openUpdate(rom) {
 
 async function boot() {
   const fonts = fontsReady();
+  const gated = !standalone() && !devBypass();
+  let shown = () => {};
+  if (!gated) updater.prepare({ ready: new Promise((resolve) => (shown = resolve)) });
   applyTheme(state.prefs.theme);
   await i18n.use(i18n.known(state.prefs.lang) ? state.prefs.lang : "ko");
   document.fonts?.ready.then(() => {
@@ -4995,7 +4998,7 @@ async function boot() {
     state.baselineCache?.clear();
     centerInk(document);
   });
-  if (!standalone() && !devBypass()) {
+  if (gated) {
     showGate();
     document.addEventListener(i18n.CHANGED, renderGate);
     await fonts;
@@ -5024,6 +5027,7 @@ async function boot() {
   layout();
   await settle();
   revealApp();
+  shown();
   registerWorker();
   await splashClosed();
   document.documentElement.dataset.ready = "1";
