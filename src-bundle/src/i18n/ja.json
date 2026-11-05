@@ -174,7 +174,6 @@
   "status.unlinked": ".wgbp ファイルの関連付けを解除しました",
   "status.linkFailed": "関連付けを変更できませんでした: {reason}",
   "status.noStateSupport": "このゲームはステートセーブに対応していません",
-  "status.stateSaved": "スロット {slot} にステートを保存しました",
   "status.stateSaveFailed": "ステートを保存できませんでした",
   "status.stateSaveFailedWhy": "ステートを保存できませんでした: {reason}",
   "status.stateEmpty": "スロット {slot} は空です",
@@ -194,7 +193,6 @@
   "status.reset": "リスタートしました",
   "status.slot": "ステートスロット {slot}",
   "status.webError": "Web ビルドのエラー: {message}",
-  "status.saveWritten": "セーブしました: {name} · {time}",
   "status.saveWriteFailed": "セーブを書き込めませんでした(次のセーブで再試行します): {reason}",
 
   "pick.open": "ゲームを開く",

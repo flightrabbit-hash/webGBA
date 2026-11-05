@@ -561,7 +561,7 @@ async function nosaveFlow() {
   const soloSave = await app.evaluate(STATUS);
   await clear();
   const soloLoad = await fkey(false);
-  check("exe 혼자 실행: 레일 상태 저장·불러오기 켜짐 · 클릭 저장 · F1 불러오기 그대로", solo.every((b) => b.aria === null && !b.disabled) && solo[0].key === "rail.stateSave" && soloSave.text === slotText("status.stateSaved") && soloLoad.text === slotText("status.stateLoaded"), JSON.stringify({ solo: solo.map((b) => `${b.id}:${b.aria}/${b.key}`), soloSave, soloLoad }));
+  check("exe 혼자 실행: 레일 상태 저장·불러오기 켜짐 · 클릭 저장(알림 없음) · F1 불러오기 그대로", solo.every((b) => b.aria === null && !b.disabled) && solo[0].key === "rail.stateSave" && soloSave.text === "" && soloLoad.text === slotText("status.stateLoaded"), JSON.stringify({ solo: solo.map((b) => `${b.id}:${b.aria}/${b.key}`), soloSave, soloLoad }));
 
   await app.evaluate(`(() => { const p = ${T}.player; p.keyDown("KeyZ"); setTimeout(() => p.keyUp("KeyZ"), 150); return true; })()`);
   await appMake();
@@ -642,5 +642,5 @@ async function nosaveFlow() {
   await clear();
   if (ended) await press(ended[0].x, ended[0].y);
   const endSave = await app.evaluate(STATUS);
-  check("exe 세션 끝: 레일 다시 켜짐(title 원래 이름) · 클릭 저장 동작", Boolean(ended) && ended[0].title === ko["rail.stateSave"] && endSave.text === slotText("status.stateSaved"), JSON.stringify({ ended: ended && ended.map((b) => `${b.id}:${b.aria}/${b.title}`), endSave }));
+  check("exe 세션 끝: 레일 다시 켜짐(title 원래 이름) · 클릭 저장 동작(막힘 안내·알림 없음)", Boolean(ended) && ended[0].title === ko["rail.stateSave"] && endSave.text === "", JSON.stringify({ ended: ended && ended.map((b) => `${b.id}:${b.aria}/${b.title}`), endSave }));
 }

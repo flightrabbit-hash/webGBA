@@ -3,7 +3,7 @@ import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
 import { DPAD_MODES, GBA_PRESET, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_STEPS_MAX, normalizeMacro, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
 import { pickText } from "../core/lang-text.js";
 import { NetHost } from "../core/net/net-host.js";
-import { lang, locale, t } from "../shell/i18n.js";
+import { lang, t } from "../shell/i18n.js";
 
 export const FRAME_MS = (280896 / 16777216) * 1000;
 const MAX_FRAMES_PER_TICK = 8;
@@ -30,8 +30,6 @@ function setAudioSession(type) {
 export function audioSessionType() {
   return globalThis.navigator?.audioSession?.type ?? "";
 }
-
-const baseOf = (path) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
 export const meterLimits = { slowMs: METER_SLOW_MS, lateMs: METER_LATE_MS, stallMs: METER_STALL_MS, lowFps: METER_LOW_FPS };
 
@@ -231,7 +229,7 @@ registerProcessor("webgba-out", WebGbaOut);`;
 
 
 export class Player {
-  constructor({ canvas, onStatus, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false, meter = false }) {
+  constructor({ canvas, onStatus, onStatusClear, onStats, onHalt, onChange, onNetWant, onNetChange, onNetNotice, onNetBoard, netNick, netEnabled, hiddenClock = false, meter = false }) {
     this.canvas = canvas;
     this.hiddenClock = hiddenClock;
     this.meter = meter ? freshMeter() : null;
@@ -259,6 +257,7 @@ export class Player {
     this.ctx = canvas.getContext("2d");
     this.image = this.ctx.createImageData(SCREEN_W, SCREEN_H);
     this.onStatus = onStatus ?? (() => {});
+    this.onStatusClear = onStatusClear ?? (() => {});
     this.onStats = onStats ?? (() => {});
     this.onHalt = onHalt ?? (() => {});
     // ② 자체 JS 게임의 상태가 바뀜(퀵슬롯을 쓸 수 있게 됨·멈춤 등) → 화면이 버튼을 다시 그린다
@@ -268,6 +267,7 @@ export class Player {
     this.saveId = "";
     this.game = "";
     this.saveBase = null;
+    this.saveFailNote = "";
     this.running = false;
     this.paused = false;
     this.netHold = false;
@@ -1187,12 +1187,14 @@ export class Player {
     }
     this.savePending = false;
     try {
-      const done = await core.saveWrite(this.game, data);
+      await core.saveWrite(this.game, data);
       this.saveBase = data;
-      if (done.action === "written") this.onStatus(t("status.saveWritten", { name: baseOf(done.path), time: new Date().toLocaleTimeString(locale(), { hour12: false }) }));
+      if (this.saveFailNote) this.onStatusClear(this.saveFailNote);
+      this.saveFailNote = "";
     } catch (error) {
       this.savePending = true;
-      this.onStatus(t("status.saveWriteFailed", { reason: String(error?.message ?? error) }), "error");
+      this.saveFailNote = t("status.saveWriteFailed", { reason: String(error?.message ?? error) });
+      this.onStatus(this.saveFailNote, "error");
     }
   }
 

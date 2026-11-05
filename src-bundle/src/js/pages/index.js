@@ -101,11 +101,13 @@ const state = {
   // 지금 게임 화면 크기(screenOf — 설명서 screen, null = GBA 240×160)와 ② 격리 틀
   screen: null,
   scriptFrame: null,
+  stateNote: "",
 };
 
 const player = new Player({
   canvas: el.screen,
   onStatus: (text, level) => status(text, level),
+  onStatusClear: (text) => clearStatus(text),
   onStats: ({ fps, speed }) => {
     const stats = t("status.stats", { fps: fps.toFixed(1), speed, slot: slot() });
     el.statusRight.textContent = player.net.active ? `${netStatus()} · ${stats}` : stats;
@@ -579,6 +581,15 @@ function status(text, level = "info") {
   el.status.textContent = hidePaths(text);
   el.status.classList.toggle("is-warn", level === "warn");
   el.status.classList.toggle("is-error", level === "error");
+}
+
+function clearStatus(text) {
+  if (text && el.status.textContent === hidePaths(text)) status("");
+}
+
+function stateProblem(text, level) {
+  state.stateNote = text;
+  status(text, level);
 }
 
 async function savePrefs(patch) {
@@ -1878,11 +1889,11 @@ async function toggleLink() {
 
 async function saveStateTo(index) {
   if (player.net.locked) {
-    status(t("net.blockQuick"), "warn");
+    stateProblem(t("net.blockQuick"), "warn");
     return;
   }
   if (!player.canState) {
-    status(t("status.noStateSupport"), "warn");
+    stateProblem(t("status.noStateSupport"), "warn");
     return;
   }
   const begin = performance.now();
@@ -1890,14 +1901,14 @@ async function saveStateTo(index) {
   try {
     if (await player.saveState(index)) {
       await rememberSlot(index);
-      status(t("status.stateSaved", { slot: index }));
+      clearStatus(state.stateNote);
       noteState("저장", index, "성공", begin);
     } else {
-      status(t("status.stateSaveFailed"), "error");
+      stateProblem(t("status.stateSaveFailed"), "error");
       noteState("저장", index, "실패(게임이 상태를 주지 않음)", begin);
     }
   } catch (error) {
-    status(t("status.stateSaveFailedWhy", { reason: reason(error) }), "error");
+    stateProblem(t("status.stateSaveFailedWhy", { reason: reason(error) }), "error");
     noteState("저장", index, `실패 ${reason(error)}`, begin);
   }
 }

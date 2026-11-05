@@ -174,7 +174,6 @@
   "status.unlinked": ".wgbp files are no longer linked",
   "status.linkFailed": "Could not change the file link: {reason}",
   "status.noStateSupport": "This game does not support save states",
-  "status.stateSaved": "Saved state to slot {slot}",
   "status.stateSaveFailed": "Could not save the state",
   "status.stateSaveFailedWhy": "Could not save the state: {reason}",
   "status.stateEmpty": "Slot {slot} is empty",
@@ -194,7 +193,6 @@
   "status.reset": "Restarted",
   "status.slot": "State slot {slot}",
   "status.webError": "Web build error: {message}",
-  "status.saveWritten": "Saved: {name} · {time}",
   "status.saveWriteFailed": "Could not write the save (will retry on the next save): {reason}",
 
   "pick.open": "Open game",

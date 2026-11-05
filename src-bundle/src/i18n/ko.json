@@ -174,7 +174,6 @@
   "status.unlinked": ".wgbp 파일 연결을 해제했습니다",
   "status.linkFailed": "연결을 바꾸지 못했습니다: {reason}",
   "status.noStateSupport": "이 게임은 상태 저장을 지원하지 않습니다",
-  "status.stateSaved": "슬롯 {slot} 에 상태를 저장했습니다",
   "status.stateSaveFailed": "상태를 저장하지 못했습니다",
   "status.stateSaveFailedWhy": "상태를 저장하지 못했습니다: {reason}",
   "status.stateEmpty": "슬롯 {slot} 이(가) 비어 있습니다",
@@ -194,7 +193,6 @@
   "status.reset": "다시 시작했습니다",
   "status.slot": "상태 슬롯 {slot}",
   "status.webError": "웹 빌드 오류: {message}",
-  "status.saveWritten": "세이브를 저장했습니다: {name} · {time}",
   "status.saveWriteFailed": "세이브를 쓰지 못했습니다(다음 저장 때 다시 씁니다): {reason}",
 
   "pick.open": "게임 열기",

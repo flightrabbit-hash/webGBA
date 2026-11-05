@@ -189,8 +189,8 @@ try {
   fs.chmodSync(sav, 0o666);
   const retry = await debugSave();
   const retried = await waitFile(sav, retry);
-  said = await statusText();
-  check("다음 저장 때 다시 써서 성공", retried && /세이브를 저장했습니다/.test(said) && inoOf(sav) === ino1, `${fileHash(sav)} · ${said}`);
+  said = await waitStatus(/^$/);
+  check("다음 저장 때 다시 써서 성공: 오류 줄이 지워지고 성공 알림은 없음", retried && said === "" && inoOf(sav) === ino1, `${fileHash(sav)} · '${said}'`);
   fs.chmodSync(sav, 0o444);
   const atClose = await debugSave();
   await waitStatus(/세이브를 쓰지 못했습니다/);

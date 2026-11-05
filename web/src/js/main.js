@@ -108,7 +108,6 @@ const QUICK_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const AUTO_SLOT = 9;
 const AUTO_SAVE_MINUTES = [0, 1, 3, 5, 10, 15, 30];
 const AUTO_SAVE_DEFAULT = 5;
-const AUTO_TOAST_MS = 1600;
 const NET_BACK_KEY = "webgba.netBack";
 const NET_SEAT_KEY = "webgba.netSeat";
 const PAD_MODES = ["on", "overlay", "off"];
@@ -131,7 +130,7 @@ const state = {
   coreModule: null,
   toastTimer: 0,
   dragDepth: 0,
-  quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0 },
+  quick: { tab: "save", info: new Map(), urls: [], busy: false, played: 0, lastTick: 0, syncMs: 0, lastMs: 0, autoCount: 0, failNote: "" },
   extra: null,
   // 지금 게임의 버튼 목록(resolveInput — 설명서 input, 없으면 GBA 10버튼)
   input: GBA_LAYOUT,
@@ -216,6 +215,7 @@ class WebPlayer extends Player {
 const player = new WebPlayer({
   canvas: el.canvas,
   onStatus: (text, level) => toast(text, level ?? "info"),
+  onStatusClear: (text) => clearToast(text),
   onHalt: (why) => {
     toast(t("status.halted", { reason: why || t("status.haltUnknown") }), "error");
     syncControls();
@@ -748,6 +748,10 @@ function toast(text, level = "info", ms = TOAST_MS) {
   el.toast.classList.toggle("is-warn", level === "warn");
   showNow(el.toast);
   if (level !== "error") state.toastTimer = setTimeout(() => hideLater(el.toast), level === "warn" ? ms * 1.6 : ms);
+}
+
+function clearToast(text) {
+  if (text && !el.toast.hidden && el.toast.textContent === text) toast("");
 }
 
 function safeInsets() {
@@ -3474,6 +3478,11 @@ function quickThumb() {
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob ? blob.arrayBuffer() : null), "image/png"));
 }
 
+function quickFail(text, auto) {
+  state.quick.failNote = text;
+  toast(text, auto ? "warn" : "error");
+}
+
 async function quickSave(slot, { auto = false } = {}) {
   if (!canQuick() || player.net.locked || state.quick.busy || (slot === AUTO_SLOT) !== auto) return false;
   state.quick.busy = true;
@@ -3483,10 +3492,11 @@ async function quickSave(slot, { auto = false } = {}) {
     state.quick.syncMs = performance.now() - started;
     const done = await pending;
     state.quick.lastMs = performance.now() - started;
-    if (!done) toast(t("web.quick.saveFailedPlain"), auto ? "warn" : "error");
+    if (!done) quickFail(t("web.quick.saveFailedPlain"), auto);
+    else clearToast(state.quick.failNote);
     return Boolean(done);
   } catch (error) {
-    toast(t("web.quick.saveFailed", { reason: reason(error) }), auto ? "warn" : "error");
+    quickFail(t("web.quick.saveFailed", { reason: reason(error) }), auto);
     return false;
   } finally {
     state.quick.busy = false;
@@ -3648,7 +3658,6 @@ async function pickSlot(slot) {
     if (info && !(await confirmDialog(t("web.quick.overTitle", { slot: label }), t("web.quick.overText", { time: fmtTime(info.saved) }), t("web.btn.overwrite")))) return;
     if (state.sheet !== "quick" || !(await quickSave(slot))) return;
     closeSheet();
-    toast(t("web.quick.saved", { slot: label }));
     return;
   }
   if (!(await confirmDialog(t("web.quick.loadTitle", { slot: label }), t("web.quick.loadText", { time: fmtTime(info.saved) }), t("web.quick.loadOk")))) return;
@@ -3676,7 +3685,6 @@ function autoTick() {
 async function autoSave() {
   if (!(await quickSave(AUTO_SLOT, { auto: true }))) return;
   state.quick.autoCount++;
-  toast(t("web.quick.autoSaved"), "info", AUTO_TOAST_MS);
   if (state.sheet === "quick") renderQuick();
 }
 
