@@ -49,23 +49,25 @@ function listFiles(dir, base = dir) {
     .sort();
 }
 
-// 휴대폰 시작 스플래시는 첫 그림이 바로 나오도록 index.html 안에 넣는다(css·js 그대로, 그림은 data URI). splash/ 폴더는 복사하지 않음.
+// 휴대폰 시작 스플래시: css·js 는 첫 그림이 추가 요청 없이 나오도록 index.html 안에 넣는다(plan.js 는 head 앞쪽 — 그림 받기를 web.css 와 함께 시작).
+// 그림은 /splash/*.png 파일로 두어 서비스 워커가 바뀌지 않은 그림을 다시 받지 않게 한다.
 function inlineSplash() {
   const dir = path.join(src, "splash");
   const file = path.join(out, "index.html");
-  const LINK = '<link rel="stylesheet" href="/splash/splash.css" />';
-  const SCRIPT = '<script src="/splash/splash.js"></script>';
   let html = fs.readFileSync(file, "utf8");
-  if (!html.includes(LINK) || !html.includes(SCRIPT)) fail("index.html 에 스플래시 자리가 없습니다");
-  let js = fs.readFileSync(path.join(dir, "splash.js"), "utf8").trim();
-  for (const m of [...js.matchAll(/"\/splash\/([\w-]+\.png)"/g)]) {
-    const data = fs.readFileSync(path.join(dir, m[1])).toString("base64");
-    js = js.replace(m[0], () => JSON.stringify(`data:image/png;base64,${data}`));
+  const parts = [
+    ['<script src="/splash/plan.js"></script>', "plan.js", "script"],
+    ['<link rel="stylesheet" href="/splash/splash.css" />', "splash.css", "style"],
+    ['<script src="/splash/splash.js"></script>', "splash.js", "script"],
+  ];
+  for (const [tag, name, kind] of parts) {
+    if (!html.includes(tag)) fail(`index.html 에 스플래시 자리 ${name} 이(가) 없습니다`);
+    const text = fs.readFileSync(path.join(dir, name), "utf8").trim();
+    if (text.includes(`</${kind}`)) fail(`${name} 를 index.html 에 넣지 못했습니다`);
+    html = html.replace(tag, () => `<${kind}>\n${text}\n    </${kind}>`);
   }
-  if (js.includes("/splash/") || js.includes("</script")) fail("splash.js 를 index.html 에 넣지 못했습니다");
-  const css = fs.readFileSync(path.join(dir, "splash.css"), "utf8").trim();
-  html = html.replace(LINK, () => `<style>\n${css}\n    </style>`).replace(SCRIPT, () => `<script>\n${js}\n    </script>`);
   fs.writeFileSync(file, html);
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".png"))) copy(path.join(dir, name), path.join(out, "splash", name));
 }
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -121,6 +123,7 @@ copy(path.join(root, "THIRD_PARTY_NOTICES"), path.join(out, "THIRD_PARTY_NOTICES
 const version = readJson(path.join(root, "package.json")).version;
 const hashOf = (files) => {
   const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(path.join(src, "sw.js")));
   for (const rel of files) {
     hash.update(rel);
     hash.update(fs.readFileSync(path.join(out, rel)));
@@ -130,8 +133,10 @@ const hashOf = (files) => {
 const contentHash = hashOf(listFiles(out));
 fs.writeFileSync(path.join(out, "js", "build-info.js"), `export const BUILD = ${JSON.stringify({ version, hash: contentHash })};\n`);
 
+// 서비스 워커가 파일마다 내용 해시를 알면 업데이트 때 해시가 같은 파일은 이전 캐시에서 복사하고 바뀐 파일만 받는다.
+const fileHash = (rel) => crypto.createHash("sha256").update(fs.readFileSync(path.join(out, rel))).digest("hex").slice(0, 16);
 const precache = listFiles(out).filter((rel) => !rel.startsWith("licenses/") && !rel.endsWith(".txt"));
-const files = ["/", ...precache.map((rel) => `/${rel}`)];
+const files = [["/", fileHash("index.html")], ...precache.map((rel) => [`/${rel}`, fileHash(rel)])];
 const sw = fs
   .readFileSync(path.join(src, "sw.js"), "utf8")
   .replace('"__WEBGBA_VERSION__"', JSON.stringify(`${version}-${contentHash}`))

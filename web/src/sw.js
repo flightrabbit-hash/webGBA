@@ -1,10 +1,40 @@
 const VERSION = "__WEBGBA_VERSION__";
 const FILES = ["__WEBGBA_FILES__"];
 const CACHE = `webgba-${VERSION}`;
+const LIST = "/__files.json";
+
+async function reuse(cache) {
+  const missing = new Map(FILES);
+  for (const key of await caches.keys()) {
+    if (!missing.size) break;
+    if (!key.startsWith("webgba-") || key === CACHE) continue;
+    const old = await caches.open(key);
+    let list = null;
+    try {
+      list = await (await old.match(LIST))?.json();
+    } catch {
+      list = null;
+    }
+    if (!list || typeof list !== "object") continue;
+    for (const [url, hash] of [...missing]) {
+      if (list[url] !== hash) continue;
+      const hit = await old.match(url);
+      if (!hit) continue;
+      await cache.put(url, hit);
+      missing.delete(url);
+    }
+  }
+  return [...missing.keys()];
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(FILES.map((url) => new Request(url, { cache: "reload" })))),
+    (async () => {
+      const cache = await caches.open(CACHE);
+      const need = await reuse(cache);
+      await cache.addAll(need.map((url) => new Request(url, { cache: "no-cache" })));
+      await cache.put(LIST, new Response(JSON.stringify(Object.fromEntries(FILES)), { headers: { "content-type": "application/json" } }));
+    })(),
   );
 });
 
@@ -29,8 +59,7 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate" && !/\.[a-z0-9]+$/i.test(url.pathname.replace(/\/index\.html$/, "/"))) {
     event.respondWith(
       (async () => {
-        const cache = await caches.open(CACHE);
-        const hit = await cache.match("/index.html");
+        const hit = await caches.match("/index.html", { cacheName: CACHE });
         if (hit) return hit;
         return fetch(request);
       })(),
@@ -39,8 +68,7 @@ self.addEventListener("fetch", (event) => {
   }
   event.respondWith(
     (async () => {
-      const cache = await caches.open(CACHE);
-      const hit = await cache.match(url.pathname);
+      const hit = await caches.match(url.pathname, { cacheName: CACHE });
       return hit ?? fetch(request);
     })(),
   );

@@ -1,8 +1,8 @@
 (() => {
   const splash = document.getElementById("splash");
   if (!splash) return;
-  const phone = matchMedia("(pointer: coarse) and (hover: none)").matches && Math.min(screen.width, screen.height) <= 600;
-  if (!phone) {
+  const plan = window.webgbaSplashPlan;
+  if (!plan) {
     splash.remove();
     return;
   }
@@ -27,15 +27,12 @@
   const LATE_MS = 1000;
   const HOME_VP_X = 199;
   const HOME_VP_Y = 150;
-  const STRIPS = { meadow: { src: "/splash/meadow.png", rows: 64 }, sunset: { src: "/splash/sunset.png", rows: 52 }, home: { src: "/splash/home.png" } };
-  const CAT_SRC = "/splash/cat.png";
-  const TEXT_SRC = "/splash/text.png";
+  const STRIP_ROWS = { meadow: 64, sunset: 52 };
   const NAMES = ["sky", "cloud", "cloud-shade", "sun-rim", "sun-mid", "sun-core", "sun-band", "ground-far", "ground-mid", "ground-near", "ground-a", "ground-b", "band", "path", "path-edge", "pebble", "flower-a", "flower-b", "flower-c", "flower-d", "flower-core", "tuft", "wood", "wood-dark", "pole", "lamp", "lamp-core", "shadow", "fill"];
   const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const bayer = (x, y) => BAYER[(y & 3) * 4 + (x & 3)];
 
-  const hour = new Date().getHours();
-  const variant = hour >= 17 && hour < 23 ? "home" : hour >= 4 && hour < 17 ? "meadow" : "sunset";
+  const variant = plan.variant;
   const home = variant === "home";
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let finish = () => {};
@@ -146,12 +143,6 @@
     }
     flush();
   }
-
-  const loadImage = (src) => {
-    const image = new Image();
-    image.src = src;
-    return image.decode().then(() => image);
-  };
 
   const cat = { sheet: null, size: 0, union: null };
   function measureCat(image) {
@@ -343,7 +334,7 @@
   }
 
   function drawStrip() {
-    const rows = STRIPS[variant].rows;
+    const rows = STRIP_ROWS[variant];
     let left = view.AX - Math.floor(strip.width / 2);
     while (left > 0) left -= strip.width;
     for (let x = left; x < view.LW; x += strip.width) ctx.drawImage(strip, 0, 0, strip.width, rows, x, view.hyL - rows, strip.width, rows);
@@ -597,7 +588,7 @@
     requestAnimationFrame(loop);
   }
 
-  Promise.all([loadImage(CAT_SRC), loadImage(STRIPS[variant].src), loadImage(TEXT_SRC)])
+  plan.images
     .then(([catImage, stripImage, textImage]) => {
       if (api.closedAt) return;
       measureCat(catImage);
