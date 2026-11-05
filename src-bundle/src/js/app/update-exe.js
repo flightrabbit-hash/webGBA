@@ -1,4 +1,4 @@
-import { checkGames, fetchChecked, planUpdate, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
+import { buildGauge, checkGames, fetchChecked, GAUGE, planUpdate, prefetchFeeds, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./update-pick.js";
 import { runPatchJob } from "./patch-loader.js";
 import { readWgba, pickText } from "../core/wgba-read.js";
@@ -11,6 +11,7 @@ export function createExeUpdater(d) {
   const { t } = d;
   const items = new Map();
   const urls = [];
+  const feeds = new Map();
   let checked = false;
   let shown = null;
   const keyOf = (path) => path.replace(/\//g, "\\").toLowerCase();
@@ -52,6 +53,12 @@ export function createExeUpdater(d) {
     return { ...entry, path };
   }
 
+  function prepare() {
+    if (checked || navigator.onLine === false) return;
+    const games = Object.values(d.prefs().updateIndex ?? {}).map((entry) => ({ gameId: entry.gameId, version: entry.version, update: entry.update }));
+    prefetchFeeds(games, { overrides: d.testMode() ? readOverrides() : null, cache: feeds });
+  }
+
   async function check(paths) {
     if (checked) return 0;
     checked = true;
@@ -69,7 +76,7 @@ export function createExeUpdater(d) {
       if (games.length >= INDEX_MAX) break;
     }
     d.savePrefs({ updateIndex: Object.fromEntries(Object.entries(cache).slice(-INDEX_MAX)) });
-    const found = await checkGames(games, { overrides: d.testMode() ? readOverrides() : null, log: d.log });
+    const found = await checkGames(games, { overrides: d.testMode() ? readOverrides() : null, log: d.log, cache: feeds });
     for (const { game, feed } of found) {
       let bytes;
       try {
@@ -119,6 +126,7 @@ export function createExeUpdater(d) {
       apply: (source, delta, options) => applyInWorker(source, delta, options),
     });
     await writeVerified(item, out);
+    progress({ stage: "apply", fraction: 1 });
     d.log("INFO", `업데이트 완료 ${item.gameId} ${plan.steps.length}단계 → ${item.to} ${item.path}`);
     return true;
   }
@@ -127,16 +135,17 @@ export function createExeUpdater(d) {
     const rom = await d.pickRom(item);
     if (!rom) return false;
     progress({ stage: "download", fraction: 0 });
-    const patch = await fetchChecked(item.feed.full, { onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * 0.5 }) });
-    progress({ stage: "rom", fraction: 0.5 });
+    const patch = await fetchChecked(item.feed.full, { onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * GAUGE.download }) });
+    progress({ stage: "rom", fraction: GAUGE.download });
     let made;
     try {
-      made = await runPatchJob(patch, await d.readRom(rom), (stage, fraction) => progress({ stage: "rom", fraction: 0.5 + 0.5 * Math.min(1, fraction) }));
+      made = await runPatchJob(patch, await d.readRom(rom), (stage, fraction) => progress({ stage: "rom", fraction: buildGauge(stage, fraction) }));
     } catch (error) {
       throw new Error(d.patchText(error, rom));
     }
     if (made.sha1 !== item.feed.wgba.sha1) throw new UpdateError("fullMismatch");
     await writeVerified(item, made.wgba);
+    progress({ stage: "rom", fraction: 1 });
     d.log("INFO", `업데이트 전체 설치 ${item.gameId} → ${item.to} ${item.path} (${rom})`);
     return true;
   }
@@ -221,6 +230,7 @@ export function createExeUpdater(d) {
   }
 
   return {
+    prepare,
     check,
     open,
     pending,

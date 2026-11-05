@@ -166,15 +166,15 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
 
   const progress = (item) => ({ stage, fraction }) => {
     item.stage = stage;
-    item.fraction = fraction;
+    item.fraction = Math.max(item.fraction ?? 0, Math.min(1, Number(fraction) || 0));
     const entry = rows.find((r) => r.item === item);
     const text = rowMeta(item);
     if (entry.meta.textContent !== text) {
       entry.meta.textContent = text;
       centerTexts([entry.meta]);
     }
-    entry.fill.style.setProperty("--progress", (percent(fraction) / 100).toFixed(4));
-    entry.bar.setAttribute("aria-valuenow", String(percent(fraction)));
+    entry.fill.style.setProperty("--progress", (percent(item.fraction) / 100).toFixed(4));
+    entry.bar.setAttribute("aria-valuenow", String(percent(item.fraction)));
   };
 
   const runOne = async (item, work) => {

@@ -2489,6 +2489,7 @@ const updatePaths = () => [...favorites(), ...(state.prefs.recent ?? []), ...sta
 async function boot() {
   state.info = await core.runtimeInfo();
   state.prefs = (await core.prefsGet()) ?? {};
+  updater.prepare();
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
