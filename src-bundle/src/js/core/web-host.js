@@ -1,4 +1,5 @@
 import { t } from "../shell/i18n.js";
+import { GPU_EXPORTS } from "./gpu-bridge.js";
 
 export const SCREEN_W = 240;
 export const SCREEN_H = 160;
@@ -57,6 +58,7 @@ export function inspectModule(module) {
     canState: exports.has("Web_StateSize") && exports.has("Web_StateSave") && exports.has("Web_StateLoad"),
     canPointer: exports.has("Web_Pointer"),
     canNet: NET_EXPORTS.every((name) => exports.has(name)),
+    canGpu: GPU_EXPORTS.every((name) => exports.has(name)),
   };
 }
 
@@ -333,6 +335,14 @@ class WebHost {
 
   get hasSave() {
     return Boolean(this.ex.Web_GetFlash);
+  }
+
+  get canGpu() {
+    return GPU_EXPORTS.every((name) => typeof this.ex?.[name] === "function");
+  }
+
+  get gpuOverlay() {
+    return this.ex?.Web_GpuOverlay ? this.ex.Web_GpuOverlay() | 0 : 0;
   }
 
   get hasPointer() {

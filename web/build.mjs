@@ -17,7 +17,7 @@ const app = path.join(root, "src-bundle", "src");
 const coreDir = path.join(root, "src-bundle", "bin", "core");
 const out = path.resolve(process.argv[2] ?? path.join(web, "dist"));
 
-const SHARED = ["app/player.js", "app/patch-loader.js", "app/zip-pick.js", "app/update-pick.js", "core/wgba-update.js", "core/update-worker.js","app/net-window.js", "app/board-panel.js", "core/net/board.js", "core/net/lan.js", "core/net/ice.js","core/net/session.js", "core/net/net-host.js", "core/net/qr.js", "core/net/signal.js", "core/web-host.js", "core/rom-kind.js", "core/wgbp.js", "core/zip.js", "core/wgba-format.js", "core/wgba-read.js", "core/lang-text.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js", "vendor/jsqr.js"];
+const SHARED = ["app/player.js", "app/patch-loader.js", "app/zip-pick.js", "app/update-pick.js", "core/wgba-update.js", "core/update-worker.js","app/net-window.js", "app/board-panel.js", "core/net/board.js", "core/net/lan.js", "core/net/ice.js","core/net/session.js", "core/net/net-host.js", "core/net/qr.js", "core/net/signal.js", "core/web-host.js", "core/gpu-bridge.js", "core/rom-kind.js", "core/wgbp.js", "core/zip.js", "core/wgba-format.js", "core/wgba-read.js", "core/lang-text.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js", "vendor/jsqr.js"];
 const LANGS = ["ko", "en", "ja"];
 const LICENSES = ["mgba-LICENSE.txt", "blip_buf-LICENSE.txt", "inih-LICENSE.txt", "pako-LICENSE.txt", "jsqr-LICENSE.txt"];
 

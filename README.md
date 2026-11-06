@@ -480,6 +480,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | 마우스: 게임 픽셀 좌표(화면 밖이면 -1), `MouseEvent.buttons`, 휠 칸 수 / 1이면 현재 마우스 사용 중 |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | 정지 사유 문자열(NUL 종료) 주소 / 제목 / 시간대 오프셋(UTC 기준 동쪽 방향, 초) |
 | `Web_Net*` | | 멀티플레이 — [7장](#7-멀티플레이)(7.3, 상태 표 `Web_NetBoard` 7.9.2) |
+| `Web_GpuStart(version)` → i32 · `Web_GpuList()` → ptr · `Web_GpuListLen()` → u32 · `Web_GpuListDone()` · `Web_GpuSync(reason)` · `Web_GpuStop()` · `Web_GpuOverlay()` → i32 | | GPU 그리기(WebGL2) — [4.1.4](#414-gpu-그리기-선택). 앞의 네 개가 모두 있으면 사용 |
 
 ##### 4.1.2 가져오기(호스트 제공)
 
@@ -495,6 +496,34 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 3. 세이브가 있으면 `Web_FlashClear` 후 `Web_GetFlash` 위치에 기록 → `Web_SetSaveSize`.
 4. `Web_Init()` → 이후 매 프레임(GBA 속도, 약 59.7275fps) `Web_RunFrame(keys)` → 화면·소리 조회.
 5. **`Web_Init` 후에는 `Web_RunFrame` 안에서 메모리를 크게 늘리지 마세요**(호스트가 보관 중인 화면 주소가 무효화됨).
+
+##### 4.1.4 GPU 그리기 (선택)
+
+화면을 CPU 대신 WebGL2로 그리는 게임용입니다. 그리기 규칙(셰이더 GLSL ES 3.00)은 게임이 제공하고, 호스트는 게임이 기록한 명령 목록을 순서대로 실행합니다. 새 가져오기는 없으므로 이 기능을 모르는 webGBA·WebGL2가 없는 브라우저에서는 호스트가 `Web_GpuStart`를 호출하지 않고, 게임은 기존 화면 버퍼(`Web_GetFramebuffer`)로 그립니다. 설명서 항목은 필요하지 않습니다.
+
+1. 호스트는 `Web_Init` 후 WebGL2 컨텍스트를 생성하고 `Web_GpuStart(1)`을 호출합니다. 1을 반환하면 GPU 모드, 0이면 기존 방식입니다. 인스턴스를 새로 생성하면(재시작) 다시 호출합니다.
+2. GPU 모드에서는 `Web_RunFrame`마다 `Web_GpuList()` → `Web_GpuListLen()` 순서로 목록(u32 단어)을 받아 순서대로 실행하고 `Web_GpuListDone()`을 호출합니다. 목록은 실행 후 비워질 때까지 프레임마다 이어 붙습니다(여러 프레임을 한 번에 실행해도 됨).
+3. 그림 = 출력 대상 0(`screen.width × height` RGBA8, GL 좌표 — 0행이 하단). 화면에 표시할 때 `Web_GpuOverlay()`: 0 = 출력 그대로, 1 = `Web_GetFramebuffer`를 위에 합성(premultiplied alpha, 0행이 상단), 2 = 이번 프레임은 `Web_GetFramebuffer`가 그림.
+4. 퀵슬롯 저장 전 `Web_GpuSync(1)`을 호출하고 목록을 실행한 후 `Web_StateSave`를 호출합니다(게임이 GPU 그림을 메모리로 읽는 `READ`를 기록).
+5. 컨텍스트 손실·셰이더 오류 등으로 실행하지 못하면 `Web_GpuStop()`을 호출하고 기존 방식으로 표시합니다. 게임은 다음 프레임부터 CPU로 그립니다.
+6. 사용자가 끄기: 웹 버전 `localStorage`의 `webgba.gpu`가 `"0"`이면 호스트가 GPU 모드를 시작하지 않습니다(테스트용).
+
+명령 레코드 = 첫 단어 `opcode | 단어 수 << 8`(단어 수는 첫 단어 포함) + 값. 주소는 wasm 메모리 바이트 위치, 실수는 f32 비트입니다.
+
+| opcode | 명령 | 값 |
+| --- | --- | --- |
+| 1 | `PROGRAM` | id, 정점 셰이더 주소·길이, 조각 셰이더 주소·길이, 인스턴스 속성 수(속성마다 `ivec4`, location 0부터), uniform 이름 목록(NUL 구분) 주소·길이 — uniform 번호 = 목록 순서 |
+| 2 | `TEXTURE` | id(1 이상), 형식(1 RGBA8 · 2 RGB10_A2 · 3 R16UI), 너비, 높이 — NEAREST, CLAMP_TO_EDGE |
+| 3 | `TARGET` | 텍스처 id(0 = 출력), viewport x·y·w·h |
+| 4 | `BLEND` | 사용(0·1), 식 RGB·A(0 ADD · 1 SUBTRACT · 2 REVERSE_SUBTRACT), 계수 srcRGB·dstRGB·srcA·dstA(0 ZERO · 1 ONE · 2 SRC_COLOR · 3 ONE_MINUS_SRC_COLOR · 4 DST_COLOR · 5 ONE_MINUS_DST_COLOR · 6 SRC_ALPHA · 7 ONE_MINUS_SRC_ALPHA · 8 DST_ALPHA · 9 ONE_MINUS_DST_ALPHA · 10 CONSTANT_COLOR · 11 ONE_MINUS_CONSTANT_COLOR · 12 CONSTANT_ALPHA · 13 ONE_MINUS_CONSTANT_ALPHA), 상수 색 r·g·b·a(f32) |
+| 5 | `UNIFORM` | 프로그램 id, uniform 번호, 종류(0 int · 1 float), 개수(1~4), 값 |
+| 6 | `TEXBIND` | 텍스처 단위, 텍스처 id |
+| 7 | `DRAW` | 프로그램 id, 인스턴스당 정점 수(TRIANGLES), 인스턴스 수, 인스턴스 데이터 주소(0 = 속성 없음), 인스턴스 간격(바이트) |
+| 8 | `UPLOAD` | 텍스처 id, x·y·w·h, 형식, 데이터 주소, 행 길이(화소) |
+| 9 | `COPY` | 원본·대상 텍스처 id, 원본 x·y, 대상 x·y, w·h(같은 형식) |
+| 10 | `READ` | 텍스처 id, x·y·w·h, 형식(1 RGBA8), 메모리 주소 — 호스트가 목록 실행 중에 기록을 끝냄 |
+
+- 모르는 opcode가 있으면 호스트는 GPU 모드를 중지합니다(5번).
 
 #### 4.2 ② 자체 JS — `runtime: "script"` (격리 실행)
 
