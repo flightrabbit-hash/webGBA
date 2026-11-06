@@ -18,7 +18,7 @@ import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
-import { r2Config, r2Has, r2Put } from "./r2.mjs";
+import { r2Config, r2Head, r2Put } from "./r2.mjs";
 import { applyDelta, FEED_FORMAT, fromBase64, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { compareVersions, ID_RE, VERSION_RE } from "../../src-bundle/src/js/core/wgba-format.js";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
@@ -483,15 +483,25 @@ export async function upload(dir, { dryRun = false } = {}) {
     return 0;
   }
   const config = r2Config();
+  let put = 0;
+  let sent = 0;
+  let same = 0;
   for (const item of plan) {
-    if (item.cache === IMMUTABLE && (await r2Has(config, item.key, item.size))) {
-      console.log(`있음  ${item.key}`);
+    const bytes = readBytes(item.file);
+    // 묶음 전체를 올려도 바뀌지 않은 latest.json 은 다시 쓰지 않게 내용(ETag = MD5)까지 비교. 여러 조각으로 올린 객체(ETag 에 "-")는 크기만
+    const head = await r2Head(config, item.key);
+    const md5 = crypto.createHash("md5").update(bytes).digest("hex");
+    if (head && head.size === bytes.length && (head.etag === md5 || (item.cache === IMMUTABLE && head.etag.includes("-")))) {
+      console.log(`같음  ${item.key}`);
+      same++;
       continue;
     }
-    await r2Put(config, item.key, readBytes(item.file), { contentType: item.type, cacheControl: item.cache });
-    console.log(`올림  ${item.key} ${n(item.size)}바이트`);
+    await r2Put(config, item.key, bytes, { contentType: item.type, cacheControl: item.cache });
+    console.log(`올림  ${item.key} ${n(bytes.length)}바이트`);
+    put++;
+    sent += bytes.length;
   }
-  console.log(`완료 — ${games.map((game) => `${game.id} ${game.version}`).join(", ")}${withIndex ? " + index.json" : ""}`);
+  console.log(`완료 — 올림 ${put}개 ${n(sent)}바이트 · 같아서 건너뜀 ${same}개 · ${games.map((game) => `${game.id} ${game.version}`).join(", ")}${withIndex ? " + index.json" : ""}`);
   return 0;
 }
 

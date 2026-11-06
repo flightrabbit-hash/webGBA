@@ -53,12 +53,12 @@ async function call(config, method, key, { body = null, headers = {} } = {}) {
   return response;
 }
 
-/** 이미 같은 크기로 있으면 true(HEAD). */
-export async function r2Has(config, key, size) {
+/** 버킷 객체의 크기·ETag(따옴표 뺌 — 한 번에 올린 객체는 내용 MD5). 없으면 null(HEAD). */
+export async function r2Head(config, key) {
   const response = await call(config, "HEAD", key);
-  if (response.status === 404) return false;
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`HEAD ${key}: HTTP ${response.status}`);
-  return Number(response.headers.get("content-length")) === size;
+  return { size: Number(response.headers.get("content-length")), etag: (response.headers.get("etag") ?? "").replace(/"/g, "").toLowerCase() };
 }
 
 export async function r2Put(config, key, bytes, { contentType, cacheControl }) {
