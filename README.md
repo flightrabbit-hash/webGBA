@@ -1382,11 +1382,35 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 | `version` | 새 버전 `x.y.z` |
 | `time` | 선택. 생성 시각(ISO 8601) |
 | `wgba` | `{ "sha1", "size" }` — 새 `.wgba` 파일 전체의 SHA-1(소문자 16진수 40자)·크기 |
-| `from` | 배열(256개까지). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = 파일 SHA-1이 `sha1`인 `.wgba`에 `patch`를 적용하면 SHA-1 `to`가 됩니다. `to`가 새 버전이 아니면 `to`로 다시 찾아 이어서 적용합니다(건너뛴 버전 연쇄, 64단계까지). 같은 `sha1`이 여러 개면 `to`가 새 버전인 항목을 먼저 사용 |
+| `from` | 배열(256개까지). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = 파일 SHA-1이 `sha1`인 `.wgba`에 `patch`를 적용하면 SHA-1 `to`가 됩니다. `to`가 새 버전이 아니면 `to`로 다시 찾아 이어서 적용합니다(건너뛴 버전 연쇄, 64단계까지). 같은 `sha1`이 여러 개면 단계 수가 가장 적은 경로(같으면 받는 양이 적은 것)를 사용 — webGBA 0.8.0 이하는 `to`가 새 버전인 항목을 먼저 |
 | `full` | 선택. `{ "url", "size", "sha256" }` — 전체 설치용 `.wgbp`. `from` 표에 없는 파일은 원본 롬을 선택해 이 `.wgbp`로 새로 만듭니다 |
 | `notes` | 선택. 언어별 글(예약 — 현재 webGBA는 표시하지 않음) |
 
 - `url`은 버전 파일 주소 기준 상대 주소 또는 `https://` 절대 주소입니다. `sha256`은 받은 파일 전체의 SHA-256(소문자 16진수 64자)입니다.
+- 바로 가는 패치: 옛 버전마다 새 버전으로 바로 가는 항목(`to` = 새 버전)을 두면 업데이트 1번 = 패치 받기 1번입니다. `wgba.mjs feed --old`가 생성합니다.
+
+#### 12.2.1 업데이트 목록 `index.json` (webGBA 0.8.1~)
+
+알려진 게임 id 표의 게임은 앱 실행마다 게임별 `latest.json` 대신 버킷 최상위의 **목록** 1개만 조회합니다(게임 수와 무관하게 요청 1번). 목록 = 게임별 `latest.json` 봉투를 그대로 담고 목록 자체에도 서명한 파일입니다.
+
+```json
+{
+ "wgbaIndex": 1,
+ "signed": "{\"time\":\"2026-11-06T04:16:10Z\",\"feeds\":{\"<게임 id>\":\"<SHA-256>\"}}",
+ "signature": "<base64, 64바이트>",
+ "feeds": { "<게임 id>": { "wgbaFeed": 1, "signed": "…", "signature": "…" } }
+}
+```
+
+| 필드 | 설명 |
+| --- | --- |
+| `signed.time` | 목록 생성 시각(ISO 8601). 호스트는 목록 주소마다 확인한 시각 중 가장 늦은 것을 기억하고, 그보다 이른 목록은 사용하지 않습니다(오래된 목록 되돌리기 방지) |
+| `signed.feeds` | 게임 id → 해당 게임 봉투의 `signed` 글(UTF-8 바이트) SHA-256(소문자 16진수 64자) |
+| `feeds` | 게임 id → `<게임 id>/latest.json`과 같은 봉투. 호스트는 해시를 확인한 후 12.2와 같이 서명·내용을 확인합니다. 상대 `url`의 기준 = `<목록과 같은 폴더>/<게임 id>/latest.json` |
+
+- 서명 = `signed` 글의 ECDSA P-256·SHA-256(12.2와 같은 키·형식). 목록 크기는 1MiB까지.
+- 대체: 목록이 존재하지 않음(404 등)·`wgbaIndex`가 모르는 번호·서명 불일치·이전보다 이른 시각·게임 누락·해시 불일치이면 해당 게임은 게임별 `latest.json`을 조회합니다. 서버에 닿지 않으면(오프라인) 대체하지 않고 넘어갑니다.
+- 옛 webGBA(0.8.0 이하)는 목록을 조회하지 않으므로 게임별 `latest.json`도 계속 발행합니다. manifest `update`의 다른 주소 버전 파일은 게임별 조회 그대로입니다.
 
 #### 12.3 차이 패치 `.wgbd`
 
@@ -1413,7 +1437,8 @@ little endian:
 
 #### 12.4 호스트 동작
 
-- 앱 실행(웹 페이지 열기·Windows 앱 시작) 때마다 한 번, 온라인이면 확인합니다. 대상 = 웹 버전 라이브러리의 `.wgba`, Windows 앱의 즐겨찾기·최근·같은 폴더의 `.wgba`. 같은 버전 파일은 한 번만 받습니다. 실행 중에는 다시 확인하지 않습니다.
+- 앱 실행(웹 페이지 열기·Windows 앱 시작) 때마다 한 번, 온라인이면 확인합니다. 대상 = 웹 버전 라이브러리의 `.wgba`, Windows 앱의 즐겨찾기·최근·같은 폴더의 `.wgba`. 알려진 게임 id 표의 게임은 목록(12.2.1) 1번, 그 외 게임은 같은 버전 파일을 한 번만 받습니다. 실행 중에는 다시 확인하지 않습니다.
+- 경로 = 단계 수가 가장 적은 연쇄(같으면 받는 양이 적은 것). 바로 가는 패치가 있으면 1단계입니다.
 - 오프라인·받기 실패·서명 불일치는 알림 없이 넘어갑니다(기록만).
 - 새 버전이 있을 때만 업데이트 창을 표시합니다: 줄마다 롬팩 그림·이름·현재 버전 → 새 버전·크기와 "업데이트" 버튼, 아래에 전체(체크한 게임) 업데이트·나중에. 창을 닫은 뒤에도 같은 실행 동안 라이브러리(Windows 앱은 첫 화면·옆 목록의 줄)·정보 화면에 업데이트 표시와 버튼이 남습니다.
 - 파일 SHA-1이 `from` 표에 없고 `full`도 없으면 업데이트 창·라이브러리·정보 화면에 아무것도 표시하지 않습니다(기록만). 패치 경로가 있는 `.wgba`를 가진 사람에게만 업데이트가 보입니다.
@@ -1427,16 +1452,22 @@ little endian:
 ```text
 node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem>
 node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]…
-node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> --patch <패치.wgbd>… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>]
-node tools/wgba.mjs verify <발행 폴더> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
-node tools/wgba.mjs upload <발행 폴더> [--dry-run]
+node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> [--patch <패치.wgbd>]… [--old <옛.wgba|폴더>]… [--orig <원작 롬>]… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
+node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
+node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run]
 ```
+
+- 발행 폴더 묶음 = 버킷 최상위와 같은 구조(`index.json` · `<게임 id>/…`).
 
 - `keygen`: 비밀 키는 git 저장소 밖에만 저장합니다(저장소 안이면 거절). 화면에는 공개 키만 출력합니다.
 - `diff`: 같은 id·더 높은 버전만. 만든 뒤 적용해 새 파일과 바이트 단위까지 같은지 확인합니다. `--orig`를 주면 패치에 새로 들어가는 바이트에 원작 롬과 32바이트 이상 같은 구간이 있는지 검사하고, 있으면 패치를 쓰지 않습니다(그 버전은 `.wgbp` 전체 설치로만 배포).
-- `feed`: 발행 폴더 = 버킷의 `<게임 id>/`와 같은 구조(`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). 발행 폴더의 이전 `latest.json`(`--prev`로 다른 파일 지정 가능)의 `from` 표를 이어받고, 모든 이전 버전이 새 버전까지 이어지는지 확인한 뒤 서명합니다.
-- `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다.
-- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 마지막에 올립니다(이미 같은 크기로 있으면 건너뜀). 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
+- `feed`: 발행 폴더 = 버킷의 `<게임 id>/`와 같은 구조(`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). 발행 폴더의 이전 `latest.json`(`--prev`로 다른 파일 지정 가능)의 `from` 표를 이어받고, 모든 이전 버전이 새 버전까지 이어지는지 확인한 뒤 서명합니다. 같은 `.wgba`로 다시 실행하면 `full`·`notes`를 이어받습니다.
+  - `--old`(파일 또는 폴더 안 `.wgba`): 같은 id·낮은 버전마다 새 버전으로 바로 가는 패치를 생성합니다. 새 파일에 롬이 있으면 `--orig`가 필요하고, 원작 롬과 같은 구간이 있는 패치는 쓰지 않습니다(해당 옛 버전은 기존 단계 연쇄 유지). 바로 가는 패치가 생긴 옛 버전의 이전 건너뛰는 항목(바로 다음 버전이 아닌 곳으로 가는 항목)은 `from`에서 제외합니다 — 단계 항목은 유지, 파일은 그대로.
+  - 묶음(발행 폴더의 상위 폴더)에 `index.json`이 있으면 목록도 다시 생성합니다(`--no-index`로 끔).
+- `index`: 묶음의 `<게임 id>/latest.json`(같은 키로 서명한 것)을 모두 담은 `index.json`을 생성합니다. 시각은 기존 목록보다 이르지 않게 정합니다.
+- `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
+- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(패치·`.wgbp`는 이미 같은 크기로 있으면 건너뜀). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 
 ---
 
@@ -1518,7 +1549,7 @@ node tools/wgba.mjs upload <발행 폴더> [--dry-run]
 [온라인 업데이트 — 선택(규격 12장)]
 - 새 버전을 사용자가 파일을 다시 받지 않고 적용하게 하려면 manifest에 "update": {"feed": "https://<정적 서버>/<게임 id>/latest.json", "key": "<공개 키>"}를 추가한다. 서버는 정적 파일만(예: Cloudflare R2 공개 버킷), CORS GET 허용, latest.json은 Cache-Control: no-cache, 패치·.wgbp는 내용 해시 이름 + 1년 immutable.
 - 열쇠: node tools/wgba.mjs keygen -o <git 저장소 밖 경로>/key.pem — 공개 키(base64 88자)만 manifest에 넣고, 비밀 키는 저장소·채팅·로그에 넣지 않는다. 비밀 키를 잃으면 이 key로는 새 버전을 낼 수 없다.
-- 새 버전마다: node tools/wgba.mjs diff <직전.wgba> <새.wgba> -o p.wgbd [--orig <원작 롬>] → node tools/wgba.mjs feed --dir <발행 폴더> --key key.pem --wgba <새.wgba> --patch p.wgbd [--full <새.wgbp>] → node tools/wgba.mjs verify <발행 폴더> --key key.pem --wgba <직전.wgba> → node tools/wgba.mjs upload <발행 폴더>(환경 변수 R2_ACCOUNT_ID·R2_ACCESS_KEY_ID·R2_SECRET_ACCESS_KEY·R2_BUCKET). 직전 버전 .wgba를 보관해 둔다(없으면 그 버전 사용자는 .wgbp 전체 설치로만 받는다).
+- 새 버전마다: node tools/wgba.mjs diff <직전.wgba> <새.wgba> -o p.wgbd [--orig <원작 롬>] → node tools/wgba.mjs feed --dir <발행 폴더> --key key.pem --wgba <새.wgba> --patch p.wgbd [--old <옛 버전 .wgba 폴더> --orig <원작 롬>] [--full <새.wgbp>] → node tools/wgba.mjs verify <발행 폴더> --key key.pem --wgba <직전.wgba> → node tools/wgba.mjs upload <발행 폴더>(환경 변수 R2_ACCOUNT_ID·R2_ACCESS_KEY_ID·R2_SECRET_ACCESS_KEY·R2_BUCKET). 이전 버전 .wgba를 모두 보관해 둔다(--old 로 옛 버전마다 바로 가는 패치 = 업데이트 1번에 패치 1개, 직전 버전이 없으면 그 버전 사용자는 .wgbp 전체 설치로만 받는다). 업데이트 목록 index.json(12.2.1)은 webGBA 알려진 게임 id 표의 게임용이고, manifest update 만 쓰는 게임은 필요 없다.
 - 버전 파일 형식을 직접 만들 때: {"wgbaFeed":1,"signed":"<JSON 글: id·version·wgba{sha1,size}·from[{sha1,version,to,patch{url,size,sha256}}]·full{url,size,sha256}>","signature":"<signed 글 UTF-8 바이트의 ECDSA P-256·SHA-256 서명 r‖s 64바이트 base64>"}. 차이 패치 .wgbd 형식은 12.3절 그대로(직접 만들지 말고 도구를 쓴다).
 - 같은 id·더 높은 version으로만 낸다. 세이브 형식이 바뀌면 게임 쪽에서 옛 세이브를 이어 읽게 한다(퀵슬롯은 버전이 다르면 webGBA가 불러오지 않는다).
 

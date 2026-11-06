@@ -159,10 +159,11 @@ const wrongKey = await checkGames([{ ...games[0], update: { feed: base, key: oth
 ok(wrongKey.length === 0, "서명 다른 버전 파일 → 업데이트 없음으로 넘어감");
 
 /* ── 확인할 곳 ── */
-ok(updateSource({ gameId: "com.flightrabbit.rapid" }) === null, "알려진 id 표 = 주소·키를 아직 넣지 않으면 확인하지 않음");
+const known = updateSource({ gameId: "com.flightrabbit.rapid" });
+ok(known?.from === "known" && /^https:\/\/.+\/index\.json$/.test(known.index?.url ?? "") && known.feed.endsWith("/com.flightrabbit.rapid/latest.json"), "알려진 id 표 = 목록(index.json) + 게임별 버전 파일(대체)", JSON.stringify(known));
 const store = { getItem: () => JSON.stringify({ feeds: { "com.flightrabbit.rapid": { feed: "http://127.0.0.1:9/x/latest.json", key: pub }, "io.bad": { feed: "http://evil.example/x", key: pub } } }) };
 const overrides = readOverrides(store);
-ok(overrides["com.flightrabbit.rapid"] && !overrides["io.bad"], "시험 덮어쓰기: 루프백 http 만 받음");
+ok(overrides.feeds["com.flightrabbit.rapid"] && !overrides.feeds["io.bad"], "시험 덮어쓰기: 루프백 http 만 받음");
 ok(updateSource({ gameId: "com.flightrabbit.rapid" }, overrides).from === "test", "시험 덮어쓰기가 먼저");
 
 /* ── 설명서 update 검사 ── */

@@ -1,6 +1,7 @@
 // 웹 온라인 업데이트 시험(로컬 전용, 흉내 R2 — 실제 R2 안 씀). 시험 서버 둘(웹 빌드·흉내 R2)을 띄우고 끝나면 닫는다.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-update.mjs --dist <웹 빌드> --feeds <발행 폴더 묶음> --pub <공개 키>
 //     --v121 <1.2.1.wgba> --v130 <1.3.0.wgba> --v131 <1.3.1.wgba> --unknown <SHA-1 이 다른 1.3.0> --rom <원본 롬> --shots <캡처 폴더>
+//     [--v133 <1.3.3.wgba>](G: 묶음에 모드 idx·noidx·badidx — 1.3.3 + 바로 가는 패치, 목록 있음·없음·서명 깨짐)
 // 롬이 든 시험 파일은 브라우저에서 고르기만 한다(서버로 보내지 않음). 새 브라우저 프로필(시험 전용)에서만 돈다.
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -27,7 +28,8 @@ const GAME_ID = "com.flightrabbit.rapid";
 const FEED = `${R2}/${GAME_ID}/latest.json`;
 fs.mkdirSync(opt.shots, { recursive: true });
 const sha1 = (file) => crypto.createHash("sha1").update(fs.readFileSync(file)).digest("hex");
-const SHA = { v121: sha1(opt.v121), v130: sha1(opt.v130), v131: sha1(opt.v131) };
+const SHA = { v121: sha1(opt.v121), v130: sha1(opt.v130), v131: sha1(opt.v131), v133: opt.v133 ? sha1(opt.v133) : "" };
+const served = (log) => ({ index: log.filter((l) => l.path === "/index.json").length, latest: log.filter((l) => l.path.endsWith("/latest.json")).length, patches: log.filter((l) => l.path.includes("/patches/")).length });
 
 const results = [];
 const ok = (name, pass, detail = "") => {
@@ -49,18 +51,19 @@ const r2Clear = () => fetch(`${R2}/__clear`);
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function open({ lang = "ko", viewport = { width: 390, height: 844 }, feed = FEED } = {}) {
+async function open({ lang = "ko", viewport = { width: 390, height: 844 }, feed = FEED, index = false } = {}) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: "reduce" });
+  const test = index ? { index: { url: `${R2}/index.json`, key: opt.pub } } : { feeds: { "com.flightrabbit.rapid": { feed, key: opt.pub } } };
   await context.addInitScript(
-    ([feed, pub, lang]) => {
+    ([test, lang]) => {
       Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
       if (window !== window.top) return;
       localStorage.setItem("webgba.installHint", "1");
-      localStorage.setItem("webgba.updateTest", JSON.stringify({ feeds: { "com.flightrabbit.rapid": { feed, key: pub } } }));
+      localStorage.setItem("webgba.updateTest", JSON.stringify(test));
       const prefs = JSON.parse(localStorage.getItem("webgba.prefs") ?? "{}");
       if (prefs.lang !== lang) localStorage.setItem("webgba.prefs", JSON.stringify({ ...prefs, lang }));
     },
-    [feed, opt.pub, lang],
+    [test, lang],
   );
   const page = await context.newPage();
   const errors = [];
@@ -375,6 +378,42 @@ try {
     ok("F 원본 롬 + .wgbp → 1.3.1 SHA-1 일치", after?.sha1 === SHA.v131 && done[0].state === "done", `${done[0].meta} · ${after?.sha1}`);
     ok("F 페이지 오류 없음", errors.length === 0, errors.join(" | "));
     await context.close();
+  }
+
+  /* ── G: 업데이트 목록(index.json, --v133 과 모드 idx·noidx·badidx 가 있을 때) — 목록 1번 · 바로 가는 패치 1번 · 목록 없음/서명 실패 → 게임별 대체 ── */
+  if (opt.v133 && (!opt.only || opt.only.includes("G"))) {
+    await r2Mode("idx");
+    const { context, page, errors } = await open({ index: true });
+    await addFile(page, opt.v121);
+    await page.evaluate(() => window.webgba.closeGame({ quiet: true }));
+    await r2Clear();
+    await boot(page);
+    await waitDialog(page);
+    const shown = await rows(page);
+    const seen = served(await r2Log());
+    ok("G 목록 모드: 앱 실행 → 목록 1번 · 게임별 0번 → 업데이트 창(1.2.1 → 1.3.3)", seen.index === 1 && seen.latest === 0 && /1\.2\.1 → 1\.3\.3/.test(shown[0]?.meta ?? ""), `${JSON.stringify(seen)} · ${shown[0]?.meta}`);
+    await r2Clear();
+    await page.click('#dialogActions [data-action="update-all"]');
+    await waitRows(page, ["done", "failed"]);
+    const after = await rapid(page);
+    const got = served(await r2Log());
+    ok("G 바로 가는 패치 1번 → 1.3.3 SHA-1 일치", after?.sha1 === SHA.v133 && got.patches === 1 && got.index === 0 && got.latest === 0, `${JSON.stringify(got)} · ${after?.version}`);
+    ok("G 페이지 오류 없음", errors.length === 0, errors.join(" | "));
+    await context.close();
+    const second = await open({ index: true });
+    await addFile(second.page, opt.v130);
+    await second.page.evaluate(() => window.webgba.closeGame({ quiet: true }));
+    for (const mode of ["noidx", "badidx"]) {
+      await r2Mode(mode);
+      await r2Clear();
+      await boot(second.page);
+      await waitDialog(second.page);
+      const list = await rows(second.page);
+      const count = served(await r2Log());
+      ok(`G ${mode} → 목록 1번 + 게임별 latest.json 1번(대체) → 업데이트 창(1.3.0 → 1.3.3)`, count.index === 1 && count.latest === 1 && /1\.3\.0 → 1\.3\.3/.test(list[0]?.meta ?? ""), `${JSON.stringify(count)} · ${list[0]?.meta}`);
+    }
+    ok("G 대체 페이지 오류 없음", second.errors.length === 0, second.errors.join(" | "));
+    await second.context.close();
   }
 } catch (error) {
   ok("시험 진행", false, String(error?.stack ?? error));

@@ -1385,11 +1385,35 @@ Envelope (UTF-8 JSON):
 | `version` | New version `x.y.z` |
 | `time` | Optional. Creation time (ISO 8601) |
 | `wgba` | `{ "sha1", "size" }` — SHA-1 (40 lowercase hex digits) and size of the whole new `.wgba` file |
-| `from` | Array (up to 256). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = applying `patch` to the `.wgba` whose file SHA-1 is `sha1` gives SHA-1 `to`. If `to` is not the new version, the host looks `to` up again and continues (skipped versions are chained, up to 64 steps). With several entries for the same `sha1`, the one whose `to` is the new version is used first |
+| `from` | Array (up to 256). `{ "sha1", "version", "to", "patch": { "url", "size", "sha256" } }` = applying `patch` to the `.wgba` whose file SHA-1 is `sha1` gives SHA-1 `to`. If `to` is not the new version, the host looks `to` up again and continues (skipped versions are chained, up to 64 steps). With several entries for the same `sha1`, the path with the fewest steps (then the smallest download) is used — webGBA 0.8.0 and earlier use the entry whose `to` is the new version first |
 | `full` | Optional. `{ "url", "size", "sha256" }` — a `.wgbp` for a full install. A file missing from `from` is rebuilt with this `.wgbp` from the original ROM the player picks |
 | `notes` | Optional. Text per language (reserved — current webGBA does not show it) |
 
 - `url` is relative to the version file address, or an absolute `https://` address. `sha256` is the SHA-256 (64 lowercase hex digits) of the whole downloaded file.
+- Direct patches: an entry from each old version straight to the new version (`to` = new version) makes one update = one patch download. `wgba.mjs feed --old` creates them.
+
+#### 12.2.1 Update index `index.json` (webGBA 0.8.1+)
+
+For games in the known game id table, each app start reads one **index** at the top of the bucket instead of a `latest.json` per game (one request regardless of the number of games). The index carries each game's `latest.json` envelope unchanged and is signed itself.
+
+```json
+{
+ "wgbaIndex": 1,
+ "signed": "{\"time\":\"2026-11-06T04:16:10Z\",\"feeds\":{\"<game id>\":\"<SHA-256>\"}}",
+ "signature": "<base64, 64 bytes>",
+ "feeds": { "<game id>": { "wgbaFeed": 1, "signed": "…", "signature": "…" } }
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `signed.time` | Index creation time (ISO 8601). The host remembers the latest time seen per index address and ignores an index older than that (protection against rolling back to an old index) |
+| `signed.feeds` | Game id → SHA-256 (64 lowercase hex digits) of that game's envelope `signed` text (UTF-8 bytes) |
+| `feeds` | Game id → the same envelope as `<game id>/latest.json`. The host checks the hash, then the signature and content as in 12.2. Relative `url` values resolve against `<index folder>/<game id>/latest.json` |
+
+- Signature = ECDSA P-256/SHA-256 over the `signed` text (same key and format as 12.2). The index is at most 1 MiB.
+- Fallback: when the index is missing (404 etc.), has an unknown `wgbaIndex`, a bad signature, an older time, lacks the game or has a wrong hash, that game reads its own `latest.json`. When the server cannot be reached (offline) there is no fallback.
+- webGBA 0.8.0 and earlier do not read the index, so the per-game `latest.json` keeps being published. Version files at other addresses from manifest `update` are read per game as before.
 
 #### 12.3 Delta patch `.wgbd`
 
@@ -1416,7 +1440,8 @@ Little endian:
 
 #### 12.4 Host behavior
 
-- Once each time the app starts (opening the web page, starting the Windows app), when online. Checked files = `.wgba` in the web version's library; in the Windows app, `.wgba` among favorites, recent files and the current folder. Each version file is downloaded once. No further checks while the app runs.
+- Once each time the app starts (opening the web page, starting the Windows app), when online. Checked files = `.wgba` in the web version's library; in the Windows app, `.wgba` among favorites, recent files and the current folder. Games in the known game id table read the index (12.2.1) once; for other games each version file is downloaded once. No further checks while the app runs.
+- Path = the chain with the fewest steps (then the smallest download). With a direct patch it is one step.
 - Offline, failed downloads and signature mismatches are skipped without a notice (logged only).
 - The update window appears only when a new version exists: per row the cartridge art, name, current version → new version, size and an "Update" button; below, update the checked games and later. After closing it, for the rest of that run the library (in the Windows app, rows on the start screen and side list) and the info screen keep an update mark and button.
 - If the file SHA-1 is not in `from` and there is no `full`, nothing is shown in the update window, library or info screen (log only). Only players who have a `.wgba` with a patch path see the update.
@@ -1430,16 +1455,22 @@ Little endian:
 ```text
 node tools/wgba.mjs keygen -o <private key outside the repository.pem>
 node tools/wgba.mjs diff <old.wgba> <new.wgba> -o <patch.wgbd> [--orig <original ROM>]…
-node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> --patch <patch.wgbd>… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>]
-node tools/wgba.mjs verify <publish folder> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
-node tools/wgba.mjs upload <publish folder> [--dry-run]
+node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> [--patch <patch.wgbd>]… [--old <old.wgba|folder>]… [--orig <original ROM>]… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs index --root <publish root> --key <private key.pem>
+node tools/wgba.mjs verify <publish folder|root> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
+node tools/wgba.mjs upload <publish folder|root> [--dry-run]
 ```
+
+- Publish root = the same layout as the top of the bucket (`index.json` · `<game id>/…`).
 
 - `keygen`: stores the private key only outside a git repository (refused inside one) and prints only the public key.
 - `diff`: same id and a higher version only. Applies the result and checks that it matches the new file byte for byte. With `--orig`, checks whether the bytes newly carried by the patch contain a run of 32 bytes or more equal to the original ROM, and writes no patch if so (that version is released as a `.wgbp` full install only).
-- `feed`: publish folder = the same layout as `<game id>/` in the bucket (`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). Carries over the `from` table of the previous `latest.json` in the publish folder (`--prev` picks another file), checks that every previous version reaches the new one, then signs.
-- `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1.
-- `upload`: S3-compatible API (R2); patches and `.wgbp` first, `latest.json` last (skips files already there at the same size). Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
+- `feed`: publish folder = the same layout as `<game id>/` in the bucket (`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). Carries over the `from` table of the previous `latest.json` in the publish folder (`--prev` picks another file), checks that every previous version reaches the new one, then signs. Running it again with the same `.wgba` keeps `full` and `notes`.
+  - `--old` (files, or the `.wgba` files in a folder): creates a direct patch from each lower version with the same id to the new version. If the new file contains a ROM, `--orig` is required, and a patch with a run equal to the original ROM is not written (that old version keeps its existing step chain). For an old version that gets a direct patch, its previous skipping entries (entries to something other than the next version) are removed from `from` — step entries stay, files are left as they are.
+  - If the root (the parent of the publish folder) has an `index.json`, the index is rebuilt too (`--no-index` turns this off).
+- `index`: creates `index.json` with every `<game id>/latest.json` in the root signed by the same key. Its time is never earlier than the existing index.
+- `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1. For a root it also checks the index signature and that each index entry equals the game's `latest.json` (old files are matched to games by id); for a game folder, the entry for that game in the parent's index.
+- `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (patches and `.wgbp` already there at the same size are skipped). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
 
 ---
 
@@ -1521,7 +1552,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 [Online updates — optional (spec chapter 12)]
 - To let players apply a new version without downloading the file again, add "update": {"feed": "https://<static server>/<game id>/latest.json", "key": "<public key>"} to the manifest. The server serves static files only (e.g. a public Cloudflare R2 bucket), allows CORS GET, sends Cache-Control: no-cache for latest.json, and uses content-hash names with a 1-year immutable cache for patches and .wgbp.
 - Keys: node tools/wgba.mjs keygen -o <path outside any git repository>/key.pem — put only the public key (88 base64 characters) in the manifest; never put the private key in a repository, chat or log. Losing the private key means no new versions for that key.
-- For every new version: node tools/wgba.mjs diff <previous.wgba> <new.wgba> -o p.wgbd [--orig <original ROM>] → node tools/wgba.mjs feed --dir <publish folder> --key key.pem --wgba <new.wgba> --patch p.wgbd [--full <new.wgbp>] → node tools/wgba.mjs verify <publish folder> --key key.pem --wgba <previous.wgba> → node tools/wgba.mjs upload <publish folder> (environment variables R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET). Keep the previous .wgba (without it, players on that version can only do a .wgbp full install).
+- For every new version: node tools/wgba.mjs diff <previous.wgba> <new.wgba> -o p.wgbd [--orig <original ROM>] → node tools/wgba.mjs feed --dir <publish folder> --key key.pem --wgba <new.wgba> --patch p.wgbd [--old <folder of old .wgba> --orig <original ROM>] [--full <new.wgbp>] → node tools/wgba.mjs verify <publish folder> --key key.pem --wgba <previous.wgba> → node tools/wgba.mjs upload <publish folder> (environment variables R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET). Keep every previous .wgba (--old makes a direct patch from each old version = one patch per update; without the previous .wgba, players on that version can only do a .wgbp full install). The update index index.json (12.2.1) is for games in the webGBA known game id table; games that only use manifest update do not need it.
 - Writing the version file by hand: {"wgbaFeed":1,"signed":"<JSON text: id, version, wgba{sha1,size}, from[{sha1,version,to,patch{url,size,sha256}}], full{url,size,sha256}>","signature":"<base64 of the 64-byte r‖s ECDSA P-256/SHA-256 signature over the UTF-8 bytes of signed>"}. The .wgbd delta format is exactly 12.3 (use the tool rather than writing it by hand).
 - Publish only the same id with a higher version. If the save format changes, make the game read old saves (webGBA does not load quick slots from another version).
 

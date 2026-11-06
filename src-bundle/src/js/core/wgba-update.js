@@ -5,15 +5,18 @@ import { compareVersions, FEED_LOOPBACK_RE, feedUrlOk, ID_RE, keyOk, KIND, readT
 export { feedUrlOk, keyOk };
 
 export const FEED_FORMAT = 1;
+export const INDEX_FORMAT = 1;
 export const DELTA_MAGIC = "WGBD";
 export const DELTA_VERSION = 1;
 export const DELTA_HEAD = 72;
 export const DELTA_EXPANDED = 1;
 export const DELTA_REBUILT = 2;
 export const FEED_MAX = 256 * 1024;
+export const INDEX_MAX = 1024 * 1024;
 export const FILE_MAX = 512 * 1024 * 1024;
 export const STEPS_MAX = 64;
 export const TEST_KEY = "webgba.updateTest";
+export const INDEX_TIME_KEY = "webgba.updateIndexTime";
 
 const FEED_HOST = "https://pub-da193dc1ff6540a4a6654def95a1a92f.r2.dev";
 const FEED_KEY = "BFhhvxjl7AcTB5l5YA648fDFzdgTvC2Il3FO+yu4KPfaH2iYD85g6vUOsQ7JHBOpg+6nBN1LpO5WbPfbm0MJ/cY=";
@@ -33,10 +36,12 @@ const KNOWN_IDS = [
   "local.mslug5",
   "local.mslugx",
   "local.neobombe",
+  "local.tektagt",
   "local.tengai",
 ];
 
 export const KNOWN_FEEDS = Object.freeze(Object.fromEntries(KNOWN_IDS.map((id) => [id, Object.freeze({ feed: `${FEED_HOST}/${id}/latest.json`, key: FEED_KEY })])));
+export const FEED_INDEX = Object.freeze({ url: `${FEED_HOST}/index.json`, key: FEED_KEY });
 
 export class UpdateError extends Error {
   constructor(code, params = {}) {
@@ -86,22 +91,48 @@ export function readOverrides(storage = globalThis.localStorage) {
   try {
     const raw = storage?.getItem(TEST_KEY);
     if (!raw) return null;
-    const feeds = JSON.parse(raw)?.feeds;
-    if (!feeds || typeof feeds !== "object") return null;
-    const out = {};
-    for (const [id, item] of Object.entries(feeds)) if (ID_RE.test(id) && feedUrlOk(item?.feed, { loopback: true }) && keyOk(item?.key)) out[id] = { feed: item.feed, key: item.key };
-    return out;
+    const test = JSON.parse(raw);
+    const feeds = {};
+    if (test?.feeds && typeof test.feeds === "object") for (const [id, item] of Object.entries(test.feeds)) if (ID_RE.test(id) && feedUrlOk(item?.feed, { loopback: true }) && keyOk(item?.key)) feeds[id] = { feed: item.feed, key: item.key };
+    const index = feedUrlOk(test?.index?.url, { loopback: true }) && keyOk(test?.index?.key) ? { url: test.index.url, key: test.index.key } : null;
+    return Object.keys(feeds).length || index ? { feeds, index } : null;
   } catch {
     return null;
   }
 }
 
 export function updateSource({ gameId, update }, overrides = null) {
-  if (overrides?.[gameId]) return { ...overrides[gameId], from: "test" };
+  const test = overrides?.feeds?.[gameId];
+  if (test) return { ...test, from: "test" };
   const known = KNOWN_FEEDS[gameId];
-  if (known && feedUrlOk(known.feed) && keyOk(known.key)) return { feed: known.feed, key: known.key, from: "known" };
+  if (known && feedUrlOk(known.feed) && keyOk(known.key)) {
+    const index = overrides?.index ?? FEED_INDEX;
+    const feed = overrides?.index ? new URL(`${gameId}/latest.json`, index.url).href : known.feed;
+    return { feed, key: overrides?.index ? index.key : known.key, from: "known", index };
+  }
   if (update && feedUrlOk(update.feed) && keyOk(update.key)) return { feed: update.feed, key: update.key, from: "manifest" };
   return null;
+}
+
+export function indexMemory(storage = globalThis.localStorage) {
+  if (!storage) return null;
+  const read = () => {
+    try {
+      const all = JSON.parse(storage.getItem(INDEX_TIME_KEY) ?? "{}");
+      return all && typeof all === "object" && !Array.isArray(all) ? all : {};
+    } catch {
+      return {};
+    }
+  };
+  return {
+    get: (url) => Number(read()[url]) || 0,
+    set: (url, time) => {
+      try {
+        const all = read();
+        if (time > (Number(all[url]) || 0)) storage.setItem(INDEX_TIME_KEY, JSON.stringify({ ...all, [url]: time }));
+      } catch {}
+    },
+  };
 }
 
 const keyCache = new Map();
@@ -145,15 +176,16 @@ export function readFeed(signed, base) {
   return { id: signed.id, version: signed.version, time: typeof signed.time === "string" ? signed.time : "", wgba: { sha1: wgba.sha1, size: wgba.size }, from, full, notes };
 }
 
-export async function verifyFeed(text, key, base) {
-  let envelope;
+const parseJson = (text, code) => {
   try {
-    envelope = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
-    throw new UpdateError("feedBad", { why: "json" });
+    throw new UpdateError(code, { why: "json" });
   }
-  if (envelope?.wgbaFeed !== FEED_FORMAT) throw new UpdateError("feedFormat", { format: envelope?.wgbaFeed });
-  if (typeof envelope.signed !== "string" || typeof envelope.signature !== "string") throw new UpdateError("feedBad", { why: "envelope" });
+};
+
+async function verifySigned(envelope, key, code) {
+  if (typeof envelope.signed !== "string" || typeof envelope.signature !== "string") throw new UpdateError(code, { why: "envelope" });
   let signature;
   try {
     signature = fromBase64(envelope.signature);
@@ -162,29 +194,65 @@ export async function verifyFeed(text, key, base) {
   }
   const ok = signature.length === 64 && (await globalThis.crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, await verifyKey(key), signature, utf8.encode(envelope.signed)));
   if (!ok) throw new UpdateError("feedSignature");
-  let signed;
-  try {
-    signed = JSON.parse(envelope.signed);
-  } catch {
-    throw new UpdateError("feedBad", { why: "json" });
-  }
-  return readFeed(signed, base);
+  return parseJson(envelope.signed, code);
+}
+
+export async function verifyEnvelope(envelope, key, base) {
+  if (!envelope || typeof envelope !== "object" || envelope.wgbaFeed !== FEED_FORMAT) throw new UpdateError("feedFormat", { format: envelope?.wgbaFeed });
+  return readFeed(await verifySigned(envelope, key, "feedBad"), base);
+}
+
+export async function verifyFeed(text, key, base) {
+  return verifyEnvelope(parseJson(text, "feedBad"), key, base);
+}
+
+const own = (object, name) => Boolean(object) && typeof object === "object" && Object.prototype.hasOwnProperty.call(object, name);
+
+export async function verifyIndex(text, key, { url = "", memory = null } = {}) {
+  const bad = (why) => new UpdateError("indexBad", { why });
+  const envelope = parseJson(text, "indexBad");
+  if (!envelope || typeof envelope !== "object" || envelope.wgbaIndex !== INDEX_FORMAT) throw new UpdateError("indexFormat", { format: envelope?.wgbaIndex });
+  const signed = await verifySigned(envelope, key, "indexBad");
+  const time = Date.parse(signed?.time ?? "");
+  if (!Number.isFinite(time)) throw bad("time");
+  const hashes = signed.feeds;
+  const feeds = envelope.feeds;
+  if (!hashes || typeof hashes !== "object" || Array.isArray(hashes) || !feeds || typeof feeds !== "object" || Array.isArray(feeds)) throw bad("feeds");
+  const last = memory?.get(url) ?? 0;
+  if (time < last) throw new UpdateError("indexOld", { time: signed.time });
+  memory?.set(url, time);
+  return { time, hashes, feeds };
+}
+
+export async function indexedFeed(list, gameId, source) {
+  if (!own(list.feeds, gameId) || !own(list.hashes, gameId) || !SHA256_RE.test(list.hashes[gameId] ?? "")) throw new UpdateError("indexMissing", { id: gameId });
+  const envelope = list.feeds[gameId];
+  if (typeof envelope?.signed !== "string" || (await sha256Hex(utf8.encode(envelope.signed))) !== list.hashes[gameId]) throw new UpdateError("indexBad", { why: "hash" });
+  const feed = await verifyEnvelope(envelope, source.key, source.feed);
+  if (feed.id !== gameId) throw new UpdateError("indexBad", { why: "id" });
+  return feed;
 }
 
 export function planUpdate(feed, sha1) {
   if (sha1 === feed.wgba.sha1) return { kind: "latest", steps: [], size: 0 };
-  const steps = [];
-  const seen = new Set();
-  let at = sha1;
-  while (at !== feed.wgba.sha1) {
-    const choices = feed.from.filter((item) => item.sha1 === at);
-    const step = choices.find((item) => item.to === feed.wgba.sha1) ?? choices[0];
-    if (!step || seen.has(at) || steps.length >= STEPS_MAX) return feed.full ? { kind: "full", steps: [], size: feed.full.size } : { kind: "none", steps: [], size: 0 };
-    seen.add(at);
-    steps.push(step);
-    at = step.to;
+  const seen = new Set([sha1]);
+  let level = new Map([[sha1, { steps: [], size: 0 }]]);
+  for (let depth = 0; depth < STEPS_MAX && level.size; depth++) {
+    const next = new Map();
+    for (const [at, path] of level) {
+      for (const item of feed.from) {
+        if (item.sha1 !== at || seen.has(item.to)) continue;
+        const size = path.size + item.patch.size;
+        const had = next.get(item.to);
+        if (!had || size < had.size) next.set(item.to, { steps: [...path.steps, item], size });
+      }
+    }
+    const done = next.get(feed.wgba.sha1);
+    if (done) return { kind: "patch", steps: done.steps, size: done.size };
+    for (const at of next.keys()) seen.add(at);
+    level = next;
   }
-  return { kind: "patch", steps, size: steps.reduce((sum, step) => sum + step.patch.size, 0) };
+  return feed.full ? { kind: "full", steps: [], size: feed.full.size } : { kind: "none", steps: [], size: 0 };
 }
 
 async function withTimeout(ms, signal, work) {
@@ -200,13 +268,17 @@ async function withTimeout(ms, signal, work) {
   }
 }
 
-export function fetchFeed(url, { fetchImpl = globalThis.fetch, timeout = 10000 } = {}) {
+export function fetchFeed(url, { fetchImpl = globalThis.fetch, timeout = 10000, max = FEED_MAX, code = "feedBad" } = {}) {
   return withTimeout(timeout, null, async (signal) => {
     const response = await fetchImpl(url, { cache: "no-cache", credentials: "omit", referrerPolicy: "no-referrer", signal });
     if (!response.ok) throw new UpdateError("feedHttp", { status: response.status });
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > FEED_MAX) throw new UpdateError("feedBad", { why: "size" });
-    return fromUtf8.decode(bytes);
+    if (bytes.length > max) throw new UpdateError(code, { why: "size" });
+    try {
+      return fromUtf8.decode(bytes);
+    } catch {
+      throw new UpdateError(code, { why: "utf8" });
+    }
   });
 }
 
@@ -217,38 +289,72 @@ function groupSources(games, overrides) {
     const source = updateSource(game, overrides);
     if (!source) continue;
     const id = `${source.feed}\n${source.key}`;
-    if (!wanted.has(id)) wanted.set(id, { id, source, games: [] });
+    if (!wanted.has(id)) wanted.set(id, { id, source, gameId: game.gameId, games: [] });
     wanted.get(id).games.push(game);
   }
   return wanted;
 }
 
-function loadFeed({ id, source }, { fetchImpl, timeout, cache }) {
-  const hit = cache?.get(id);
-  if (hit) return hit;
-  const work = fetchFeed(source.feed, { fetchImpl, timeout }).then((text) => verifyFeed(text, source.key, source.feed));
-  if (cache) {
-    cache.set(id, work);
+function loadIndex(index, { fetchImpl, timeout, cache, memory }) {
+  const id = `index\n${index.url}\n${index.key}`;
+  if (!cache.has(id)) {
+    const work = fetchFeed(index.url, { fetchImpl, timeout, max: INDEX_MAX, code: "indexBad" })
+      .then((text) => verifyIndex(text, index.key, { url: index.url, memory }))
+      .then((list) => ({ list, error: null }), (error) => {
+        if (error instanceof UpdateError) return { list: null, error };
+        if (error && typeof error === "object") error.where = index.url;
+        throw error;
+      });
     work.catch(() => {});
+    cache.set(id, work);
   }
+  return cache.get(id);
+}
+
+function loadFeed({ id, source, gameId }, options) {
+  const { fetchImpl, timeout, cache } = options;
+  if (cache.has(id)) return cache.get(id);
+  const single = async (error = null, where = "") => ({ feed: await fetchFeed(source.feed, { fetchImpl, timeout }).then((text) => verifyFeed(text, source.key, source.feed)), error, where });
+  const work = !source.index
+    ? single()
+    : loadIndex(source.index, options).then(async ({ list, error }) => {
+        if (!list) return single(error, source.index.url);
+        try {
+          return { feed: await indexedFeed(list, gameId, source), error: null, where: "" };
+        } catch (failure) {
+          if (!(failure instanceof UpdateError)) throw failure;
+          return single(failure, `${source.index.url} ${gameId}`);
+        }
+      });
+  work.catch(() => {});
+  cache.set(id, work);
   return work;
 }
 
-export function prefetchFeeds(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, cache } = {}) {
-  for (const group of groupSources(games, overrides).values()) loadFeed(group, { fetchImpl, timeout, cache });
+export function prefetchFeeds(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, cache = new Map(), memory = indexMemory() } = {}) {
+  for (const group of groupSources(games, overrides).values()) loadFeed(group, { fetchImpl, timeout, cache, memory });
 }
 
-export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {}, cache = null } = {}) {
+export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {}, cache = null, memory = indexMemory() } = {}) {
   const wanted = groupSources(games, overrides);
+  const options = { fetchImpl, timeout, cache: cache ?? new Map(), memory };
+  const told = new Set();
   const found = [];
   await Promise.all(
     [...wanted.values()].map(async (group) => {
       const { source, games: list } = group;
       let feed;
+      const once = (error, line) => {
+        if (told.has(error)) return;
+        told.add(error);
+        log(...line);
+      };
       try {
-        feed = await loadFeed(group, { fetchImpl, timeout, cache });
+        const got = await loadFeed(group, options);
+        feed = got.feed;
+        if (got.error) once(got.error, ["INFO", `업데이트 목록 사용 안 함 ${got.where}: ${got.error.message} → 게임별 버전 파일`]);
       } catch (error) {
-        log("WARN", `업데이트 확인 실패 ${source.feed}: ${error?.code ?? error?.name ?? ""} ${error?.message ?? error}`);
+        once(error, ["WARN", `업데이트 확인 실패 ${error?.where ?? source.feed}: ${error?.code ?? error?.name ?? ""} ${error?.message ?? error}`]);
         return;
       }
       for (const game of list) {

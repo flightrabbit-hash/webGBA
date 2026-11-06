@@ -2,7 +2,7 @@
 //   node tools/test/app-update.mjs <시험 exe> <작업 폴더> --feeds <발행 폴더 묶음> --pub <공개 키> --v130 <1.3.0.wgba> --v131 <1.3.1.wgba>
 // 작업 폴더에 앱 폴더(app_update)와 1.3.0 사본(디스크의 파일을 바꾸므로 사본 1개)·옆 .sav 표시를 만든다. 레지스트리는 건드리지 않는다.
 // 확인: 앱 실행 → 업데이트 창 → LATER → 즐겨찾기 줄 "업데이트" 버튼(잉크 가운데) → 그 버튼 → 디스크 파일 1.3.1 SHA-1 · 옆 .sav 그대로 ·
-// 버전 파일 1번만 · 다른 버전 퀵슬롯 막힘 안내.
+// 업데이트 목록(index.json) 1번만 · 다른 버전 퀵슬롯 막힘 안내. 묶음의 모드 ok 에 index.json 이 있어야 한다.
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -59,7 +59,7 @@ let cdp = null;
 try {
   launch(app, PORT);
   cdp = await attach(PORT);
-  await cdp.evaluate(`localStorage.setItem("webgba.updateTest", ${JSON.stringify(JSON.stringify({ feeds: { "com.flightrabbit.rapid": { feed: `${R2}/com.flightrabbit.rapid/latest.json`, key: opt.pub } } }))}); 1`);
+  await cdp.evaluate(`localStorage.setItem("webgba.updateTest", ${JSON.stringify(JSON.stringify({ index: { url: `${R2}/index.json`, key: opt.pub } }))}); 1`);
   await fetch(`${R2}/__clear`);
   await cdp.evaluate("location.reload(); 1").catch(() => {});
   cdp.close();
@@ -149,7 +149,7 @@ try {
   ok("옆 .sav 그대로", sha1(fs.readFileSync(sav)) === sha1(marker));
   ok("임시 파일이 남지 않음", !fs.readdirSync(games).some((name) => name.endsWith(".tmp")), fs.readdirSync(games).join(", "));
   const log = await (await fetch(`${R2}/__log`)).json();
-  ok("버전 파일 1번 · 패치 1번(창을 두 번 열어도)", log.filter((l) => l.path.endsWith("latest.json")).length === 1 && log.filter((l) => l.path.includes("/patches/")).length === 1, log.map((l) => `${l.path.split("/").pop().slice(0, 10)}@${l.origin}`).join(", "));
+  ok("업데이트 목록 1번 · 게임별 버전 파일 0번 · 패치 1번(창을 두 번 열어도)", log.filter((l) => l.path === "/index.json").length === 1 && log.filter((l) => l.path.endsWith("latest.json")).length === 0 && log.filter((l) => l.path.includes("/patches/")).length === 1, log.map((l) => `${l.path.split("/").pop().slice(0, 10)}@${l.origin}`).join(", "));
   await cdp.evaluate(`[...document.querySelectorAll("#dialog-actions .btn")][0].click(); 1`);
   await sleep(300);
 
