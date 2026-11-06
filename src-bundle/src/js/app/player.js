@@ -1,5 +1,6 @@
 import { core } from "../bridge.js";
 import { SCREEN_H, SCREEN_W } from "../core/web-host.js";
+import { GpuBridge, GPU_VERSION } from "../core/gpu-bridge.js";
 import { DPAD_MODES, GBA_PRESET, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_STEPS_MAX, normalizeMacro, resolveInput, ROLE_KEYS } from "../core/wgba-format.js";
 import { pickText } from "../core/lang-text.js";
 import { NetHost } from "../core/net/net-host.js";
@@ -896,6 +897,7 @@ export class Player {
       host.setVolume(this.muted ? 0 : this.volume);
     } else {
       this.fitScreen(host.width ?? SCREEN_W, host.height ?? SCREEN_H);
+      this.gpuStart(host);
       const audio = await this.ensureAudio();
       if (audio) {
         host.setAudioRate(audio.ac.sampleRate);
@@ -922,6 +924,7 @@ export class Player {
     this.syncClock();
     if (this.host?.script) await this.host.flush();
     if (this.host) await this.flushSave({ final: true });
+    this.gpuStop();
     this.host?.dispose?.();
     this.host = null;
     this.ptr = { x: -1, y: -1, buttons: 0, wheel: 0, block: false };
@@ -1109,6 +1112,7 @@ export class Player {
         return;
       }
       this.frameNo++;
+      if (this.gpu) this.gpuRun();
       this.net.afterFrame();
       ran++;
       const samples = this.host.audio();
@@ -1119,8 +1123,7 @@ export class Player {
     this.notePace(ran, dt);
     if (this.acc > FRAME_MS * MAX_FRAMES_PER_TICK) this.acc = 0;
     if (ran) {
-      this.image.data.set(this.host.framebuffer());
-      this.ctx.putImageData(this.image, 0, 0);
+      this.paint();
       this.frames += ran;
     }
     if (now - this.statAt >= 1000) {
@@ -1205,8 +1208,13 @@ export class Player {
   async saveState(slot) {
     if (!this.canState || this.net.locked) return false;
     // ② 는 틀에 물어 받는다(비동기) — 그 순간 틀 화면 사진을 this.image 로(웹 퀵슬롯 칸 그림)
+    if (this.gpu) {
+      this.host.ex.Web_GpuSync?.(1);
+      this.gpuRun();
+    }
     const bytes = this.host.script ? await this.host.stateSave() : this.host.stateSave();
     if (!bytes) return false;
+    if (this.gpu) this.image = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
     if (this.host?.script && this.host.thumb) this.image = this.host.thumb;
     this.lastStateSize = bytes.byteLength ?? bytes.length ?? 0;
     await core.storeWrite(this.saveId, slot, bytes);
@@ -1222,10 +1230,60 @@ export class Player {
     const ok = this.host.stateLoad(bytes);
     if (ok) {
       this.audio?.node.port.postMessage("clear");
-      this.image.data.set(this.host.framebuffer());
-      this.ctx.putImageData(this.image, 0, 0);
+      if (!this.gpu) this.paint();
     }
     return ok;
+  }
+
+  gpuStart(host) {
+    this.gpuStop();
+    if (!host?.canGpu || globalThis.localStorage?.getItem?.("webgba.gpu") === "0") return;
+    const bridge = GpuBridge.create(host.width ?? SCREEN_W, host.height ?? SCREEN_H);
+    if (!bridge) return;
+    try {
+      if (host.ex.Web_GpuStart(GPU_VERSION)) {
+        this.gpu = bridge;
+        this.gpuEx = host.ex;
+        core.log("INFO", "[GPU] WebGL2");
+        return;
+      }
+    } catch (error) {
+      core.log("WARN", `[GPU] ${error?.message ?? error}`);
+    }
+    bridge.destroy();
+  }
+
+  gpuStop() {
+    if (!this.gpu) return;
+    try {
+      if (this.host?.ex === this.gpuEx) this.host.ex.Web_GpuStop?.();
+    } catch {}
+    this.gpu.destroy();
+    this.gpu = null;
+    this.gpuEx = null;
+  }
+
+  gpuRun() {
+    if (this.host.ex !== this.gpuEx) {
+      this.gpuStart(this.host);
+      if (!this.gpu) return;
+    }
+    try {
+      this.gpu.run(this.host.ex);
+    } catch (error) {
+      core.log("WARN", `[GPU] ${error?.message ?? error}`);
+      this.gpuStop();
+    }
+  }
+
+  paint() {
+    const overlay = this.gpu ? this.host.gpuOverlay : 2;
+    if (this.gpu && overlay !== 2) {
+      this.ctx.drawImage(this.gpu.compose(overlay === 1 ? this.host.framebuffer() : null), 0, 0);
+      return;
+    }
+    this.image.data.set(this.host.framebuffer());
+    this.ctx.putImageData(this.image, 0, 0);
   }
 
   async reset() {

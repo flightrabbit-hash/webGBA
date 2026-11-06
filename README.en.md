@@ -491,6 +491,7 @@ A game of this kind therefore cannot touch any other host feature (files, storag
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | Mouse: game pixel coordinates (-1 when outside), `MouseEvent.buttons`, wheel steps / 1 when the game wants the mouse now |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | Address of the stop reason text (NUL terminated) / title / local time offset (seconds east of UTC) |
 | `Web_Net*` | | Multiplayer — [chapter 7](#7-multiplayer) (7.3; status board `Web_NetBoard` 7.9.2) |
+| `Web_GpuStart(version)` → i32 · `Web_GpuList()` → ptr · `Web_GpuListLen()` → u32 · `Web_GpuListDone()` · `Web_GpuSync(reason)` · `Web_GpuStop()` · `Web_GpuOverlay()` → i32 | | GPU drawing (WebGL2) — [4.1.4](#414-gpu-drawing-optional). Used only when the first four all exist |
 
 ##### 4.1.2 Imports (provided by the host)
 
@@ -506,6 +507,34 @@ A game of this kind therefore cannot touch any other host feature (files, storag
 3. If there is a save, `Web_FlashClear` then write it at `Web_GetFlash` → `Web_SetSaveSize`.
 4. `Web_Init()` → then every frame (GBA speed, about 59.7275 fps) `Web_RunFrame(keys)` → take the screen and sound.
 5. **After `Web_Init`, do not grow memory a lot inside `Web_RunFrame`** (the host's screen address would go stale).
+
+##### 4.1.4 GPU drawing (optional)
+
+For games that draw the screen with WebGL2 instead of the CPU. The game supplies the drawing rules (shaders, GLSL ES 3.00), and the host runs the command list the game wrote, in order. There are no new imports, so a webGBA that does not know this feature, or a browser without WebGL2, never calls `Web_GpuStart`, and the game draws with the usual framebuffer (`Web_GetFramebuffer`). No manifest entry is needed.
+
+1. After `Web_Init`, the host creates a WebGL2 context and calls `Web_GpuStart(1)`. 1 means GPU mode, 0 means the usual way. When the host creates a new instance (restart), it calls it again.
+2. In GPU mode, after every `Web_RunFrame` the host takes the list (u32 words) with `Web_GpuList()` → `Web_GpuListLen()`, runs it in order and calls `Web_GpuListDone()`. Until it is run and cleared, the list keeps growing frame by frame (running several frames at once is fine).
+3. Picture = output target 0 (`screen.width × height` RGBA8, GL coordinates — row 0 is the bottom). When showing it, `Web_GpuOverlay()`: 0 = the output as is, 1 = `Web_GetFramebuffer` composited on top (premultiplied alpha, row 0 is the top), 2 = `Web_GetFramebuffer` draws this frame.
+4. Before saving a quick slot, the host calls `Web_GpuSync(1)`, runs the list and then calls `Web_StateSave` (the game writes a `READ` that copies the GPU picture into memory).
+5. If the list cannot be run (lost context, shader error and so on), the host calls `Web_GpuStop()` and shows the screen the usual way. The game draws on the CPU from the next frame.
+6. Turning it off: in the web version, when `webgba.gpu` in `localStorage` is `"0"`, the host does not start GPU mode (for testing).
+
+Command record = first word `opcode | word count << 8` (the count includes the first word) followed by the values. Addresses are byte offsets in wasm memory, and floats are f32 bits.
+
+| opcode | Command | Values |
+| --- | --- | --- |
+| 1 | `PROGRAM` | id, vertex shader address·length, fragment shader address·length, number of instance attributes (one `ivec4` each, from location 0), uniform name list (NUL separated) address·length — uniform number = order in the list |
+| 2 | `TEXTURE` | id (1 or more), format (1 RGBA8 · 2 RGB10_A2 · 3 R16UI), width, height — NEAREST, CLAMP_TO_EDGE |
+| 3 | `TARGET` | texture id (0 = output), viewport x·y·w·h |
+| 4 | `BLEND` | enable (0·1), equation RGB·A (0 ADD · 1 SUBTRACT · 2 REVERSE_SUBTRACT), factors srcRGB·dstRGB·srcA·dstA (0 ZERO · 1 ONE · 2 SRC_COLOR · 3 ONE_MINUS_SRC_COLOR · 4 DST_COLOR · 5 ONE_MINUS_DST_COLOR · 6 SRC_ALPHA · 7 ONE_MINUS_SRC_ALPHA · 8 DST_ALPHA · 9 ONE_MINUS_DST_ALPHA · 10 CONSTANT_COLOR · 11 ONE_MINUS_CONSTANT_COLOR · 12 CONSTANT_ALPHA · 13 ONE_MINUS_CONSTANT_ALPHA), constant color r·g·b·a (f32) |
+| 5 | `UNIFORM` | program id, uniform number, type (0 int · 1 float), count (1–4), values |
+| 6 | `TEXBIND` | texture unit, texture id |
+| 7 | `DRAW` | program id, vertices per instance (TRIANGLES), instance count, instance data address (0 = no attributes), instance stride (bytes) |
+| 8 | `UPLOAD` | texture id, x·y·w·h, format, data address, row length (pixels) |
+| 9 | `COPY` | source·destination texture id, source x·y, destination x·y, w·h (same format) |
+| 10 | `READ` | texture id, x·y·w·h, format (1 RGBA8), memory address — the host finishes writing while it runs the list |
+
+- An unknown opcode makes the host stop GPU mode (step 5).
 
 #### 4.2 ② Own JS — `runtime: "script"` (isolated)
 
