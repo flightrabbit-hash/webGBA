@@ -1467,7 +1467,7 @@ node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run]
   - 묶음(발행 폴더의 상위 폴더)에 `index.json`이 있으면 목록도 다시 생성합니다(`--no-index`로 끔).
 - `index`: 묶음의 `<게임 id>/latest.json`(같은 키로 서명한 것)을 모두 담은 `index.json`을 생성합니다. 시각은 기존 목록보다 이르지 않게 정합니다.
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
-- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(패치·`.wgbp`는 이미 같은 크기로 있으면 건너뜀). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
+- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 
 ---
 
