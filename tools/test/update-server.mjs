@@ -3,7 +3,7 @@
 // <발행 폴더 묶음>/<모드>/<게임 id>/latest.json · patches/ · full/ — 모드(기본 "ok")는 GET /__use?mode=<모드> 로 바꾼다
 // (같은 주소에 다른 버전 파일: 서명 변조·SHA-1 다름 등). GET /__log = 받은 요청 목록(JSON), /__clear = 비움.
 // GET /__delay?ms=<밀리초> = 파일 응답 첫 바이트를 늦춤(r2.dev 첫 바이트 1.3~4초 흉내, 기본 0).
-// 응답 머리는 R2 공개 버킷과 같게: latest.json = Cache-Control no-cache, 그 밖 = 1년 immutable. CORS 는 모든 출처 GET.
+// 응답 머리는 R2 공개 버킷과 같게: latest.json·index.json = Cache-Control no-cache, 그 밖 = 1년 immutable. CORS 는 모든 출처 GET.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,7 +47,7 @@ const server = http.createServer((req, res) => {
     return res.end("not found");
   }
   const body = fs.readFileSync(file);
-  const feed = file.endsWith("latest.json");
+  const feed = /(?:latest|index)\.json$/.test(file);
   setTimeout(() => {
     res.writeHead(200, { ...cors, "content-type": feed ? "application/json" : "application/octet-stream", "content-length": body.length, "cache-control": feed ? "no-cache" : "public, max-age=31536000, immutable" });
     res.end(req.method === "HEAD" ? undefined : body);
