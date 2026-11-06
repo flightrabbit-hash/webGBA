@@ -139,7 +139,7 @@ async function directPatches({ dir, newBytes, meta, files, origs, from }) {
       console.log(`있음  ${m.version} → ${meta.version} 바로 가는 패치(${label})`);
       continue;
     }
-    const { bytes: delta, info } = await makeDelta(bytes, newBytes, { origs: loaded });
+    const { bytes: delta, info } = await makeDelta(bytes, newBytes, { origs: loaded, log: (line) => console.log(`알림  ${m.version} → ${meta.version}: ${line}`) });
     const hits = info.orig?.hits.filter((hit) => hit.count) ?? [];
     if (hits.length) {
       const why = hits.map((hit) => `${hit.name} ${hit.count}개 ${n(hit.bytes)}바이트`).join(", ");
@@ -153,7 +153,7 @@ async function directPatches({ dir, newBytes, meta, files, origs, from }) {
     from = from.filter((item) => !(item.sha1 === hash && item.to === newSha1));
     from.push({ sha1: hash, version: m.version, to: newSha1, patch: { url: rel, size: delta.length, sha256: digest } });
     made.push({ version: m.version, size: delta.length });
-    console.log(`바로 가는 패치 ${m.version} → ${meta.version} ${n(delta.length)}바이트(${info.mode === "rebuilt" ? "롬 다시 묶기" : "파일 그대로"}${info.orig ? ` · 원작 롬 ${info.orig.hits.length}개와 같은 구간 0` : ""}) · 만들기 ${(info.makeMs / 1000).toFixed(1)}초 → ${rel}`);
+    console.log(`바로 가는 패치 ${m.version} → ${meta.version} ${n(delta.length)}바이트(${info.mode === "rebuilt" ? "롬 다시 묶기" : "파일 그대로"}${info.expanded ? " · 확장 바탕" : ""}${info.orig ? ` · 원작 롬 ${info.orig.hits.length}개와 같은 구간 0` : ""}) · 만들기 ${(info.makeMs / 1000).toFixed(1)}초 → ${rel}`);
   }
   return { from, made, skipped };
 }
