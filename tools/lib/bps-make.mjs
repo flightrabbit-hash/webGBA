@@ -52,15 +52,22 @@ class Out {
   }
 }
 
-/** 원본 → 결과 BPS(Uint8Array). meta 는 패치 안에 남는 글(utf8). */
-export function makeBps(source, target, meta = "") {
-  const sHead = new Int32Array(HSIZE).fill(-1);
+/**
+ * 원본 → 결과 BPS(Uint8Array). meta 는 패치 안에 남는 글(utf8). split: 원본을 [0, split)·[split, 끝) 두 구역으로 나눠 해시 사슬을
+ * 따로 둔다 — 뒤에 붙인 풀린 롬의 자리가 사슬을 채워 앞쪽(옛 파일)의 일치를 놓치지 않게.
+ */
+export function makeBps(source, target, meta = "", { split = 0 } = {}) {
+  const regions = split > 0 && split < source.length ? [[0, split], [split, source.length]] : [[0, source.length]];
+  const sHeads = regions.map(() => new Int32Array(HSIZE).fill(-1));
   const sPrev = new Int32Array(source.length).fill(-1);
-  for (let i = 0; i + 4 <= source.length; i++) {
-    const k = key4(source, i);
-    sPrev[i] = sHead[k];
-    sHead[k] = i;
-  }
+  regions.forEach(([from, to], r) => {
+    const head = sHeads[r];
+    for (let i = from; i + 4 <= to; i++) {
+      const k = key4(source, i);
+      sPrev[i] = head[k];
+      head[k] = i;
+    }
+  });
   const tHead = new Int32Array(HSIZE).fill(-1);
   const tPrev = new Int32Array(target.length).fill(-1);
   let tIndexed = 0;
@@ -110,7 +117,7 @@ export function makeBps(source, target, meta = "") {
         }
       };
       trySource(sourceRel);
-      for (let p = sHead[k], c = 0; p >= 0 && c < CHAIN; p = sPrev[p], c++) trySource(p);
+      for (const head of sHeads) for (let p = head[k], c = 0; p >= 0 && c < CHAIN; p = sPrev[p], c++) trySource(p);
       indexTarget(at);
       for (let p = tHead[k], c = 0; p >= 0 && c < CHAIN; p = tPrev[p], c++) {
         let l = 0;
