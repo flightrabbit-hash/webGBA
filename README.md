@@ -1510,11 +1510,32 @@ node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run]
 
 [runtime "webapi" — JS 없음, 호스트가 wasm을 직접 실행]
 - 내보내기 필수: memory, Web_Init() -> i32(0 실패), Web_RunFrame(keys) -> i32(0 정지, keys = 눌린 버튼 비트), Web_GetFramebuffer() -> i32(width×height 픽셀, 픽셀당 R,G,B,A 바이트).
-- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]).
+- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]) / Web_Gpu*(GPU 그리기, 아래 [GPU 그리기]).
 - 가져오기는 다음 항목만: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1(() -> (), 동작 없음). 다른 가져오기가 있으면 runtime "script"로 제작한다.
 - 240×160·GBA 버튼이 아니거나 롬 없이 실행되는 게임은 가져오기 webgba.v1을 추가한다(이전 버전 webGBA가 열지 않도록). C에서는 __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void);를 선언하고 Web_Init에서 한 번 호출한다.
 - 순서: 인스턴스 → __wasm_call_ctors(없으면 _initialize) → 롬 → 세이브 → Web_Init → 매 프레임 Web_RunFrame. Web_Init 후에는 메모리를 크게 늘리지 않는다.
 - 버튼별 bit(0~31). GBA와 같으면 "input": {"preset":"gba"} (A=0 B=1 SELECT=2 START=3 RIGHT=4 LEFT=5 UP=6 DOWN=7 R=8 L=9). GBA와 다르면 반드시 "input": {"preset":"none", "buttons":[…모든 버튼…]} — webapi의 preset 기본값은 "gba"라서 preset을 생략하면 내 버튼이 GBA 10버튼 뒤에 추가되어 bit·role이 중복된다(검사 오류). GBA 10버튼에 몇 개만 추가하려면 preset "gba" + 추가할 버튼(중복되지 않는 bit·role, 예 c=10 d=11).
+
+[GPU 그리기 — 선택(규격 4.1.4, webGBA 0.8.0부터, runtime "webapi"만)]
+- CPU로 그리기 무거운 게임이 화면을 WebGL2로 그리는 방식이다. 셰이더(GLSL ES 3.00 원문)는 게임이 제공하고, 호스트는 게임이 wasm 메모리에 기록한 명령 목록을 순서대로 실행한다. 새 가져오기·manifest 항목은 없다.
+- 내보내기: Web_GpuStart(version)→i32 · Web_GpuList()→ptr · Web_GpuListLen()→u32(u32 단어 수) · Web_GpuListDone() · Web_GpuSync(reason) · Web_GpuStop() · Web_GpuOverlay()→i32. 앞의 네 개가 모두 있어야 사용된다. check 도구는 Web_Gpu*를 검사하지 않으므로 네 개가 모두 있는지 직접 확인한다.
+- 호출 순서: Web_Init → 호스트가 WebGL2 컨텍스트를 생성하고 Web_GpuStart(1) 호출 → 1 = GPU 모드, 0 = 기존 방식(재시작으로 인스턴스를 새로 생성하면 다시 호출). GPU 모드에서는 Web_RunFrame마다 Web_GpuList() → Web_GpuListLen() → 목록 실행 → Web_GpuListDone(). 게임은 Web_GpuListDone이 호출될 때까지 목록을 비우지 않고 프레임마다 이어 붙인다(호스트가 여러 프레임 분량을 한 번에 실행해도 됨).
+- 표시: 그림 = 출력 대상 0(screen.width×height RGBA8, GL 좌표 — 0행이 하단). Web_GpuOverlay(): 0 = 출력 그대로 · 1 = Web_GetFramebuffer를 위에 합성(덧그림, premultiplied alpha, 0행이 상단) · 2 = 이번 프레임은 Web_GetFramebuffer가 그림.
+- 명령 레코드(u32 단어, 연속 배치) = 첫 단어 opcode | 단어 수 << 8(단어 수는 첫 단어 포함) + 값. 주소 = wasm 메모리 바이트 위치, 실수 = f32 비트.
+  1 PROGRAM: id, 정점 셰이더 주소·길이, 조각 셰이더 주소·길이, 인스턴스 속성 수(속성마다 ivec4, location 0부터), uniform 이름 목록(NUL 구분) 주소·길이 — uniform 번호 = 목록 순서
+  2 TEXTURE: id(1 이상), 형식(1 RGBA8 · 2 RGB10_A2 · 3 R16UI), 너비, 높이 — NEAREST, CLAMP_TO_EDGE
+  3 TARGET: 텍스처 id(0 = 출력), viewport x·y·w·h
+  4 BLEND: 사용(0·1), 식 RGB·A(0 ADD · 1 SUBTRACT · 2 REVERSE_SUBTRACT), 계수 srcRGB·dstRGB·srcA·dstA(0 ZERO · 1 ONE · 2 SRC_COLOR · 3 ONE_MINUS_SRC_COLOR · 4 DST_COLOR · 5 ONE_MINUS_DST_COLOR · 6 SRC_ALPHA · 7 ONE_MINUS_SRC_ALPHA · 8 DST_ALPHA · 9 ONE_MINUS_DST_ALPHA · 10 CONSTANT_COLOR · 11 ONE_MINUS_CONSTANT_COLOR · 12 CONSTANT_ALPHA · 13 ONE_MINUS_CONSTANT_ALPHA), 상수 색 r·g·b·a(f32)
+  5 UNIFORM: 프로그램 id, uniform 번호, 종류(0 int · 1 float), 개수(1~4), 값
+  6 TEXBIND: 텍스처 단위, 텍스처 id
+  7 DRAW: 프로그램 id, 인스턴스당 정점 수(TRIANGLES), 인스턴스 수, 인스턴스 데이터 주소(0 = 속성 없음), 인스턴스 간격(바이트)
+  8 UPLOAD: 텍스처 id, x·y·w·h, 형식, 데이터 주소, 행 길이(화소)
+  9 COPY: 원본·대상 텍스처 id, 원본 x·y, 대상 x·y, w·h(같은 형식)
+  10 READ: 텍스처 id, x·y·w·h, 형식(1 RGBA8), 메모리 주소 — 호스트가 목록 실행 중에 기록을 끝냄
+  모르는 opcode가 있으면 호스트는 GPU 모드를 중지한다.
+- 퀵슬롯: 호스트는 저장 전 Web_GpuSync(1) → 목록 실행 → Web_StateSave 순서로 호출한다. 게임은 Web_GpuSync(1)에서 GPU 그림을 메모리로 읽는 READ를 목록에 기록한다.
+- 대체: WebGL2가 없는 브라우저·이 기능을 모르는 webGBA는 Web_GpuStart를 호출하지 않는다. 컨텍스트 손실·셰이더 오류·모르는 opcode로 목록을 실행하지 못하면 호스트가 Web_GpuStop()을 호출하고 기존 방식으로 표시한다. 웹 버전 localStorage의 webgba.gpu가 "0"이면 GPU 모드를 시작하지 않는다(테스트용). 따라서 게임은 Web_GpuStart가 1을 반환하기 전과 Web_GpuStop 다음 프레임부터 CPU로 Web_GetFramebuffer에 그린다.
+- 멀티플레이 주의: 같은 세션에서도 기기마다 GPU 모드와 CPU 그리기가 다를 수 있다. 따라서 게임 진행은 그림 결과에 의존하지 않게 하고, 기기 간 상태 비교(해시)에는 모드에 따라 내용이 달라지는 그림 메모리(예: CPU 그리기에서만 갱신되는 VRAM)를 넣지 않는다.
 
 [runtime "script" — 자체 JS가 있는 게임]
 - JS는 출처 없는 sandbox iframe(srcdoc) 안에서 실행된다. 네트워크(fetch·XHR·WebSocket·WebRTC)·IndexedDB·쿠키·실제 localStorage·팝업·상위 창 이동·스레드(SharedArrayBuffer·pthreads)를 사용할 수 없다(멀티플레이는 webgba.net). localStorage는 메모리 기반 대체 객체다.
