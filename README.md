@@ -504,7 +504,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 1. 호스트는 `Web_Init` 후 WebGL2 컨텍스트를 생성하고 `Web_GpuStart(1)`을 호출합니다. 1을 반환하면 GPU 모드, 0이면 기존 방식입니다. 인스턴스를 새로 생성하면(재시작) 다시 호출합니다.
 2. GPU 모드에서는 `Web_RunFrame`마다 `Web_GpuList()` → `Web_GpuListLen()` 순서로 목록(u32 단어)을 받아 순서대로 실행하고 `Web_GpuListDone()`을 호출합니다. 목록은 실행 후 비워질 때까지 프레임마다 이어 붙습니다(여러 프레임을 한 번에 실행해도 됨).
 3. 그림 = 출력 대상 0(`screen.width × height` RGBA8, GL 좌표 — 0행이 하단). 화면에 표시할 때 `Web_GpuOverlay()`: 0 = 출력 그대로, 1 = `Web_GetFramebuffer`를 위에 합성(premultiplied alpha, 0행이 상단), 2 = 이번 프레임은 `Web_GetFramebuffer`가 그림.
-4. 퀵슬롯 저장 전 `Web_GpuSync(1)`을 호출하고 목록을 실행한 후 `Web_StateSave`를 호출합니다(게임이 GPU 그림을 메모리로 읽는 `READ`를 기록).
+4. 퀵슬롯 저장 전 `Web_GpuSync(1)`을 호출하고 목록을 실행한 후 `Web_StateSave`를 호출합니다(게임이 GPU 그림을 메모리로 읽는 `READ`를 기록). `reason`은 현재 1(퀵슬롯 저장 직전)만 정의되어 있고, 호스트는 다른 값으로 호출하지 않습니다.
 5. 컨텍스트 손실·셰이더 오류 등으로 실행하지 못하면 `Web_GpuStop()`을 호출하고 기존 방식으로 표시합니다. 게임은 다음 프레임부터 CPU로 그립니다.
 6. 사용자가 끄기: 웹 버전 `localStorage`의 `webgba.gpu`가 `"0"`이면 호스트가 GPU 모드를 시작하지 않습니다(테스트용).
 
@@ -524,6 +524,13 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | 10 | `READ` | 텍스처 id, x·y·w·h, 형식(1 RGBA8), 메모리 주소 — 호스트가 목록 실행 중에 기록을 끝냄 |
 
 - 모르는 opcode가 있으면 호스트는 GPU 모드를 중지합니다(5번).
+- 정점·인스턴스 속성: 정점 버퍼는 없습니다. 정점 셰이더가 `gl_VertexID`(0 ~ 인스턴스당 정점 수 − 1)로 위치를 계산합니다. 인스턴스 i의 레코드 = 인스턴스 데이터 주소 + i × 인스턴스 간격이고, 속성 a(0 ~ 인스턴스 속성 수 − 1)는 레코드의 a × 16바이트 위치에 있는 `INT` 4개입니다. 셰이더에서는 `layout(location = a) in ivec4`로 선언하세요(인스턴스마다 한 번 바뀜).
+- `DRAW`: 인스턴스 수가 0이면 그리지 않습니다. 인스턴스 데이터 주소가 0이면 속성 없이 인스턴스 수와 상관없이 한 번 그리고(`drawArrays`), 0이 아니면 인스턴스 수만큼 그립니다(`drawArraysInstanced`).
+- 목록 사이 GL 상태: 다음 목록까지 남는 것은 게임이 만든 프로그램(설정한 uniform 값 포함)과 텍스처(내용 포함)뿐입니다. 호스트는 목록 끝마다 블렌드를 비활성화하고, 화면을 표시할 때 출력 대상 연결을 해제하며, `Web_GpuOverlay()`가 1이면 viewport·텍스처 연결·사용 중인 프로그램도 바꿉니다. 따라서 목록마다 처음 그리기 전에 `TARGET`·`TEXBIND`(블렌드가 필요하면 `BLEND`)를 기록하세요.
+- 목록 안 GL 상태: `TEXTURE`·`UPLOAD`는 현재 텍스처 단위의 연결을 해당 텍스처로 바꾸고, `COPY`는 출력 대상 연결을 해제하며, `READ`는 출력 대상을 읽은 텍스처로 바꿉니다. 이후에 그리려면 `TEXBIND`·`TARGET`을 다시 기록하세요.
+- 선택 내보내기가 없을 때: `Web_GpuSync`가 없으면 호출을 건너뛰고 목록 실행 → `Web_StateSave`만 진행합니다. `Web_GpuStop`이 없으면 호출을 건너뛰고 기존 방식으로 표시합니다. `Web_GpuOverlay`가 없으면 0(출력 그대로)으로 처리합니다.
+- 상태 적용 후 텍스처: 퀵슬롯 불러오기(`Web_StateLoad`) 때 호스트는 GPU 쪽에 아무것도 하지 않습니다(`Web_GpuStart`를 다시 호출하지 않고, 게임이 만든 프로그램·텍스처는 불러오기 전 그대로 남음). 따라서 불러온 상태에 맞게 텍스처를 다시 올리는 `UPLOAD`는 게임이 다음 목록에 기록하세요. 다시 들어오기(7.10)·중간 참가(7.12)로 받은 게임 상태를 적용할 때와 `Web_Reset`으로 재시작할 때도 같습니다. GPU 모드에서는 불러온 직후 화면을 다시 표시하지 않고 다음 프레임부터 표시합니다.
+- 멀티플레이: 같은 세션에서도 기기마다 GPU 모드 여부가 다를 수 있습니다(WebGL2 유무·`webgba.gpu`·`Web_GpuStop`). 기기 간 상태 비교(해시)에는 모드에 따라 내용이 달라지는 그림 메모리(예: CPU 그리기에서만 갱신되는 VRAM)를 포함하지 마세요.
 
 #### 4.2 ② 자체 JS — `runtime: "script"` (격리 실행)
 
@@ -1535,8 +1542,11 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
   9 COPY: 원본·대상 텍스처 id, 원본 x·y, 대상 x·y, w·h(같은 형식)
   10 READ: 텍스처 id, x·y·w·h, 형식(1 RGBA8), 메모리 주소 — 호스트가 목록 실행 중에 기록을 끝냄
   모르는 opcode가 있으면 호스트는 GPU 모드를 중지한다.
-- 퀵슬롯: 호스트는 저장 전 Web_GpuSync(1) → 목록 실행 → Web_StateSave 순서로 호출한다. 게임은 Web_GpuSync(1)에서 GPU 그림을 메모리로 읽는 READ를 목록에 기록한다.
-- 대체: WebGL2가 없는 브라우저·이 기능을 모르는 webGBA는 Web_GpuStart를 호출하지 않는다. 컨텍스트 손실·셰이더 오류·모르는 opcode로 목록을 실행하지 못하면 호스트가 Web_GpuStop()을 호출하고 기존 방식으로 표시한다. 웹 버전 localStorage의 webgba.gpu가 "0"이면 GPU 모드를 시작하지 않는다(테스트용). 따라서 게임은 Web_GpuStart가 1을 반환하기 전과 Web_GpuStop 다음 프레임부터 CPU로 Web_GetFramebuffer에 그린다.
+- 그리기: 정점 버퍼는 없다 — 정점 셰이더가 gl_VertexID로 위치를 계산한다. 인스턴스 i의 레코드 = 인스턴스 데이터 주소 + i×간격, 속성 a = 레코드의 a×16바이트 위치 INT 4개(셰이더 layout(location = a) in ivec4). DRAW 인스턴스 수 0 = 그리지 않음, 주소 0 = 인스턴스 수와 상관없이 1회.
+- GL 상태: 목록 사이에 남는 것은 프로그램(uniform 값 포함)·텍스처(내용 포함)뿐이다. 블렌드는 목록 끝마다 비활성화되고, 화면 표시 때 출력 대상(덧그림 1이면 viewport·텍스처 연결·프로그램도)이 바뀌므로 목록마다 처음에 TARGET·TEXBIND·BLEND를 기록한다. 목록 안에서도 TEXTURE·UPLOAD는 현재 단위의 텍스처 연결을, COPY·READ는 출력 대상을 바꾼다.
+- 퀵슬롯: 호스트는 저장 전 Web_GpuSync(1) → 목록 실행 → Web_StateSave 순서로 호출한다. 게임은 Web_GpuSync(1)에서 GPU 그림을 메모리로 읽는 READ를 목록에 기록한다. reason은 1만 정의되어 있다.
+- 상태 적용: 퀵슬롯 불러오기·다시 들어오기·중간 참가의 상태 적용·Web_Reset 때 호스트는 GPU 쪽에 아무것도 하지 않는다(프로그램·텍스처 그대로). 상태에 맞게 텍스처를 다시 올리는 UPLOAD는 게임이 다음 목록에 기록한다.
+- 대체: WebGL2가 없는 브라우저·이 기능을 모르는 webGBA는 Web_GpuStart를 호출하지 않는다. 컨텍스트 손실·셰이더 오류·모르는 opcode로 목록을 실행하지 못하면 호스트가 Web_GpuStop()을 호출하고 기존 방식으로 표시한다. 웹 버전 localStorage의 webgba.gpu가 "0"이면 GPU 모드를 시작하지 않는다(테스트용). 따라서 게임은 Web_GpuStart가 1을 반환하기 전과 Web_GpuStop 다음 프레임부터 CPU로 Web_GetFramebuffer에 그린다. Web_GpuSync·Web_GpuStop이 없으면 호출을 건너뛰고, Web_GpuOverlay가 없으면 0으로 처리한다.
 - 멀티플레이 주의: 같은 세션에서도 기기마다 GPU 모드와 CPU 그리기가 다를 수 있다. 따라서 게임 진행은 그림 결과에 의존하지 않게 하고, 기기 간 상태 비교(해시)에는 모드에 따라 내용이 달라지는 그림 메모리(예: CPU 그리기에서만 갱신되는 VRAM)를 넣지 않는다.
 
 [runtime "script" — 자체 JS가 있는 게임]
