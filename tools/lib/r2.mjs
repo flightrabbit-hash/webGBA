@@ -44,13 +44,54 @@ export function r2Config(env = process.env) {
 
 const amzNow = () => new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 
-async function call(config, method, key, { body = null, headers = {} } = {}) {
-  const path = `/${config.bucket}/${key}`;
+/** 서명에 넣는 질의 글: 이름순, 이름·값 모두 RFC 3986 인코딩. */
+export function canonicalQuery(params) {
+  return Object.keys(params)
+    .sort()
+    .map((name) => `${encodeSegment(name)}=${encodeSegment(String(params[name]))}`)
+    .join("&");
+}
+
+// config.fetch·config.origin 은 시험(흉내 S3 서버)에서만 준다
+async function call(config, method, key, { body = null, headers = {}, params = null } = {}) {
+  const path = key === null ? `/${config.bucket}` : `/${config.bucket}/${key}`;
+  const query = params ? canonicalQuery(params) : "";
   const payloadHash = sha256Hex(body ?? "");
-  const signed = signRequest({ method, host: config.host, path, headers, payloadHash, accessKey: config.accessKey, secret: config.secret, amzDate: amzNow() });
+  const signed = signRequest({ method, host: config.host, path, query, headers, payloadHash, accessKey: config.accessKey, secret: config.secret, amzDate: amzNow() });
   const { host, ...send } = signed.headers;
-  const response = await fetch(`https://${host}${path.split("/").map(encodeSegment).join("/")}`, { method, headers: send, body });
+  const response = await (config.fetch ?? fetch)(`${config.origin ?? `https://${host}`}${path.split("/").map(encodeSegment).join("/")}${query ? `?${query}` : ""}`, { method, headers: send, body });
   return response;
+}
+
+const unescapeXml = (text) => text.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&amp;/g, "&");
+const tagOf = (xml, name) => {
+  const hit = xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
+  return hit ? unescapeXml(hit[1]) : null;
+};
+
+/**
+ * 버킷 객체 목록(ListObjectsV2) → { objects: Map(키 → { size, etag }), requests }. 요청 1번에 1,000개까지(Class A 1회) —
+ * 파일마다 HEAD(Class B 1회씩)를 보내지 않으려고.
+ */
+export async function r2List(config, { prefix = "", pageMax = 100 } = {}) {
+  const objects = new Map();
+  let token = "";
+  let requests = 0;
+  for (let page = 0; page < pageMax; page++) {
+    const params = { "list-type": "2", "max-keys": "1000", ...(prefix ? { prefix } : {}), ...(token ? { "continuation-token": token } : {}) };
+    const response = await call(config, "GET", null, { params });
+    requests++;
+    const xml = await response.text();
+    if (!response.ok) throw new Error(`목록 조회 HTTP ${response.status} ${(tagOf(xml, "Code") ?? "").slice(0, 80)}`);
+    for (const [, body] of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const key = tagOf(body, "Key");
+      if (key !== null) objects.set(key, { size: Number(tagOf(body, "Size")), etag: (tagOf(body, "ETag") ?? "").replace(/"/g, "").toLowerCase() });
+    }
+    if (tagOf(xml, "IsTruncated") !== "true") return { objects, requests };
+    token = tagOf(xml, "NextContinuationToken") ?? "";
+    if (!token) throw new Error("목록 조회: 다음 쪽 표시(NextContinuationToken)가 없습니다");
+  }
+  throw new Error(`목록 조회: ${pageMax}쪽을 넘었습니다`);
 }
 
 /** 버킷 객체의 크기·ETag(따옴표 뺌 — 한 번에 올린 객체는 내용 MD5). 없으면 null(HEAD). */
