@@ -11,14 +11,19 @@
 //   index --root <발행 폴더 묶음> --key <비밀 키.pem>   <묶음>/<게임 id>/latest.json 을 모두 담은 서명 목록 <묶음>/index.json
 //   verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…   서명·파일 크기·SHA-256, 옛 파일마다 끝까지 적용.
 //        묶음이면 목록 서명·게임마다 latest.json 과 같은지, 게임 폴더면 목록이 있을 때 그 게임 줄이 latest.json 과 같은지도 본다.
-//   upload <발행 폴더|묶음> [--dry-run]     R2 에 올리기(patches·full 먼저, latest.json 다음, index.json 마지막). 환경 변수 R2_ACCOUNT_ID ·
+//   upload <발행 폴더|묶음> [--dry-run [--remote]]   R2 에 올리기(patches·full 먼저, latest.json 다음, index.json 마지막). 환경 변수 R2_ACCOUNT_ID ·
 //                                            R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_BUCKET (값은 출력하지 않음)
+//        버킷에 같은 내용이 있는 파일은 건너뜀 — 버킷 확인은 목록 조회 1번(ListObjectsV2, Class A). 목록이 실패하면 파일마다 HEAD(Class B).
+//        --dry-run 은 버킷에 연결하지 않음, --dry-run --remote 는 목록 1번으로 버킷과 비교만(쓰기 없음).
+//   r2-stats [--days <일 수>|--since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>]   R2 요청 수(GraphQL r2OperationsAdaptiveGroups) —
+//        객체·동작·응답 코드별, 날짜별. 환경 변수 CF_API_TOKEN(Account Analytics 읽기) · R2_ACCOUNT_ID · R2_BUCKET(값은 출력하지 않음)
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
-import { r2Config, r2Head, r2Put } from "./r2.mjs";
+import { r2Config, r2Head, r2List, r2Put } from "./r2.mjs";
+import { r2Stats } from "./r2-stats.mjs";
 import { applyDelta, FEED_FORMAT, fromBase64, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { compareVersions, ID_RE, VERSION_RE } from "../../src-bundle/src/js/core/wgba-format.js";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
@@ -456,7 +461,7 @@ function gamePlan(dir, expectId) {
   };
 }
 
-export async function upload(dir, { dryRun = false } = {}) {
+export async function upload(dir, { dryRun = false, remote = false, config = null } = {}) {
   const asRoot = !fs.existsSync(path.join(dir, "latest.json")) && fs.existsSync(path.join(dir, "index.json"));
   const root = asRoot ? dir : path.dirname(path.resolve(dir));
   const withIndex = fs.existsSync(path.join(root, "index.json"));
@@ -477,31 +482,48 @@ export async function upload(dir, { dryRun = false } = {}) {
     plan.push({ key: "index.json", file, size: fs.statSync(file).size, type: "application/json", cache: FEED_CACHE });
   }
   for (const item of plan) if (!fs.existsSync(item.file)) throw new Error(`파일이 없습니다: ${relOf(path.relative(root, item.file))}`);
-  if (dryRun) {
+  if (dryRun && !remote) {
     for (const item of plan) console.log(`올릴 것 ${item.key} ${n(item.size)}바이트 · Cache-Control ${item.cache}`);
     console.log(`--dry-run: 올리지 않았습니다(게임 ${games.length}개 · 파일 ${plan.length}개 · ${n(plan.reduce((sum, item) => sum + item.size, 0))}바이트)`);
     return 0;
   }
-  const config = r2Config();
+  const r2 = config ?? r2Config();
+  // 버킷 쪽 확인은 목록 1번(ListObjectsV2 = Class A, 1,000개당 1번). 파일마다 HEAD 하면 실행마다 Class B 가 파일 수만큼 든다
+  let listed = null;
+  try {
+    listed = await r2List(r2);
+    console.log(`버킷 목록 ${n(listed.objects.size)}개 · 요청 ${listed.requests}번(ListObjectsV2)`);
+  } catch (error) {
+    console.log(`경고  버킷 목록을 받지 못해 파일마다 HEAD 로 확인합니다(${error.message})`);
+  }
   let put = 0;
   let sent = 0;
   let same = 0;
+  let heads = 0;
   for (const item of plan) {
     const bytes = readBytes(item.file);
     // 묶음 전체를 올려도 바뀌지 않은 latest.json 은 다시 쓰지 않게 내용(ETag = MD5)까지 비교. 여러 조각으로 올린 객체(ETag 에 "-")는 크기만
-    const head = await r2Head(config, item.key);
+    const head = listed ? (listed.objects.get(item.key) ?? null) : (heads++, await r2Head(r2, item.key));
     const md5 = crypto.createHash("md5").update(bytes).digest("hex");
     if (head && head.size === bytes.length && (head.etag === md5 || (item.cache === IMMUTABLE && head.etag.includes("-")))) {
       console.log(`같음  ${item.key}`);
       same++;
       continue;
     }
-    await r2Put(config, item.key, bytes, { contentType: item.type, cacheControl: item.cache });
+    if (dryRun) {
+      console.log(`올릴 것 ${item.key} ${n(bytes.length)}바이트 · ${head ? "버킷과 다름" : "버킷에 없음"}`);
+      put++;
+      sent += bytes.length;
+      continue;
+    }
+    await r2Put(r2, item.key, bytes, { contentType: item.type, cacheControl: item.cache });
     console.log(`올림  ${item.key} ${n(bytes.length)}바이트`);
     put++;
     sent += bytes.length;
   }
-  console.log(`완료 — 올림 ${put}개 ${n(sent)}바이트 · 같아서 건너뜀 ${same}개 · ${games.map((game) => `${game.id} ${game.version}`).join(", ")}${withIndex ? " + index.json" : ""}`);
+  const checks = listed ? `목록 ${listed.requests}번` : `HEAD ${heads}번`;
+  if (dryRun) console.log(`--dry-run --remote: 올리지 않았습니다 — 올릴 것 ${put}개 ${n(sent)}바이트 · 같음 ${same}개 · 버킷 확인 ${checks}`);
+  else console.log(`완료 — 올림 ${put}개 ${n(sent)}바이트 · 같아서 건너뜀 ${same}개 · 버킷 확인 ${checks} · ${games.map((game) => `${game.id} ${game.version}`).join(", ")}${withIndex ? " + index.json" : ""}`);
   return 0;
 }
 
@@ -548,7 +570,13 @@ export async function updateCommand(cmd, rest) {
   if (cmd === "upload") {
     const o = parseList(rest, []);
     if (o.positional.length !== 1) return -1;
-    return upload(o.positional[0], { dryRun: Boolean(o["--dry-run"]) });
+    if (o["--remote"] && !o["--dry-run"]) return -1;
+    return upload(o.positional[0], { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) });
+  }
+  if (cmd === "r2-stats") {
+    const o = parseList(rest, ["--days", "--since", "--until", "--top"]);
+    if (o.positional.length) return -1;
+    return r2Stats({ days: o["--days"] ? Number(o["--days"]) : null, since: o["--since"] ?? null, until: o["--until"] ?? null, top: o["--top"] ? Number(o["--top"]) : 30 });
   }
   return null;
 }

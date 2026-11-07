@@ -1455,7 +1455,8 @@ node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 
 node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> [--patch <패치.wgbd>]… [--old <옛.wgba|폴더>]… [--orig <원작 롬>]… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>] [--no-index]
 node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
 node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
-node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run]
+node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run [--remote]]
+node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>]
 ```
 
 - 발행 폴더 묶음 = 버킷 최상위와 같은 구조(`index.json` · `<게임 id>/…`).
@@ -1467,7 +1468,8 @@ node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run]
   - 묶음(발행 폴더의 상위 폴더)에 `index.json`이 있으면 목록도 다시 생성합니다(`--no-index`로 끔).
 - `index`: 묶음의 `<게임 id>/latest.json`(같은 키로 서명한 것)을 모두 담은 `index.json`을 생성합니다. 시각은 기존 목록보다 이르지 않게 정합니다.
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
-- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
+- `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 버킷 확인은 목록 조회 1번(ListObjectsV2, 1,000개당 1번 = Class A)이고, 목록이 실패할 때만 파일마다 HEAD(Class B)로 확인합니다. `--dry-run`은 버킷에 연결하지 않고, `--dry-run --remote`는 목록 1번으로 버킷과 비교만 합니다(쓰기 없음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
+- `r2-stats`: Cloudflare 분석 API(GraphQL `r2OperationsAdaptiveGroups`)로 R2 요청 수를 한국 날짜별·객체·동작·응답 코드별로 출력합니다(버킷 요청 0번, 기본 7일·최대 31일). 객체 이름으로 출처를 추정합니다 — `index.json` = webGBA 0.8.1 이상, `<게임 id>/latest.json` = 0.8.0 이하(또는 목록 실패 시 대체), `patches/`·`full/` = 업데이트 받기, HeadObject = 이전 `upload`·대시보드, 404·그 외 객체 = 외부 요청 의심. 환경 변수 `CF_API_TOKEN`(Account Analytics 읽기 권한 API 토큰)·`R2_ACCOUNT_ID`·`R2_BUCKET`(없으면 계정 전체), 값은 출력하지 않습니다.
 
 ---
 

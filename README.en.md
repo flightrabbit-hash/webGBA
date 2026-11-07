@@ -1458,7 +1458,8 @@ node tools/wgba.mjs diff <old.wgba> <new.wgba> -o <patch.wgbd> [--orig <original
 node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> [--patch <patch.wgbd>]… [--old <old.wgba|folder>]… [--orig <original ROM>]… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>] [--no-index]
 node tools/wgba.mjs index --root <publish root> --key <private key.pem>
 node tools/wgba.mjs verify <publish folder|root> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
-node tools/wgba.mjs upload <publish folder|root> [--dry-run]
+node tools/wgba.mjs upload <publish folder|root> [--dry-run [--remote]]
+node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO time>]] [--top <rows>]
 ```
 
 - Publish root = the same layout as the top of the bucket (`index.json` · `<game id>/…`).
@@ -1470,7 +1471,8 @@ node tools/wgba.mjs upload <publish folder|root> [--dry-run]
   - If the root (the parent of the publish folder) has an `index.json`, the index is rebuilt too (`--no-index` turns this off).
 - `index`: creates `index.json` with every `<game id>/latest.json` in the root signed by the same key. Its time is never earlier than the existing index.
 - `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1. For a root it also checks the index signature and that each index entry equals the game's `latest.json` (old files are matched to games by id); for a game folder, the entry for that game in the parent's index.
-- `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (objects already in the bucket with the same content — size and ETag MD5 — are skipped, so unchanged `latest.json` files are not rewritten). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
+- `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (objects already in the bucket with the same content — size and ETag MD5 — are skipped, so unchanged `latest.json` files are not rewritten). The bucket is checked with one object listing (ListObjectsV2, one request per 1,000 objects = Class A); only when the listing fails does it check each file with HEAD (Class B). `--dry-run` does not connect to the bucket; `--dry-run --remote` only compares with the bucket through one listing (no writes). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
+- `r2-stats`: prints R2 request counts from the Cloudflare analytics API (GraphQL `r2OperationsAdaptiveGroups`) per Korean date and per object, action and response code (no bucket requests, 7 days by default, 31 at most). The source is guessed from the object name — `index.json` = webGBA 0.8.1 or later, `<game id>/latest.json` = 0.8.0 or earlier (or the fallback when the index fails), `patches/`·`full/` = update downloads, HeadObject = the earlier `upload` or the dashboard, 404 and other objects = likely outside requests. Environment variables `CF_API_TOKEN` (an API token with Account Analytics read), `R2_ACCOUNT_ID` and `R2_BUCKET` (whole account when absent); values are never printed.
 
 ---
 
