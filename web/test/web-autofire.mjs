@@ -1,7 +1,8 @@
 // 연사(autoFire) 시험 — 웹(로컬 서버 tools/test/mp-local.mjs 가 web/dist 를 내줌, 롬 없는 예제만).
 //   node web/test/web-autofire.mjs [--out <결과 json>]
 // ① 게임: 프레임마다 게임에 넘긴 키(host.runFrame 인자)를 기록해 단계 1~9 의 누름·뗌 무늬가 공식(프레임 f 에 floor(f × 초당 횟수 / 30) 짝수 = 누름)과
-// 프레임 단위로 같은지, 끔이면 입력 그대로, 방향·START·SELECT 제외, A·B·L·R 적용, 키보드·화면 터치(Pad:)·게임패드 같은 설정, 빨리 감기 4배에서도 프레임 기준.
+// 프레임 단위로 같은지, 끔이면 입력 그대로, 방향·START·SELECT 제외, A·B·L·R 적용, 키보드·화면 터치(Pad:)·게임패드 같은 설정, 빨리 감기 4배에서도 프레임 기준,
+// 게임의 Web_AutoFireOff 1 = 누른 그대로 · 0 으로 돌아오면 그 프레임부터 다시 무늬 · 내보내기 없음 = 그대로 · 연사 버튼을 안 누르면 부르지 않음.
 // ② 게임(자체 JS): 틀 안 rAF 프레임마다 버튼 키 이벤트 무늬. 설정 화면 켜기·단계 바 → 저장 → 다시 열기 복원.
 import fs from "node:fs";
 import path from "node:path";
@@ -148,6 +149,44 @@ try {
     p.gameSpeed = 1;
     p.fast = false;
   });
+
+  // 게임이 멈춤(Web_AutoFireOff): 예제는 내보내기가 없어 그대로, 내보내기를 덧대어 1 = 그대로 · 0 으로 돌아오면 그 프레임부터 무늬
+  const plain = await page.evaluate(() => ({ off: window.webgba.player.host.autoFireOff, has: typeof window.webgba.player.host.ex.Web_AutoFireOff }));
+  ok("Web_AutoFireOff 없는 게임: autoFireOff = false(지금 그대로 연사 — 위 단계 무늬)", plain.off === false && plain.has === "undefined", JSON.stringify(plain));
+  await setFire(true, 5);
+  const gated = await page.evaluate(async () => {
+    const p = window.webgba.player;
+    const host = p.host;
+    const ex = host.ex;
+    const log = [];
+    let start = -1;
+    let asked = 0;
+    host.ex = { ...ex, Web_AutoFireOff: () => (asked++, start >= 0 && log.length - start >= 20 && log.length - start < 40 ? 1 : 0) };
+    const run = host.runFrame.bind(host);
+    host.runFrame = (keys) => {
+      log.push(keys);
+      return run(keys);
+    };
+    const idle = log.length;
+    await new Promise((r) => setTimeout(r, 200));
+    const askedIdle = asked;
+    p.keyDown("KeyZ");
+    start = log.length;
+    await new Promise((resolve) => {
+      const wait = () => (log.length - start >= 64 ? resolve() : setTimeout(wait, 16));
+      wait();
+    });
+    p.keyUp("KeyZ");
+    await new Promise((r) => setTimeout(r, 120));
+    host.runFrame = run;
+    host.ex = ex;
+    const bits = log.map((k) => (k & 1 ? "1" : "0")).join("");
+    const first = bits.indexOf("1");
+    return { bits: first < 0 ? "" : bits.slice(first, first + 60), askedIdle, idleFrames: log.length > idle };
+  });
+  const gatedWant = expected(20, RATES[4]) + "1".repeat(20) + expected(20, RATES[4]);
+  ok(`Web_AutoFireOff: 0(연사 5단계) → 1(20프레임 누른 그대로) → 0(그 프레임부터 다시 무늬, 첫 프레임 누름)`, gated.bits === gatedWant, `${gated.bits} / 기대 ${gatedWant}`);
+  ok("Web_AutoFireOff: 연사 버튼을 누르지 않는 프레임에는 부르지 않음", gated.askedIdle === 0 && gated.idleFrames, JSON.stringify({ askedIdle: gated.askedIdle }));
 
   // ② 자체 JS 게임: 틀 안에서 rAF 프레임마다 키 이벤트
   await openGame("script");

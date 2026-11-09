@@ -353,6 +353,10 @@ class WebHost {
     return Boolean(this.ex?.Web_PointerWanted && this.ex.Web_PointerWanted());
   }
 
+  get autoFireOff() {
+    return Boolean(this.ex?.Web_AutoFireOff && this.ex.Web_AutoFireOff());
+  }
+
   pointer(x, y, buttons, wheel) {
     if (this.ex?.Web_Pointer) this.ex.Web_Pointer(x, y, buttons, wheel);
   }

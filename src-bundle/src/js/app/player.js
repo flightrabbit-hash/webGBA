@@ -547,7 +547,7 @@ export class Player {
     const rate = this.fireRate;
     const mask = rate ? this.fireMask : 0;
     const held = (keys & mask) >>> 0;
-    if (!held) {
+    if (!held || this.host?.autoFireOff) {
       this.fireHeld = 0;
       return keys;
     }

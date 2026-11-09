@@ -116,6 +116,7 @@ node tools/run.cjs   # 전체 명령 목록
   설명서에 `input.dpad`가 있는 게임은 해당 값이 기본값이며, 해당 게임 실행 중에 변경한 값은 게임별로 기억합니다.
 - **연사** — 설정 창 › 일반 › 게임(웹 버전 설정). 켜면 A·B·C·D·L·R(role `a`·`b`·`c`·`d`·`l`·`r`) 버튼을 누르고 있는 동안 연속으로 누릅니다(방향·START·SELECT 제외).
   속도 1~9단계 = 초당 1·2·3·4·6·8·12·20·30회(기본 5단계 = 초당 6회, 1단계 = 30프레임 누름·30프레임 뗌, 9단계 = 2프레임마다 누름·뗌). 게임 프레임 기준이라 빨리 감기 중에도 같은 무늬이고, 키보드·게임패드·화면 버튼에 같은 설정이 적용됩니다(앱 전체 설정 하나). 기본 끔.
+  게임이 연사를 멈춘 화면(메뉴·배틀 등, ① `Web_AutoFireOff()`)에서는 누르고 있는 버튼을 누른 그대로 전달합니다.
 - **RS 버튼(순서 입력)** — 정해 둔 키 순서(예: A → A → ↓ → A+B)를 한 번에 입력합니다. 단계마다 동시에 누를 키(A·B·C·D·L·R·START·SELECT·방향, 대각선은 두 방향 함께)·누르는 시간·다음 단계까지 간격을 프레임(1/60초, ms 함께 표시) 단위로 정합니다(기본 누름 3·간격 3프레임, 단계 32개까지).
   게임마다 프리셋 5개를 저장하고(이름 12자까지 변경·삭제), 사용 중 프리셋 하나를 재생합니다. 설정의 X·1~5 막대에서 고르며(빈 번호 = 새 프리셋), X(사용 안함)이면 RS 버튼을 숨기고 RS 키도 동작하지 않습니다(설명서에 `input.rs`가 있는 게임은 프리셋 1이 기본, 없으면 사용 안함). 프리셋은 설정에서만 바꿉니다.
   재생 규칙: RS를 한 번 누르면 처음부터 한 번 재생 · 누르고 있으면 마지막 단계의 키를 계속 누름(떼면 끝) · 재생 중 다른 키(키보드·게임패드·화면 버튼)를 누르면 그 프레임부터 RS 입력을 멈추고 그 키를 입력 · 재생 중 RS를 다시 누르면 처음부터 · 연사는 RS 입력에 적용하지 않음 · 일시정지 중에는 재생하지 않음.
@@ -478,6 +479,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `Web_Reset()` | | 재시작. 없으면 호스트가 인스턴스를 새로 생성 |
 | `Web_StateSize()` · `Web_StateSave(at)` · `Web_StateLoad(at)` · `Web_Alloc(n)` · `Web_Free(at)` · `Web_StateUsed()` | | 퀵슬롯(상태 저장). 앞의 다섯 개가 모두 있어야 활성화. `Web_StateUsed`가 있으면 사용한 길이만 보관(불러올 때 나머지를 0으로 채움) |
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | 마우스: 게임 픽셀 좌표(화면 밖이면 -1), `MouseEvent.buttons`, 휠 칸 수 / 1이면 현재 마우스 사용 중 |
+| `Web_AutoFireOff()` → i32 | | 1이면 지금 연사를 적용하지 않음 — 호스트가 누르고 있는 버튼을 누른 그대로 전달(메뉴·배틀처럼 연사가 방해되는 화면). 연사가 켜져 있고 연사 버튼을 누르고 있을 때 `Web_RunFrame` 전마다 조회. 없으면 항상 연사([5.2](#52-role-기본값)) |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | 정지 사유 문자열(NUL 종료) 주소 / 제목 / 시간대 오프셋(UTC 기준 동쪽 방향, 초) |
 | `Web_Net*` | | 멀티플레이 — [7장](#7-멀티플레이)(7.3, 상태 표 `Web_NetBoard` 7.9.2) |
 | `Web_GpuStart(version)` → i32 · `Web_GpuList()` → ptr · `Web_GpuListLen()` → u32 · `Web_GpuListDone()` · `Web_GpuSync(reason)` · `Web_GpuStop()` · `Web_GpuOverlay()` → i32 | | GPU 그리기(WebGL2) — [4.1.4](#414-gpu-그리기-선택). 앞의 네 개가 모두 있으면 사용 |
@@ -630,6 +632,7 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 - GBA 버튼과 같은 role(`a` `b` `select` `start` 방향 `l` `r`)의 기본 키는 사용자가 앱에서 설정한 GBA 키를 따릅니다(위 표는 초기값).
 - 키 한 개는 버튼 한 개에만 할당됩니다(먼저 지정된 쪽). Windows 앱은 설정 창 › 키에 해당 게임의 버튼만 표시하고, 변경한 배치를 게임 id별로 기억합니다.
 - 사용자가 **연사**를 켜면 호스트가 role `a`·`b`·`c`·`d`·`l`·`r` 버튼을 누르고 있는 동안 누름·뗌을 반복해 전달합니다(초당 1~30회, ① = `Web_RunFrame(keys)` 프레임마다, ② = 틀의 화면 갱신 프레임마다 키 이벤트). 연사가 맞지 않는 버튼은 `role: "extra"`로 지정하세요.
+- ① 게임은 연사가 방해되는 화면(메뉴·배틀·이름 입력 등)에서 `Web_AutoFireOff()`가 1을 반환하게 하면 그동안 연사를 멈출 수 있습니다(누르고 있는 버튼은 누른 그대로 전달). 다시 0이 되면 누르고 있는 버튼은 그 프레임부터 새로 누른 것처럼 연사합니다(첫 프레임 누름이라 끊김 없음).
 
 #### 5.3 GBA 기본 배치 `preset: "gba"`
 
@@ -1519,7 +1522,7 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 
 [runtime "webapi" — JS 없음, 호스트가 wasm을 직접 실행]
 - 내보내기 필수: memory, Web_Init() -> i32(0 실패), Web_RunFrame(keys) -> i32(0 정지, keys = 눌린 버튼 비트), Web_GetFramebuffer() -> i32(width×height 픽셀, 픽셀당 R,G,B,A 바이트).
-- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]) / Web_Gpu*(GPU 그리기, 아래 [GPU 그리기]).
+- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_AutoFireOff()(1이면 사용자 연사를 멈추고 누른 그대로 전달 — 메뉴·배틀 등) / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]) / Web_Gpu*(GPU 그리기, 아래 [GPU 그리기]).
 - 가져오기는 다음 항목만: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1(() -> (), 동작 없음). 다른 가져오기가 있으면 runtime "script"로 제작한다.
 - 240×160·GBA 버튼이 아니거나 롬 없이 실행되는 게임은 가져오기 webgba.v1을 추가한다(이전 버전 webGBA가 열지 않도록). C에서는 __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void);를 선언하고 Web_Init에서 한 번 호출한다.
 - 순서: 인스턴스 → __wasm_call_ctors(없으면 _initialize) → 롬 → 세이브 → Web_Init → 매 프레임 Web_RunFrame. Web_Init 후에는 메모리를 크게 늘리지 않는다.

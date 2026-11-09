@@ -1,7 +1,7 @@
 // 연사(autoFire) exe 시험(실제 앱, CDP) — 식별자를 바꾼 시험 빌드만.
 //   node tools/test/app-autofire.mjs <exe> <작업 폴더>
 // 설정 창 게임 묶음의 연사 줄(체크)·연사 속도 줄(값 글 + 바): 기본 끔·5단계, 끄면 바 비활성, 줄 안 세로 가운데(체크·값 글·바 가운데 = 줄 가운데, 1px 이하),
-// SAVE → 적용·personalization.cfg 저장 → 앱 다시 켜기 복원. 게임에 넘긴 키(host.runFrame 인자)로 끔 = 그대로, 1·9단계 무늬 = 공식.
+// SAVE → 적용·personalization.cfg 저장 → 앱 다시 켜기 복원. 게임에 넘긴 키(host.runFrame 인자)로 끔 = 그대로, 1·9단계 무늬 = 공식, 게임의 Web_AutoFireOff 1 = 누른 그대로 · 0 으로 돌아오면 다시 무늬.
 import fs from "fs";
 import path from "path";
 import { attach, guardOthers, launch, prepareApp, sleep } from "./cdp.mjs";
@@ -56,6 +56,28 @@ const HOLD = (code, frames) => `(async () => {
   const bits = log.map((k) => (k & 1 ? "1" : "0")).join("");
   const first = bits.indexOf("1");
   return first < 0 ? "" : bits.slice(first, first + ${frames});
+})()`;
+
+// 게임의 Web_AutoFireOff 를 덧대어 누른 뒤 20~39프레임만 1
+const GATED = `(async () => {
+  const p = ${T}.player;
+  const host = p.host;
+  const ex = host.ex;
+  const log = [];
+  let start = -1;
+  host.ex = { ...ex, Web_AutoFireOff: () => (start >= 0 && log.length - start >= 20 && log.length - start < 40 ? 1 : 0) };
+  const run = host.runFrame.bind(host);
+  host.runFrame = (k) => { log.push(k); return run(k); };
+  p.keyDown("KeyZ");
+  start = log.length;
+  await new Promise((r) => { const w = () => (log.length - start >= 64 ? r() : setTimeout(w, 16)); w(); });
+  p.keyUp("KeyZ");
+  await new Promise((r) => setTimeout(r, 120));
+  host.runFrame = run;
+  host.ex = ex;
+  const bits = log.map((k) => (k & 1 ? "1" : "0")).join("");
+  const first = bits.indexOf("1");
+  return first < 0 ? "" : bits.slice(first, first + 60);
 })()`;
 
 const ROWS = `(() => {
@@ -113,6 +135,12 @@ try {
   await app.evaluate(`${T}.player.setAutoFire({ on: true, level: 1 })`);
   const one = await app.evaluate(HOLD("KeyZ", 66));
   check("1단계: 게임 프레임 무늬 = 공식(초당 1회 = 30프레임 누름·30프레임 뗌)", one === expected(66, 1) && one.slice(0, 60) === "1".repeat(30) + "0".repeat(30), one);
+  const plain = await app.evaluate(`${T}.player.host.autoFireOff`);
+  check("Web_AutoFireOff 없는 게임: autoFireOff = false(위 무늬 그대로)", plain === false, String(plain));
+  await app.evaluate(`${T}.player.setAutoFire({ on: true, level: 5 })`);
+  const gated = await app.evaluate(GATED);
+  const gatedWant = expected(20, 6) + "1".repeat(20) + expected(20, 6);
+  check("Web_AutoFireOff: 0(5단계 무늬) → 1(20프레임 누른 그대로) → 0(그 프레임부터 다시 무늬)", gated === gatedWant, `${gated} / 기대 ${gatedWant}`);
   const cfg = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
   check("personalization.cfg 에 autoFire·autoFireLevel 저장", cfg.autoFire === true && cfg.autoFireLevel === 9, JSON.stringify({ autoFire: cfg.autoFire, autoFireLevel: cfg.autoFireLevel }));
   await app.evaluate(`${T}.shutdown()`).catch(() => {});
