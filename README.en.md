@@ -79,7 +79,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
 
 - Cloudflare does not stop by itself when usage passes the free tier, so the issuing route keeps the limit. Change the limit and window in one place, `TURN_CAP` in `api/_mp/turn.js`.
 
-Admin mode "Import ROMs" (`api/v1/admin/[op].js`, for a single operator only — downloads `.wgba` files from a private R2 bucket with its public URL turned off, after a 6-character check):
+Admin mode "Import ROMs" (`api/v1/admin/[op].js`, from webGBA 0.9.1, for a single operator only — downloads `.wgba` files from a private R2 bucket with its public URL turned off, after a 6-character check):
 
 | Environment variable | Purpose | If missing |
 |---|---|---|
