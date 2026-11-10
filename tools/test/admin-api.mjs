@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { ADMIN, createAdmin, parseUpdated, safeFileName } from "../../api/_admin/server.js";
+import { ADMIN, createAdmin, parseUpdated, safeFileName, saveFileName } from "../../api/_admin/server.js";
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { startFakeUpstash } from "./fake-upstash.mjs";
 import { keyFile, startFakeR2 } from "./fake-r2-private.mjs";
@@ -135,11 +135,15 @@ try {
   const v120 = await game("io.example.alpha", "1.2.0", { en: "Alpha", ko: "알파" }, { art: true, pad: 200000 });
   const beta = await game("io.example.beta", "2.0.0", "Beta Quest: <Two>");
   const loose = await game("io.example.gamma", "0.3.1", { ja: "ガンマ" });
+  const rapid = await game("com.flightrabbit.rapid", "1.3.5", { en: "Pokémon Rapid", ko: "포켓몬스터 래피드" });
+  const kof = await game("local.kof98", "1.0.0", { en: "The King of Fighters '98" });
   r2.put("wgba/io.example.alpha/1.0.0.wgba", v100);
   r2.put("wgba/io.example.alpha/1.2.0.wgba", v120);
   r2.put("wgba/io.example.alpha/1.2.0-beta.1.wgba", v100);
   r2.put("wgba/io.example.beta/2.0.0.wgba", beta);
   r2.put("wgba/My Gamma.wgba", loose);
+  r2.put("wgba/firered.wgba", rapid);
+  r2.put("wgba/local.kof98/1.0.0.wgba", kof);
   r2.put("wgba/broken.wgba", Buffer.from("not a wgba file"));
   r2.put("wgba/readme.txt", Buffer.from("x"));
   r2.put("other/io.example.zeta.wgba", beta);
@@ -148,12 +152,14 @@ try {
   const items = listed.body?.items ?? [];
   const alpha = items.find((i) => i.id === "io.example.alpha");
   ok("목록 = 게임별 최신 버전만(1.0.0·1.2.0-beta.1 제외)", listed.status === 200 && alpha?.version === "1.2.0" && alpha.key === "wgba/io.example.alpha/1.2.0.wgba", items.map((i) => `${i.id}@${i.version}`).join(" "));
-  ok("목록 = 직접 올린 파일도 manifest로 id·버전", items.some((i) => i.id === "io.example.gamma" && i.version === "0.3.1" && i.file === "My Gamma.wgba"));
-  ok("목록 = 깨진 파일·다른 확장자·wgba/ 밖 제외", items.length === 3, String(items.length));
-  ok("목록 = 이름(언어별)·라벨 그림·크기·저장 이름", alpha.names.ko === "알파" && /^data:image\/png;base64,/.test(alpha.label) && alpha.size === v120.length && alpha.file === "Alpha.wgba" && items.find((i) => i.id === "io.example.beta").file === "Beta Quest_ _Two_.wgba");
+  ok("목록 = 직접 올린 파일도 manifest로 id·버전·저장 이름(버킷 객체 이름 무관)", items.some((i) => i.id === "io.example.gamma" && i.version === "0.3.1" && i.file === "gamma.wgba"));
+  ok("저장 이름 = 래피드는 firered.wgba로 올려도 pokemon-rapid-v.<버전>.wgba", items.find((i) => i.id === "com.flightrabbit.rapid")?.file === "pokemon-rapid-v.1.3.5.wgba", items.find((i) => i.id === "com.flightrabbit.rapid")?.file);
+  ok("저장 이름 = 표에 있는 게임은 사용자 폴더 이름", items.find((i) => i.id === "local.kof98")?.file === "king-of-fighters-98.wgba", items.find((i) => i.id === "local.kof98")?.file);
+  ok("목록 = 깨진 파일·다른 확장자·wgba/ 밖 제외", items.length === 5, String(items.length));
+  ok("목록 = 이름(언어별)·라벨 그림·크기·저장 이름", alpha.names.ko === "알파" && /^data:image\/png;base64,/.test(alpha.label) && alpha.size === v120.length && alpha.file === "alpha.wgba" && items.find((i) => i.id === "io.example.beta").file === "beta-quest-two.wgba");
   const lists = r2.log.filter((l) => l.kind === "list").length;
   const ranges = r2.log.filter((l) => l.range).length;
-  ok("R2 요청 = 목록 1번 + 후보마다 앞부분 Range 1번", lists === 1 && ranges === 4 && r2.log.every((l) => !l.range || l.range === `bytes=0-${ADMIN.HEAD_BYTES - 1}`), `목록 ${lists} · Range ${ranges}`);
+  ok("R2 요청 = 목록 1번 + 후보마다 앞부분 Range 1번", lists === 1 && ranges === 6 && r2.log.every((l) => !l.range || l.range === `bytes=0-${ADMIN.HEAD_BYTES - 1}`), `목록 ${lists} · Range ${ranges}`);
   r2.clear();
   await call("GET", "list", { token });
   ok("두 번째 목록 = 앞부분 캐시(ETag 같음 → Range 0번)", r2.log.filter((l) => l.range).length === 0 && r2.log.filter((l) => l.kind === "list").length === 1);
@@ -209,7 +215,7 @@ try {
     let asked = 0;
     await adminKey({ config: tool, ask: async () => (asked++, "1#2!3#"), now: () => clock - 60000 });
     r2.clear();
-    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta")), await writeTemp("b.wgba", await game("io.example.delta", "1.1.0", "Delta"))], { config: tool });
+    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta")), await writeTemp("b.wgba", await game("io.example.delta", "1.1.0", "Delta")), await writeTemp("firered.wgba", rapid)], { config: tool });
     var firstPuts = r2.log.filter((l) => l.kind === "put" && l.status === 200).map((l) => l.path);
     r2.clear();
     await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta"))], { config: tool });
@@ -225,9 +231,10 @@ try {
   clock += ADMIN.KEY_MS + 1;
   const viaTool = await call("POST", "verify", { body: { pin: "1#2!3#" }, ip: "192.0.2.99" });
   ok("도구로 만든 키 = 서버 확인 통과", viaTool.status === 200);
-  ok("upload --wgba = 비공개 버킷 wgba/<id>/<버전>.wgba", firstPuts.join() === `/${r2.bucket}/wgba/io.example.delta/1.0.0.wgba,/${r2.bucket}/wgba/io.example.delta/1.1.0.wgba`, firstPuts.join(" "));
+  ok("upload --wgba = 비공개 버킷 wgba/<id>/<버전>.wgba(원본 이름 firered.wgba 무관)", firstPuts.join() === `/${r2.bucket}/wgba/io.example.delta/1.0.0.wgba,/${r2.bucket}/wgba/io.example.delta/1.1.0.wgba,/${r2.bucket}/wgba/com.flightrabbit.rapid/1.3.5.wgba`, firstPuts.join(" "));
   ok("upload --wgba = 같은 파일 다시 올리지 않음(목록 1번)", againPuts === 0);
 
+  ok("저장 이름 = 영어 이름 소문자·하이픈(악센트 제거) · 영어 이름 없으면 id 끝", saveFileName({ id: "local.x", names: { en: "Ninja Baseball Bat Man", ko: "닌자" } }) === "ninja-baseball-bat-man.wgba" && saveFileName({ id: "local.tetris", names: { ja: "テトリス" } }) === "tetris.wgba" && saveFileName({ id: "com.flightrabbit.rapid" }) === "pokemon-rapid.wgba");
   ok("저장 이름 = Windows 금지 글자·예약어 처리", safeFileName('a<b>:"c"/\\|?*') === "a_b___c______.wgba" && safeFileName("con") === "_con.wgba" && safeFileName("  ..  ") === "game.wgba");
 } finally {
   await r2.close();

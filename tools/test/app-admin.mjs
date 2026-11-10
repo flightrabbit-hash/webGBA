@@ -66,7 +66,7 @@ const alpha = await game("io.example.alpha", "1.2.0", { en: "Alpha", ko: "알파
 const gamma = await game("io.example.gamma", "0.3.1", { ja: "ガンマ" }, 300000);
 const beta = await game("io.example.beta", "2.0.0", "Beta Quest", 1000);
 fs.writeFileSync(path.join(appDir, "beta-local.wgba"), beta);
-fs.writeFileSync(path.join(appDir, "Alpha.wgba"), await game("io.example.other", "1.0.0", "Other", 10));
+fs.writeFileSync(path.join(appDir, "alpha.wgba"), await game("io.example.other", "1.0.0", "Other", 10));
 
 const r2 = await startFakeR2();
 const kv = await startFakeUpstash();
@@ -209,10 +209,10 @@ try {
   ok("받는 중 = 줄 진행 % (Rust 진행 신호)", /내려받는 중 \d+%/.test(busyMeta), busyMeta);
   await until(`[...document.querySelectorAll("#dialog .upick__item")].every((n) => n.dataset.state === "done")`, 60000);
   const got = files();
-  ok("exe 폴더에 저장 · 같은 이름이 있으면 (2) · .part 없음", got.join(",") === "Alpha (2).wgba,Alpha.wgba,Gamma Land.wgba,beta-local.wgba", got.join(","));
-  ok("받은 파일 = 버킷과 같은 바이트", Buffer.compare(fs.readFileSync(path.join(appDir, "Alpha (2).wgba")), Buffer.from(alpha)) === 0 && Buffer.compare(fs.readFileSync(path.join(appDir, "Gamma Land.wgba")), Buffer.from(gamma)) === 0);
+  ok("exe 폴더에 저장(저장 이름 = 서버 규칙, 버킷 객체 이름 무관) · 같은 이름이 있으면 (2) · .part 없음", got.join(",") === "alpha (2).wgba,alpha.wgba,beta-local.wgba,gamma.wgba", got.join(","));
+  ok("받은 파일 = 버킷과 같은 바이트", Buffer.compare(fs.readFileSync(path.join(appDir, "alpha (2).wgba")), Buffer.from(alpha)) === 0 && Buffer.compare(fs.readFileSync(path.join(appDir, "gamma.wgba")), Buffer.from(gamma)) === 0);
   const favs = await ev(`${T}.state.prefs.favorites`);
-  ok("받은 파일 = 즐겨찾기에 추가", favs.some((p) => p.endsWith("Alpha (2).wgba")) && favs.some((p) => p.endsWith("Gamma Land.wgba")), favs.map((p) => path.basename(p)).join(" "));
+  ok("받은 파일 = 즐겨찾기에 추가", favs.some((p) => p.endsWith("alpha (2).wgba")) && favs.some((p) => p.endsWith("gamma.wgba")), favs.map((p) => path.basename(p)).join(" "));
   ok("목록 닫기", await closeList());
 
   r2.put("wgba/io.example.delta/1.0.0.wgba", await game("io.example.delta", "1.0.0", "Delta", 400000));
@@ -231,7 +231,7 @@ try {
   await click("#dialog .upick__check");
   await press("DOWNLOAD");
   await until(`document.querySelector("#dialog .upick__item")?.dataset.state === "done"`, 30000);
-  ok("실패 줄 다시 체크 → 받기 성공", files().includes("Delta.wgba"));
+  ok("실패 줄 다시 체크 → 받기 성공", files().includes("delta.wgba"));
   ok("목록 닫기", await closeList());
 
   skew += ADMIN.KEY_MS + 120000;

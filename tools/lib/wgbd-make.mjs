@@ -21,7 +21,7 @@ export async function manifestOf(bytes) {
   const entry = toc?.entries.find((e) => e.name === "manifest");
   if (!entry) return { id: "", version: "" };
   const m = JSON.parse(new TextDecoder().decode(unpackChunk(bytes.subarray(entry.start, entry.end), entry)));
-  return { id: m.id ?? "", version: m.version ?? "" };
+  return { id: m.id ?? "", version: m.version ?? "", names: m.name ?? null };
 }
 
 /** BPS 안 TargetRead(새로 넣는 바이트) 구간 [시작, 끝) — 패치 바이트 기준. */

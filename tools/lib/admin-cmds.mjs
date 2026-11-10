@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { manifestOf } from "./wgbd-make.mjs";
 import { r2List, r2Put } from "./r2.mjs";
+import { saveFileName } from "../../api/_admin/save-name.js";
 
 export const PRIVATE_ENV = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_PRIVATE_BUCKET"];
 export const KEY_FILE = "authentication.key";
@@ -85,18 +86,18 @@ export async function adminKey({ dryRun = false, config = null, ask = askHidden,
   return 0;
 }
 
-/** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번). */
+/** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번). */
 export async function privateUpload(files, { dryRun = false, remote = false, config = null } = {}) {
   const plan = [];
   for (const file of files) {
     const bytes = new Uint8Array(fs.readFileSync(file));
-    const { id, version } = await manifestOf(bytes);
+    const { id, version, names } = await manifestOf(bytes);
     if (!/^[a-z0-9][a-z0-9.-]{0,63}$/.test(id) || !id.includes(".")) throw new Error(`게임 id 가 없거나 형식이 다릅니다: ${path.basename(file)}`);
     if (!SEMVER_RE.test(version)) throw new Error(`버전이 x.y.z 형식이 아닙니다: ${path.basename(file)} (${version})`);
-    plan.push({ key: `wgba/${id}/${version}.wgba`, bytes, file });
+    plan.push({ key: `wgba/${id}/${version}.wgba`, bytes, file, save: saveFileName({ id, version, names }) });
   }
   if (dryRun && !remote) {
-    for (const item of plan) console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 (${path.basename(item.file)})`);
+    for (const item of plan) console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save} (원본 ${path.basename(item.file)})`);
     console.log(`--dry-run: 비공개 버킷에 올리지 않았습니다(${plan.length}개)`);
     return 0;
   }
@@ -111,12 +112,12 @@ export async function privateUpload(files, { dryRun = false, remote = false, con
       continue;
     }
     if (dryRun) {
-      console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 · ${head ? "버킷과 다름" : "버킷에 없음"}`);
+      console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save} · ${head ? "버킷과 다름" : "버킷에 없음"}`);
       put++;
       continue;
     }
     await r2Put(r2, item.key, item.bytes, { contentType: "application/octet-stream", cacheControl: "no-store" });
-    console.log(`올림  비공개 ${item.key} ${n(item.bytes.length)}바이트`);
+    console.log(`올림  비공개 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save}`);
     put++;
   }
   console.log(`${dryRun ? "--dry-run --remote: 비공개 버킷에 올리지 않았습니다 — 올릴 것" : "비공개 버킷 완료 — 올림"} ${put}개 · 같음 ${plan.length - put}개 · 버킷 확인 목록 ${listed.requests}번`);

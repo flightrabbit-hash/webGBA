@@ -3,6 +3,7 @@ import { makeStore, StoreError } from "../_mp/store.js";
 import { ipPrefix, ORIGINS } from "../_mp/server.js";
 import { onlyHex32, tidyEnv } from "../_mp/turn.js";
 import { makeR2, R2Error } from "./r2.js";
+import { saveFileName } from "./save-name.js";
 import { readHead } from "./wgba-head.js";
 
 export const ADMIN = Object.freeze({
@@ -98,16 +99,7 @@ export function semverCompare(a, b) {
   return String(x[4] ?? "").localeCompare(String(y[4] ?? ""));
 }
 
-const WIN_BAD = /[\\/:*?"<>|\x00-\x1f]/g;
-const WIN_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
-
-export function safeFileName(text, fallback = "game") {
-  let name = String(text ?? "").replace(WIN_BAD, "_").replace(/\s+/g, " ").trim().replace(/^[. ]+|[. ]+$/g, "");
-  name = [...name].slice(0, 80).join("").trim();
-  if (!name) name = fallback;
-  if (WIN_RESERVED.test(name)) name = `_${name}`;
-  return `${name}.wgba`;
-}
+export { safeFileName, saveFileName } from "./save-name.js";
 
 function nameOf(names) {
   if (typeof names === "string") return names;
@@ -273,7 +265,7 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
         names: head.names,
         short: head.short,
         size: c.info.size,
-        file: c.placed ? safeFileName(nameOf(head.names) || head.id.split(".").pop(), head.id) : safeFileName(c.name.slice(c.name.lastIndexOf("/") + 1).replace(/\.wgba$/i, "")),
+        file: saveFileName({ id: head.id, version, names: head.names }),
         label: head.label,
       };
       const was = byId.get(item.id);
