@@ -47,6 +47,8 @@ windows = { version = "0.61", features = [
   "Win32_System_Registry",
   # RegCreateKeyExW 의 보안 속성 인자 타입이 여기 있어 함께 켠다(아비터와 같음).
   "Win32_Security",
+  # 관리자 모드 롬 가져오기: 비공개 R2 presigned 주소에서 받기(웹뷰 fetch 는 버킷 CORS 에 막힘). Windows 내장이라 크레이트 추가 없음.
+  "Win32_Networking_WinHttp",
 ] }
 
 # WebView2 설정(브라우저 가속키 끄기·개발자 도구 허용). tauri 가 쓰는 것과 같은 0.38.

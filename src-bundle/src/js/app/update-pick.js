@@ -67,8 +67,8 @@ export function rowMeta(item) {
 
 const usable = (item) => item.kind === "patch" && !item.running && (item.state === "ready" || item.state === "failed");
 
-export function updatePicker({ items, art = () => null, button, kinds = {}, apply, install, stop, onChange = () => {} }) {
-  const root = make("div", "zpick upick");
+export function updatePicker({ items, art = () => null, button, kinds = {}, apply, install, stop, onChange = () => {}, metaOf = rowMeta, labelOf = null, listLabel = "", startOn = true }) {
+  const root = make("div", button ? "zpick upick" : "zpick upick upick--bare");
   const box = () => {
     const node = make("span", "cbox");
     node.setAttribute("aria-hidden", "true");
@@ -85,9 +85,9 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
   all.append(box(), allLabel, count);
   const list = make("ul", "zpick__list upick__list");
   list.setAttribute("role", "group");
-  list.setAttribute("aria-label", t("update.listLabel"));
+  list.setAttribute("aria-label", listLabel || t("update.listLabel"));
   let busy = false;
-  for (const item of items) item.on = usable(item);
+  for (const item of items) item.on = startOn && usable(item);
   const rows = items.map((item, index) => {
     const li = make("li", "zpick__row upick__item");
     li.dataset.key = item.key;
@@ -106,9 +106,12 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
     bar.setAttribute("aria-valuemax", "100");
     const fill = make("span", "upick__fill");
     bar.append(fill);
-    const act = button(() => onRow(item));
-    act.classList.add("upick__btn");
-    foot.append(act, bar);
+    const act = button ? button(() => onRow(item)) : null;
+    if (act) {
+      act.classList.add("upick__btn");
+      foot.append(act);
+    }
+    foot.append(bar);
     texts.append(name, meta, foot);
     const picture = make("span", "upick__art");
     const drawn = art(item);
@@ -124,7 +127,7 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
   });
   root.append(all, list);
 
-  const labelOf = (item) => {
+  const defaultLabel = (item) => {
     if (item.state === "busy" || item.state === "done" || item.kind === "none") return "";
     if (item.running) return t("update.btn.stop");
     if (item.kind === "full") return t("update.btn.full");
@@ -142,15 +145,17 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
       li.classList.toggle("is-off", !can || busy);
       li.dataset.state = item.state;
       meta.classList.toggle("zpick__meta--why", item.state === "failed");
-      const text = rowMeta(item);
+      const text = metaOf(item);
       if (meta.textContent !== text) meta.textContent = text;
-      const label = labelOf(item);
-      act.hidden = !label;
-      const labelNode = act.querySelector(".btn__label, .upick__label") ?? act;
-      if (label && labelNode.textContent !== label) labelNode.textContent = label;
-      act.disabled = busy;
-      const kind = item.running ? "warn" : item.kind === "full" ? "plain" : "primary";
-      for (const [name, cls] of Object.entries(kinds)) if (cls) act.classList.toggle(cls, name === kind);
+      if (act) {
+        const label = (labelOf ?? defaultLabel)(item);
+        act.hidden = !label;
+        const labelNode = act.querySelector(".btn__label, .upick__label") ?? act;
+        if (label && labelNode.textContent !== label) labelNode.textContent = label;
+        act.disabled = busy;
+        const kind = item.running ? "warn" : item.kind === "full" ? "plain" : "primary";
+        for (const [name, cls] of Object.entries(kinds)) if (cls) act.classList.toggle(cls, name === kind);
+      }
       bar.hidden = item.state !== "busy";
       fill.style.setProperty("--progress", (percent(item.fraction) / 100).toFixed(4));
       bar.setAttribute("aria-valuenow", String(percent(item.fraction)));
@@ -168,7 +173,7 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
     item.stage = stage;
     item.fraction = Math.max(item.fraction ?? 0, Math.min(1, Number(fraction) || 0));
     const entry = rows.find((r) => r.item === item);
-    const text = rowMeta(item);
+    const text = metaOf(item);
     if (entry.meta.textContent !== text) {
       entry.meta.textContent = text;
       centerTexts([entry.meta]);
@@ -255,7 +260,7 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
       }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
-        const order = [all, ...rows.flatMap((r) => [r.row, r.act])].filter((n) => n.tabIndex !== -1 && !n.hidden && !n.disabled);
+        const order = [all, ...rows.flatMap((r) => [r.row, r.act])].filter((n) => n && n.tabIndex !== -1 && !n.hidden && !n.disabled);
         const at = order.indexOf(node);
         order[Math.max(0, Math.min(order.length - 1, at + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
       }

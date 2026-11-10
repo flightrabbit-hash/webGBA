@@ -328,6 +328,27 @@ pub async fn app_update_finish() -> Result<()> {
     .await
 }
 
+/* ── 관리자 모드 롬 가져오기 ── */
+
+#[derive(Clone, Serialize)]
+pub struct FetchProgress {
+    done: u64,
+    total: u64,
+}
+
+/// presigned 주소 → exe 폴더 `<name>.wgba`(같은 이름이 있으면 ` (2)`). 주소는 기록에 남기지 않는다(서명 포함).
+#[tauri::command]
+pub async fn admin_fetch(url: String, name: String, size: u64, on_progress: tauri::ipc::Channel<FetchProgress>) -> Result<String> {
+    let loopback = settings::load().use_develop_kit;
+    offload(move || {
+        let mut on = |done: u64, total: u64| {
+            let _ = on_progress.send(FetchProgress { done, total });
+        };
+        crate::admin_fetch::fetch(&url, &name, size, loopback, &mut on).map(|path| path.display().to_string())
+    })
+    .await
+}
+
 /* ── 기록 ── */
 
 #[tauri::command]

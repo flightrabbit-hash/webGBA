@@ -15,6 +15,7 @@
 //!
 //! 게임 실행(코어·키·소리·프레임)은 모두 웹뷰가 한다. Rust 는 파일과 창만 맡는다.
 
+mod admin_fetch;
 mod app_update;
 mod assoc;
 mod bridge;
@@ -160,6 +161,7 @@ pub fn run() {
         .on_window_event(window_events())
         .invoke_handler(tauri::generate_handler![
             bridge::commands::runtime_info,
+            bridge::commands::admin_fetch,
             bridge::commands::window_minimize,
             bridge::commands::window_toggle_maximize,
             bridge::commands::window_is_maximized,

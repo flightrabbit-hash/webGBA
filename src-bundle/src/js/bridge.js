@@ -61,6 +61,11 @@ export const core = {
   appUpdateStage: (path, bytes, first) => invoke("app_update_stage", bytes, { headers: { "x-path": encodeURIComponent(path), "x-first": first ? "1" : "0" } }),
   appUpdateInstall: (version, from, files) => invoke("app_update_install", { version, from, files }),
   appUpdateFinish: () => invoke("app_update_finish"),
+  adminFetch: (url, name, size, onProgress) => {
+    const channel = new tauri.core.Channel();
+    channel.onmessage = (message) => onProgress(message);
+    return invoke("admin_fetch", { url, name, size, onProgress: channel });
+  },
   log: queueLog,
   logFlush: () => sendLog(),
   logBeat: (on) => sendLog(Boolean(on)),

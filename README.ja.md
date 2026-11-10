@@ -65,6 +65,16 @@ Web 版(`web/dist`)とマッチングサーバー(`api/v1/mp/[op].js`、Vercel �
 
 - Cloudflare は使用量が無料枠を超えても自動では止まらないため、発行経路が上限を守ります。上限値と期間は `api/_mp/turn.js` の `TURN_CAP` 1 か所で変えます。
 
+管理者モード「ROMを取り込む」(`api/v1/admin/[op].js`、運営者 1 人専用 — 公開アドレスを切った非公開 R2 バケットの `.wgba` を 6 桁の確認後にダウンロード):
+
+| 環境変数 | 用途 | ない場合 |
+|---|---|---|
+| `R2_PRIVATE_BUCKET`・`R2_PRIVATE_ACCESS_KEY_ID`・`R2_PRIVATE_SECRET_ACCESS_KEY`・`CF_ACCOUNT_ID` | 非公開バケットの読み取り専用トークン — キーファイル `authentication.key`・`wgba/` 一覧・5 分有効のダウンロードアドレス(presigned GET) | 管理者 API が 503 → アプリは「サーバーに管理者モードの設定が存在しません」 |
+| 上の保存先(`UPSTASH_*`/`KV_*`) | 入力回数の制限(IP ごとに 1 時間 5 回・全体の失敗 1 日 30 回) | 入力確認が 503(確認しない) |
+
+- 非公開バケットの CORS = Web 版の出所の GET のみ。Windows アプリは Web ビューではなく Windows 内蔵の WinHTTP で受け取るため CORS は不要です。
+- キーファイル・`.wgba` のアップロード: `node tools/wgba.mjs admin-key`(PowerShell、6 桁を画面に表示しない)・`node tools/wgba.mjs upload [<発行フォルダー|まとめ>] --wgba <新.wgba>`。
+
 ---
 
 ## 主な機能

@@ -79,6 +79,16 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
 
 - Cloudflare does not stop by itself when usage passes the free tier, so the issuing route keeps the limit. Change the limit and window in one place, `TURN_CAP` in `api/_mp/turn.js`.
 
+Admin mode "Import ROMs" (`api/v1/admin/[op].js`, for a single operator only — downloads `.wgba` files from a private R2 bucket with its public URL turned off, after a 6-character check):
+
+| Environment variable | Purpose | If missing |
+|---|---|---|
+| `R2_PRIVATE_BUCKET`, `R2_PRIVATE_ACCESS_KEY_ID`, `R2_PRIVATE_SECRET_ACCESS_KEY`, `CF_ACCOUNT_ID` | Read-only token for the private bucket — key file `authentication.key`, the `wgba/` listing, 5-minute download addresses (presigned GET) | Admin API returns 503 → the app shows "Admin mode is not set up on the server" |
+| The storage above (`UPSTASH_*`/`KV_*`) | Attempt limit (5 per IP per hour, 30 failures per day in total) | Code check returns 503 (no check) |
+
+- Private bucket CORS = GET from the web version's origin only. The Windows app downloads with the built-in WinHTTP instead of the web view, so it needs no CORS.
+- Upload the key file and `.wgba` files with `node tools/wgba.mjs admin-key` (PowerShell, the code is not shown on screen) and `node tools/wgba.mjs upload [<publish folder|root>] --wgba <new.wgba>` (12.5).
+
 ---
 
 ## Features
@@ -1471,7 +1481,8 @@ node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <
 node tools/wgba.mjs app --dir <publish root>/com.flightrabbit.webgba --key <private key.pem> --exe <webgba.exe> [--file <LICENSE etc.>]… [--notes <text.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <publish root> --key <private key.pem>
 node tools/wgba.mjs verify <publish folder|root> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
-node tools/wgba.mjs upload <publish folder|root> [--dry-run [--remote]]
+node tools/wgba.mjs upload [<publish folder|root>] [--wgba <new.wgba>]… [--dry-run [--remote]]
+node tools/wgba.mjs admin-key [--dry-run]
 node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO time>]] [--top <rows>]
 ```
 
@@ -1486,6 +1497,8 @@ node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO t
 - `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1. For a root it also checks the index signature and that each index entry equals the game's `latest.json` (old files are matched to games by id); for a game folder, the entry for that game in the parent's index.
 - `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (objects already in the bucket with the same content — size and ETag MD5 — are skipped, so unchanged `latest.json` files are not rewritten). The bucket is checked with one object listing (ListObjectsV2, one request per 1,000 objects = Class A); only when the listing fails does it check each file with HEAD (Class B). `--dry-run` does not connect to the bucket; `--dry-run --remote` only compares with the bucket through one listing (no writes). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
 - `r2-stats`: prints R2 request counts from the Cloudflare analytics API (GraphQL `r2OperationsAdaptiveGroups`) per Korean date and per object, action and response code (no bucket requests, 7 days by default, 31 at most). The source is guessed from the object name — `index.json` = webGBA 0.8.1 or later, `<game id>/latest.json` = 0.8.0 or earlier (or the fallback when the index fails), `patches/`·`full/` = update downloads, HeadObject = the earlier `upload` or the dashboard, 404 and other objects = likely outside requests. Environment variables `CF_API_TOKEN` (an API token with Account Analytics read), `R2_ACCOUNT_ID` and `R2_BUCKET` (whole account when absent); values are never printed.
+- `upload --wgba`: uploads full `.wgba` files to `wgba/<game id>/<version>.wgba` in the private bucket (admin mode "Import ROMs" only, public URL off), regardless of the source file name. The saved file name on download also comes from the game id, not the bucket object name — Rapid `pokemon-rapid-v.<version>.wgba`, others the English name in lowercase with hyphens (exceptions in the `api/_admin/save-name.js` table). Skips files with the same size and ETag; one listing request checks the bucket. `--wgba` alone works without a publish folder. Environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`.
+- `admin-key`: reads the 6-character admin code (0–9, `!`, `#`) twice, showing only `•`, and uploads its SHA-256 to `authentication.key` in the private bucket (`{"sha256":"…","updated":"YYYY-MM-DD HH:mm"}`, Korea time). The code and the hash are never printed (a 6-character code can be recovered from its hash at once, so the key file is secret too). Admin mode enabled before the updated time asks for the code again at "Import ROMs". Takes up to a minute to reach the server. The file can also be edited by hand (a future time is refused).
 - `app`: publishes a webGBA self-update for the Windows app (12.6). `index`, `verify` and `upload` also handle the app folder in the root.
 
 #### 12.6 webGBA self-update (Windows app)

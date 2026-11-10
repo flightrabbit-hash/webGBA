@@ -8,6 +8,8 @@ import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { centerTexts, openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
 import { createExeUpdater } from "../app/update-exe.js";
 import { createAppUpdater } from "../app/update-app.js";
+import { ADMIN_APP_API, adminClient, readRecord } from "../core/admin.js";
+import { createAdminFlow } from "../app/admin-ui.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, romType, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
@@ -53,6 +55,7 @@ const el = {
   dialogActions: $("dialog-actions"),
   btnFiles: $("btn-files"),
   btnFavorites: $("btn-favorites"),
+  btnAdmin: $("btn-admin"),
   btnStar: $("btn-star"),
   btnStarIcon: $("btn-star-icon"),
   btnPause: $("btn-pause"),
@@ -708,6 +711,7 @@ function netBlock(node, key, blocked) {
 
 function syncControls() {
   const hosted = player.active;
+  el.btnAdmin.hidden = !readRecord(state.prefs?.admin);
   el.btnPause.disabled = !hosted;
   el.btnReset.disabled = !state.game || player.net.locked;
   el.btnFast.disabled = !hosted || player.net.locked;
@@ -2392,6 +2396,7 @@ $("btn-open").addEventListener("click", openDialogFile);
 $("start-open").addEventListener("click", openDialogFile);
 el.btnFiles.addEventListener("click", () => showPanel("files"));
 el.btnFavorites.addEventListener("click", () => showPanel("favorites"));
+el.btnAdmin.addEventListener("click", () => admin.importRoms());
 el.btnStar.addEventListener("click", () => toggleFavorite());
 el.railToggle.addEventListener("click", () => toggleRail());
 el.btnPause.addEventListener("click", () => togglePause("버튼"));
@@ -2438,9 +2443,11 @@ settings.setup({
   confirm: (title, text, ok) => openDialog({ title, body: text, actions: [{ label: "CANCEL", value: false }, { label: ok, go: true, value: true }] }).then(Boolean),
   keyOrder: SETTINGS_KEY_ORDER,
   defaultKeys: DEFAULT_KEYS,
+  adminOn: () => admin.isOn(),
+  adminToggle: () => (admin.isOn() ? admin.leave() : admin.enter()),
   vars: (key) => (key === "netNick" ? { name: (netNick(), defaultNick(state.prefs.netNo)) } : {}),
   placeholder: (key) => (key === "netNick" ? (netNick(), defaultNick(state.prefs.netNo)) : undefined),
-  hint: (key) => (key === "dpadMode" && state.input.dpad ? t("cfg.dpadMode.game", { name: state.game?.label || state.game?.name || state.input.gameId, value: t(`cfg.dpadMode.${state.input.dpad}`) }) : undefined),
+  hint: (key) => (key === "admin" ? adminHint() : key === "dpadMode" && state.input.dpad ? t("cfg.dpadMode.game", { name: state.game?.label || state.game?.name || state.input.gameId, value: t(`cfg.dpadMode.${state.input.dpad}`) }) : undefined),
   onClose: () => {
     syncControls();
     if (state.game?.kind === "frame") focusFrame();
@@ -2503,6 +2510,64 @@ const updater = createExeUpdater({
     renderPanel();
     if (!el.start.hidden) renderStart();
   },
+});
+
+/* ── 관리자 모드 롬 가져오기 ── */
+
+// 시험 exe(개발 키트)만 다른 서버 주소: localStorage webgba.adminTest = {"base": "http://127.0.0.1:…/api/v1/admin/"}
+function adminBase() {
+  if (!state.info?.settings?.useDevelopKit) return ADMIN_APP_API;
+  try {
+    return JSON.parse(localStorage.getItem("webgba.adminTest") || "null")?.base || ADMIN_APP_API;
+  } catch {
+    return ADMIN_APP_API;
+  }
+}
+
+function adminHint() {
+  const rec = readRecord(state.prefs.admin);
+  if (!rec) return t("cfg.admin.note");
+  const d = new Date(rec.at);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  return t("cfg.admin.on", { date: `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` });
+}
+
+const admin = createAdminFlow({
+  get client() {
+    return adminClient({ base: adminBase() });
+  },
+  load: () => state.prefs.admin ?? null,
+  save: (rec) => savePrefs({ admin: rec ?? null }),
+  dialog: ({ title, body, kind, actions }) => {
+    const done = openDialog({ title, body, kind, actions: actions.map((action) => ({ label: action.label, value: action.value, go: action.primary, run: action.run })) });
+    return { done, buttons: [...el.dialogActions.children] };
+  },
+  closeDialog: (value) => dialogDone?.(value),
+  labels: { ok: "OK", cancel: "CANCEL", close: "CLOSE", get: "DOWNLOAD" },
+  get listText() {
+    return t("admin.list.textExe");
+  },
+  icon,
+  notify: (text, level = "info") => status(text, level),
+  changed: () => syncControls(),
+  registeredIds: async () => {
+    let inApp = [];
+    try {
+      inApp = (await core.fileList(state.info.appDir)).filter((item) => !item.isDir && item.extension === "wgba").map((item) => item.path);
+    } catch {}
+    return updater.ids([...updatePaths(), ...inApp]);
+  },
+  download: async (game, url, onFraction) => {
+    const path = await core.adminFetch(url, game.file, game.size, ({ done, total }) => onFraction(total ? done / total : 0));
+    if (!isFavorite(path)) await toggleFavorite(path, true);
+    core.log("INFO", `롬 가져오기 → ${path}`);
+  },
+  refresh: () => {
+    renderPanel();
+    if (!el.start.hidden) renderStart();
+  },
+  lang: () => i18n.lang(),
+  log: (level, text) => core.log(level, text),
 });
 
 function openUpdate(path) {

@@ -22,6 +22,8 @@ import * as cartArt from "./cart.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 import { createUpdater } from "./update.js";
+import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
+import { createAdminFlow } from "./app/admin-ui.js";
 
 const { t } = i18n;
 const $ = (id) => document.getElementById(id);
@@ -1379,7 +1381,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = fals
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state";
 const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -2954,7 +2956,9 @@ async function renderLibrary() {
     savePrefs({ libSort: libSort() === "name" ? "recent" : "name" });
     renderSheet();
   } });
-  head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })), sortBtn);
+  head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })));
+  if (admin.isOn()) head.append(button({ label: t("admin.import"), icon: "download", title: t("admin.import"), kind: "small", action: "admin-import", onClick: () => admin.importRoms() }));
+  head.append(sortBtn);
   const shelf = make("div", "lib__case");
   shelf.style.setProperty("--slot-h", `${spineH + 28}px`);
   shelf.setAttribute("role", "group");
@@ -4122,6 +4126,7 @@ function renderSettings() {
         syncControls();
       }),
       nickSetting(),
+      adminSetting(),
     ),
     group(
       "",
@@ -4986,6 +4991,67 @@ const updater = createUpdater({
     if (state.sheet === "library") renderSheet();
   },
 });
+
+const ADMIN_STORE = "webgba.admin";
+
+const admin = createAdminFlow({
+  client: adminClient({ base: new URL(ADMIN_PATH, location.origin).href }),
+  load: () => {
+    try {
+      return JSON.parse(localStorage.getItem(ADMIN_STORE) || "null");
+    } catch {
+      return null;
+    }
+  },
+  save: (rec) => {
+    try {
+      if (rec) localStorage.setItem(ADMIN_STORE, JSON.stringify(rec));
+      else localStorage.removeItem(ADMIN_STORE);
+    } catch {}
+  },
+  dialog: ({ title, body, kind, actions }) => {
+    const done = openDialog({ title, body, kind, actions: actions.map((action, index) => ({ label: action.label, value: action.value, primary: action.primary, run: action.run, id: `admin-${index}` })) });
+    el.dialog.querySelector(".dialog__card")?.addEventListener("animationend", () => centerInk(el.dialog), { once: true });
+    return { done, buttons: [...el.dialogActions.children] };
+  },
+  closeDialog: (value) => state.dialogDone?.(value),
+  get labels() {
+    return { ok: t("admin.pad.ok"), cancel: t("admin.pad.cancel"), close: t("admin.btn.close"), get: t("admin.btn.chosen") };
+  },
+  get listText() {
+    return t("admin.list.text");
+  },
+  icon: (name) => iconNode(name),
+  notify: (text, level = "info") => toast(text, level),
+  changed: () => {
+    if (state.sheet === "settings" || state.sheet === "library") renderSheet();
+  },
+  registeredIds: async () => new Set((await store.list(store.KIND_ROM).catch(() => [])).map((rom) => rom.gameId).filter(Boolean)),
+  download: async (game, url, onFraction) => {
+    const bytes = await downloadBytes(url, { size: game.size, onProgress: onFraction });
+    await importGame(String(game.file).replace(/\.wgba$/i, ""), bytes, { file: game.file });
+  },
+  refresh: () => {
+    refreshStart();
+    if (state.sheet === "library") renderSheet();
+  },
+  lang: () => i18n.lang(),
+  log: logLine,
+  centerDialog: () => centerInk(el.dialog),
+});
+
+function adminSetting() {
+  const rec = admin.record();
+  const act = button({
+    label: t(rec ? "cfg.admin.leave" : "cfg.admin.enter"),
+    action: "cfg-admin",
+    onClick: async () => {
+      if (admin.record()) admin.leave();
+      else await admin.enter();
+    },
+  });
+  return field(t("cfg.admin"), rec ? t("cfg.admin.on", { date: fmtTime(rec.at) }) : t("cfg.admin.note"), act);
+}
 
 function openUpdate(rom) {
   const item = updater.pending(rom.key);
