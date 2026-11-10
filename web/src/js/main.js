@@ -19,6 +19,7 @@ import { extractRom, ZIP_MAX, zipEntries, zipFile, zipGames, zipReadAsync, ZipEr
 import { openCountLoader, shownNames, whyText, zipPicker } from "./app/zip-pick.js";
 import { Skin } from "./skin.js";
 import * as cartArt from "./cart.js";
+import { createMedia } from "./media.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 import { createUpdater } from "./update.js";
@@ -118,6 +119,7 @@ const state = {
   prefs: store.loadPrefs(),
   game: null,
   opening: false,
+  audioHeld: false,
   sheet: "",
   sheetHistory: false,
   choiceDone: null,
@@ -212,6 +214,11 @@ class WebPlayer extends Player {
     });
     return Promise.race([this.audioBoot, ready]).then(() => this.audio);
   }
+
+  onAudioState(audio) {
+    super.onAudioState(audio);
+    if (audio === this.audio) systemAudio(audio.ac.state);
+  }
 }
 
 const player = new WebPlayer({
@@ -244,6 +251,32 @@ const player = new WebPlayer({
   netEnabled: () => state.prefs.netOn !== false,
   hiddenClock: !window.matchMedia("(pointer: coarse)").matches,
 });
+
+const media = createMedia({
+  read: (rom, part) => store.cartBytes(rom.id, part).catch(() => null),
+  titleOf: (rom) => displayName(rom),
+  play: () => userPause(false),
+  pause: () => userPause(true),
+});
+
+function userPause(on) {
+  if (!state.game) return;
+  state.audioHeld = false;
+  hold("user", on);
+}
+
+function systemAudio(acState) {
+  if (!media.enabled || !state.game || document.visibilityState !== "hidden") return;
+  if (acState === "suspended") {
+    state.audioHeld = true;
+    if (!holds.has("user")) hold("user", true);
+  } else if (acState === "running" && state.audioHeld) {
+    state.audioHeld = false;
+    hold("user", false);
+  }
+}
+
+const syncMedia = () => media.sync(!state.game ? "none" : holds.size ? "paused" : "playing");
 
 function netNick() {
   let no = state.prefs.netNo;
@@ -1184,6 +1217,7 @@ function syncControls() {
   if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
   syncTools();
+  syncMedia();
 }
 
 // 세로 햄버거 창. 예전에는 열고 닫을 때마다 layout()(가상 버튼·화면 테두리·기능 버튼 전부 다시 그리기 + 루트 CSS 변수)을
@@ -2020,6 +2054,7 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   context.version = meta.gameId ? meta.version ?? "" : "";
   state.quick.played = 0;
   holds.delete("user");
+  state.audioHeld = false;
   // ② 자체 JS 게임은 격리 틀(#screen 안 iframe)이 화면 — 캔버스는 숨김(web.css)
   if (host.script) document.body.dataset.runtime = "script";
   else delete document.body.dataset.runtime;
@@ -2033,6 +2068,7 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   hold("sheet", Boolean(state.sheet) && state.sheet !== "net");
   syncControls();
   updateWake();
+  media.setGame(meta);
   netWin.offerBack();
 }
 
@@ -2554,6 +2590,8 @@ async function closeGame({ quiet = false } = {}) {
   context.game = "";
   context.version = "";
   holds.delete("user");
+  state.audioHeld = false;
+  media.setGame(null);
   pad.releaseAll();
   const reshape = Boolean(state.screen);
   setScreen(null);
@@ -2774,8 +2812,7 @@ async function refreshStart() {
 }
 
 function togglePause() {
-  if (!state.game) return;
-  hold("user", !holds.has("user"));
+  userPause(!holds.has("user"));
 }
 
 const speedText = (value) => t("web.speed.value", { n: value });
@@ -4592,6 +4629,7 @@ function onVisibility() {
     player.releaseAll();
     if (state.prefs.pauseWhenHidden && !(player.clockOn && player.net.active)) hold("hidden", true);
   } else {
+    state.audioHeld = false;
     hold("hidden", false);
     player.resumeAudio();
     state.reg?.update().catch(() => {});
