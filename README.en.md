@@ -137,7 +137,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   A game whose multiplayer protocol is newer than this webGBA runs without multiplayer, and the multiplayer button and connection window show "This game's multiplayer needs a newer webGBA".
 
 - **Online updates** — once each time the app starts, when online, webGBA checks whether the `.wgba` files in the library (in the Windows app: favorites, recent files and the current folder) have a new version. The update window appears only when one exists; pressing "Update" downloads and applies a delta patch (signature and SHA-1 checked, the current file kept on failure, saves kept). Quick slots made in another version are not loaded. Spec for authors: [chapter 12](#12-online-updates-update-spec-1-extension).
-- **webGBA updates (Windows app)** — from the version that includes this feature, each app start also checks for a new webGBA version through the same index (`index.json`) as the `.wgba` check (no extra request). When one exists an update window appears; pressing "UPDATE" downloads only the changed files (such as `webgba.exe`), checks the signature and SHA-256, replaces the files and restarts the app. Settings (`bin/ini`), logs, quick slots, WebView data and saves (the `.sav` next to each game) are kept. If downloading or replacing fails, the original files are restored. After "LATER", the update is still available from the About screen for the rest of that run. The web version is always current and is not covered. Spec: [12.6](#126-webgba-self-update-windows-app).
+- **webGBA updates (Windows app)** — from 0.9.0, each app start also checks for a new webGBA version through the same index (`index.json`) as the `.wgba` check (no extra request). When one exists an update window appears; pressing "UPDATE" downloads only the changed files (such as `webgba.exe`), checks the signature and SHA-256, replaces the files and restarts the app. Settings (`bin/ini`), logs, quick slots, WebView data and saves (the `.sav` next to each game) are kept. If downloading or replacing fails, the original files are restored. After "LATER", the update is still available from the About screen for the rest of that run. The web version is always current and is not covered. Spec: [12.6](#126-webgba-self-update-windows-app).
 
 ---
 
@@ -1425,7 +1425,7 @@ For games in the known game id table, each app start reads one **index** at the 
 - Signature = ECDSA P-256/SHA-256 over the `signed` text (same key and format as 12.2). The index is at most 1 MiB.
 - Fallback: when the index is missing (404 etc.), has an unknown `wgbaIndex`, a bad signature, an older time, lacks the game or has a wrong hash, that game reads its own `latest.json`. When the server cannot be reached (offline) there is no fallback.
 - webGBA 0.8.0 and earlier do not read the index, so the per-game `latest.json` keeps being published. Version files at other addresses from manifest `update` are read per game as before.
-- Optional fields `apps` (envelopes) and `signed.apps` (hashes) = the webGBA self-update entry (12.6). 0.8.1 does not read them.
+- Optional fields `apps` (envelopes) and `signed.apps` (hashes) = the webGBA self-update entry (12.6, from 0.9.0). 0.8.1 and earlier do not read them.
 
 #### 12.3 Delta patch `.wgbd`
 
@@ -1490,7 +1490,7 @@ node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO t
 
 #### 12.6 webGBA self-update (Windows app)
 
-For the webGBA operator (game authors don't use this). Applies to webGBA Windows app versions that include this feature and later. The web version is not covered.
+For the webGBA operator (game authors don't use this). Applies to the webGBA Windows app 0.9.0 and later. The web version is not covered.
 
 - Check: at the same time and from the same `index.json` as the `.wgba` check — `apps` (envelopes) and `signed.apps` (SHA-256 of each envelope's `signed` text). One app start is still one request. Only when the index fails (404, signature, time or hash) does it read `com.flightrabbit.webgba/latest.json`; an index without an app entry causes no extra request.
 - Envelope `{ "wgbaApp": 1, "signed": "<signed JSON text>", "signature": "<base64, 64 bytes>" }` — signature = same key and format as 12.2.
