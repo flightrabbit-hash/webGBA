@@ -12,6 +12,7 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
   const log = [];
   let delayMs = 0;
   let cut = false;
+  let emptyPuts = false;
 
   function headerAuth(req, path, params) {
     const auth = /Credential=([^/]+)\/(\d{8})\/auto\/s3\/aws4_request, SignedHeaders=([^,]+), Signature=([0-9a-f]{64})/.exec(req.headers.authorization ?? "");
@@ -50,7 +51,8 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
         log.push(entry);
         const good = headerAuth(req, path, Object.fromEntries(url.searchParams)) && req.headers["x-amz-content-sha256"] === sha256Hex(body) && path.startsWith(`/${bucket}/`);
         entry.status = good ? 200 : 403;
-        if (good) objects.set(path.slice(bucket.length + 2), { bytes: body, etag: crypto.createHash("md5").update(body).digest("hex") });
+        const kept = emptyPuts ? Buffer.alloc(0) : body;
+        if (good) objects.set(path.slice(bucket.length + 2), { bytes: kept, etag: crypto.createHash("md5").update(kept).digest("hex") });
         res.writeHead(entry.status);
         res.end();
       });
@@ -126,6 +128,7 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
     has: (key) => objects.has(key),
     slow: (ms) => (delayMs = ms),
     breakDownloads: (on) => (cut = on),
+    emptyPuts: (on) => (emptyPuts = on),
     clear: () => (log.length = 0),
     close: () => new Promise((resolve) => server.close(resolve)),
   };

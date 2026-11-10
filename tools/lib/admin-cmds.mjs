@@ -5,7 +5,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { manifestOf } from "./wgbd-make.mjs";
-import { r2List, r2Put } from "./r2.mjs";
+import { r2Head, r2List, r2Put } from "./r2.mjs";
 import { saveFileName } from "../../api/_admin/save-name.js";
 
 export const PRIVATE_ENV = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_PRIVATE_BUCKET"];
@@ -81,7 +81,11 @@ export async function adminKey({ dryRun = false, config = null, ask = askHidden,
     return 0;
   }
   const r2 = config ?? privateConfig();
-  await r2Put(r2, KEY_FILE, new TextEncoder().encode(text), { contentType: "application/json", cacheControl: "no-store" });
+  const bytes = new TextEncoder().encode(text);
+  await r2Put(r2, KEY_FILE, bytes, { contentType: "application/json", cacheControl: "no-store" });
+  // 올린 뒤 크기를 다시 확인(내용은 받지 않음) — 0바이트 키 파일이면 서버가 형식 오류로 막아 관리자 모드를 켤 수 없음
+  const head = await r2Head(r2, KEY_FILE);
+  if (!head || head.size !== bytes.length) throw new Error(`올린 ${KEY_FILE} 크기가 다릅니다(버킷 ${head ? head.size : "없음"} · 보낸 ${bytes.length}바이트) — admin-key 를 다시 실행하세요`);
   console.log(`${KEY_FILE} 를 비공개 버킷에 올렸습니다 · 갱신일자 ${kstStamp(ms)}(한국 시각) — 이 시각 전에 켠 관리자 모드는 "롬 가져오기" 때 다시 입력합니다. 서버 반영까지 최대 1분`);
   return 0;
 }

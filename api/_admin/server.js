@@ -132,12 +132,14 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
     try {
       got = await r2.get(ADMIN.KEY_FILE, { max: ADMIN.KEY_FILE_MAX });
     } catch (error) {
-      if (error instanceof R2Error && error.code === "size") return { error: "key" };
-      throw new HttpError(503, "r2");
+      if (error instanceof R2Error && error.code === "size") return { error: "key", why: "size" };
+      const why = error instanceof R2Error && error.code === "http" ? `${error.status}${error.detail ? ` ${error.detail}` : ""}` : "network";
+      console.warn(`[admin] key read failed: ${why}`);
+      return { error: "r2", why };
     }
     if (!got) return { error: "nokey" };
     const key = parseKeyFile(new TextDecoder().decode(got.bytes));
-    return key ? { key } : { error: "key" };
+    return key ? { key } : { error: "key", why: got.bytes.length ? "format" : "empty" };
   }
 
   async function readKey() {
@@ -147,7 +149,7 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
       const got = await keyJob;
       keyMemo = { ...got, until: now() + (got.key ? ADMIN.KEY_MS : ADMIN.KEY_MISS_MS) };
     }
-    if (keyMemo.error) throw new HttpError(503, keyMemo.error);
+    if (keyMemo.error) throw new HttpError(503, keyMemo.error, keyMemo.why ? { why: keyMemo.why } : null);
     return keyMemo.key;
   }
 
@@ -186,13 +188,14 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
     const pin = typeof body.pin === "string" ? body.pin : "";
     if (!PIN_RE.test(pin)) throw new HttpError(400, "bad");
     if (!db.ready) throw new StoreError("config");
+    // 키를 못 읽는 서버 설정 문제는 입력 횟수에 넣지 않는다(키 조회는 인스턴스 메모리 캐시라 R2 요청은 늘지 않음)
+    const key = await readKey();
+    if (key.updated > now() + ADMIN.FUTURE_MS) throw new HttpError(503, "key", { why: "future" });
     const tries = `adm:t:${groupOf(request)}:${Math.floor(now() / 3600000)}`;
     const fails = `adm:f:${Math.floor(now() / 86400000)}`;
     const [n, , failed] = await db.run([["INCR", tries], ["EXPIRE", tries, ADMIN.TRY_TTL], ["GET", fails]]);
     if (Number(n) > ADMIN.TRY_MAX) throw new HttpError(429, "limit");
     if (Number(failed) >= ADMIN.FAIL_MAX) throw new HttpError(429, "locked");
-    const key = await readKey();
-    if (key.updated > now() + ADMIN.FUTURE_MS) throw new HttpError(503, "key", { why: "future" });
     const want = Buffer.from(key.sha, "hex");
     const got = createHash("sha256").update(pin, "utf8").digest();
     if (!timingSafeEqual(want, got)) {

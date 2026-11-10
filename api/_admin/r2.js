@@ -58,12 +58,22 @@ export function presignGet(config, key, { amzDate, expires }) {
 }
 
 export class R2Error extends Error {
-  constructor(code, status = 0) {
+  constructor(code, status = 0, detail = "") {
     super(code);
     this.code = code;
     this.status = status;
+    this.detail = detail;
   }
 }
+
+// R2 오류 응답의 <Code>(AccessDenied·SignatureDoesNotMatch 등) — 값이 아니라 원인 이름이라 앱에 보여도 됨
+const errorCode = async (response) => {
+  try {
+    return (/<Code>([A-Za-z]{1,40})<\/Code>/.exec(await response.text()) ?? [])[1] ?? "";
+  } catch {
+    return "";
+  }
+};
 
 const unescapeXml = (text) => text.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&amp;/g, "&");
 const tagOf = (xml, name) => {
@@ -89,7 +99,7 @@ export function makeR2(config, { fetchImpl = globalThis.fetch, now = () => Date.
     async get(key, { range = "", max = 0 } = {}) {
       const response = await send({ key, range });
       if (response.status === 404) return null;
-      if (!response.ok) throw new R2Error("http", response.status);
+      if (!response.ok) throw new R2Error("http", response.status, await errorCode(response));
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (max && bytes.length > max) throw new R2Error("size");
       return { bytes, etag: (response.headers.get("etag") ?? "").replace(/"/g, "") };

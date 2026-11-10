@@ -16,7 +16,11 @@ const make = (tag, className, text) => {
 
 export function adminErrorText(error) {
   const code = error?.code;
+  const why = error?.extra?.why ?? "";
   if (code === "http") return t("admin.err.http", { status: error.extra?.status ?? "" });
+  if (code === "wrong" && Number.isFinite(error.extra?.left)) return t("admin.err.wrongLeft", { left: error.extra.left });
+  if (code === "r2") return t("admin.err.r2", { why: why || "?" });
+  if (code === "key" && ["empty", "future", "size"].includes(why)) return t(`admin.err.key.${why}`);
   if (KNOWN.has(code)) return t(`admin.err.${code}`);
   return String(error?.message ?? error);
 }
@@ -119,6 +123,8 @@ export function pinPad({ icon = () => null, onChange = () => {}, onEnter = () =>
  */
 export function createAdminFlow(d) {
   const record = () => readRecord(d.load());
+  // 실패는 창으로 알린다 — exe 상태 줄·웹 알림만으로는 "아무 말 없이 닫힘"으로 보였음
+  const tell = (text) => d.dialog({ title: t("admin.pad.title"), body: [text], kind: "", actions: [{ label: d.labels.ok, value: true, primary: true }] }).done;
 
   function askPin(text) {
     return new Promise((resolve) => {
@@ -161,8 +167,8 @@ export function createAdminFlow(d) {
     const out = await askPin(t("admin.pad.text"));
     if (!out) return false;
     if (out.error) {
-      d.notify(adminErrorText(out.error), "warn");
-      d.log?.("WARN", `관리자 모드 입력 실패 ${out.error.code ?? ""}`);
+      d.log?.("WARN", `관리자 모드 입력 실패 ${out.error.code ?? ""} ${out.error.extra?.why ?? ""}`);
+      await tell(adminErrorText(out.error));
       return false;
     }
     d.save(out.ok);
@@ -179,11 +185,11 @@ export function createAdminFlow(d) {
     d.log?.("INFO", "관리자 모드 해제");
   }
 
-  function turnOff(error) {
+  async function turnOff(error) {
     d.save(null);
     d.changed();
-    d.notify(error.code === "wrong" ? t("admin.err.wrongOff") : adminErrorText(error), "warn");
     d.log?.("WARN", `관리자 모드 다시 입력 실패 → 해제 ${error.code}`);
+    await tell(error.code === "wrong" ? t("admin.err.wrongOff") : adminErrorText(error));
   }
 
   async function fetchList() {
@@ -197,15 +203,15 @@ export function createAdminFlow(d) {
       return { rec, listing: await d.client.list(rec.token) };
     } catch (error) {
       if (error.code !== "again") {
-        d.notify(adminErrorText(error), "warn");
+        await tell(adminErrorText(error));
         return null;
       }
     }
     const out = await askPin(t("admin.pad.again"));
     if (!out) return null;
     if (out.error) {
-      if (OFF_CODES.has(out.error.code)) turnOff(out.error);
-      else d.notify(adminErrorText(out.error), "warn");
+      if (OFF_CODES.has(out.error.code)) await turnOff(out.error);
+      else await tell(adminErrorText(out.error));
       return null;
     }
     rec = out.ok;
@@ -214,7 +220,7 @@ export function createAdminFlow(d) {
     try {
       return { rec, listing: await d.client.list(rec.token) };
     } catch (error) {
-      d.notify(adminErrorText(error), "warn");
+      await tell(adminErrorText(error));
       return null;
     }
   }

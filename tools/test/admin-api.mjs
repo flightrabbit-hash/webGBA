@@ -93,7 +93,19 @@ try {
   r2.put("authentication.key", "{ not json");
   clock += ADMIN.KEY_MISS_MS + 1;
   const bad = await call("POST", "verify", { body: { pin: PIN } });
-  ok("키 파일 형식 틀림 → 503 key", bad.status === 503 && bad.body.error === "key");
+  ok("키 파일 형식 틀림 → 503 key(format)", bad.status === 503 && bad.body.error === "key" && bad.body.why === "format");
+  r2.put("authentication.key", "");
+  clock += ADMIN.KEY_MISS_MS + 1;
+  const empty = await call("POST", "verify", { body: { pin: PIN } });
+  ok("빈 키 파일 → 503 key(empty)", empty.status === 503 && empty.body.why === "empty", JSON.stringify(empty.body));
+  const badSecret = createAdmin({ env: { ...env, R2_PRIVATE_SECRET_ACCESS_KEY: "wrong-secret" }, endpoint: r2.endpoint, now: () => clock });
+  let denied = null;
+  for (let i = 0; i < ADMIN.TRY_MAX + 2; i++) denied = await call("POST", "verify", { body: { pin: PIN }, ip: "198.51.100.77", server: badSecret });
+  ok("서버 R2 키가 틀림 → 503 r2 + 상태 코드·R2 오류 이름", denied.status === 503 && denied.body.error === "r2" && denied.body.why === "403 SignatureDoesNotMatch", JSON.stringify(denied.body));
+  r2.put("authentication.key", keyFile(PIN, "2026-11-10 14:30"));
+  clock += ADMIN.KEY_MISS_MS + 1;
+  const notCounted = await call("POST", "verify", { body: { pin: PIN }, ip: "198.51.100.77" });
+  ok("키를 못 읽은 시도는 입력 횟수에 넣지 않음(7번 뒤에도 통과)", notCounted.status === 200, String(notCounted.status));
 
   r2.put("authentication.key", "﻿" + keyFile(PIN, "2026-11-10 14:30"));
   clock += ADMIN.KEY_MS + 1;
@@ -222,12 +234,17 @@ try {
     var againPuts = r2.log.filter((l) => l.kind === "put").length;
     var mismatch = await adminKey({ config: tool, ask: (() => { let i = 0; return async () => (i++ ? "000000" : "111111"); })() }).then(() => "올림", (e) => e.message);
     var asks = asked;
+    r2.emptyPuts(true);
+    var emptyKey = await adminKey({ config: tool, ask: async () => "1#2!3#" }).then(() => "올림", (e) => e.message);
+    r2.emptyPuts(false);
+    await adminKey({ config: tool, ask: async () => "1#2!3#", now: () => clock - 60000 });
   } finally {
     console.log = quiet;
   }
   const keyText = new TextDecoder().decode(r2.read("authentication.key"));
   ok("admin-key = 두 번 입력 → SHA-256·한국 시각 갱신일자로 업로드(서명 확인)", asks === 2 && /^\{"sha256":"[0-9a-f]{64}","updated":"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"\}\n$/.test(keyText) && !keyText.includes("1#2!3#"));
   ok("admin-key = 두 값이 다르면 올리지 않음", /다릅니다/.test(mismatch));
+  ok("admin-key = 올린 뒤 HEAD 로 크기 확인(0바이트면 오류)", /크기가 다릅니다\(버킷 0 · 보낸 \d+바이트\)/.test(emptyKey), emptyKey);
   clock += ADMIN.KEY_MS + 1;
   const viaTool = await call("POST", "verify", { body: { pin: "1#2!3#" }, ip: "192.0.2.99" });
   ok("도구로 만든 키 = 서버 확인 통과", viaTool.status === 200);

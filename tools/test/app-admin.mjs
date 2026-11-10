@@ -242,10 +242,16 @@ try {
   ok("키 갱신일자가 활성화 이후 → 숫자패드 다시", /다시 입력/.test(again), again);
   await typePad("999999");
   await clickAction("OK");
-  await until(`!document.querySelector("#dialog .apad")`, 15000);
-  await sleep(500);
-  const gone = await ev(`({ hidden: document.getElementById("btn-admin").hidden, rec: ${T}.state.prefs.admin ?? null, status: document.getElementById("status").textContent })`);
-  ok("다시 입력 실패 → 버튼 사라짐 · 저장 지움 · 안내", gone.hidden && gone.rec === null && /해제했습니다/.test(gone.status), JSON.stringify(gone));
+  await until(`!document.getElementById("layer").hidden && !document.querySelector("#dialog .apad") && document.querySelectorAll("#dialog-actions .btn").length === 1`, 15000);
+  await sleep(300);
+  const told = await ev(`document.getElementById("dialog-body").textContent`);
+  const tellShot = path.join(shots, "05_실패안내.png");
+  await cdp.screenshot(tellShot);
+  await ink("실패 안내 창 버튼", "#dialog-actions .btn", tellShot);
+  await clickAction("OK");
+  await until(`document.getElementById("layer").hidden`, 5000);
+  const gone = await ev(`({ hidden: document.getElementById("btn-admin").hidden, rec: ${T}.state.prefs.admin ?? null })`);
+  ok("다시 입력 실패 → 원인 창(OK) · 버튼 사라짐 · 저장 지움", gone.hidden && gone.rec === null && /해제했습니다/.test(told), `${told} · ${JSON.stringify(gone)}`);
   await ev(`window.__TAURI__.core.invoke("window_close")`).catch(() => {});
 } catch (error) {
   ok("시험 진행", false, String(error?.stack ?? error));

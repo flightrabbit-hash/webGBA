@@ -65,6 +65,8 @@ const kv = await startFakeUpstash();
 let skew = 0;
 let delay = 0;
 const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew });
+let broken = null;
+const badApi = createAdmin({ env: { ...r2.env, R2_PRIVATE_SECRET_ACCESS_KEY: "wrong-secret", UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint });
 const kst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
 r2.put("authentication.key", keyFile(PIN, kst(Date.now() - 600000)));
 r2.put("wgba/io.example.alpha/1.0.0.wgba", await game("io.example.alpha", "1.0.0", { en: "Alpha", ko: "알파" }, 1000, true));
@@ -155,6 +157,14 @@ async function openLibrary(page) {
   await page.waitForSelector(".lib__shelfHead", { timeout: 10000 });
   await page.waitForTimeout(400);
 }
+async function tellText(page) {
+  await page.waitForFunction(() => !document.getElementById("dialog").hidden && !document.querySelector("#dialog .apad") && document.querySelectorAll("#dialogActions .btn").length === 1, null, { timeout: 15000 });
+  await page.waitForTimeout(250);
+  const text = await page.textContent("#dialogBody");
+  await page.click('#dialogActions [data-action="admin-0"]');
+  await waitClosed(page);
+  return text;
+}
 async function typePad(page, pin, { keyboard = false } = {}) {
   await page.waitForSelector("#dialog .apad", { timeout: 10000 });
   await page.waitForTimeout(250);
@@ -177,7 +187,7 @@ await context.route("**/api/v1/admin/**", async (route) => {
   const headers = await req.allHeaders();
   calls.push({ op: new URL(req.url()).pathname.split("/").pop(), origin: headers.origin ?? "" });
   if (delay) await new Promise((r) => setTimeout(r, delay));
-  const res = await api.handle(new Request(req.url(), { method: req.method(), headers, body: ["GET", "HEAD"].includes(req.method()) ? undefined : req.postDataBuffer() }));
+  const res = await (broken ?? api).handle(new Request(req.url(), { method: req.method(), headers, body: ["GET", "HEAD"].includes(req.method()) ? undefined : req.postDataBuffer() }));
   await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: Buffer.from(await res.arrayBuffer()) });
 });
 const page = await context.newPage();
@@ -212,9 +222,16 @@ try {
   await typePad(page, "00000");
   ok("지우기 후 6자리 = 확인 켜짐", (await page.$$eval("#dialog .apad__slot.is-on", (n) => n.length)) === 6 && !(await (await okButton(page)).isDisabled()));
   await (await okButton(page)).click();
-  await waitClosed(page);
-  await page.waitForTimeout(300);
-  ok("틀린 6자리 → 창 닫힘 · 안내 · [입력] 그대로", /번호가 맞지 않습니다/.test(await toastText(page)) && (await stored(page)) === null && (await page.textContent('[data-action="cfg-admin"]')).trim() === "입력", await toastText(page));
+  const wrongText = await tellText(page);
+  ok("틀린 6자리 → 숫자패드 닫힘 · 원인 창(남은 횟수) · [입력] 그대로", /6자리가 맞지 않습니다.*남은 입력 횟수 4번/.test(wrongText) && (await stored(page)) === null && (await page.textContent('[data-action="cfg-admin"]')).trim() === "입력", wrongText);
+
+  broken = badApi;
+  await page.click('[data-action="cfg-admin"]');
+  await typePad(page, PIN);
+  await (await okButton(page)).click();
+  const r2Text = await tellText(page);
+  broken = null;
+  ok("서버가 키를 못 읽음 → 원인 창(R2·상태 코드)", /R2/.test(r2Text) && /403 SignatureDoesNotMatch/.test(r2Text) && (await stored(page)) === null, r2Text);
 
   await page.click('[data-action="cfg-admin"]');
   await typePad(page, PIN, { keyboard: true });
@@ -292,9 +309,9 @@ try {
   ok("키 갱신일자가 활성화 이후 → 롬 가져오기 때 숫자패드 다시", /다시 입력/.test(againText), againText);
   await typePad(page, "999999");
   await (await okButton(page)).click();
-  await waitClosed(page);
-  await page.waitForTimeout(500);
-  ok("다시 입력 실패 → 창 닫힘 · 버튼 사라짐 · 저장 지움", !(await page.$('[data-action="admin-import"]')) && (await stored(page)) === null && /해제했습니다/.test(await toastText(page)), await toastText(page));
+  const offText = await tellText(page);
+  await page.waitForTimeout(300);
+  ok("다시 입력 실패 → 원인 창 · 버튼 사라짐 · 저장 지움", !(await page.$('[data-action="admin-import"]')) && (await stored(page)) === null && /해제했습니다/.test(offText), offText);
   await openSettings(page);
   ok("다시 입력 실패 → 설정도 [입력]", (await page.textContent('[data-action="cfg-admin"]')).trim() === "입력");
 
