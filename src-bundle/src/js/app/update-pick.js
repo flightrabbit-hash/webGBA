@@ -2,7 +2,7 @@ import { centerTexts, sizeText } from "./zip-pick.js";
 import { applyDelta, UpdateError } from "../core/wgba-update.js";
 import { t } from "../shell/i18n.js";
 
-const ERROR_CODES = new Set(["feedSignature", "feedBad", "feedHttp", "feedFormat", "download", "downloadHttp", "downloadSize", "downloadHash", "deltaBad", "deltaVersion", "deltaSource", "deltaResult", "cancelled", "changed", "fullMismatch"]);
+const ERROR_CODES = new Set(["feedSignature", "feedBad", "feedHttp", "feedFormat", "download", "downloadHttp", "downloadSize", "downloadHash", "deltaBad", "deltaVersion", "deltaSource", "deltaResult", "cancelled", "changed", "fullMismatch", "appFile"]);
 
 export function updateErrorText(error) {
   if (error instanceof UpdateError && ERROR_CODES.has(error.code)) return t(`update.err.${error.code}`, { status: error.params?.status ?? "" });

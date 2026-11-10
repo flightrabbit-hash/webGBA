@@ -1296,6 +1296,20 @@ html.is-rail-collapsed .sidepanel {
   transform-origin: left center;
 }
 
+.dialog__body .aupd__state {
+  margin: 12px 0 6px;
+  color: var(--text);
+}
+
+.dialog__body .aupd__state--why {
+  color: var(--danger);
+}
+
+.aupd__state[hidden],
+.aupd__bar[hidden] {
+  display: none;
+}
+
 .upick__item[data-state="done"] .upick__meta {
   color: var(--text-dim);
 }

@@ -136,6 +136,7 @@ node tools/run.cjs   # 전체 명령 목록
   멀티플레이 규약 번호가 이 webGBA보다 새로운 게임은 멀티플레이 없이 실행하고, 멀티플레이 버튼·연결 창에 "이 게임의 멀티플레이는 새 webGBA가 필요합니다"를 출력합니다.
 
 - **온라인 업데이트** — 앱을 실행할 때마다 한 번, 인터넷에 연결되어 있으면 라이브러리(Windows 앱은 즐겨찾기·최근·같은 폴더)의 `.wgba`에 새 버전이 있는지 확인합니다. 새 버전이 있을 때만 업데이트 창을 표시하고, "업데이트"를 누르면 차이 패치를 받아 적용합니다(서명·SHA-1 확인, 실패하면 기존 파일 그대로, 세이브 유지). 다른 버전에서 만든 퀵슬롯은 불러오지 않습니다. 제작자용 규격은 [12장](#12-온라인-업데이트-update-규격-1-확장).
+- **webGBA 업데이트(Windows 앱)** — 이 기능이 들어간 버전부터 앱을 실행할 때마다 `.wgba` 확인과 같은 목록(`index.json`)으로 webGBA 자체의 새 버전도 확인합니다(요청 수 그대로). 새 버전이 있으면 업데이트 창을 표시하고, "UPDATE"를 누르면 바뀐 파일만(`webgba.exe` 등) 받아 서명·SHA-256을 확인한 뒤 파일을 교체하고 앱을 다시 시작합니다. 설정(`bin/ini`)·로그·퀵슬롯·WebView 데이터·세이브(게임 옆 `.sav`)는 그대로 유지됩니다. 받기·교체에 실패하면 기존 파일로 되돌립니다. "LATER"를 눌러도 같은 실행 동안 정보 화면에서 업데이트할 수 있습니다. 웹 버전은 늘 최신이라 대상이 아닙니다. 규격은 [12.6](#126-webgba-자체-업데이트-windows-앱).
 
 ---
 
@@ -1421,6 +1422,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 서명 = `signed` 글의 ECDSA P-256·SHA-256(12.2와 같은 키·형식). 목록 크기는 1MiB까지.
 - 대체: 목록이 존재하지 않음(404 등)·`wgbaIndex`가 모르는 번호·서명 불일치·이전보다 이른 시각·게임 누락·해시 불일치이면 해당 게임은 게임별 `latest.json`을 조회합니다. 서버에 닿지 않으면(오프라인) 대체하지 않고 넘어갑니다.
 - 옛 webGBA(0.8.0 이하)는 목록을 조회하지 않으므로 게임별 `latest.json`도 계속 발행합니다. manifest `update`의 다른 주소 버전 파일은 게임별 조회 그대로입니다.
+- 선택 필드 `apps`(봉투)·`signed.apps`(해시) = webGBA 자체 업데이트 항목(12.6). 0.8.1은 조회하지 않습니다.
 
 #### 12.3 차이 패치 `.wgbd`
 
@@ -1463,6 +1465,7 @@ little endian:
 node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem>
 node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]…
 node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> [--patch <패치.wgbd>]… [--old <옛.wgba|폴더>]… [--orig <원작 롬>]… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
 node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
 node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run [--remote]]
@@ -1480,6 +1483,28 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
 - `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 버킷 확인은 목록 조회 1번(ListObjectsV2, 1,000개당 1번 = Class A)이고, 목록이 실패할 때만 파일마다 HEAD(Class B)로 확인합니다. `--dry-run`은 버킷에 연결하지 않고, `--dry-run --remote`는 목록 1번으로 버킷과 비교만 합니다(쓰기 없음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 - `r2-stats`: Cloudflare 분석 API(GraphQL `r2OperationsAdaptiveGroups`)로 R2 요청 수를 한국 날짜별·객체·동작·응답 코드별로 출력합니다(버킷 요청 0번, 기본 7일·최대 31일). 객체 이름으로 출처를 추정합니다 — `index.json` = webGBA 0.8.1 이상, `<게임 id>/latest.json` = 0.8.0 이하(또는 목록 실패 시 대체), `patches/`·`full/` = 업데이트 받기, HeadObject = 이전 `upload`·대시보드, 404·그 외 객체 = 외부 요청 의심. 환경 변수 `CF_API_TOKEN`(Account Analytics 읽기 권한 API 토큰)·`R2_ACCOUNT_ID`·`R2_BUCKET`(없으면 계정 전체), 값은 출력하지 않습니다.
+- `app`: webGBA exe 자체 업데이트 발행(12.6). `index`·`verify`·`upload`는 묶음의 앱 폴더도 함께 다룹니다.
+
+#### 12.6 webGBA 자체 업데이트 (Windows 앱)
+
+webGBA 운영자용입니다(게임 제작자는 쓰지 않음). 대상 = 이 기능이 들어간 webGBA Windows 앱부터. 웹 버전은 대상이 아닙니다.
+
+- 확인: `.wgba` 확인과 같은 때, 같은 목록 `index.json`의 `apps`(봉투)·`signed.apps`(봉투 `signed` 글 SHA-256). 앱 실행 1회 요청은 그대로 1번입니다. 목록이 404·서명·시각·해시 실패일 때만 `com.flightrabbit.webgba/latest.json`을 조회하고, 목록에 앱 항목이 없으면 추가로 조회하지 않습니다.
+- 봉투 `{ "wgbaApp": 1, "signed": "<서명한 JSON 글>", "signature": "<base64, 64바이트>" }` — 서명 = 12.2와 같은 키·형식.
+
+| `signed` 필드 | 설명 |
+| --- | --- |
+| `id` | `com.flightrabbit.webgba` |
+| `version` | 새 버전 `x.y.z`. 지금 앱 버전보다 높을 때만 표시 |
+| `time` | 선택. 생성 시각(ISO 8601) |
+| `platform` | `windows-x64` |
+| `files` | 배열(16개까지). `{ "path", "size", "sha256", "get": { "url", "size", "sha256" } }` — `path` = exe 폴더 기준 상대 경로(영문·숫자·`._-` 조각, `bin/` 아래·상위 폴더·`.old`로 끝나는 이름 금지), `webgba.exe`(실행 중인 exe — 이름을 바꿨어도) 필수. `get` = zlib(RFC 1950)으로 압축한 파일(12.2와 같은 상대 주소 규칙) |
+| `notes` | 선택. 언어별 글(예약) |
+
+- 받기: 로컬 파일 SHA-256과 다른 파일만 → 받은 파일 크기·SHA-256 → 푼 파일 크기·SHA-256. `bin/core`의 코어는 exe 안에 들어 있어 새 exe가 시작할 때 교체합니다(사람이 바꿔 넣은 코어는 그대로).
+- 교체: exe 폴더의 `.webgba-update\`에 받은 파일 → 새 exe를 `--webgba-version`으로 실행해 출력 `webGBA <버전>`이 `version`과 같은지 확인 → 파일마다 현재 파일을 `<이름>.old`로, 받은 파일을 원래 이름으로(하나라도 실패하면 모두 되돌림) → 새 exe 실행(실패하면 되돌림) → 기존 앱 정상 종료. 새 exe는 기존 프로세스가 끝나기를 기다린 뒤 시작하고, 화면이 뜬 뒤 `.old`·`.webgba-update\`를 삭제합니다.
+- 유지: `bin/`(설정·로그·퀵슬롯·WebView 데이터)·게임 옆 `.sav`는 교체 대상이 아닙니다. exe 폴더에 기록할 수 없으면 업데이트하지 못합니다(안내만).
+- 발행: `wgba.mjs app` — exe를 `--webgba-version`으로 실행해 버전을 조회(이 기능이 없는 exe 거부), 시험 식별자로 빌드한 exe 거부(`--test-id`로만 허용), `--file`이 없으면 저장소 `LICENSE`·`THIRD_PARTY_NOTICES` 포함, 파일마다 `files/<압축 SHA-256>.z`, 이전 발행보다 낮은 버전·같은 버전인데 파일이 다른 경우 거부, 묶음에 `index.json`이 있으면 목록 재생성(`--no-index`로 끔). 올리기 순서 = 압축 파일 → `latest.json` → `index.json`.
 
 ---
 

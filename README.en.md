@@ -137,6 +137,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   A game whose multiplayer protocol is newer than this webGBA runs without multiplayer, and the multiplayer button and connection window show "This game's multiplayer needs a newer webGBA".
 
 - **Online updates** — once each time the app starts, when online, webGBA checks whether the `.wgba` files in the library (in the Windows app: favorites, recent files and the current folder) have a new version. The update window appears only when one exists; pressing "Update" downloads and applies a delta patch (signature and SHA-1 checked, the current file kept on failure, saves kept). Quick slots made in another version are not loaded. Spec for authors: [chapter 12](#12-online-updates-update-spec-1-extension).
+- **webGBA updates (Windows app)** — from the version that includes this feature, each app start also checks for a new webGBA version through the same index (`index.json`) as the `.wgba` check (no extra request). When one exists an update window appears; pressing "UPDATE" downloads only the changed files (such as `webgba.exe`), checks the signature and SHA-256, replaces the files and restarts the app. Settings (`bin/ini`), logs, quick slots, WebView data and saves (the `.sav` next to each game) are kept. If downloading or replacing fails, the original files are restored. After "LATER", the update is still available from the About screen for the rest of that run. The web version is always current and is not covered. Spec: [12.6](#126-webgba-self-update-windows-app).
 
 ---
 
@@ -1424,6 +1425,7 @@ For games in the known game id table, each app start reads one **index** at the 
 - Signature = ECDSA P-256/SHA-256 over the `signed` text (same key and format as 12.2). The index is at most 1 MiB.
 - Fallback: when the index is missing (404 etc.), has an unknown `wgbaIndex`, a bad signature, an older time, lacks the game or has a wrong hash, that game reads its own `latest.json`. When the server cannot be reached (offline) there is no fallback.
 - webGBA 0.8.0 and earlier do not read the index, so the per-game `latest.json` keeps being published. Version files at other addresses from manifest `update` are read per game as before.
+- Optional fields `apps` (envelopes) and `signed.apps` (hashes) = the webGBA self-update entry (12.6). 0.8.1 does not read them.
 
 #### 12.3 Delta patch `.wgbd`
 
@@ -1466,6 +1468,7 @@ Little endian:
 node tools/wgba.mjs keygen -o <private key outside the repository.pem>
 node tools/wgba.mjs diff <old.wgba> <new.wgba> -o <patch.wgbd> [--orig <original ROM>]…
 node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> [--patch <patch.wgbd>]… [--old <old.wgba|folder>]… [--orig <original ROM>]… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs app --dir <publish root>/com.flightrabbit.webgba --key <private key.pem> --exe <webgba.exe> [--file <LICENSE etc.>]… [--notes <text.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <publish root> --key <private key.pem>
 node tools/wgba.mjs verify <publish folder|root> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
 node tools/wgba.mjs upload <publish folder|root> [--dry-run [--remote]]
@@ -1483,6 +1486,28 @@ node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO t
 - `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1. For a root it also checks the index signature and that each index entry equals the game's `latest.json` (old files are matched to games by id); for a game folder, the entry for that game in the parent's index.
 - `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (objects already in the bucket with the same content — size and ETag MD5 — are skipped, so unchanged `latest.json` files are not rewritten). The bucket is checked with one object listing (ListObjectsV2, one request per 1,000 objects = Class A); only when the listing fails does it check each file with HEAD (Class B). `--dry-run` does not connect to the bucket; `--dry-run --remote` only compares with the bucket through one listing (no writes). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
 - `r2-stats`: prints R2 request counts from the Cloudflare analytics API (GraphQL `r2OperationsAdaptiveGroups`) per Korean date and per object, action and response code (no bucket requests, 7 days by default, 31 at most). The source is guessed from the object name — `index.json` = webGBA 0.8.1 or later, `<game id>/latest.json` = 0.8.0 or earlier (or the fallback when the index fails), `patches/`·`full/` = update downloads, HeadObject = the earlier `upload` or the dashboard, 404 and other objects = likely outside requests. Environment variables `CF_API_TOKEN` (an API token with Account Analytics read), `R2_ACCOUNT_ID` and `R2_BUCKET` (whole account when absent); values are never printed.
+- `app`: publishes a webGBA self-update for the Windows app (12.6). `index`, `verify` and `upload` also handle the app folder in the root.
+
+#### 12.6 webGBA self-update (Windows app)
+
+For the webGBA operator (game authors don't use this). Applies to webGBA Windows app versions that include this feature and later. The web version is not covered.
+
+- Check: at the same time and from the same `index.json` as the `.wgba` check — `apps` (envelopes) and `signed.apps` (SHA-256 of each envelope's `signed` text). One app start is still one request. Only when the index fails (404, signature, time or hash) does it read `com.flightrabbit.webgba/latest.json`; an index without an app entry causes no extra request.
+- Envelope `{ "wgbaApp": 1, "signed": "<signed JSON text>", "signature": "<base64, 64 bytes>" }` — signature = same key and format as 12.2.
+
+| `signed` field | Description |
+| --- | --- |
+| `id` | `com.flightrabbit.webgba` |
+| `version` | New version `x.y.z`. Shown only when it is higher than the running app |
+| `time` | Optional. Creation time (ISO 8601) |
+| `platform` | `windows-x64` |
+| `files` | Array (up to 16). `{ "path", "size", "sha256", "get": { "url", "size", "sha256" } }` — `path` = relative to the exe folder (segments of letters, digits and `._-`; nothing under `bin/`, no parent folders, no names ending in `.old`); `webgba.exe` (the running exe, even if renamed) is required. `get` = the file compressed with zlib (RFC 1950), same relative address rule as 12.2 |
+| `notes` | Optional. Text per language (reserved) |
+
+- Download: only files whose local SHA-256 differs → size and SHA-256 of the download → size and SHA-256 of the inflated file. The core in `bin/core` is embedded in the exe and replaced when the new exe starts (a core replaced by hand is kept).
+- Replace: downloads go to `.webgba-update\` in the exe folder → the new exe runs with `--webgba-version` and must print `webGBA <version>` equal to `version` → for each file the current file is renamed to `<name>.old` and the download takes the original name (any failure rolls everything back) → the new exe starts (a failure rolls back) → the current app exits normally. The new exe waits for the old process to end, and deletes the `.old` files and `.webgba-update\` once its screen is up.
+- Kept: `bin/` (settings, logs, quick slots, WebView data) and the `.sav` next to each game are never replaced. When the exe folder is not writable, the update fails with a message.
+- Publish: `wgba.mjs app` — reads the version by running the exe with `--webgba-version` (an exe without this feature is refused), refuses exes built with a test identifier (allowed only with `--test-id`), adds the repository `LICENSE` and `THIRD_PARTY_NOTICES` when no `--file` is given, writes `files/<compressed SHA-256>.z` per file, refuses a version lower than the previous publish or the same version with different files, and rebuilds the index when the root has `index.json` (`--no-index` turns this off). Upload order = compressed files → `latest.json` → `index.json`.
 
 ---
 
