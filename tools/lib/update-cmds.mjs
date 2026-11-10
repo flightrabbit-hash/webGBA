@@ -1,4 +1,5 @@
-// 온라인 업데이트 배포 명령(wgba.mjs keygen · diff · feed · index · verify · upload). 규격 = README 12장.
+// 온라인 업데이트 배포 명령(wgba.mjs keygen · diff · feed · app · index · verify · upload). 규격 = README 12장.
+// app(webGBA exe 자체 업데이트 발행)은 app-cmds.mjs. index · verify · upload 는 묶음의 앱 폴더(com.flightrabbit.webgba)도 함께 다룬다.
 //
 //   keygen -o <비밀 키.pem> [--force]       ECDSA P-256 열쇠 만들기. 비밀 키는 저장소 밖에만(git 저장소 안이면 거절), 화면에는 공개 키만.
 //   diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]… [--no-expand]
@@ -24,6 +25,8 @@ import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
 import { r2Config, r2Head, r2List, r2Put } from "./r2.mjs";
 import { r2Stats } from "./r2-stats.mjs";
+import { appDirs, appIndexPart, appPlan, appPublish, isAppDir, verifyAppDir, APP_BASE } from "./app-cmds.mjs";
+import { indexedApp } from "../../src-bundle/src/js/core/app-update.js";
 import { applyDelta, FEED_FORMAT, fromBase64, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { compareVersions, ID_RE, VERSION_RE } from "../../src-bundle/src/js/core/wgba-format.js";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
@@ -35,7 +38,7 @@ const readBytes = (file) => new Uint8Array(fs.readFileSync(file));
 const IMMUTABLE = "public, max-age=31536000, immutable";
 const FEED_CACHE = "no-cache";
 
-function writeAtomic(file, bytes) {
+export function writeAtomic(file, bytes) {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, bytes);
@@ -55,7 +58,7 @@ export function publicOf(keyObject) {
   return raw.toString("base64");
 }
 
-function loadSecret(file) {
+export function loadSecret(file) {
   const key = crypto.createPrivateKey(fs.readFileSync(file));
   if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") throw new Error("비밀 키가 ECDSA P-256 이 아닙니다");
   return key;
@@ -280,7 +283,7 @@ function readIndexFile(root) {
 function gameDirs(root) {
   return fs
     .readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && ID_RE.test(entry.name) && fs.existsSync(path.join(root, entry.name, "latest.json")))
+    .filter((entry) => entry.isDirectory() && ID_RE.test(entry.name) && fs.existsSync(path.join(root, entry.name, "latest.json")) && !isAppDir(path.join(root, entry.name)))
     .map((entry) => entry.name)
     .sort();
 }
@@ -311,21 +314,25 @@ export async function buildIndex(root, secret, { time = null } = {}) {
     hashes[id] = sha256(Buffer.from(envelope.signed, "utf8"));
   }
   const ids = Object.keys(feeds);
-  if (!ids.length) throw new Error(`${root} 에 이 키로 서명한 <게임 id>/latest.json 이 없습니다`);
+  // webGBA exe 자체 업데이트(README 12.6): 같은 목록에 apps 로 — 옛 webGBA 는 feeds·time 만 조회
+  const app = await appIndexPart(root, pub);
+  const appIds = Object.keys(app.apps);
+  if (!ids.length && !appIds.length) throw new Error(`${root} 에 이 키로 서명한 <게임 id>/latest.json 이 없습니다`);
   let at = time ?? nowIso();
   if (!time && fs.existsSync(path.join(root, "index.json"))) {
     // 앱은 전에 본 목록보다 이른 시각의 목록을 거부하므로, PC 시계가 늦어도 시각이 뒤로 가지 않게
     const before = readIndexFile(root).signed.time;
     if (Date.parse(before) > Date.parse(at)) at = before;
   }
-  const text = JSON.stringify({ time: at, feeds: hashes });
-  const envelope = { wgbaIndex: INDEX_FORMAT, signed: text, signature: signText(text, secret), feeds };
+  const text = JSON.stringify({ time: at, feeds: hashes, ...(appIds.length ? { apps: app.hashes } : {}) });
+  const envelope = { wgbaIndex: INDEX_FORMAT, signed: text, signature: signText(text, secret), feeds, ...(appIds.length ? { apps: app.apps } : {}) };
   const body = `${JSON.stringify(envelope, null, 1)}\n`;
   if (Buffer.byteLength(body) > INDEX_MAX) throw new Error(`index.json 이 ${n(Buffer.byteLength(body))}바이트로 앱 한도 ${n(INDEX_MAX)}바이트를 넘습니다`);
   const list = await verifyIndex(body, pub);
   for (const id of ids) await indexedFeed(list, id, { key: pub, feed: `https://feed.invalid/${id}/latest.json` });
+  if (appIds.length && !(await indexedApp(list, { key: pub, feed: APP_BASE }))) throw new Error("목록의 webGBA 항목을 확인하지 못했습니다");
   writeAtomic(path.join(root, "index.json"), Buffer.from(body, "utf8"));
-  console.log(`index.json 게임 ${ids.length}개 · ${n(Buffer.byteLength(body))}바이트 · 시각 ${at} · 서명 확인 통과(${ids.join(", ")})`);
+  console.log(`index.json 게임 ${ids.length}개${appIds.length ? ` + 앱 ${appIds.join(", ")}` : ""} · ${n(Buffer.byteLength(body))}바이트 · 시각 ${at} · 서명 확인 통과(${ids.join(", ")})`);
   return 0;
 }
 
@@ -389,8 +396,23 @@ async function verifyIndexFile(root, publicKey, only = null) {
     return { errors: 1, ids: [] };
   }
   const ids = Object.keys(signed.feeds ?? {}).sort();
-  console.log(`목록 서명 통과 index.json · 게임 ${ids.length}개 · 시각 ${signed.time}`);
-  for (const id of only ?? ids) {
+  const appIds = Object.keys(signed.apps ?? {}).sort();
+  console.log(`목록 서명 통과 index.json · 게임 ${ids.length}개${appIds.length ? ` · 앱 ${appIds.join(", ")}` : ""} · 시각 ${signed.time}`);
+  for (const id of appIds.filter((id) => !only || only.includes(id))) {
+    const file = path.join(root, id, "latest.json");
+    try {
+      if (!(await indexedApp(list, { key: publicKey, feed: APP_BASE }))) throw new Error("항목 없음");
+    } catch (error) {
+      console.log(`오류  목록의 ${id}: ${error.code ?? ""} ${error.message}`);
+      errors++;
+      continue;
+    }
+    if (!fs.existsSync(file) || JSON.parse(fs.readFileSync(file, "utf8")).signed !== list.apps[id].signed) {
+      console.log(`오류  목록의 ${id} 가 ${id}/latest.json 과 다름(또는 없음) — wgba.mjs index 로 목록을 다시 만듭니다`);
+      errors++;
+    }
+  }
+  for (const id of (only ?? ids).filter((id) => !appIds.includes(id))) {
     const file = path.join(root, id, "latest.json");
     try {
       await indexedFeed(list, id, { key: publicKey, feed: `https://feed.invalid/${id}/latest.json` });
@@ -407,7 +429,7 @@ async function verifyIndexFile(root, publicKey, only = null) {
       errors++;
     }
   }
-  return { errors, ids };
+  return { errors, ids, appIds };
 }
 
 export async function verify(dir, { pub = null, key = null, olds = [] }) {
@@ -432,6 +454,19 @@ export async function verify(dir, { pub = null, key = null, olds = [] }) {
       byId.delete(id);
     }
     for (const [id, files] of byId) console.log(`알림  ${files.map((f) => path.basename(f)).join(", ")}: 묶음에 없는 게임(${id || "설명서 없음"})`);
+    for (const id of appDirs(dir)) {
+      if (!head.appIds.includes(id)) {
+        console.log(`오류  ${id}/latest.json 이 목록에 없음 — wgba.mjs index 로 목록을 다시 만듭니다`);
+        errors++;
+      }
+      console.log(`── ${id}`);
+      errors += (await verifyAppDir(path.join(dir, id), publicKey)).errors;
+    }
+  } else if (isAppDir(dir)) {
+    const app = await verifyAppDir(dir, publicKey);
+    errors += app.errors;
+    const root = path.dirname(path.resolve(dir));
+    if (fs.existsSync(path.join(root, "index.json"))) errors += (await verifyIndexFile(root, publicKey, [app.id])).errors;
   } else {
     const game = await verifyGame(dir, publicKey, olds);
     errors += game.errors;
@@ -473,9 +508,13 @@ export async function upload(dir, { dryRun = false, remote = false, config = nul
     const ids = Object.keys(signed.feeds ?? {}).sort();
     games = ids.map((id) => gamePlan(path.join(root, id), id));
     for (const game of games) if (envelope.feeds?.[game.id]?.signed !== game.signedText) throw new Error(`index.json 의 ${game.id} 가 ${game.id}/latest.json 과 다릅니다 — wgba.mjs index 로 다시 만든 뒤 올립니다`);
-    const missing = gameDirs(root).filter((id) => !ids.includes(id));
+    const appIds = Object.keys(signed.apps ?? {}).sort();
+    const apps = appIds.map((id) => appPlan(path.join(root, id), id));
+    for (const app of apps) if (envelope.apps?.[app.id]?.signed !== app.signedText) throw new Error(`index.json 의 ${app.id} 가 ${app.id}/latest.json 과 다릅니다 — wgba.mjs index 로 다시 만든 뒤 올립니다`);
+    games.push(...apps);
+    const missing = [...gameDirs(root).filter((id) => !ids.includes(id)), ...appDirs(root).filter((id) => !appIds.includes(id))];
     if (missing.length) throw new Error(`목록에 없는 게임 폴더가 있습니다: ${missing.join(", ")} — wgba.mjs index 로 다시 만든 뒤 올립니다`);
-  } else games = [gamePlan(dir, null)];
+  } else games = [isAppDir(dir) ? appPlan(dir, null) : gamePlan(dir, null)];
   const plan = games.flatMap((game) => game.items);
   if (withIndex) {
     const file = path.join(root, "index.json");
@@ -555,6 +594,11 @@ export async function updateCommand(cmd, rest) {
     const o = parseList(rest, ["--dir", "--key", "--wgba", "--full", "--notes", "--prev", "--time"], ["--patch", "--old", "--orig"]);
     if (!o["--dir"] || !o["--key"] || !o["--wgba"] || o.positional.length) return -1;
     return feed({ dir: o["--dir"], key: o["--key"], wgba: o["--wgba"], patches: o["--patch"], olds: o["--old"], origs: o["--orig"], full: o["--full"] ?? null, notes: o["--notes"] ?? null, prev: o["--prev"] ?? null, time: o["--time"] ?? null, index: !o["--no-index"] });
+  }
+  if (cmd === "app") {
+    const o = parseList(rest, ["--dir", "--key", "--exe", "--notes", "--time"], ["--file"]);
+    if (!o["--dir"] || !o["--key"] || !o["--exe"] || o.positional.length) return -1;
+    return appPublish({ dir: o["--dir"], key: o["--key"], exe: o["--exe"], files: o["--file"], notes: o["--notes"] ?? null, index: !o["--no-index"], dryRun: Boolean(o["--dry-run"]), testId: Boolean(o["--test-id"]), time: o["--time"] ?? null });
   }
   if (cmd === "index") {
     const o = parseList(rest, ["--root", "--key", "--time"]);

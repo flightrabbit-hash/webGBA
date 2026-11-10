@@ -15,6 +15,7 @@
 //!
 //! 게임 실행(코어·키·소리·프레임)은 모두 웹뷰가 한다. Rust 는 파일과 창만 맡는다.
 
+mod app_update;
 mod assoc;
 mod bridge;
 mod config;
@@ -137,6 +138,9 @@ fn window_events<R: Runtime>() -> impl Fn(&tauri::Window<R>, &WindowEvent) + Sen
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if app_update::early() {
+        return;
+    }
     tauri::Builder::default()
         // 두 번째 실행은 기존 창만 보이고, 넘겨받은 파일을 연다. 반드시 첫 번째로 등록한다.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -189,6 +193,9 @@ pub fn run() {
             bridge::commands::assoc_set,
             bridge::commands::web_inspect,
             bridge::commands::web_set_rom,
+            bridge::commands::app_update_stage,
+            bridge::commands::app_update_install,
+            bridge::commands::app_update_finish,
             bridge::commands::log_write,
             bridge::commands::log_lines,
         ])
@@ -196,6 +203,11 @@ pub fn run() {
             let handle = app.handle().clone();
             ui::ensure_layout(&handle);
             logging::write("INFO", &format!("[앱] webGBA {} 시작 · 앱 폴더 {} · 프로세스 {}", env!("CARGO_PKG_VERSION"), ui::bin_root().display(), std::process::id()));
+            // 업데이트 뒤 실행은 화면이 다 뜬 뒤 정리(app_update_finish), 보통 실행은 남은 단계 폴더·.old 를 지금.
+            match app_update::updated_from() {
+                Some(from) => logging::write("INFO", &format!("[앱] 업데이트 뒤 실행 {from} → {}", env!("CARGO_PKG_VERSION"))),
+                None => app_update::cleanup(),
+            }
             // 오류·대화상자 형식 이름·.wgba 형식 이름을 지난번 언어로(연결보다 먼저).
             i18n::set(config::prefs().get("lang").and_then(|v| v.as_str()).unwrap_or("ko"));
             // .wgba 를 이 exe 로 연결(해제를 고르지 않았으면). 폴더를 옮겨도 켤 때 고쳐 쓴다.

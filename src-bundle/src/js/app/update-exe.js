@@ -11,7 +11,7 @@ export function createExeUpdater(d) {
   const { t } = d;
   const items = new Map();
   const urls = [];
-  const feeds = new Map();
+  const feeds = d.cache ?? new Map();
   let checked = false;
   let shown = null;
   const keyOf = (path) => path.replace(/\//g, "\\").toLowerCase();

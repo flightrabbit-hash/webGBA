@@ -7,6 +7,7 @@ import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { centerTexts, openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
 import { createExeUpdater } from "../app/update-exe.js";
+import { createAppUpdater } from "../app/update-app.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, romType, systemKind } from "../core/rom-kind.js";
 import { resolveInput, sha256Hex } from "../core/wgba-format.js";
@@ -1671,7 +1672,7 @@ async function showInfo() {
   const pre = document.createElement("pre");
   pre.className = "license";
   pre.textContent = license || "MPL-2.0 — https://mozilla.org/MPL/2.0/";
-  const lead = Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: `webGBA V${state.info?.version ?? ""}` });
+  const lead = Object.assign(document.createElement("p"), { className: "dialog__lead", textContent: `webGBA V${state.info?.version ?? ""}${appUpdater.pending ? ` · ${t("appUpdate.infoNew", { version: appUpdater.pending.to })}` : ""}` });
   const blog = Object.assign(document.createElement("p"), { className: "dialog__link" });
   const blogLink = Object.assign(document.createElement("a"), { href: BLOG_URL, textContent: BLOG_URL });
   blogLink.addEventListener("click", (event) => {
@@ -1704,7 +1705,7 @@ async function showInfo() {
       t("info.others"),
       pre,
     ],
-    actions: [{ label: "CLOSE", go: true, value: null }],
+    actions: [...(appUpdater.pending ? [{ label: "UPDATE", run: () => appUpdater.open() }] : []), { label: "CLOSE", go: true, value: null }],
   });
 }
 
@@ -2464,10 +2465,27 @@ async function rememberSlot(index) {
   await savePrefs({ slotVersions: all });
 }
 
+const updateCache = new Map();
+
+const appUpdater = createAppUpdater({
+  t,
+  core,
+  el,
+  log: (level, text) => core.log(level, text),
+  info: () => state.info,
+  testMode: () => Boolean(state.info?.settings?.useDevelopKit),
+  cache: updateCache,
+  openDialog,
+  gameOpen: () => Boolean(state.game),
+  closeGame: () => closeGame({ why: "webGBA 업데이트" }),
+  shutdown: () => shutdown(),
+});
+
 const updater = createExeUpdater({
   t,
   core,
   el,
+  cache: updateCache,
   log: (level, text) => core.log(level, text),
   status,
   lang: () => i18n.lang(),
@@ -2495,16 +2513,22 @@ function openUpdate(path) {
 
 const updatePaths = () => [...favorites(), ...(state.prefs.recent ?? []), ...state.entries];
 
+async function checkUpdates() {
+  if (await appUpdater.check()) await appUpdater.open();
+  await updater.check(updatePaths());
+}
+
 /* ── 시작 ── */
 
 async function boot() {
   state.info = await core.runtimeInfo();
   state.prefs = (await core.prefsGet()) ?? {};
   updater.prepare();
+  appUpdater.prepare();
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, updater, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, updater, appUpdater, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);
@@ -2523,8 +2547,13 @@ async function boot() {
   renderPanel();
   await refreshLink();
   status(t("status.ready"));
+  if (state.info.updatedFrom) {
+    status(t("appUpdate.done", { version: state.info.version }));
+    journal.info("앱", `webGBA 업데이트 뒤 첫 실행 · ${state.info.updatedFrom} → ${state.info.version}`);
+    core.appUpdateFinish().catch((error) => core.log("WARN", `지난 업데이트 파일 정리 실패: ${reason(error)}`));
+  }
   if (state.info.launchFile) await openPath(state.info.launchFile);
-  updater.check(updatePaths()).catch((error) => core.log("WARN", `업데이트 확인 실패: ${reason(error)}`));
+  checkUpdates().catch((error) => core.log("WARN", `업데이트 확인 실패: ${reason(error)}`));
 }
 
 boot().catch((error) => {

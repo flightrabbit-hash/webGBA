@@ -117,6 +117,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   A game whose manifest has `input.dpad` uses that value as its default; a change made while that game runs is remembered per game.
 - **Auto fire** — Settings › General › Game (web: Settings). When on, holding A · B · C · D · L · R (roles `a`, `b`, `c`, `d`, `l`, `r`) presses it repeatedly (not the directions, START or SELECT).
   Speed levels 1–9 = 1 · 2 · 3 · 4 · 6 · 8 · 12 · 20 · 30 presses per second (default level 5 = 6 per second, level 1 = 30 frames pressed and 30 frames released, level 9 = press and release every 2 frames). It counts game frames, so the pattern is the same while fast-forwarding, and the same setting applies to the keyboard, gamepads and on-screen buttons (one app-wide setting). Off by default.
+  On screens where the game turns auto fire off (menus, battles and so on, ① `Web_AutoFireOff()`), held buttons are passed as held.
 - **RS button (sequence input)** — enters a key sequence you set up (for example A → A → ↓ → A+B) in one press. For each step you choose the keys pressed together (A · B · C · D · L · R · START · SELECT · directions; a diagonal is two directions together), how long they are held and the wait before the next step, in frames (1/60 s, shown with ms; default hold 3 and wait 3 frames, up to 32 steps).
   Each game keeps 5 presets (rename up to 12 characters, delete), and the preset in use is played. Pick it in Settings from the X · 1–5 row (an empty number makes a new preset); X (Off) hides the RS button and the RS key does nothing (a game whose manifest has `input.rs` starts with preset 1, otherwise Off). Presets change only in Settings.
   Playback rules: one press plays the sequence once from the start · holding RS keeps the last step's keys pressed (release to end) · pressing any other key (keyboard, gamepad, on-screen button) during playback stops RS input from that frame and sends that key · pressing RS again during playback restarts it · auto fire is not applied to RS input · nothing plays while paused.
@@ -136,6 +137,7 @@ The web version (`web/dist`) and the matchmaking server (`api/v1/mp/[op].js`, on
   A game whose multiplayer protocol is newer than this webGBA runs without multiplayer, and the multiplayer button and connection window show "This game's multiplayer needs a newer webGBA".
 
 - **Online updates** — once each time the app starts, when online, webGBA checks whether the `.wgba` files in the library (in the Windows app: favorites, recent files and the current folder) have a new version. The update window appears only when one exists; pressing "Update" downloads and applies a delta patch (signature and SHA-1 checked, the current file kept on failure, saves kept). Quick slots made in another version are not loaded. Spec for authors: [chapter 12](#12-online-updates-update-spec-1-extension).
+- **webGBA updates (Windows app)** — from the version that includes this feature, each app start also checks for a new webGBA version through the same index (`index.json`) as the `.wgba` check (no extra request). When one exists an update window appears; pressing "UPDATE" downloads only the changed files (such as `webgba.exe`), checks the signature and SHA-256, replaces the files and restarts the app. Settings (`bin/ini`), logs, quick slots, WebView data and saves (the `.sav` next to each game) are kept. If downloading or replacing fails, the original files are restored. After "LATER", the update is still available from the About screen for the rest of that run. The web version is always current and is not covered. Spec: [12.6](#126-webgba-self-update-windows-app).
 
 ---
 
@@ -489,6 +491,7 @@ A game of this kind therefore cannot touch any other host feature (files, storag
 | `Web_Reset()` | | Restart. Without it the host creates a new instance |
 | `Web_StateSize()` · `Web_StateSave(at)` · `Web_StateLoad(at)` · `Web_Alloc(n)` · `Web_Free(at)` · `Web_StateUsed()` | | Quick slots (save states). Enabled only when the first five all exist. With `Web_StateUsed`, only the used length is kept (zero-filled on load) |
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | Mouse: game pixel coordinates (-1 when outside), `MouseEvent.buttons`, wheel steps / 1 when the game wants the mouse now |
+| `Web_AutoFireOff()` → i32 | | 1 = no auto fire now: the host passes held buttons as held (screens where auto fire gets in the way, such as menus and battles). Read before each `Web_RunFrame` while auto fire is on and an auto fire button is held. Without it, auto fire always applies ([5.2](#52-role-defaults)) |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | Address of the stop reason text (NUL terminated) / title / local time offset (seconds east of UTC) |
 | `Web_Net*` | | Multiplayer — [chapter 7](#7-multiplayer) (7.3; status board `Web_NetBoard` 7.9.2) |
 | `Web_GpuStart(version)` → i32 · `Web_GpuList()` → ptr · `Web_GpuListLen()` → u32 · `Web_GpuListDone()` · `Web_GpuSync(reason)` · `Web_GpuStop()` · `Web_GpuOverlay()` → i32 | | GPU drawing (WebGL2) — [4.1.4](#414-gpu-drawing-optional). Used only when the first four all exist |
@@ -641,6 +644,7 @@ One button:
 - Roles that match a GBA button (`a` `b` `select` `start`, directions, `l` `r`) follow the GBA keys the user set in the app (the table shows the initial values).
 - A key goes to one button only (whichever was assigned first). In the Windows app, Settings › Keys shows just that game's buttons and remembers changes per game id.
 - When the user turns on **auto fire**, the host passes buttons with role `a`, `b`, `c`, `d`, `l` or `r` as repeated presses and releases while they are held (1–30 per second; ① = per `Web_RunFrame(keys)` frame, ② = key events per display frame of the frame runtime). Give buttons that should not repeat `role: "extra"`.
+- A ① game can stop auto fire on screens where it gets in the way (menus, battles, name entry and so on) by returning 1 from `Web_AutoFireOff()`; held buttons are then passed as held. When it returns 0 again, a held button starts auto fire from that frame as if newly pressed (its first frame is pressed, so there is no gap).
 
 #### 5.3 GBA default layout `preset: "gba"`
 
@@ -1421,6 +1425,7 @@ For games in the known game id table, each app start reads one **index** at the 
 - Signature = ECDSA P-256/SHA-256 over the `signed` text (same key and format as 12.2). The index is at most 1 MiB.
 - Fallback: when the index is missing (404 etc.), has an unknown `wgbaIndex`, a bad signature, an older time, lacks the game or has a wrong hash, that game reads its own `latest.json`. When the server cannot be reached (offline) there is no fallback.
 - webGBA 0.8.0 and earlier do not read the index, so the per-game `latest.json` keeps being published. Version files at other addresses from manifest `update` are read per game as before.
+- Optional fields `apps` (envelopes) and `signed.apps` (hashes) = the webGBA self-update entry (12.6). 0.8.1 does not read them.
 
 #### 12.3 Delta patch `.wgbd`
 
@@ -1463,6 +1468,7 @@ Little endian:
 node tools/wgba.mjs keygen -o <private key outside the repository.pem>
 node tools/wgba.mjs diff <old.wgba> <new.wgba> -o <patch.wgbd> [--orig <original ROM>]…
 node tools/wgba.mjs feed --dir <publish folder> --key <private key.pem> --wgba <new.wgba> [--patch <patch.wgbd>]… [--old <old.wgba|folder>]… [--orig <original ROM>]… [--full <new.wgbp>] [--notes <text.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs app --dir <publish root>/com.flightrabbit.webgba --key <private key.pem> --exe <webgba.exe> [--file <LICENSE etc.>]… [--notes <text.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <publish root> --key <private key.pem>
 node tools/wgba.mjs verify <publish folder|root> (--pub <public key> | --key <private key.pem>) [--wgba <old.wgba>]…
 node tools/wgba.mjs upload <publish folder|root> [--dry-run [--remote]]
@@ -1480,6 +1486,28 @@ node tools/wgba.mjs r2-stats [--days <days> | --since <ISO time> [--until <ISO t
 - `verify`: signature, file sizes and SHA-256; for each old file given with `--wgba`, applies the whole chain and compares with the new SHA-1. For a root it also checks the index signature and that each index entry equals the game's `latest.json` (old files are matched to games by id); for a game folder, the entry for that game in the parent's index.
 - `upload`: S3-compatible API (R2); patches and `.wgbp` first, then `latest.json`, `index.json` last (objects already in the bucket with the same content — size and ETag MD5 — are skipped, so unchanged `latest.json` files are not rewritten). The bucket is checked with one object listing (ListObjectsV2, one request per 1,000 objects = Class A); only when the listing fails does it check each file with HEAD (Class B). `--dry-run` does not connect to the bucket; `--dry-run --remote` only compares with the bucket through one listing (no writes). If the root has an `index.json`, the whole root is uploaded even when a game folder is given, and nothing is uploaded if the index and a `latest.json` differ. Account and keys are read only from the environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, and their values are never printed.
 - `r2-stats`: prints R2 request counts from the Cloudflare analytics API (GraphQL `r2OperationsAdaptiveGroups`) per Korean date and per object, action and response code (no bucket requests, 7 days by default, 31 at most). The source is guessed from the object name — `index.json` = webGBA 0.8.1 or later, `<game id>/latest.json` = 0.8.0 or earlier (or the fallback when the index fails), `patches/`·`full/` = update downloads, HeadObject = the earlier `upload` or the dashboard, 404 and other objects = likely outside requests. Environment variables `CF_API_TOKEN` (an API token with Account Analytics read), `R2_ACCOUNT_ID` and `R2_BUCKET` (whole account when absent); values are never printed.
+- `app`: publishes a webGBA self-update for the Windows app (12.6). `index`, `verify` and `upload` also handle the app folder in the root.
+
+#### 12.6 webGBA self-update (Windows app)
+
+For the webGBA operator (game authors don't use this). Applies to webGBA Windows app versions that include this feature and later. The web version is not covered.
+
+- Check: at the same time and from the same `index.json` as the `.wgba` check — `apps` (envelopes) and `signed.apps` (SHA-256 of each envelope's `signed` text). One app start is still one request. Only when the index fails (404, signature, time or hash) does it read `com.flightrabbit.webgba/latest.json`; an index without an app entry causes no extra request.
+- Envelope `{ "wgbaApp": 1, "signed": "<signed JSON text>", "signature": "<base64, 64 bytes>" }` — signature = same key and format as 12.2.
+
+| `signed` field | Description |
+| --- | --- |
+| `id` | `com.flightrabbit.webgba` |
+| `version` | New version `x.y.z`. Shown only when it is higher than the running app |
+| `time` | Optional. Creation time (ISO 8601) |
+| `platform` | `windows-x64` |
+| `files` | Array (up to 16). `{ "path", "size", "sha256", "get": { "url", "size", "sha256" } }` — `path` = relative to the exe folder (segments of letters, digits and `._-`; nothing under `bin/`, no parent folders, no names ending in `.old`); `webgba.exe` (the running exe, even if renamed) is required. `get` = the file compressed with zlib (RFC 1950), same relative address rule as 12.2 |
+| `notes` | Optional. Text per language (reserved) |
+
+- Download: only files whose local SHA-256 differs → size and SHA-256 of the download → size and SHA-256 of the inflated file. The core in `bin/core` is embedded in the exe and replaced when the new exe starts (a core replaced by hand is kept).
+- Replace: downloads go to `.webgba-update\` in the exe folder → the new exe runs with `--webgba-version` and must print `webGBA <version>` equal to `version` → for each file the current file is renamed to `<name>.old` and the download takes the original name (any failure rolls everything back) → the new exe starts (a failure rolls back) → the current app exits normally. The new exe waits for the old process to end, and deletes the `.old` files and `.webgba-update\` once its screen is up.
+- Kept: `bin/` (settings, logs, quick slots, WebView data) and the `.sav` next to each game are never replaced. When the exe folder is not writable, the update fails with a message.
+- Publish: `wgba.mjs app` — reads the version by running the exe with `--webgba-version` (an exe without this feature is refused), refuses exes built with a test identifier (allowed only with `--test-id`), adds the repository `LICENSE` and `THIRD_PARTY_NOTICES` when no `--file` is given, writes `files/<compressed SHA-256>.z` per file, refuses a version lower than the previous publish or the same version with different files, and rebuilds the index when the root has `index.json` (`--no-index` turns this off). Upload order = compressed files → `latest.json` → `index.json`.
 
 ---
 
@@ -1522,7 +1550,7 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
 
 [runtime "webapi" — no JS, the host runs the wasm directly]
 - Required exports: memory, Web_Init() -> i32 (0 = failure), Web_RunFrame(keys) -> i32 (0 = stopped; keys = bits of pressed buttons), Web_GetFramebuffer() -> i32 (width×height pixels, R,G,B,A bytes each).
-- Optional: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount() (float32 stereo interleaved, count = number of left/right pairs) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty() (save) / Web_RomBuffer(size) (where to place the ROM) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at) (quick slots need all five; Web_StateUsed() optional) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net* (multiplayer, see [Multiplayer] below) / Web_Gpu* (GPU drawing, see [GPU drawing] below).
+- Optional: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount() (float32 stereo interleaved, count = number of left/right pairs) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty() (save) / Web_RomBuffer(size) (where to place the ROM) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at) (quick slots need all five; Web_StateUsed() optional) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_AutoFireOff() (1 = the user's auto fire stops and held buttons pass as held — menus, battles) / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net* (multiplayer, see [Multiplayer] below) / Web_Gpu* (GPU drawing, see [GPU drawing] below).
 - Only these imports: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1 (() -> (), does nothing). Any other import → make it runtime "script".
 - Games that are not 240×160 with GBA buttons, or that run without a ROM, import webgba.v1 (so older webGBA refuses them). In C: __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void); called once in Web_Init.
 - Sequence: instantiate → __wasm_call_ctors (or else _initialize) → ROM → save → Web_Init → Web_RunFrame every frame. Do not grow memory a lot after Web_Init.

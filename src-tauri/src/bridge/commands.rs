@@ -42,6 +42,9 @@ pub struct RuntimeInfo {
     core_path: String,
     launch_file: Option<String>,
     settings: settings::Settings,
+    app_dir: String,
+    exe_name: String,
+    updated_from: Option<String>,
 }
 
 #[tauri::command]
@@ -55,6 +58,9 @@ pub fn runtime_info(state: tauri::State<'_, crate::AppState>) -> RuntimeInfo {
         core_path: ui::dir(ui::CORE_DIR).join(ui::CORE_FILE).to_string_lossy().into_owned(),
         launch_file: state.take_launch_file(),
         settings: settings::load(),
+        app_dir: ui::app_root().to_string_lossy().into_owned(),
+        exe_name: crate::app_update::exe_name(),
+        updated_from: crate::app_update::updated_from(),
     }
 }
 
@@ -296,6 +302,30 @@ pub async fn web_inspect(path: String, rom_name: Option<String>, allow_net: Opti
 #[tauri::command]
 pub fn web_set_rom(key: String, rom: Option<String>) -> Result<()> {
     web::set_rom(&key, rom)
+}
+
+/* ── webGBA 자체 업데이트 ── */
+
+#[tauri::command]
+pub fn app_update_stage(request: Request<'_>) -> Result<()> {
+    let rel = header(&request, "x-path")?;
+    let first = header(&request, "x-first").map(|v| v == "1").unwrap_or(false);
+    let bytes = raw_body(&request)?;
+    crate::app_update::stage(&rel, &bytes, first)
+}
+
+#[tauri::command]
+pub async fn app_update_install(version: String, from: String, files: Vec<String>) -> Result<()> {
+    offload(move || crate::app_update::install(&version, &from, &files)).await
+}
+
+#[tauri::command]
+pub async fn app_update_finish() -> Result<()> {
+    offload(|| {
+        crate::app_update::cleanup();
+        Ok(())
+    })
+    .await
 }
 
 /* ── 기록 ── */

@@ -18,7 +18,7 @@ export const STEPS_MAX = 64;
 export const TEST_KEY = "webgba.updateTest";
 export const INDEX_TIME_KEY = "webgba.updateIndexTime";
 
-const FEED_HOST = "https://pub-da193dc1ff6540a4a6654def95a1a92f.r2.dev";
+export const FEED_HOST = "https://pub-da193dc1ff6540a4a6654def95a1a92f.r2.dev";
 const FEED_KEY = "BFhhvxjl7AcTB5l5YA648fDFzdgTvC2Il3FO+yu4KPfaH2iYD85g6vUOsQ7JHBOpg+6nBN1LpO5WbPfbm0MJ/cY=";
 const KNOWN_IDS = [
   "com.flightrabbit.rapid",
@@ -95,7 +95,8 @@ export function readOverrides(storage = globalThis.localStorage) {
     const feeds = {};
     if (test?.feeds && typeof test.feeds === "object") for (const [id, item] of Object.entries(test.feeds)) if (ID_RE.test(id) && feedUrlOk(item?.feed, { loopback: true }) && keyOk(item?.key)) feeds[id] = { feed: item.feed, key: item.key };
     const index = feedUrlOk(test?.index?.url, { loopback: true }) && keyOk(test?.index?.key) ? { url: test.index.url, key: test.index.key } : null;
-    return Object.keys(feeds).length || index ? { feeds, index } : null;
+    const app = VERSION_RE.test(test?.app?.version ?? "") ? { version: test.app.version } : null;
+    return Object.keys(feeds).length || index || app ? { feeds, index, app } : null;
   } catch {
     return null;
   }
@@ -142,7 +143,7 @@ function verifyKey(key) {
   return keyCache.get(key);
 }
 
-function fileRef(ref, base) {
+export function fileRef(ref, base) {
   if (!ref || typeof ref !== "object") return null;
   if (typeof ref.url !== "string" || !Number.isInteger(ref.size) || ref.size < 1 || ref.size > FILE_MAX || !SHA256_RE.test(ref.sha256 ?? "")) return null;
   let url;
@@ -176,7 +177,7 @@ export function readFeed(signed, base) {
   return { id: signed.id, version: signed.version, time: typeof signed.time === "string" ? signed.time : "", wgba: { sha1: wgba.sha1, size: wgba.size }, from, full, notes };
 }
 
-const parseJson = (text, code) => {
+export const parseJson = (text, code) => {
   try {
     return JSON.parse(text);
   } catch {
@@ -184,7 +185,7 @@ const parseJson = (text, code) => {
   }
 };
 
-async function verifySigned(envelope, key, code) {
+export async function verifySigned(envelope, key, code) {
   if (typeof envelope.signed !== "string" || typeof envelope.signature !== "string") throw new UpdateError(code, { why: "envelope" });
   let signature;
   try {
@@ -221,7 +222,8 @@ export async function verifyIndex(text, key, { url = "", memory = null } = {}) {
   const last = memory?.get(url) ?? 0;
   if (time < last) throw new UpdateError("indexOld", { time: signed.time });
   memory?.set(url, time);
-  return { time, hashes, feeds };
+  const table = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+  return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps) };
 }
 
 export async function indexedFeed(list, gameId, source) {
@@ -295,7 +297,7 @@ function groupSources(games, overrides) {
   return wanted;
 }
 
-function loadIndex(index, { fetchImpl, timeout, cache, memory }) {
+export function loadIndex(index, { fetchImpl = globalThis.fetch, timeout = 10000, cache, memory }) {
   const id = `index\n${index.url}\n${index.key}`;
   if (!cache.has(id)) {
     const work = fetchFeed(index.url, { fetchImpl, timeout, max: INDEX_MAX, code: "indexBad" })

@@ -116,6 +116,7 @@ node tools/run.cjs   # 전체 명령 목록
   설명서에 `input.dpad`가 있는 게임은 해당 값이 기본값이며, 해당 게임 실행 중에 변경한 값은 게임별로 기억합니다.
 - **연사** — 설정 창 › 일반 › 게임(웹 버전 설정). 켜면 A·B·C·D·L·R(role `a`·`b`·`c`·`d`·`l`·`r`) 버튼을 누르고 있는 동안 연속으로 누릅니다(방향·START·SELECT 제외).
   속도 1~9단계 = 초당 1·2·3·4·6·8·12·20·30회(기본 5단계 = 초당 6회, 1단계 = 30프레임 누름·30프레임 뗌, 9단계 = 2프레임마다 누름·뗌). 게임 프레임 기준이라 빨리 감기 중에도 같은 무늬이고, 키보드·게임패드·화면 버튼에 같은 설정이 적용됩니다(앱 전체 설정 하나). 기본 끔.
+  게임이 연사를 멈춘 화면(메뉴·배틀 등, ① `Web_AutoFireOff()`)에서는 누르고 있는 버튼을 누른 그대로 전달합니다.
 - **RS 버튼(순서 입력)** — 정해 둔 키 순서(예: A → A → ↓ → A+B)를 한 번에 입력합니다. 단계마다 동시에 누를 키(A·B·C·D·L·R·START·SELECT·방향, 대각선은 두 방향 함께)·누르는 시간·다음 단계까지 간격을 프레임(1/60초, ms 함께 표시) 단위로 정합니다(기본 누름 3·간격 3프레임, 단계 32개까지).
   게임마다 프리셋 5개를 저장하고(이름 12자까지 변경·삭제), 사용 중 프리셋 하나를 재생합니다. 설정의 X·1~5 막대에서 고르며(빈 번호 = 새 프리셋), X(사용 안함)이면 RS 버튼을 숨기고 RS 키도 동작하지 않습니다(설명서에 `input.rs`가 있는 게임은 프리셋 1이 기본, 없으면 사용 안함). 프리셋은 설정에서만 바꿉니다.
   재생 규칙: RS를 한 번 누르면 처음부터 한 번 재생 · 누르고 있으면 마지막 단계의 키를 계속 누름(떼면 끝) · 재생 중 다른 키(키보드·게임패드·화면 버튼)를 누르면 그 프레임부터 RS 입력을 멈추고 그 키를 입력 · 재생 중 RS를 다시 누르면 처음부터 · 연사는 RS 입력에 적용하지 않음 · 일시정지 중에는 재생하지 않음.
@@ -135,6 +136,7 @@ node tools/run.cjs   # 전체 명령 목록
   멀티플레이 규약 번호가 이 webGBA보다 새로운 게임은 멀티플레이 없이 실행하고, 멀티플레이 버튼·연결 창에 "이 게임의 멀티플레이는 새 webGBA가 필요합니다"를 출력합니다.
 
 - **온라인 업데이트** — 앱을 실행할 때마다 한 번, 인터넷에 연결되어 있으면 라이브러리(Windows 앱은 즐겨찾기·최근·같은 폴더)의 `.wgba`에 새 버전이 있는지 확인합니다. 새 버전이 있을 때만 업데이트 창을 표시하고, "업데이트"를 누르면 차이 패치를 받아 적용합니다(서명·SHA-1 확인, 실패하면 기존 파일 그대로, 세이브 유지). 다른 버전에서 만든 퀵슬롯은 불러오지 않습니다. 제작자용 규격은 [12장](#12-온라인-업데이트-update-규격-1-확장).
+- **webGBA 업데이트(Windows 앱)** — 이 기능이 들어간 버전부터 앱을 실행할 때마다 `.wgba` 확인과 같은 목록(`index.json`)으로 webGBA 자체의 새 버전도 확인합니다(요청 수 그대로). 새 버전이 있으면 업데이트 창을 표시하고, "UPDATE"를 누르면 바뀐 파일만(`webgba.exe` 등) 받아 서명·SHA-256을 확인한 뒤 파일을 교체하고 앱을 다시 시작합니다. 설정(`bin/ini`)·로그·퀵슬롯·WebView 데이터·세이브(게임 옆 `.sav`)는 그대로 유지됩니다. 받기·교체에 실패하면 기존 파일로 되돌립니다. "LATER"를 눌러도 같은 실행 동안 정보 화면에서 업데이트할 수 있습니다. 웹 버전은 늘 최신이라 대상이 아닙니다. 규격은 [12.6](#126-webgba-자체-업데이트-windows-앱).
 
 ---
 
@@ -478,6 +480,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `Web_Reset()` | | 재시작. 없으면 호스트가 인스턴스를 새로 생성 |
 | `Web_StateSize()` · `Web_StateSave(at)` · `Web_StateLoad(at)` · `Web_Alloc(n)` · `Web_Free(at)` · `Web_StateUsed()` | | 퀵슬롯(상태 저장). 앞의 다섯 개가 모두 있어야 활성화. `Web_StateUsed`가 있으면 사용한 길이만 보관(불러올 때 나머지를 0으로 채움) |
 | `Web_Pointer(x, y, buttons, wheel)` · `Web_PointerWanted()` | | 마우스: 게임 픽셀 좌표(화면 밖이면 -1), `MouseEvent.buttons`, 휠 칸 수 / 1이면 현재 마우스 사용 중 |
+| `Web_AutoFireOff()` → i32 | | 1이면 지금 연사를 적용하지 않음 — 호스트가 누르고 있는 버튼을 누른 그대로 전달(메뉴·배틀처럼 연사가 방해되는 화면). 연사가 켜져 있고 연사 버튼을 누르고 있을 때 `Web_RunFrame` 전마다 조회. 없으면 항상 연사([5.2](#52-role-기본값)) |
 | `Web_GetHaltReason()` · `Web_GetTitle()` · `Web_SetTimeZone(sec)` | | 정지 사유 문자열(NUL 종료) 주소 / 제목 / 시간대 오프셋(UTC 기준 동쪽 방향, 초) |
 | `Web_Net*` | | 멀티플레이 — [7장](#7-멀티플레이)(7.3, 상태 표 `Web_NetBoard` 7.9.2) |
 | `Web_GpuStart(version)` → i32 · `Web_GpuList()` → ptr · `Web_GpuListLen()` → u32 · `Web_GpuListDone()` · `Web_GpuSync(reason)` · `Web_GpuStop()` · `Web_GpuOverlay()` → i32 | | GPU 그리기(WebGL2) — [4.1.4](#414-gpu-그리기-선택). 앞의 네 개가 모두 있으면 사용 |
@@ -630,6 +633,7 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 - GBA 버튼과 같은 role(`a` `b` `select` `start` 방향 `l` `r`)의 기본 키는 사용자가 앱에서 설정한 GBA 키를 따릅니다(위 표는 초기값).
 - 키 한 개는 버튼 한 개에만 할당됩니다(먼저 지정된 쪽). Windows 앱은 설정 창 › 키에 해당 게임의 버튼만 표시하고, 변경한 배치를 게임 id별로 기억합니다.
 - 사용자가 **연사**를 켜면 호스트가 role `a`·`b`·`c`·`d`·`l`·`r` 버튼을 누르고 있는 동안 누름·뗌을 반복해 전달합니다(초당 1~30회, ① = `Web_RunFrame(keys)` 프레임마다, ② = 틀의 화면 갱신 프레임마다 키 이벤트). 연사가 맞지 않는 버튼은 `role: "extra"`로 지정하세요.
+- ① 게임은 연사가 방해되는 화면(메뉴·배틀·이름 입력 등)에서 `Web_AutoFireOff()`가 1을 반환하게 하면 그동안 연사를 멈출 수 있습니다(누르고 있는 버튼은 누른 그대로 전달). 다시 0이 되면 누르고 있는 버튼은 그 프레임부터 새로 누른 것처럼 연사합니다(첫 프레임 누름이라 끊김 없음).
 
 #### 5.3 GBA 기본 배치 `preset: "gba"`
 
@@ -1418,6 +1422,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 서명 = `signed` 글의 ECDSA P-256·SHA-256(12.2와 같은 키·형식). 목록 크기는 1MiB까지.
 - 대체: 목록이 존재하지 않음(404 등)·`wgbaIndex`가 모르는 번호·서명 불일치·이전보다 이른 시각·게임 누락·해시 불일치이면 해당 게임은 게임별 `latest.json`을 조회합니다. 서버에 닿지 않으면(오프라인) 대체하지 않고 넘어갑니다.
 - 옛 webGBA(0.8.0 이하)는 목록을 조회하지 않으므로 게임별 `latest.json`도 계속 발행합니다. manifest `update`의 다른 주소 버전 파일은 게임별 조회 그대로입니다.
+- 선택 필드 `apps`(봉투)·`signed.apps`(해시) = webGBA 자체 업데이트 항목(12.6). 0.8.1은 조회하지 않습니다.
 
 #### 12.3 차이 패치 `.wgbd`
 
@@ -1460,6 +1465,7 @@ little endian:
 node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem>
 node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]…
 node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> [--patch <패치.wgbd>]… [--old <옛.wgba|폴더>]… [--orig <원작 롬>]… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>] [--no-index]
+node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
 node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
 node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run [--remote]]
@@ -1477,6 +1483,28 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
 - `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 버킷 확인은 목록 조회 1번(ListObjectsV2, 1,000개당 1번 = Class A)이고, 목록이 실패할 때만 파일마다 HEAD(Class B)로 확인합니다. `--dry-run`은 버킷에 연결하지 않고, `--dry-run --remote`는 목록 1번으로 버킷과 비교만 합니다(쓰기 없음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 - `r2-stats`: Cloudflare 분석 API(GraphQL `r2OperationsAdaptiveGroups`)로 R2 요청 수를 한국 날짜별·객체·동작·응답 코드별로 출력합니다(버킷 요청 0번, 기본 7일·최대 31일). 객체 이름으로 출처를 추정합니다 — `index.json` = webGBA 0.8.1 이상, `<게임 id>/latest.json` = 0.8.0 이하(또는 목록 실패 시 대체), `patches/`·`full/` = 업데이트 받기, HeadObject = 이전 `upload`·대시보드, 404·그 외 객체 = 외부 요청 의심. 환경 변수 `CF_API_TOKEN`(Account Analytics 읽기 권한 API 토큰)·`R2_ACCOUNT_ID`·`R2_BUCKET`(없으면 계정 전체), 값은 출력하지 않습니다.
+- `app`: webGBA exe 자체 업데이트 발행(12.6). `index`·`verify`·`upload`는 묶음의 앱 폴더도 함께 다룹니다.
+
+#### 12.6 webGBA 자체 업데이트 (Windows 앱)
+
+webGBA 운영자용입니다(게임 제작자는 쓰지 않음). 대상 = 이 기능이 들어간 webGBA Windows 앱부터. 웹 버전은 대상이 아닙니다.
+
+- 확인: `.wgba` 확인과 같은 때, 같은 목록 `index.json`의 `apps`(봉투)·`signed.apps`(봉투 `signed` 글 SHA-256). 앱 실행 1회 요청은 그대로 1번입니다. 목록이 404·서명·시각·해시 실패일 때만 `com.flightrabbit.webgba/latest.json`을 조회하고, 목록에 앱 항목이 없으면 추가로 조회하지 않습니다.
+- 봉투 `{ "wgbaApp": 1, "signed": "<서명한 JSON 글>", "signature": "<base64, 64바이트>" }` — 서명 = 12.2와 같은 키·형식.
+
+| `signed` 필드 | 설명 |
+| --- | --- |
+| `id` | `com.flightrabbit.webgba` |
+| `version` | 새 버전 `x.y.z`. 지금 앱 버전보다 높을 때만 표시 |
+| `time` | 선택. 생성 시각(ISO 8601) |
+| `platform` | `windows-x64` |
+| `files` | 배열(16개까지). `{ "path", "size", "sha256", "get": { "url", "size", "sha256" } }` — `path` = exe 폴더 기준 상대 경로(영문·숫자·`._-` 조각, `bin/` 아래·상위 폴더·`.old`로 끝나는 이름 금지), `webgba.exe`(실행 중인 exe — 이름을 바꿨어도) 필수. `get` = zlib(RFC 1950)으로 압축한 파일(12.2와 같은 상대 주소 규칙) |
+| `notes` | 선택. 언어별 글(예약) |
+
+- 받기: 로컬 파일 SHA-256과 다른 파일만 → 받은 파일 크기·SHA-256 → 푼 파일 크기·SHA-256. `bin/core`의 코어는 exe 안에 들어 있어 새 exe가 시작할 때 교체합니다(사람이 바꿔 넣은 코어는 그대로).
+- 교체: exe 폴더의 `.webgba-update\`에 받은 파일 → 새 exe를 `--webgba-version`으로 실행해 출력 `webGBA <버전>`이 `version`과 같은지 확인 → 파일마다 현재 파일을 `<이름>.old`로, 받은 파일을 원래 이름으로(하나라도 실패하면 모두 되돌림) → 새 exe 실행(실패하면 되돌림) → 기존 앱 정상 종료. 새 exe는 기존 프로세스가 끝나기를 기다린 뒤 시작하고, 화면이 뜬 뒤 `.old`·`.webgba-update\`를 삭제합니다.
+- 유지: `bin/`(설정·로그·퀵슬롯·WebView 데이터)·게임 옆 `.sav`는 교체 대상이 아닙니다. exe 폴더에 기록할 수 없으면 업데이트하지 못합니다(안내만).
+- 발행: `wgba.mjs app` — exe를 `--webgba-version`으로 실행해 버전을 조회(이 기능이 없는 exe 거부), 시험 식별자로 빌드한 exe 거부(`--test-id`로만 허용), `--file`이 없으면 저장소 `LICENSE`·`THIRD_PARTY_NOTICES` 포함, 파일마다 `files/<압축 SHA-256>.z`, 이전 발행보다 낮은 버전·같은 버전인데 파일이 다른 경우 거부, 묶음에 `index.json`이 있으면 목록 재생성(`--no-index`로 끔). 올리기 순서 = 압축 파일 → `latest.json` → `index.json`.
 
 ---
 
@@ -1519,7 +1547,7 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 
 [runtime "webapi" — JS 없음, 호스트가 wasm을 직접 실행]
 - 내보내기 필수: memory, Web_Init() -> i32(0 실패), Web_RunFrame(keys) -> i32(0 정지, keys = 눌린 버튼 비트), Web_GetFramebuffer() -> i32(width×height 픽셀, 픽셀당 R,G,B,A 바이트).
-- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]) / Web_Gpu*(GPU 그리기, 아래 [GPU 그리기]).
+- 선택: Web_SetAudioRate(rate)·Web_GetAudioBuffer()·Web_GetAudioCount()(float32 스테레오 interleaved, 개수 = 좌우 쌍 수) / Web_GetFlash()·Web_GetSaveSize()·Web_SetSaveSize(n)·Web_FlashClear()·Web_TakeFlashDirty()(세이브) / Web_RomBuffer(size)(롬 배치 주소) / Web_Reset() / Web_StateSize()·Web_StateSave(at)·Web_StateLoad(at)·Web_Alloc(n)·Web_Free(at)(퀵슬롯은 다섯 개 모두, Web_StateUsed() 선택) / Web_Pointer(x,y,buttons,wheel)·Web_PointerWanted() / Web_AutoFireOff()(1이면 사용자 연사를 멈추고 누른 그대로 전달 — 메뉴·배틀 등) / Web_GetHaltReason()·Web_GetTitle()·Web_SetTimeZone(sec) / Web_Net*(멀티플레이, 아래 [멀티플레이]) / Web_Gpu*(GPU 그리기, 아래 [GPU 그리기]).
 - 가져오기는 다음 항목만: env.{emscripten_asm_const_int, emscripten_resize_heap, _emscripten_throw_longjmp, emscripten_date_now, emscripten_get_now, emscripten_notify_memory_growth, abort, _abort_js, invoke_*}, wasi_snapshot_preview1.{fd_write, fd_read, fd_close, fd_seek, fd_sync, fd_fdstat_get, environ_get, environ_sizes_get, clock_time_get, random_get, proc_exit}, webgba.v1(() -> (), 동작 없음). 다른 가져오기가 있으면 runtime "script"로 제작한다.
 - 240×160·GBA 버튼이 아니거나 롬 없이 실행되는 게임은 가져오기 webgba.v1을 추가한다(이전 버전 webGBA가 열지 않도록). C에서는 __attribute__((import_module("webgba"), import_name("v1"))) void webgba_v1(void);를 선언하고 Web_Init에서 한 번 호출한다.
 - 순서: 인스턴스 → __wasm_call_ctors(없으면 _initialize) → 롬 → 세이브 → Web_Init → 매 프레임 Web_RunFrame. Web_Init 후에는 메모리를 크게 늘리지 않는다.
