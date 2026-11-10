@@ -1381,7 +1381,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = fals
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
 const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -1724,7 +1724,8 @@ async function askName({ title, text, value, fallback, selfId = "" }) {
 function storeFailed(error) {
   state.storeBroken = true;
   logLine("WARN", `보관하지 못했습니다: ${reason(error)}`);
-  toast(t("web.storeFailed", { reason: error?.name === "QuotaExceededError" ? t("web.quota") : reason(error) }), "warn");
+  state.storeText = t("web.storeFailed", { reason: error?.name === "QuotaExceededError" ? t("web.quota") : reason(error) });
+  toast(state.storeText, "warn");
 }
 
 function logLine(level, text) {
@@ -5021,6 +5022,7 @@ const admin = createAdminFlow({
   get listText() {
     return t("admin.list.text");
   },
+  allText: (count) => t("admin.emptyAll", { count }),
   icon: (name) => iconNode(name),
   notify: (text, level = "info") => toast(text, level),
   changed: () => {
@@ -5029,7 +5031,8 @@ const admin = createAdminFlow({
   registeredIds: async () => new Set((await store.list(store.KIND_ROM).catch(() => [])).map((rom) => rom.gameId).filter(Boolean)),
   download: async (game, url, onFraction) => {
     const bytes = await downloadBytes(url, { size: game.size, onProgress: onFraction });
-    await importGame(String(game.file).replace(/\.wgba$/i, ""), bytes, { file: game.file });
+    const { meta } = await importGame(String(game.file).replace(/\.wgba$/i, ""), bytes, { file: game.file });
+    if (meta.transient) throw new Error(state.storeText || t("web.storeFailed", { reason: "?" }));
   },
   refresh: () => {
     refreshStart();
@@ -5044,6 +5047,7 @@ function adminSetting() {
   const rec = admin.record();
   const act = button({
     label: t(rec ? "cfg.admin.leave" : "cfg.admin.enter"),
+    kind: rec ? "danger" : "",
     action: "cfg-admin",
     onClick: async () => {
       if (admin.record()) admin.leave();

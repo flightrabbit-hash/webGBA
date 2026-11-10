@@ -71,6 +71,7 @@ fs.writeFileSync(path.join(appDir, "alpha.wgba"), await game("io.example.other",
 const r2 = await startFakeR2();
 const kv = await startFakeUpstash();
 let skew = 0;
+let delay = 0;
 const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew });
 const kst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
 r2.put("authentication.key", keyFile(PIN, kst(Date.now() - 600000)));
@@ -85,6 +86,7 @@ const server = http.createServer(async (req, res) => {
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
   origins.push(req.headers.origin ?? "");
+  if (delay) await sleep(delay);
   const response = await api.handle(new Request(`http://127.0.0.1:${API_PORT}${req.url}`, { method: req.method, headers, body: ["GET", "HEAD", "OPTIONS"].includes(req.method) ? undefined : Buffer.concat(chunks) }));
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
@@ -111,6 +113,29 @@ const closeList = async () => {
 };
 const typePad = (pin) => ev(`(() => { for (const k of ${JSON.stringify([...pin])}) document.querySelector('#dialog .apad__key[data-key="' + k + '"]').click(); return document.querySelectorAll("#dialog .apad__slot.is-on").length; })()`);
 const files = () => fs.readdirSync(appDir).filter((n) => /\.wgba$|\.part$/i.test(n)).sort();
+const LOADING = "롬 목록을 받는 중…";
+const adminButton = () =>
+  ev(`(() => {
+    const b = document.querySelector('[data-action="cfg-admin"]');
+    const row = b.closest(".cfg__row");
+    const br = b.getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    const s = getComputedStyle(row);
+    const top = rr.top + parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth);
+    const bottom = rr.bottom - parseFloat(s.paddingBottom) - parseFloat(s.borderBottomWidth);
+    const probe = document.createElement("div");
+    probe.style.background = "var(--danger)";
+    document.body.append(probe);
+    const want = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const bg = getComputedStyle(b).backgroundColor;
+    return { label: b.textContent, red: bg === want, bg, h: br.height, top: br.top - rr.top, bottom: rr.bottom - br.bottom, offCenter: Math.abs((br.top + br.bottom) / 2 - (top + bottom) / 2) };
+  })()`);
+const noteText = async () => {
+  await until(`(() => { const n = !document.getElementById("layer").hidden && document.querySelector("#dialog .anote"); return Boolean(n) && n.textContent !== ${JSON.stringify(LOADING)} && !document.querySelector("#dialog .upick__item") && document.querySelectorAll("#dialog-actions .btn").length === 1; })()`);
+  await sleep(300);
+  return ev(`document.querySelector("#dialog .anote")?.textContent ?? ""`);
+};
 
 async function ink(label, selector, file) {
   const image = decodePng(fs.readFileSync(file));
@@ -157,6 +182,8 @@ try {
   await until(`Boolean(document.querySelector('[data-action="cfg-admin"]'))`);
   const off = await ev(`(() => { const b = document.querySelector('[data-action="cfg-admin"]'); const row = b.closest(".cfg__row"); return { label: b.textContent, name: row.querySelector(".cfg__label").firstChild.textContent, prevNick: Boolean(row.previousElementSibling?.querySelector(".cfg__input--text")) }; })()`);
   ok("설정 = 닉네임 아래 관리자 모드 ENTER", off.label === "ENTER" && off.name === "관리자 모드" && off.prevNick, JSON.stringify(off));
+  const enterButton = await adminButton();
+  ok("ENTER = 기본 색(빨간색 아님) · 줄 안 세로 가운데", !enterButton.red && enterButton.offCenter < 0.5, JSON.stringify(enterButton));
   await click('[data-action="cfg-admin"]');
   await until(`Boolean(document.querySelector("#dialog .apad"))`);
   await sleep(300);
@@ -181,6 +208,13 @@ try {
   const cfgShot = path.join(shots, "02_설정.png");
   await cdp.screenshot(cfgShot);
   await ink("설정 관리자 버튼", '[data-action="cfg-admin"]', cfgShot);
+  const exitDark = await adminButton();
+  await ev(`${T}.theme.apply({ mode: "light" }); 1`);
+  await sleep(200);
+  const exitLight = await adminButton();
+  await ev(`${T}.theme.apply({ mode: "dark" }); 1`);
+  await sleep(200);
+  ok("EXIT = 빨간색(위험 색 토큰, 다크·라이트) · ENTER와 높이 같음 · 줄 안 세로 가운데", [exitDark, exitLight].every((b) => b.red && Math.abs(b.h - enterButton.h) < 0.5 && b.offCenter < 0.5) && exitDark.bg !== exitLight.bg, JSON.stringify({ exitDark, exitLight }));
   const cfg = JSON.parse(fs.readFileSync(path.join(appDir, "bin", "ini", "personalization.cfg"), "utf8"));
   ok("personalization.cfg 에 6자리 없음", Boolean(cfg.admin?.token) && !JSON.stringify(cfg).includes(PIN));
   await click("#settings-close");
@@ -188,7 +222,17 @@ try {
   const rail = await ev(`(() => { const b = document.getElementById("btn-admin"); const f = document.getElementById("btn-favorites").getBoundingClientRect(); const r = b.getBoundingClientRect(); return { hidden: b.hidden, title: b.title, below: r.top >= f.bottom - 1, left: r.left - f.left, w: r.width - f.width }; })()`);
   ok("활성 = 레일 즐겨찾기 다음 롬 가져오기(아이콘 + title)", !rail.hidden && rail.title === "롬 가져오기" && rail.below && rail.left === 0 && rail.w === 0, JSON.stringify(rail));
 
+  delay = 1500;
   await click("#btn-admin");
+  await until(`!document.getElementById("layer").hidden && Boolean(document.querySelector("#dialog .anote"))`, 5000);
+  await sleep(150);
+  const loading = await ev(`({ text: document.querySelector("#dialog .anote")?.textContent, title: document.getElementById("dialog-title")?.textContent, actions: [...document.querySelectorAll("#dialog-actions .btn")].map((b) => b.textContent).join("·"), status: document.getElementById("status").textContent })`);
+  const loadingShot = path.join(shots, "02a_목록받는중.png");
+  await cdp.screenshot(loadingShot);
+  ok("목록 받는 중 = 팝업을 먼저 열고 안에 표시(상태 줄 안 씀)", loading.text === LOADING && loading.title === "롬 가져오기" && loading.actions === "CLOSE" && !loading.status.includes("롬"), JSON.stringify(loading));
+  await ink("목록 받는 중 글", "#dialog .anote", loadingShot);
+  await ink("목록 받는 중 창 버튼", "#dialog-actions .btn", loadingShot);
+  delay = 0;
   await until(`!document.getElementById("layer").hidden && Boolean(document.querySelector("#dialog .upick__item"))`);
   await sleep(500);
   const list = await ev(`({ rows: [...document.querySelectorAll("#dialog .upick__item")].map((n) => n.querySelector(".upick__name").textContent + "|" + n.dataset.key), checked: document.querySelectorAll('#dialog .upick__check[aria-checked="true"]').length, rowButtons: document.querySelectorAll("#dialog .upick__btn").length, actions: [...document.querySelectorAll("#dialog-actions .btn")].map((b) => b.textContent + (b.disabled ? "(꺼짐)" : "")).join("·") })`);
@@ -208,6 +252,12 @@ try {
   await cdp.screenshot(path.join(shots, "04_받는중.png"));
   ok("받는 중 = 줄 진행 % (Rust 진행 신호)", /내려받는 중 \d+%/.test(busyMeta), busyMeta);
   await until(`[...document.querySelectorAll("#dialog .upick__item")].every((n) => n.dataset.state === "done")`, 60000);
+  await sleep(300);
+  const doneState = await ev(`({ note: document.querySelector("#dialog .anote")?.textContent ?? "", status: document.getElementById("status").textContent })`);
+  const doneShot = path.join(shots, "04a_받기완료.png");
+  await cdp.screenshot(doneShot);
+  ok("받기 완료 = 팝업 안 결과(상태 줄에 즐겨찾기 알림 안 씀)", doneState.note === "롬 2개를 가져왔습니다" && !/즐겨찾기/.test(doneState.status), JSON.stringify(doneState));
+  await ink("받기 완료 안내 글", "#dialog .anote", doneShot);
   const got = files();
   ok("exe 폴더에 저장(저장 이름 = 서버 규칙, 버킷 객체 이름 무관) · 같은 이름이 있으면 (2) · .part 없음", got.join(",") === "alpha (2).wgba,alpha.wgba,beta-local.wgba,gamma.wgba", got.join(","));
   ok("받은 파일 = 버킷과 같은 바이트", Buffer.compare(fs.readFileSync(path.join(appDir, "alpha (2).wgba")), Buffer.from(alpha)) === 0 && Buffer.compare(fs.readFileSync(path.join(appDir, "gamma.wgba")), Buffer.from(gamma)) === 0);
@@ -232,6 +282,22 @@ try {
   await press("DOWNLOAD");
   await until(`document.querySelector("#dialog .upick__item")?.dataset.state === "done"`, 30000);
   ok("실패 줄 다시 체크 → 받기 성공", files().includes("delta.wgba"));
+  ok("목록 닫기", await closeList());
+
+  await click("#btn-admin");
+  const allText = await noteText();
+  const allShot = path.join(shots, "04b_모두등록됨.png");
+  await cdp.screenshot(allShot);
+  ok("모두 등록됨 → 팝업 안 안내(버킷 4개 · exe 기준 문구)", allText === "보관소의 롬 4개가 모두 즐겨찾기·최근 연 파일·같은 폴더에 있습니다", allText);
+  await ink("모두 등록됨 안내 글", "#dialog .anote", allShot);
+  await press("OK");
+  await until(`document.getElementById("layer").hidden`, 5000);
+
+  fs.rmSync(path.join(appDir, "delta.wgba"));
+  await click("#btn-admin");
+  await until(`!document.getElementById("layer").hidden && Boolean(document.querySelector("#dialog .upick__item"))`);
+  const back = await ev(`[...document.querySelectorAll("#dialog .upick__item")].map((n) => n.dataset.key)`);
+  ok("받은 파일을 지움(즐겨찾기 기록만 남음) → 목록에 다시 나옴", back.length === 1 && back[0] === "wgba/io.example.delta/1.0.0.wgba", back.join(" "));
   ok("목록 닫기", await closeList());
 
   skew += ADMIN.KEY_MS + 120000;

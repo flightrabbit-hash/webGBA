@@ -2,6 +2,7 @@ import { OFF_CODES, PIN_KEYS, PIN_LENGTH, readRecord, recordOf } from "../core/a
 import { pickText } from "../core/lang-text.js";
 import { updatePicker } from "./update-pick.js";
 import { centerTexts, sizeText } from "./zip-pick.js";
+import { centerBoardNodes, measureInk } from "./board-panel.js";
 import { t } from "../shell/i18n.js";
 
 const KNOWN = new Set(["wrong", "limit", "locked", "nokey", "key", "off", "store", "r2", "network", "again", "size"]);
@@ -13,6 +14,15 @@ const make = (tag, className, text) => {
   if (text !== undefined && text !== null) node.textContent = text;
   return node;
 };
+
+const noteInk = (node) => {
+  const ink = measureInk(node);
+  if (!ink) return null;
+  const line = parseFloat(getComputedStyle(node).lineHeight) || 20;
+  const lines = Math.max(1, Math.round((ink.contentBottom - ink.contentTop) / line));
+  return { ...ink, bottom: ink.bottom + (lines - 1) * line };
+};
+const centerNotes = (nodes) => centerBoardNodes(nodes, noteInk);
 
 export function adminErrorText(error) {
   const code = error?.code;
@@ -120,11 +130,25 @@ export function pinPad({ icon = () => null, onChange = () => {}, onEnter = () =>
  *  client · load() · save(rec|null) · dialog({title, body, kind, actions}) → { done, buttons } · closeDialog(value)
  *  labels { ok, cancel, close, get } · listText · icon(name)
  *  notify(text, level) · changed() · registeredIds() → Set · download(game, url, onFraction) · refresh() · lang() · log(level, text)
+ *  allText(count)
  */
 export function createAdminFlow(d) {
   const record = () => readRecord(d.load());
-  // 실패는 창으로 알린다 — exe 상태 줄·웹 알림만으로는 "아무 말 없이 닫힘"으로 보였음
-  const tell = (text) => d.dialog({ title: t("admin.pad.title"), body: [text], kind: "", actions: [{ label: d.labels.ok, value: true, primary: true }] }).done;
+  const note = (text) => make("p", "anote", text);
+  const centerNote = (node) => (d.centerDialog ? d.centerDialog() : centerNotes([node]));
+  const tell = (text, title = t("admin.pad.title")) => {
+    const body = note(text);
+    const view = d.dialog({ title, body: [body], kind: "", actions: [{ label: d.labels.ok, value: true, primary: true }] });
+    centerNote(body);
+    return view.done;
+  };
+  const waiting = () => {
+    let open = true;
+    const body = note(t("admin.list.loading"));
+    d.dialog({ title: t("admin.import"), body: [body], kind: "", actions: [{ label: d.labels.close, value: false }] }).done.then(() => (open = false));
+    centerNote(body);
+    return () => open;
+  };
 
   function askPin(text) {
     return new Promise((resolve) => {
@@ -199,11 +223,14 @@ export function createAdminFlow(d) {
       d.changed();
       return null;
     }
+    let wanted = waiting();
     try {
-      return { rec, listing: await d.client.list(rec.token) };
+      const listing = await d.client.list(rec.token);
+      return wanted() ? { rec, listing, wanted } : null;
     } catch (error) {
+      if (!wanted()) return null;
       if (error.code !== "again") {
-        await tell(adminErrorText(error));
+        await tell(adminErrorText(error), t("admin.import"));
         return null;
       }
     }
@@ -217,10 +244,12 @@ export function createAdminFlow(d) {
     rec = out.ok;
     d.save(rec);
     d.changed();
+    wanted = waiting();
     try {
-      return { rec, listing: await d.client.list(rec.token) };
+      const listing = await d.client.list(rec.token);
+      return wanted() ? { rec, listing, wanted } : null;
     } catch (error) {
-      await tell(adminErrorText(error));
+      if (wanted()) await tell(adminErrorText(error), t("admin.import"));
       return null;
     }
   }
@@ -242,14 +271,16 @@ export function createAdminFlow(d) {
   };
 
   async function importRoms() {
-    d.notify(t("admin.list.loading"));
     const got = await fetchList();
     if (!got) return null;
     const session = got.rec;
     const ids = await d.registeredIds();
-    const games = (got.listing.items ?? []).filter((game) => game && typeof game.id === "string" && typeof game.key === "string" && !ids.has(game.id));
+    if (!got.wanted()) return null;
+    const stored = (got.listing.items ?? []).filter((game) => game && typeof game.id === "string" && typeof game.key === "string");
+    const games = stored.filter((game) => !ids.has(game.id));
+    d.log?.("INFO", `롬 가져오기 목록 버킷 ${stored.length}개 · 등록됨 ${stored.length - games.length}개`);
     if (!games.length) {
-      d.notify(t("admin.empty"));
+      await tell(stored.length ? d.allText(stored.length) : t("admin.emptyBucket"), t("admin.import"));
       return null;
     }
     const items = games.map((game) => ({
@@ -279,6 +310,19 @@ export function createAdminFlow(d) {
     };
     let close = null;
     let go = null;
+    let ran = false;
+    const lead = make("p", "", d.listText);
+    const showState = (busy) => {
+      if (busy) ran = true;
+      if (!ran) return;
+      const done = items.filter((item) => item.state === "done").length;
+      const failed = items.filter((item) => item.state === "failed").length;
+      const text = busy ? t("admin.list.busy") : failed ? t("admin.list.doneFail", { done, failed }) : t("admin.list.done", { done });
+      if (lead.textContent === text) return;
+      lead.className = "anote";
+      lead.textContent = text;
+      if (!d.centerDialog) centerNotes([lead]);
+    };
     const picker = updatePicker({
       items,
       art,
@@ -291,6 +335,7 @@ export function createAdminFlow(d) {
       listLabel: t("admin.list.label"),
       onChange: ({ chosen, busy }) => {
         if (!go) return;
+        showState(busy);
         go.disabled = busy || chosen === 0;
         const label = d.labels.get;
         const node = go.querySelector(".btn__label") ?? go;
@@ -301,7 +346,7 @@ export function createAdminFlow(d) {
     });
     const view = d.dialog({
       title: t("admin.list.title", { count: items.length }),
-      body: [d.listText, picker.node],
+      body: [lead, picker.node],
       kind: "pick",
       actions: [
         { label: d.labels.close, value: false },

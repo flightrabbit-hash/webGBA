@@ -2871,6 +2871,12 @@ body[data-layout="landscape"] .lib__shelf {
   line-height: 16px;
 }
 
+.dialog__body p.anote {
+  margin: 0;
+  font-family: var(--font-ui);
+  line-height: 20px;
+}
+
 .dialog[data-kind="pick"] .dialog__card {
   width: min(100%, 460px);
 }

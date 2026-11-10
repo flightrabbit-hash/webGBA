@@ -1464,7 +1464,7 @@ async function toggleRail(collapse = !state.prefs.railCollapsed) {
   requestAnimationFrame(layoutScreen);
 }
 
-async function toggleFavorite(path = state.game?.path, on = path ? !isFavorite(path) : false) {
+async function toggleFavorite(path = state.game?.path, on = path ? !isFavorite(path) : false, { quiet = false } = {}) {
   if (!path) return;
   const list = favorites().filter((item) => !samePath(item, path));
   if (on) list.push(path);
@@ -1472,7 +1472,7 @@ async function toggleFavorite(path = state.game?.path, on = path ? !isFavorite(p
   syncControls();
   renderPanel();
   if (el.start.hidden === false) renderStart();
-  status(t(on ? "status.starred" : "status.unstarred", { name: baseOf(path) }));
+  if (!quiet) status(t(on ? "status.starred" : "status.unstarred", { name: baseOf(path) }));
 }
 
 async function stepGame(by) {
@@ -2547,6 +2547,7 @@ const admin = createAdminFlow({
   get listText() {
     return t("admin.list.textExe");
   },
+  allText: (count) => t("admin.emptyAllExe", { count }),
   icon,
   notify: (text, level = "info") => status(text, level),
   changed: () => syncControls(),
@@ -2559,7 +2560,7 @@ const admin = createAdminFlow({
   },
   download: async (game, url, onFraction) => {
     const path = await core.adminFetch(url, game.file, game.size, ({ done, total }) => onFraction(total ? done / total : 0));
-    if (!isFavorite(path)) await toggleFavorite(path, true);
+    if (!isFavorite(path)) await toggleFavorite(path, true, { quiet: true });
     core.log("INFO", `롬 가져오기 → ${path}`);
   },
   refresh: () => {

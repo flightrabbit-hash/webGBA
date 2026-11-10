@@ -489,7 +489,7 @@ function adminControl(item, hint) {
   const paint = () => {
     const on = Boolean(hooks.adminOn?.());
     button.textContent = on ? "EXIT" : "ENTER";
-    button.classList.toggle("btn--warn", on);
+    button.classList.toggle("btn--danger-fill", on);
     hint.textContent = hooks.hint?.(item.key) ?? "";
   };
   button.addEventListener("click", async (event) => {

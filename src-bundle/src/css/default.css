@@ -1193,6 +1193,11 @@ html.is-rail-collapsed .sidepanel {
   font: 12px/16px var(--font-ui);
 }
 
+.dialog__body p.anote {
+  margin: 0;
+  line-height: 20px;
+}
+
 .dialog[data-kind="pick"] .dialog__body {
   display: flex;
   flex-direction: column;
@@ -2788,6 +2793,17 @@ label.cfg__swatch-row {
 
 .btn--warn:not(:disabled):hover {
   background: var(--global-hi);
+}
+
+.btn--danger-fill:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--ink-danger);
+}
+
+.btn--danger-fill:not(:disabled):hover {
+  border-color: var(--danger-hi);
+  background: var(--danger-hi);
 }
 
 .btn:disabled {
