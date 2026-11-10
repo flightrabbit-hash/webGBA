@@ -79,6 +79,7 @@ const FIELDS = [
     items: [
       { key: "netOn", default: true },
       { key: "netNick", type: "text", maxLength: 12, default: "" },
+      { key: "admin", type: "admin" },
     ],
   },
   {
@@ -299,7 +300,7 @@ function drawFields() {
 }
 
 function fieldRow(item) {
-  const row = document.createElement(item.type === "radio" || item.type === "clear" || item.type === "text" || item.type === "level" ? "div" : "label");
+  const row = document.createElement(item.type === "radio" || item.type === "clear" || item.type === "text" || item.type === "level" || item.type === "admin" ? "div" : "label");
   row.className = "cfg__row";
 
   const text = document.createElement("span");
@@ -321,6 +322,7 @@ function control(item, hint) {
   const value = draft[item.key];
 
   if (item.type === "clear") return clearControl(item, hint);
+  if (item.type === "admin") return adminControl(item, hint);
   if (item.type === "text") return textControl(item);
 
   if (item.type === "radio") {
@@ -473,6 +475,35 @@ function clearControl(item, hint) {
   });
   box.append(clear);
   paint();
+  return box;
+}
+
+// 저장(SAVE)과 상관없이 바로 동작 — 6자리 확인은 서버에서
+function adminControl(item, hint) {
+  const box = document.createElement("span");
+  box.className = "cfg__folder";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn";
+  button.dataset.action = "cfg-admin";
+  const paint = () => {
+    const on = Boolean(hooks.adminOn?.());
+    button.textContent = on ? "EXIT" : "ENTER";
+    button.classList.toggle("btn--warn", on);
+    hint.textContent = hooks.hint?.(item.key) ?? "";
+  };
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    try {
+      await hooks.adminToggle?.();
+    } finally {
+      button.disabled = false;
+      paint();
+    }
+  });
+  paint();
+  box.append(button);
   return box;
 }
 

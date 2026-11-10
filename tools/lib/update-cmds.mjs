@@ -25,6 +25,7 @@ import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
 import { r2Config, r2Head, r2List, r2Put } from "./r2.mjs";
 import { r2Stats } from "./r2-stats.mjs";
+import { adminKey, privateUpload } from "./admin-cmds.mjs";
 import { appDirs, appIndexPart, appPlan, appPublish, isAppDir, verifyAppDir, APP_BASE } from "./app-cmds.mjs";
 import { indexedApp } from "../../src-bundle/src/js/core/app-update.js";
 import { applyDelta, FEED_FORMAT, fromBase64, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
@@ -612,10 +613,17 @@ export async function updateCommand(cmd, rest) {
     return verify(o.positional[0], { pub: o["--pub"] ?? null, key: o["--key"] ?? null, olds: o["--wgba"] });
   }
   if (cmd === "upload") {
-    const o = parseList(rest, []);
-    if (o.positional.length !== 1) return -1;
+    const o = parseList(rest, [], ["--wgba"]);
+    if (o.positional.length > 1 || (!o.positional.length && !o["--wgba"].length)) return -1;
     if (o["--remote"] && !o["--dry-run"]) return -1;
-    return upload(o.positional[0], { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) });
+    const flags = { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) };
+    if (o["--wgba"].length) await privateUpload(o["--wgba"], flags);
+    return o.positional.length ? upload(o.positional[0], flags) : 0;
+  }
+  if (cmd === "admin-key") {
+    const o = parseList(rest, []);
+    if (o.positional.length) return -1;
+    return adminKey({ dryRun: Boolean(o["--dry-run"]) });
   }
   if (cmd === "r2-stats") {
     const o = parseList(rest, ["--days", "--since", "--until", "--top"]);

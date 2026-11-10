@@ -1606,6 +1606,10 @@ body[data-layout="landscape"] .lib__shelf {
   flex: none;
 }
 
+.lib__shelfHead .lib__count {
+  margin-right: auto;
+}
+
 /* 책장: 한 칸(--slot-h = 위 표시 자리 14 + 옆면 + 선반 14)마다 선반 판(윗면·앞면·그림자)을 배경으로 — 굴려도 같이 움직임 */
 .lib__case {
   --spine-out: 0.35;
@@ -2789,6 +2793,84 @@ body[data-layout="landscape"] .lib__shelf {
   line-height: 16px;
 }
 
+.dialog[data-kind="pin"] .dialog__card {
+  width: min(100%, 320px);
+}
+
+.apad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-3);
+  margin-top: var(--gap-3);
+}
+
+.apad__top {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+
+.apad__slots {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--px-well);
+  box-shadow: 0 calc(var(--px) * -1) 0 0 var(--px-ol), 0 var(--px) 0 0 var(--px-pan-hi), calc(var(--px) * -1) 0 0 0 var(--px-ol), var(--px) 0 0 0 var(--px-pan-hi);
+}
+
+.apad__slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  background: var(--bg-raised);
+  box-shadow: inset 0 calc(var(--px) * -1) 0 0 var(--line);
+}
+
+.apad__dot {
+  width: 10px;
+  height: 10px;
+  background: var(--text);
+  visibility: hidden;
+}
+
+.apad__slot.is-on .apad__dot {
+  visibility: visible;
+}
+
+.apad__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 60px);
+  gap: 12px;
+}
+
+.btn.apad__key {
+  width: 60px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.btn.apad__key--erase {
+  width: 44px;
+  min-height: 40px;
+}
+
+.apad__label {
+  line-height: 20px;
+}
+
+.apad__state {
+  min-height: 16px;
+  margin: 0;
+  color: var(--text-dim);
+  font-family: var(--font-small);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .dialog[data-kind="pick"] .dialog__card {
   width: min(100%, 460px);
 }
@@ -2949,6 +3031,10 @@ body[data-layout="landscape"] .lib__shelf {
 .upick__btn[hidden],
 .upick__bar[hidden] {
   display: none;
+}
+
+.upick--bare .upick__foot {
+  height: 14px;
 }
 
 .upick__bar {

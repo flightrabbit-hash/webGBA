@@ -78,6 +78,16 @@ node tools/run.cjs   # 전체 명령 목록
 
 - Cloudflare는 사용량이 한도를 넘어도 자동으로 멈추지 않으므로 발급 경로가 한도를 지킵니다. 한도 값·기간은 `api/_mp/turn.js`의 `TURN_CAP` 하나로 바꿉니다.
 
+관리자 모드 "롬 가져오기"(`api/v1/admin/[op].js`, 운영자 1명 전용 — 공개 주소를 끈 비공개 R2 버킷의 `.wgba`를 6자리 확인 뒤 내려받음):
+
+| 환경 변수 | 용도 | 없으면 |
+|---|---|---|
+| `R2_PRIVATE_BUCKET`·`R2_PRIVATE_ACCESS_KEY_ID`·`R2_PRIVATE_SECRET_ACCESS_KEY`·`CF_ACCOUNT_ID` | 비공개 버킷 읽기 전용 토큰 — 키 파일 `authentication.key`·`wgba/` 목록·5분짜리 내려받기 주소(presigned GET) | 관리자 API 503 → 앱은 "서버에 관리자 모드 설정이 존재하지 않습니다" |
+| 위 저장소(`UPSTASH_*`/`KV_*`) | 입력 횟수 제한(IP당 시간당 5번 · 전체 실패 하루 30번) | 입력 확인 503(확인하지 않음) |
+
+- 비공개 버킷 CORS = 웹 버전 출처의 GET만. Windows 앱은 웹뷰 대신 Windows 내장 WinHTTP로 받으므로 CORS가 필요 없습니다.
+- 키 파일·`.wgba` 올리기: `node tools/wgba.mjs admin-key`(PowerShell, 6자리를 화면에 표시하지 않음) · `node tools/wgba.mjs upload [<발행 폴더|묶음>] --wgba <새.wgba>`(12.5).
+
 ---
 
 ## 주요 기능
@@ -1468,7 +1478,8 @@ node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <�
 node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
 node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
-node tools/wgba.mjs upload <발행 폴더|묶음> [--dry-run [--remote]]
+node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]
+node tools/wgba.mjs admin-key [--dry-run]
 node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>]
 ```
 
@@ -1483,6 +1494,8 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
 - `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 버킷 확인은 목록 조회 1번(ListObjectsV2, 1,000개당 1번 = Class A)이고, 목록이 실패할 때만 파일마다 HEAD(Class B)로 확인합니다. `--dry-run`은 버킷에 연결하지 않고, `--dry-run --remote`는 목록 1번으로 버킷과 비교만 합니다(쓰기 없음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 - `r2-stats`: Cloudflare 분석 API(GraphQL `r2OperationsAdaptiveGroups`)로 R2 요청 수를 한국 날짜별·객체·동작·응답 코드별로 출력합니다(버킷 요청 0번, 기본 7일·최대 31일). 객체 이름으로 출처를 추정합니다 — `index.json` = webGBA 0.8.1 이상, `<게임 id>/latest.json` = 0.8.0 이하(또는 목록 실패 시 대체), `patches/`·`full/` = 업데이트 받기, HeadObject = 이전 `upload`·대시보드, 404·그 외 객체 = 외부 요청 의심. 환경 변수 `CF_API_TOKEN`(Account Analytics 읽기 권한 API 토큰)·`R2_ACCOUNT_ID`·`R2_BUCKET`(없으면 계정 전체), 값은 출력하지 않습니다.
+- `upload --wgba`: 전체 `.wgba`를 비공개 버킷(관리자 모드 "롬 가져오기" 전용, 공개 주소 꺼짐)의 `wgba/<게임 id>/<버전>.wgba`에 올립니다(같은 크기·ETag면 건너뜀, 버킷 확인 = 목록 1번). 발행 폴더 없이 `--wgba`만 주어도 됩니다. 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_PRIVATE_BUCKET`.
+- `admin-key`: 관리자 6자리(0~9·`!`·`#`)를 화면에 `•`로만 표시하며 두 번 받아 SHA-256을 비공개 버킷 `authentication.key`(`{"sha256":"…","updated":"YYYY-MM-DD HH:mm"}`, 한국 시각)에 올립니다. 6자리·해시는 출력하지 않습니다(6자리는 해시만으로 바로 역산되므로 키 파일도 비밀). 갱신일자보다 먼저 켠 관리자 모드는 "롬 가져오기" 때 다시 입력합니다. 서버 반영까지 최대 1분. 파일을 직접 고쳐도 됩니다(미래 시각은 거절).
 - `app`: webGBA exe 자체 업데이트 발행(12.6). `index`·`verify`·`upload`는 묶음의 앱 폴더도 함께 다룹니다.
 
 #### 12.6 webGBA 자체 업데이트 (Windows 앱)

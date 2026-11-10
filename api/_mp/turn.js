@@ -35,9 +35,9 @@ export class RelayError extends Error {
   }
 }
 
-const tidyEnv = (value) => String(value ?? "").replace(ZERO_WIDTH_RE, "").replace(/\xa0/g, " ").replace(EDGE_RE, "");
+export const tidyEnv = (value) => String(value ?? "").replace(ZERO_WIDTH_RE, "").replace(/\xa0/g, " ").replace(EDGE_RE, "");
 
-function onlyHex32(value) {
+export function onlyHex32(value) {
   const found = value.match(HEX32_RE) ?? [];
   return new Set(found.map((s) => s.toLowerCase())).size === 1 ? found[0] : "";
 }

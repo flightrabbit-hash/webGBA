@@ -229,12 +229,29 @@ export function createExeUpdater(d) {
     return picker;
   }
 
+  /** 경로들의 .wgba 게임 id(설명서 조회 캐시 updateIndex 재사용 — 바뀐 파일만 읽음). */
+  async function ids(paths) {
+    const cache = { ...(d.prefs().updateIndex ?? {}) };
+    const before = JSON.stringify(cache);
+    const found = new Set();
+    const seen = new Set();
+    for (const path of paths) {
+      if (!/\.wgba$/i.test(path) || seen.has(keyOf(path))) continue;
+      seen.add(keyOf(path));
+      const info = await describe(path, cache);
+      if (info?.gameId) found.add(info.gameId);
+    }
+    if (JSON.stringify(cache) !== before) d.savePrefs({ updateIndex: Object.fromEntries(Object.entries(cache).slice(-INDEX_MAX)) });
+    return found;
+  }
+
   return {
     prepare,
     check,
     open,
     pending,
     keyOf,
+    ids,
     get items() {
       return items;
     },
