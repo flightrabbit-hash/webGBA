@@ -8,7 +8,7 @@ import { ADMIN, createAdmin, parseUpdated, safeFileName, saveFileName } from "..
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { startFakeUpstash } from "./fake-upstash.mjs";
 import { keyFile, startFakeR2 } from "./fake-r2-private.mjs";
-import { adminKey, privateUpload } from "../lib/admin-cmds.mjs";
+import { adminKey, privatePrune, privateUpload } from "../lib/admin-cmds.mjs";
 
 const require = createRequire(import.meta.url);
 const { encode: encodePng } = require("./png.cjs");
@@ -230,8 +230,36 @@ try {
     await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta")), await writeTemp("b.wgba", await game("io.example.delta", "1.1.0", "Delta")), await writeTemp("firered.wgba", rapid)], { config: tool });
     var firstPuts = r2.log.filter((l) => l.kind === "put" && l.status === 200).map((l) => l.path);
     r2.clear();
-    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta"))], { config: tool });
+    var afterFirst = ["wgba/io.example.delta/1.0.0.wgba", "wgba/io.example.delta/1.1.0.wgba", "wgba/com.flightrabbit.rapid/1.3.5.wgba"].map((k) => r2.has(k));
+    var keyBefore = r2.read("authentication.key")?.length ?? 0;
+    r2.clear();
+    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.1.0", "Delta"))], { config: tool });
     var againPuts = r2.log.filter((l) => l.kind === "put").length;
+    r2.put("wgba/io.example.delta/0.9.0.wgba", "old");
+    r2.put("wgba/io.example.other/1.0.0.wgba", "other");
+    r2.put("wgba/io.example.delta/notes.txt", "x");
+    r2.clear();
+    await privateUpload([await writeTemp("c.wgba", await game("io.example.delta", "1.2.0", "Delta"))], { config: tool });
+    var afterSecond = ["wgba/io.example.delta/0.9.0.wgba", "wgba/io.example.delta/1.1.0.wgba", "wgba/io.example.delta/1.2.0.wgba", "wgba/io.example.other/1.0.0.wgba", "wgba/io.example.delta/notes.txt", "wgba/com.flightrabbit.rapid/1.3.5.wgba"].map((k) => r2.has(k));
+    var deletes = r2.log.filter((l) => l.kind === "delete").map((l) => l.path.replace(`/${r2.bucket}/`, "")).sort();
+    r2.put("wgba/io.example.delta/1.3.0.wgba", "newer");
+    r2.clear();
+    await privateUpload([await writeTemp("d.wgba", await game("io.example.delta", "1.2.5", "Delta"))], { config: tool });
+    var lowerKeepsNewer = r2.has("wgba/io.example.delta/1.3.0.wgba") && r2.has("wgba/io.example.delta/1.2.5.wgba") && !r2.has("wgba/io.example.delta/1.2.0.wgba");
+    r2.put("wgba/io.example.delta/1.2.0.wgba", "back");
+    r2.put("wgba/io.example.old/1.0.0.wgba", "o1");
+    r2.put("wgba/io.example.old/1.0.1.wgba", "o2");
+    r2.clear();
+    await privatePrune({ dryRun: true, config: tool });
+    var dryDeletes = r2.log.filter((l) => l.kind === "delete").length;
+    await privatePrune({ config: tool });
+    var prunedLeft = [...["wgba/io.example.delta/1.2.0.wgba", "wgba/io.example.delta/1.2.5.wgba", "wgba/io.example.delta/1.3.0.wgba", "wgba/io.example.old/1.0.0.wgba", "wgba/io.example.old/1.0.1.wgba", "wgba/io.example.other/1.0.0.wgba", "wgba/com.flightrabbit.rapid/1.3.5.wgba", "wgba/io.example.delta/notes.txt", "authentication.key"].map((k) => r2.has(k))];
+    r2.put("wgba/io.example.fail/1.0.0.wgba", "f1");
+    r2.clear();
+    r2.breakPuts(true);
+    var failMsg = await privateUpload([await writeTemp("e.wgba", await game("io.example.fail", "1.1.0", "Fail"))], { config: tool }).then(() => "올림", (e) => e.message);
+    r2.breakPuts(false);
+    var failKept = r2.has("wgba/io.example.fail/1.0.0.wgba") && r2.log.every((l) => l.kind !== "delete");
     var mismatch = await adminKey({ config: tool, ask: (() => { let i = 0; return async () => (i++ ? "000000" : "111111"); })() }).then(() => "올림", (e) => e.message);
     var asks = asked;
     r2.emptyPuts(true);
@@ -250,6 +278,11 @@ try {
   ok("도구로 만든 키 = 서버 확인 통과", viaTool.status === 200);
   ok("upload --wgba = 비공개 버킷 wgba/<id>/<버전>.wgba(원본 이름 firered.wgba 무관)", firstPuts.join() === `/${r2.bucket}/wgba/io.example.delta/1.0.0.wgba,/${r2.bucket}/wgba/io.example.delta/1.1.0.wgba,/${r2.bucket}/wgba/com.flightrabbit.rapid/1.3.5.wgba`, firstPuts.join(" "));
   ok("upload --wgba = 같은 파일 다시 올리지 않음(목록 1번)", againPuts === 0);
+  ok("올린 뒤 같은 id 의 낮은 버전 삭제(delta 1.0.0 삭제 · 1.1.0·다른 id 남김)", afterFirst.join() === "false,true,true", afterFirst.join());
+  ok("낮은 것만 삭제 · 다른 id·notes.txt·authentication.key 그대로", afterSecond.join() === "false,false,true,true,true,true" && deletes.join() === "wgba/io.example.delta/0.9.0.wgba,wgba/io.example.delta/1.1.0.wgba" && r2.read("authentication.key").length === keyBefore, deletes.join(" "));
+  ok("더 높은 버전이 있는 id 에 낮은 버전을 올리면 높은 것은 남김", lowerKeepsNewer);
+  ok("private-prune --dry-run = 삭제 없음 · 실행 = 게임마다 최신 하나만(wgba/ 밖·형식 다른 키 그대로)", dryDeletes === 0 && prunedLeft.join() === "false,false,true,false,true,true,true,true,true", prunedLeft.join());
+  ok("올리기 실패 시 삭제하지 않음", /PUT/.test(failMsg) && failKept, failMsg);
 
   ok("저장 이름 = 영어 이름 소문자·하이픈(악센트 제거) · 영어 이름 없으면 id 끝", saveFileName({ id: "local.x", names: { en: "Ninja Baseball Bat Man", ko: "닌자" } }) === "ninja-baseball-bat-man.wgba" && saveFileName({ id: "local.tetris", names: { ja: "テトリス" } }) === "tetris.wgba" && saveFileName({ id: "com.flightrabbit.rapid" }) === "pokemon-rapid.wgba");
   ok("저장 이름 = Windows 금지 글자·예약어 처리", safeFileName('a<b>:"c"/\\|?*') === "a_b___c______.wgba" && safeFileName("con") === "_con.wgba" && safeFileName("  ..  ") === "game.wgba");

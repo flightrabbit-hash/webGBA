@@ -13,6 +13,7 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
   let delayMs = 0;
   let cut = false;
   let emptyPuts = false;
+  let failPuts = false;
 
   function headerAuth(req, path, params) {
     const auth = /Credential=([^/]+)\/(\d{8})\/auto\/s3\/aws4_request, SignedHeaders=([^,]+), Signature=([0-9a-f]{64})/.exec(req.headers.authorization ?? "");
@@ -40,6 +41,18 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
   }
 
   const server = http.createServer((req, res) => {
+    if (req.method === "DELETE") {
+      const url = new URL(req.url, "http://x");
+      const path = decodeURIComponent(url.pathname);
+      const entry = { method: "DELETE", path, kind: "delete" };
+      log.push(entry);
+      const good = headerAuth(req, path, Object.fromEntries(url.searchParams)) && path.startsWith(`/${bucket}/`);
+      entry.status = good ? 204 : 403;
+      if (good) objects.delete(path.slice(bucket.length + 2));
+      res.writeHead(entry.status);
+      res.end();
+      return;
+    }
     if (req.method === "PUT") {
       const chunks = [];
       req.on("data", (c) => chunks.push(c));
@@ -49,7 +62,7 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
         const path = decodeURIComponent(url.pathname);
         const entry = { method: "PUT", path, kind: "put" };
         log.push(entry);
-        const good = headerAuth(req, path, Object.fromEntries(url.searchParams)) && req.headers["x-amz-content-sha256"] === sha256Hex(body) && path.startsWith(`/${bucket}/`);
+        const good = !failPuts && headerAuth(req, path, Object.fromEntries(url.searchParams)) && req.headers["x-amz-content-sha256"] === sha256Hex(body) && path.startsWith(`/${bucket}/`);
         entry.status = good ? 200 : 403;
         const kept = emptyPuts ? Buffer.alloc(0) : body;
         if (good) objects.set(path.slice(bucket.length + 2), { bytes: kept, etag: crypto.createHash("md5").update(kept).digest("hex") });
@@ -129,6 +142,7 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
     slow: (ms) => (delayMs = ms),
     breakDownloads: (on) => (cut = on),
     emptyPuts: (on) => (emptyPuts = on),
+    breakPuts: (on) => (failPuts = on),
     clear: () => (log.length = 0),
     close: () => new Promise((resolve) => server.close(resolve)),
   };

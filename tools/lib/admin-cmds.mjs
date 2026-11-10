@@ -5,7 +5,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { manifestOf } from "./wgbd-make.mjs";
-import { r2Head, r2List, r2Put } from "./r2.mjs";
+import { r2Delete, r2Head, r2List, r2Put } from "./r2.mjs";
 import { saveFileName } from "../../api/_admin/save-name.js";
 
 export const PRIVATE_ENV = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_PRIVATE_BUCKET"];
@@ -90,6 +90,49 @@ export async function adminKey({ dryRun = false, config = null, ask = askHidden,
   return 0;
 }
 
+const GAME_KEY_RE = /^wgba\/([a-z0-9][a-z0-9.-]{0,63})\/(\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?)\.wgba$/;
+
+/** semver 비교(x.y.z 숫자, 같으면 접미사 없는 쪽이 높음). */
+export function compareVersions(a, b) {
+  const split = (v) => [v.split("-")[0].split(".").map(Number), v.includes("-") ? v.slice(v.indexOf("-") + 1) : null];
+  const [na, pa] = split(a);
+  const [nb, pb] = split(b);
+  for (let i = 0; i < 3; i++) if (na[i] !== nb[i]) return na[i] < nb[i] ? -1 : 1;
+  if (pa === pb) return 0;
+  if (pa === null) return 1;
+  if (pb === null) return -1;
+  return pa < pb ? -1 : 1;
+}
+
+/** 게임 id 마다 keep(id → 남길 버전)보다 낮은 wgba/<id>/<버전>.wgba 삭제. wgba/ 밖·형식이 다른 키·keep 에 없는 id 는 건드리지 않음. */
+async function pruneOld(r2, keys, keep, { dryRun }) {
+  let count = 0;
+  let bytes = 0;
+  for (const [key, size] of keys) {
+    const hit = GAME_KEY_RE.exec(key);
+    if (!hit || !keep.has(hit[1]) || compareVersions(hit[2], keep.get(hit[1])) >= 0) continue;
+    if (!dryRun) await r2Delete(r2, key);
+    console.log(`${dryRun ? "삭제할 것" : "삭제함"}  비공개 ${key} ${n(size)}바이트`);
+    count++;
+    bytes += size;
+  }
+  return { count, bytes };
+}
+
+/** 이미 올라간 이전 버전 정리: 게임 id 마다 가장 높은 버전만 남김. */
+export async function privatePrune({ dryRun = false, config = null } = {}) {
+  const r2 = config ?? privateConfig();
+  const listed = await r2List(r2, { prefix: "wgba/" });
+  const keep = new Map();
+  for (const key of listed.objects.keys()) {
+    const hit = GAME_KEY_RE.exec(key);
+    if (hit && (!keep.has(hit[1]) || compareVersions(hit[2], keep.get(hit[1])) > 0)) keep.set(hit[1], hit[2]);
+  }
+  const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
+  console.log(`${dryRun ? "--dry-run: 삭제하지 않았습니다 — 삭제할 것" : "비공개 버킷 정리 완료 — 삭제"} ${done.count}개 ${n(done.bytes)}바이트 · 남김 ${[...keep].map(([id, v]) => `${id} ${v}`).join(", ")}`);
+  return 0;
+}
+
 /** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번). */
 export async function privateUpload(files, { dryRun = false, remote = false, config = null } = {}) {
   const plan = [];
@@ -121,9 +164,18 @@ export async function privateUpload(files, { dryRun = false, remote = false, con
       continue;
     }
     await r2Put(r2, item.key, item.bytes, { contentType: "application/octet-stream", cacheControl: "no-store" });
+    listed.objects.set(item.key, { size: item.bytes.length, etag: md5 });
     console.log(`올림  비공개 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save}`);
     put++;
   }
   console.log(`${dryRun ? "--dry-run --remote: 비공개 버킷에 올리지 않았습니다 — 올릴 것" : "비공개 버킷 완료 — 올림"} ${put}개 · 같음 ${plan.length - put}개 · 버킷 확인 목록 ${listed.requests}번`);
+  // 올리기가 모두 끝난 뒤에만: 같은 게임 id 의 이번에 올린 최고 버전보다 낮은 것 삭제
+  const keep = new Map();
+  for (const item of plan) {
+    const [, id, version] = GAME_KEY_RE.exec(item.key);
+    if (!keep.has(id) || compareVersions(version, keep.get(id)) > 0) keep.set(id, version);
+  }
+  const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
+  if (done.count) console.log(`${dryRun ? "삭제할 것" : "이전 버전 삭제"} ${done.count}개 ${n(done.bytes)}바이트`);
   return 0;
 }

@@ -290,7 +290,7 @@ export async function main(argv) {
   return usage();
 }
 
-const UPDATE_COMMANDS = ["keygen", "diff", "feed", "app", "index", "verify", "upload", "r2-stats", "admin-key"];
+const UPDATE_COMMANDS = ["keygen", "diff", "feed", "app", "index", "verify", "upload", "r2-stats", "admin-key", "private-prune"];
 const UPDATE_USAGE = [
   "        node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem> [--force]",
   "        node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]… [--no-expand]",
@@ -298,8 +298,9 @@ const UPDATE_USAGE = [
   "        node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]",
   "        node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>",
   "        node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…",
-  "        node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]   (--wgba = 비공개 버킷 wgba/<id>/<버전>.wgba)",
+  "        node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]   (--wgba = 비공개 버킷 wgba/<id>/<버전>.wgba, 올린 뒤 같은 id 의 낮은 버전 삭제)",
   "        node tools/wgba.mjs admin-key [--dry-run]   (관리자 6자리 → 비공개 버킷 authentication.key, PowerShell 에서)",
+  "        node tools/wgba.mjs private-prune [--dry-run]   (비공개 버킷 wgba/<id>/ 에 게임마다 최신 버전 하나만 남김)",
   "        node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>]",
 ];
 

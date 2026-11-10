@@ -102,6 +102,12 @@ export async function r2Head(config, key) {
   return { size: Number(response.headers.get("content-length")), etag: (response.headers.get("etag") ?? "").replace(/"/g, "").toLowerCase() };
 }
 
+/** 버킷 객체 삭제(DELETE, 없는 키도 204). */
+export async function r2Delete(config, key) {
+  const response = await call(config, "DELETE", key);
+  if (!response.ok) throw new Error(`DELETE ${key}: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
+}
+
 export async function r2Put(config, key, bytes, { contentType, cacheControl }) {
   const response = await call(config, "PUT", key, { body: bytes, headers: { "content-type": contentType, "cache-control": cacheControl } });
   if (!response.ok) throw new Error(`PUT ${key}: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
