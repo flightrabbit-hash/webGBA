@@ -46,6 +46,8 @@ const label = encodePng(Buffer.alloc(96 * 64 * 4, 0xc8), 96, 64);
 const game = async (id, version, name, { pad = 0, art = false } = {}) => (await packWgba({ wasm: tinyWasm(pad), manifest: { wgba: 1, id, version, name, runtime: "webapi", input: { preset: "gba" } }, images: art ? { label } : {} })).bytes;
 
 const r2 = await startFakeR2();
+const pub = await startFakeR2({ bucket: "public-test", publicRead: true });
+const pubTool = pub.toolConfig();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "admin-api-"));
 const writeTemp = async (name, bytes) => {
   const file = path.join(tmp, name);
@@ -55,7 +57,8 @@ const writeTemp = async (name, bytes) => {
 const kv = await startFakeUpstash();
 let clock = Date.UTC(2026, 10, 10, 6, 0, 0);
 const env = { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token };
-let api = createAdmin({ env, endpoint: r2.endpoint, now: () => clock });
+const romsUrl = `${pub.endpoint}/roms.json`;
+let api = createAdmin({ env, endpoint: r2.endpoint, now: () => clock, romsUrl });
 const BASE = "https://webgba.vercel.app/api/v1/admin/";
 const PIN = "4!8#0" + "2";
 
@@ -115,7 +118,7 @@ try {
   ok("맞는 6자리 → 토큰·갱신일자", good.status === 200 && /^a1\./.test(good.body.token) && good.body.updated === "2026-11-10 14:30" && good.body.at === clock, JSON.stringify(good.body).slice(0, 60));
   const wrong = await call("POST", "verify", { body: { pin: "000000" }, ip: "198.51.100.1" });
   ok("틀린 6자리 → 401 wrong · 남은 횟수", wrong.status === 401 && wrong.body.error === "wrong" && wrong.body.left === 3, JSON.stringify(wrong.body));
-  ok("키 파일 = 인스턴스 메모리 캐시(60초 안 다시 조회 안 함)", keyGets() === 1, `${keyGets()}번`);
+  ok(`키 파일 = 인스턴스 메모리 캐시(${ADMIN.KEY_MS / 1000}초 안 다시 조회 안 함)`, keyGets() === 1, `${keyGets()}번`);
 
   for (let i = 0; i < 3; i++) await call("POST", "verify", { body: { pin: "111111" }, ip: "198.51.100.1" });
   const limited = await call("POST", "verify", { body: { pin: PIN }, ip: "198.51.100.1" });
@@ -171,7 +174,7 @@ try {
   ok("목록 = 이름(언어별)·라벨 그림·크기·저장 이름", alpha.names.ko === "알파" && /^data:image\/png;base64,/.test(alpha.label) && alpha.size === v120.length && alpha.file === "alpha.wgba" && items.find((i) => i.id === "io.example.beta").file === "beta-quest-two.wgba");
   const lists = r2.log.filter((l) => l.kind === "list").length;
   const ranges = r2.log.filter((l) => l.range).length;
-  ok("R2 요청 = 목록 1번 + 후보마다 앞부분 Range 1번", lists === 1 && ranges === 6 && r2.log.every((l) => !l.range || l.range === `bytes=0-${ADMIN.HEAD_BYTES - 1}`), `목록 ${lists} · Range ${ranges}`);
+  ok("roms.json 없음(404) → 예전 방식 = 목록 1번 + 후보마다 앞부분 Range 1번", lists === 1 && ranges === 6 && r2.log.every((l) => !l.range || l.range === `bytes=0-${ADMIN.HEAD_BYTES - 1}`), `목록 ${lists} · Range ${ranges}`);
   r2.clear();
   await call("GET", "list", { token });
   ok("두 번째 목록 = 앞부분 캐시(ETag 같음 → Range 0번)", r2.log.filter((l) => l.range).length === 0 && r2.log.filter((l) => l.kind === "list").length === 1);
@@ -227,37 +230,43 @@ try {
     let asked = 0;
     await adminKey({ config: tool, ask: async () => (asked++, "1#2!3#"), now: () => clock - 60000 });
     r2.clear();
-    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta")), await writeTemp("b.wgba", await game("io.example.delta", "1.1.0", "Delta")), await writeTemp("firered.wgba", rapid)], { config: tool });
+    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.0.0", "Delta")), await writeTemp("b.wgba", await game("io.example.delta", "1.1.0", "Delta")), await writeTemp("firered.wgba", rapid)], { config: tool, publicConfig: pubTool });
     var firstPuts = r2.log.filter((l) => l.kind === "put" && l.status === 200).map((l) => l.path);
+    var firstRanges = r2.log.filter((l) => l.range).map((l) => l.path.replace(`/${r2.bucket}/`, "")).sort();
+    var romsFirst = JSON.parse(new TextDecoder().decode(pub.read("roms.json")));
+    var romsPutFirst = pub.log.filter((l) => l.kind === "put" && l.status === 200).map((l) => l.path);
     r2.clear();
     var afterFirst = ["wgba/io.example.delta/1.0.0.wgba", "wgba/io.example.delta/1.1.0.wgba", "wgba/com.flightrabbit.rapid/1.3.5.wgba"].map((k) => r2.has(k));
     var keyBefore = r2.read("authentication.key")?.length ?? 0;
     r2.clear();
-    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.1.0", "Delta"))], { config: tool });
+    pub.clear();
+    await privateUpload([await writeTemp("a.wgba", await game("io.example.delta", "1.1.0", "Delta"))], { config: tool, publicConfig: pubTool });
     var againPuts = r2.log.filter((l) => l.kind === "put").length;
+    var againRanges = r2.log.filter((l) => l.range).length;
+    var againRomsPuts = pub.log.filter((l) => l.kind === "put").length;
     r2.put("wgba/io.example.delta/0.9.0.wgba", "old");
     r2.put("wgba/io.example.other/1.0.0.wgba", "other");
     r2.put("wgba/io.example.delta/notes.txt", "x");
     r2.clear();
-    await privateUpload([await writeTemp("c.wgba", await game("io.example.delta", "1.2.0", "Delta"))], { config: tool });
+    await privateUpload([await writeTemp("c.wgba", await game("io.example.delta", "1.2.0", "Delta"))], { config: tool, publicConfig: pubTool });
     var afterSecond = ["wgba/io.example.delta/0.9.0.wgba", "wgba/io.example.delta/1.1.0.wgba", "wgba/io.example.delta/1.2.0.wgba", "wgba/io.example.other/1.0.0.wgba", "wgba/io.example.delta/notes.txt", "wgba/com.flightrabbit.rapid/1.3.5.wgba"].map((k) => r2.has(k));
     var deletes = r2.log.filter((l) => l.kind === "delete").map((l) => l.path.replace(`/${r2.bucket}/`, "")).sort();
     r2.put("wgba/io.example.delta/1.3.0.wgba", "newer");
     r2.clear();
-    await privateUpload([await writeTemp("d.wgba", await game("io.example.delta", "1.2.5", "Delta"))], { config: tool });
+    await privateUpload([await writeTemp("d.wgba", await game("io.example.delta", "1.2.5", "Delta"))], { config: tool, publicConfig: pubTool });
     var lowerKeepsNewer = r2.has("wgba/io.example.delta/1.3.0.wgba") && r2.has("wgba/io.example.delta/1.2.5.wgba") && !r2.has("wgba/io.example.delta/1.2.0.wgba");
     r2.put("wgba/io.example.delta/1.2.0.wgba", "back");
     r2.put("wgba/io.example.old/1.0.0.wgba", "o1");
     r2.put("wgba/io.example.old/1.0.1.wgba", "o2");
     r2.clear();
-    await privatePrune({ dryRun: true, config: tool });
+    await privatePrune({ dryRun: true, config: tool, publicConfig: pubTool });
     var dryDeletes = r2.log.filter((l) => l.kind === "delete").length;
-    await privatePrune({ config: tool });
+    await privatePrune({ config: tool, publicConfig: pubTool });
     var prunedLeft = [...["wgba/io.example.delta/1.2.0.wgba", "wgba/io.example.delta/1.2.5.wgba", "wgba/io.example.delta/1.3.0.wgba", "wgba/io.example.old/1.0.0.wgba", "wgba/io.example.old/1.0.1.wgba", "wgba/io.example.other/1.0.0.wgba", "wgba/com.flightrabbit.rapid/1.3.5.wgba", "wgba/io.example.delta/notes.txt", "authentication.key"].map((k) => r2.has(k))];
     r2.put("wgba/io.example.fail/1.0.0.wgba", "f1");
     r2.clear();
     r2.breakPuts(true);
-    var failMsg = await privateUpload([await writeTemp("e.wgba", await game("io.example.fail", "1.1.0", "Fail"))], { config: tool }).then(() => "올림", (e) => e.message);
+    var failMsg = await privateUpload([await writeTemp("e.wgba", await game("io.example.fail", "1.1.0", "Fail"))], { config: tool, publicConfig: pubTool }).then(() => "올림", (e) => e.message);
     r2.breakPuts(false);
     var failKept = r2.has("wgba/io.example.fail/1.0.0.wgba") && r2.log.every((l) => l.kind !== "delete");
     var mismatch = await adminKey({ config: tool, ask: (() => { let i = 0; return async () => (i++ ? "000000" : "111111"); })() }).then(() => "올림", (e) => e.message);
@@ -276,6 +285,33 @@ try {
   clock += ADMIN.KEY_MS + 1;
   const viaTool = await call("POST", "verify", { body: { pin: "1#2!3#" }, ip: "192.0.2.99" });
   ok("도구로 만든 키 = 서버 확인 통과", viaTool.status === 200);
+  const firstIds = romsFirst.items.map((i) => `${i.id}@${i.version}`).join(" ");
+  ok("upload --wgba = 공개 버킷 roms.json 갱신(게임 id 마다 최신 하나·형식 다른 키 뺌)", romsPutFirst.join() === `/${pub.bucket}/roms.json` && firstIds === "com.flightrabbit.rapid@1.3.5 io.example.alpha@1.2.0 io.example.beta@2.0.0 io.example.delta@1.1.0 local.kof98@1.0.0", firstIds);
+  ok("roms.json 처음 = 올린 파일은 로컬 머리 · 나머지만 버킷 앞부분 범위 GET(게임마다 1번)", firstRanges.join() === "wgba/io.example.alpha/1.2.0.wgba,wgba/io.example.beta/2.0.0.wgba,wgba/local.kof98/1.0.0.wgba", firstRanges.join(" "));
+  const romAlpha = romsFirst.items.find((i) => i.id === "io.example.alpha");
+  ok("roms.json 항목 = 키·크기·ETag·저장 이름·이름·라벨 그림", romAlpha?.key === "wgba/io.example.alpha/1.2.0.wgba" && romAlpha.size === v120.length && /^[0-9a-f]{32}$/.test(romAlpha.etag) && romAlpha.file === "alpha.wgba" && romAlpha.names.ko === "알파" && /^data:image\/png;base64,/.test(romAlpha.label) && romsFirst.items.find((i) => i.id === "com.flightrabbit.rapid").file === "pokemon-rapid-v.1.3.5.wgba");
+  ok("같은 파일 다시 올림 = 이전 roms.json 재사용(범위 GET 0번 · 내용 같으면 올리지 않음)", againRanges === 0 && againRomsPuts === 0, `범위 ${againRanges} · roms PUT ${againRomsPuts}`);
+
+  const viaToken = viaTool.body.token;
+  r2.clear();
+  pub.clear();
+  const fromRoms = await call("GET", "list", { token: viaToken });
+  const romIds = (fromRoms.body?.items ?? []).map((i) => `${i.id}@${i.version}`).sort().join(" ");
+  ok("roms.json 있음 → list R2 요청 = roms.json 1번(비공개 버킷 목록·범위 GET·키 다시 읽기 0번)", fromRoms.status === 200 && pub.log.filter((l) => l.kind === "public").length === 1 && r2.log.length === 0, `공개 ${pub.log.length} · 비공개 ${r2.log.length}`);
+  ok("roms.json 목록 = 남은 게임 최신만(머리가 깨진 것 뺌)", romIds === "com.flightrabbit.rapid@1.3.5 io.example.alpha@1.2.0 io.example.beta@2.0.0 local.kof98@1.0.0", romIds);
+  pub.clear();
+  clock += 30000;
+  await call("GET", "list", { token: viaToken });
+  ok(`roms.json = 인스턴스 메모리 캐시(${ADMIN.ROMS_MS / 1000}초 안 다시 조회 안 함)`, pub.log.length === 0 && r2.log.length === 0);
+  const goodItem = romsFirst.items.find((i) => i.id === "io.example.alpha");
+  pub.put("roms.json", JSON.stringify({ wgbaRoms: 1, time: "x", items: [{ ...goodItem, file: "evil.exe" }, { ...goodItem, id: "io.example.evil", key: "wgba/../evil.wgba" }, { ...goodItem, id: "io.example.big", version: "1.0.0", key: "wgba/io.example.big/1.0.0.wgba", size: -1 }] }));
+  clock += ADMIN.ROMS_MS + 1;
+  const romsBad = await call("GET", "list", { token: viaToken });
+  ok("roms.json 항목 검사 = 키·크기 형식이 다른 항목 뺌 · 저장 이름은 서버가 다시 계산", romsBad.body?.items?.length === 1 && romsBad.body.items[0].file === "alpha.wgba", JSON.stringify(romsBad.body?.items?.map((i) => i.file)));
+  pub.put("roms.json", "{broken");
+  clock += ADMIN.ROMS_MS + 1;
+  const broken = await call("GET", "list", { token: viaToken });
+  ok("roms.json 형식 틀림 → 503 r2(roms format) · 버킷 목록으로 대신하지 않음", broken.status === 503 && broken.body.why === "roms format" && r2.log.filter((l) => l.kind === "list").length === 0, JSON.stringify(broken.body));
   ok("upload --wgba = 비공개 버킷 wgba/<id>/<버전>.wgba(원본 이름 firered.wgba 무관)", firstPuts.join() === `/${r2.bucket}/wgba/io.example.delta/1.0.0.wgba,/${r2.bucket}/wgba/io.example.delta/1.1.0.wgba,/${r2.bucket}/wgba/com.flightrabbit.rapid/1.3.5.wgba`, firstPuts.join(" "));
   ok("upload --wgba = 같은 파일 다시 올리지 않음(목록 1번)", againPuts === 0);
   ok("올린 뒤 같은 id 의 낮은 버전 삭제(delta 1.0.0 삭제 · 1.1.0·다른 id 남김)", afterFirst.join() === "false,true,true", afterFirst.join());
@@ -288,6 +324,7 @@ try {
   ok("저장 이름 = Windows 금지 글자·예약어 처리", safeFileName('a<b>:"c"/\\|?*') === "a_b___c______.wgba" && safeFileName("con") === "_con.wgba" && safeFileName("  ..  ") === "game.wgba");
 } finally {
   await r2.close();
+  await pub.close();
   fs.rmSync(tmp, { recursive: true, force: true });
   await kv.close?.();
 }

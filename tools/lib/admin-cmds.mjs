@@ -5,10 +5,13 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { manifestOf } from "./wgbd-make.mjs";
-import { r2Delete, r2Head, r2List, r2Put } from "./r2.mjs";
+import { r2Delete, r2Get, r2Head, r2List, r2Put } from "./r2.mjs";
 import { saveFileName } from "../../api/_admin/save-name.js";
+import { readHead } from "../../api/_admin/wgba-head.js";
+import { ROMS, romItem, romsText } from "../../api/_admin/roms.js";
 
 export const PRIVATE_ENV = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_PRIVATE_BUCKET"];
+const HEAD_BYTES = 131072;
 export const KEY_FILE = "authentication.key";
 export const PIN_RE = /^[0-9!#]{6}$/;
 const SEMVER_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?$/;
@@ -18,6 +21,12 @@ export function privateConfig(env = process.env) {
   const missing = PRIVATE_ENV.filter((name) => !env[name]);
   if (missing.length) throw new Error(`환경 변수가 없습니다: ${missing.join(", ")}`);
   return { account: env.R2_ACCOUNT_ID, accessKey: env.R2_ACCESS_KEY_ID, secret: env.R2_SECRET_ACCESS_KEY, bucket: env.R2_PRIVATE_BUCKET, host: `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` };
+}
+
+/** roms.json 을 올릴 공개 버킷(R2_BUCKET, 키는 비공개 버킷과 같은 R2_ACCESS_KEY_ID). */
+export function romsConfig(priv, env = process.env) {
+  if (!env.R2_BUCKET) throw new Error("환경 변수가 없습니다: R2_BUCKET(roms.json 을 올릴 공개 버킷)");
+  return { ...priv, bucket: env.R2_BUCKET };
 }
 
 /** 한국 시각 "YYYY-MM-DD HH:mm"(서버가 시각대 없는 값을 +09:00 으로 읽음). */
@@ -108,6 +117,7 @@ export function compareVersions(a, b) {
 async function pruneOld(r2, keys, keep, { dryRun }) {
   let count = 0;
   let bytes = 0;
+  const removed = [];
   for (const [key, size] of keys) {
     const hit = GAME_KEY_RE.exec(key);
     if (!hit || !keep.has(hit[1]) || compareVersions(hit[2], keep.get(hit[1])) >= 0) continue;
@@ -115,13 +125,83 @@ async function pruneOld(r2, keys, keep, { dryRun }) {
     console.log(`${dryRun ? "삭제할 것" : "삭제함"}  비공개 ${key} ${n(size)}바이트`);
     count++;
     bytes += size;
+    removed.push(key);
   }
-  return { count, bytes };
+  return { count, bytes, removed };
 }
 
-/** 이미 올라간 이전 버전 정리: 게임 id 마다 가장 높은 버전만 남김. */
-export async function privatePrune({ dryRun = false, config = null } = {}) {
+/** 앞부분(manifest 가 밖이면 그 범위 1번 더)만 읽은 머리. */
+async function bucketHead(priv, key, size) {
+  const first = await r2Get(priv, key, { range: `bytes=0-${HEAD_BYTES - 1}` });
+  if (!first) return null;
+  let head = readHead(first);
+  if (head.need && head.need[1] <= size) {
+    const more = await r2Get(priv, key, { range: `bytes=${head.need[0]}-${head.need[1] - 1}` });
+    head = more ? readHead(first, { start: head.need[0], bytes: more }) : { bad: true };
+  }
+  return head;
+}
+
+/**
+ * 비공개 버킷 목록(objects) → 공개 버킷 roms.json(게임 id 마다 최신 하나 · 이름·저장 이름·라벨 그림). 서버 list 는 이 파일만 1번 읽는다.
+ * 머리 출처 = 이번에 올린 로컬 파일 → 이전 roms.json(같은 키·크기·ETag) → 버킷 범위 GET(처음 한 번만) 순.
+ */
+export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun = false, now = () => new Date().toISOString() } = {}) {
+  const latest = new Map();
+  let loose = 0;
+  for (const [key, info] of objects) {
+    const hit = GAME_KEY_RE.exec(key);
+    if (!hit) {
+      if (/\.wgba$/i.test(key)) loose++;
+      continue;
+    }
+    const was = latest.get(hit[1]);
+    if (!was || compareVersions(hit[2], was.version) > 0) latest.set(hit[1], { key, id: hit[1], version: hit[2], size: info.size, etag: info.etag ?? "" });
+  }
+  const oldBytes = await r2Get(pub, ROMS.FILE);
+  let oldText = "";
+  const before = new Map();
+  if (oldBytes) {
+    oldText = new TextDecoder().decode(oldBytes);
+    try {
+      for (const item of JSON.parse(oldText).items ?? []) if (item?.key) before.set(item.key, item);
+    } catch {}
+  }
+  const items = [];
+  let ranged = 0;
+  for (const want of latest.values()) {
+    const prev = before.get(want.key);
+    let head = null;
+    if (local.has(want.key)) head = readHead(local.get(want.key));
+    else if (prev && prev.size === want.size && prev.etag === want.etag) {
+      items.push(romItem({ ...prev, ...want }));
+      continue;
+    } else {
+      ranged++;
+      head = await bucketHead(priv, want.key, want.size);
+    }
+    if (!head || head.bad || head.need || head.id !== want.id) {
+      console.log(`roms.json 뺌  ${want.key}(머리를 읽지 못했거나 id 가 다름)`);
+      continue;
+    }
+    items.push(romItem({ ...want, names: head.names, short: head.short, label: head.label }));
+  }
+  const body = romsText(items, now());
+  const same = oldText && oldText.replace(/"time":"[^"]*"/, "") === body.replace(/"time":"[^"]*"/, "");
+  const note = `게임 ${items.length}개 · ${n(Buffer.byteLength(body))}바이트 · 버킷 머리 읽기 ${ranged}개${loose ? ` · 형식이 다른 키 ${loose}개는 목록에서 뺌` : ""}`;
+  if (same) console.log(`roms.json 같음(올리지 않음) · ${note}`);
+  else if (dryRun) console.log(`roms.json 올릴 것 · ${note}`);
+  else {
+    await r2Put(pub, ROMS.FILE, Buffer.from(body, "utf8"), { contentType: "application/json", cacheControl: "no-cache" });
+    console.log(`roms.json 올림(공개 버킷) · ${note}`);
+  }
+  return { items, ranged, same };
+}
+
+/** 이미 올라간 이전 버전 정리: 게임 id 마다 가장 높은 버전만 남김 → roms.json 갱신. */
+export async function privatePrune({ dryRun = false, config = null, publicConfig = null } = {}) {
   const r2 = config ?? privateConfig();
+  const pub = publicConfig ?? romsConfig(r2);
   const listed = await r2List(r2, { prefix: "wgba/" });
   const keep = new Map();
   for (const key of listed.objects.keys()) {
@@ -130,11 +210,13 @@ export async function privatePrune({ dryRun = false, config = null } = {}) {
   }
   const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
   console.log(`${dryRun ? "--dry-run: 삭제하지 않았습니다 — 삭제할 것" : "비공개 버킷 정리 완료 — 삭제"} ${done.count}개 ${n(done.bytes)}바이트 · 남김 ${[...keep].map(([id, v]) => `${id} ${v}`).join(", ")}`);
+  for (const key of done.removed) listed.objects.delete(key);
+  await writeRoms(r2, pub, listed.objects, { dryRun });
   return 0;
 }
 
-/** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번). */
-export async function privateUpload(files, { dryRun = false, remote = false, config = null } = {}) {
+/** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번) → 이전 버전 삭제 → 공개 버킷 roms.json 갱신. */
+export async function privateUpload(files, { dryRun = false, remote = false, config = null, publicConfig = null } = {}) {
   const plan = [];
   for (const file of files) {
     const bytes = new Uint8Array(fs.readFileSync(file));
@@ -177,5 +259,12 @@ export async function privateUpload(files, { dryRun = false, remote = false, con
   }
   const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
   if (done.count) console.log(`${dryRun ? "삭제할 것" : "이전 버전 삭제"} ${done.count}개 ${n(done.bytes)}바이트`);
+  for (const key of done.removed) listed.objects.delete(key);
+  const local = new Map();
+  for (const item of plan) {
+    local.set(item.key, item.bytes);
+    if (dryRun && !listed.objects.has(item.key)) listed.objects.set(item.key, { size: item.bytes.length, etag: crypto.createHash("md5").update(item.bytes).digest("hex") });
+  }
+  await writeRoms(r2, publicConfig ?? romsConfig(r2), listed.objects, { local, dryRun });
   return 0;
 }

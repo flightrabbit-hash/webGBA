@@ -60,13 +60,13 @@ for (let i = 0; i < 96 * 64; i++) rgba.set(i % 96 < 48 ? [220, 80, 60, 255] : [6
 const label = encodePng(rgba, 96, 64);
 const game = async (id, version, name, pad, art = false) => (await packWgba({ wasm: tinyWasm(pad), manifest: { wgba: 1, id, version, name, runtime: "webapi", input: { preset: "gba" } }, images: art ? { label } : {} })).bytes;
 
-const r2 = await startFakeR2();
+const r2 = await startFakeR2({ publicRead: true });
 const kv = await startFakeUpstash();
 let skew = 0;
 let delay = 0;
-const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew });
+const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew, romsUrl: `${r2.endpoint}/roms.json` });
 let broken = null;
-const badApi = createAdmin({ env: { ...r2.env, R2_PRIVATE_SECRET_ACCESS_KEY: "wrong-secret", UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint });
+const badApi = createAdmin({ env: { ...r2.env, R2_PRIVATE_SECRET_ACCESS_KEY: "wrong-secret", UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, romsUrl: `${r2.endpoint}/roms.json` });
 const kst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
 r2.put("authentication.key", keyFile(PIN, kst(Date.now() - 600000)));
 r2.put("wgba/io.example.alpha/1.0.0.wgba", await game("io.example.alpha", "1.0.0", { en: "Alpha", ko: "알파" }, 1000, true));

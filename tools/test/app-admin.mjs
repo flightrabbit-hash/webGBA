@@ -68,11 +68,11 @@ const beta = await game("io.example.beta", "2.0.0", "Beta Quest", 1000);
 fs.writeFileSync(path.join(appDir, "beta-local.wgba"), beta);
 fs.writeFileSync(path.join(appDir, "alpha.wgba"), await game("io.example.other", "1.0.0", "Other", 10));
 
-const r2 = await startFakeR2();
+const r2 = await startFakeR2({ publicRead: true });
 const kv = await startFakeUpstash();
 let skew = 0;
 let delay = 0;
-const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew });
+const api = createAdmin({ env: { ...r2.env, UPSTASH_REDIS_REST_URL: kv.url, UPSTASH_REDIS_REST_TOKEN: kv.token }, endpoint: r2.endpoint, now: () => Date.now() + skew, romsUrl: `${r2.endpoint}/roms.json` });
 const kst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
 r2.put("authentication.key", keyFile(PIN, kst(Date.now() - 600000)));
 r2.put("wgba/io.example.alpha/1.2.0.wgba", alpha);

@@ -3,6 +3,7 @@ import { makeStore, StoreError } from "../_mp/store.js";
 import { ipPrefix, ORIGINS } from "../_mp/server.js";
 import { onlyHex32, tidyEnv } from "../_mp/turn.js";
 import { makeR2, R2Error } from "./r2.js";
+import { readRoms, ROMS } from "./roms.js";
 import { saveFileName } from "./save-name.js";
 import { readHead } from "./wgba-head.js";
 
@@ -11,7 +12,7 @@ export const ADMIN = Object.freeze({
   TRY_TTL: 3700,
   FAIL_MAX: 30,
   FAIL_TTL: 90000,
-  KEY_MS: 60000,
+  KEY_MS: 300000,
   KEY_MISS_MS: 15000,
   TOKEN_MS: 30 * 86400000,
   URL_TTL: 300,
@@ -22,6 +23,8 @@ export const ADMIN = Object.freeze({
   KEY_FILE: "authentication.key",
   KEY_FILE_MAX: 4096,
   PREFIX: "wgba/",
+  ROMS_MS: 60000,
+  ROMS_TIMEOUT_MS: 8000,
   ZONE_MIN: 540,
   FUTURE_MS: 120000,
 });
@@ -106,7 +109,7 @@ function nameOf(names) {
   return names?.en ?? names?.ko ?? names?.ja ?? "";
 }
 
-export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), store = null, endpoint = null } = {}) {
+export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), store = null, endpoint = null, romsUrl = ROMS.URL } = {}) {
   const { config, why } = adminConfig(env);
   if (config && endpoint) {
     config.host = new URL(endpoint).host;
@@ -118,6 +121,8 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
   const heads = new Map();
   let keyMemo = null;
   let keyJob = null;
+  let romsMemo = null;
+  let romsJob = null;
   let told = false;
 
   const need = () => {
@@ -227,8 +232,51 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
     return head;
   }
 
+  async function fetchRoms() {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ADMIN.ROMS_TIMEOUT_MS);
+    try {
+      const response = await fetchImpl(romsUrl, { cache: "no-store", signal: ctrl.signal });
+      if (response.status === 404) return { missing: true };
+      if (!response.ok) return { error: String(response.status) };
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.length > ROMS.MAX) return { error: "size" };
+      const items = readRoms(new TextDecoder().decode(bytes));
+      return items ? { items } : { error: "format" };
+    } catch {
+      return { error: "network" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function romsList() {
+    if (!romsMemo || romsMemo.until <= now()) {
+      romsJob ??= fetchRoms().finally(() => (romsJob = null));
+      const got = await romsJob;
+      romsMemo = { ...got, until: now() + ADMIN.ROMS_MS };
+    }
+    return romsMemo;
+  }
+
+  const latestById = (all) => {
+    const byId = new Map();
+    for (const item of all) {
+      const was = byId.get(item.id);
+      if (!was || semverCompare(item.version, was.version) > 0) byId.set(item.id, item);
+    }
+    return [...byId.values()].sort((a, b) => nameOf(a.names).localeCompare(nameOf(b.names)) || a.id.localeCompare(b.id));
+  };
+
   async function list(request) {
     const key = await session(request);
+    const roms = await romsList();
+    if (roms.items) return { items: latestById(roms.items), updated: key.text };
+    if (roms.error) {
+      console.warn(`[admin] roms.json read failed: ${roms.error}`);
+      throw new HttpError(503, "r2", { why: `roms ${roms.error}` });
+    }
+    // roms.json 이 아직 발행되지 않았을 때(404)만: 버킷 목록 + 게임마다 앞부분 범위 GET
     let objects;
     try {
       objects = await r2.list(ADMIN.PREFIX);
@@ -256,26 +304,14 @@ export function createAdmin({ env = process.env, fetchImpl = globalThis.fetch, n
         }
       }),
     );
-    const byId = new Map();
+    const all = [];
     candidates.forEach((c, i) => {
       const head = read[i];
       if (!head || head.bad) return;
       const version = head.version || c.version;
-      const item = {
-        key: c.name,
-        id: head.id,
-        version,
-        names: head.names,
-        short: head.short,
-        size: c.info.size,
-        file: saveFileName({ id: head.id, version, names: head.names }),
-        label: head.label,
-      };
-      const was = byId.get(item.id);
-      if (!was || semverCompare(item.version, was.version) > 0) byId.set(item.id, item);
+      all.push({ key: c.name, id: head.id, version, names: head.names, short: head.short, size: c.info.size, file: saveFileName({ id: head.id, version, names: head.names }), label: head.label });
     });
-    const items = [...byId.values()].sort((a, b) => nameOf(a.names).localeCompare(nameOf(b.names)) || a.id.localeCompare(b.id));
-    return { items, updated: key.text };
+    return { items: latestById(all), updated: key.text };
   }
 
   async function urls(request, body) {

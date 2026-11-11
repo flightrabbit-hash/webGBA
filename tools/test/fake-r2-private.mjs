@@ -7,7 +7,8 @@ import { canonicalQuery, sha256Hex, signingKey, signRequest } from "../lib/r2.mj
 
 const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST", secret = "secret-test", port = 0, cors = "*", skewMs = 0 } = {}) {
+// publicRead = 공개 버킷(r2.dev)처럼 서명 없는 GET /<키> 도 받음(roms.json 시험용)
+export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST", secret = "secret-test", port = 0, cors = "*", skewMs = 0, publicRead = false } = {}) {
   const objects = new Map();
   const log = [];
   let delayMs = 0;
@@ -89,6 +90,12 @@ export async function startFakeR2({ bucket = "private-test", accessKey = "AKTEST
       res.writeHead(status, { ...headers, ...extra });
       res.end(body);
     };
+    if (publicRead && !presigned && !req.headers.authorization && !path.startsWith(`/${bucket}/`)) {
+      entry.kind = "public";
+      const hit = objects.get(path.slice(1));
+      if (!hit) return finish(404, "<Error><Code>NoSuchKey</Code></Error>");
+      return finish(200, hit.bytes, { "Content-Length": String(hit.bytes.length), ETag: `"${hit.etag}"` });
+    }
     if (!path.startsWith(`/${bucket}`)) return finish(404, "<Error><Code>NoSuchBucket</Code></Error>");
     if (presigned) {
       const why = presignAuth(req, rawPath, params);

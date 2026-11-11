@@ -102,6 +102,14 @@ export async function r2Head(config, key) {
   return { size: Number(response.headers.get("content-length")), etag: (response.headers.get("etag") ?? "").replace(/"/g, "").toLowerCase() };
 }
 
+/** 버킷 객체 내용(GET, range = "bytes=0-131071" 식). 없으면 null. */
+export async function r2Get(config, key, { range = "" } = {}) {
+  const response = await call(config, "GET", key, { headers: range ? { range } : {} });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GET ${key}: HTTP ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 /** 버킷 객체 삭제(DELETE, 없는 키도 204). */
 export async function r2Delete(config, key) {
   const response = await call(config, "DELETE", key);
