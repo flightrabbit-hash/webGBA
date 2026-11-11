@@ -301,7 +301,7 @@ const UPDATE_USAGE = [
   "        node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]   (--wgba = 비공개 버킷 wgba/<id>/<버전>.wgba, 올린 뒤 같은 id 의 낮은 버전 삭제)",
   "        node tools/wgba.mjs admin-key [--dry-run]   (관리자 6자리 → 비공개 버킷 authentication.key, PowerShell 에서)",
   "        node tools/wgba.mjs private-prune [--dry-run]   (비공개 버킷 wgba/<id>/ 에 게임마다 최신 버전 하나만 남김)",
-  "        node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>]",
+  "        node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>] [--bucket public|private|all] [--hourly]",
 ];
 
 function usage() {

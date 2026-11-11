@@ -197,6 +197,22 @@ try {
   ok(!text.includes(TOKEN) && !text.includes("acct-value") && !text.includes("bucket-value"), "출력에 토큰·계정·버킷 값 없음");
   ok(/2026-11-05\s+0\s+47\s+0\s+40\s+0\s+7/.test(text) && /2026-11-06\s+2\s+12\s+12/.test(text) && /합계\s+2\s+62/.test(text), "날짜별 Class A·B·출처 칸", out.slice(1, 6).join(" / "));
   ok(out.some((l) => l.includes("local.mslug/latest.json") && l.includes("64.5%")) && out.some((l) => l.includes(".env") && l.includes("외부")), "객체별 상위 줄(비율·출처)");
+  let sentAll = null;
+  const fakeAll = async (url, init) => {
+    sentAll = JSON.parse(init.body);
+    const group = (bucketName, actionType, objectName, responseStatusCode, requests, datetimeHour) => ({ sum: { requests }, dimensions: { bucketName, actionType, objectName, responseStatusCode, datetimeHour } });
+    return new Response(JSON.stringify({ data: { viewer: { accounts: [{ d0: [group("priv-value", "GetObject", "wgba/local.kof98/1.0.0.wgba", 206, 21, "2026-11-05T03:00:00Z"), group("priv-value", "GetObject", "authentication.key", 200, 3, "2026-11-05T03:00:00Z"), group("priv-value", "ListObjectsV2", "", 200, 1, "2026-11-05T03:00:00Z"), group("bucket-value", "GetObject", "index.json", 200, 5, "2026-11-05T04:00:00Z"), group("bucket-value", "GetObject", "roms.json", 200, 1, "2026-11-05T04:00:00Z")], d1: [], d2: [] }] } }, errors: null }), { status: 200 });
+  };
+  const allOut = [];
+  await r2Stats({ days: 3, now, bucket: "all", hourly: true, env: { CF_API_TOKEN: TOKEN, R2_ACCOUNT_ID: "acct-value", R2_BUCKET: "bucket-value", R2_PRIVATE_BUCKET: "priv-value" }, fetchImpl: fakeAll, print: (line) => allOut.push(line) });
+  const allText = allOut.join("\n");
+  ok(!/bucketName: \$b/.test(sentAll.query) && /bucketName datetimeHour/.test(sentAll.query) && sentAll.variables.b === undefined, "--bucket all --hourly = 버킷 거르기 없음 · 버킷·시각 차원");
+  ok(/비공개: Class A 1 · Class B 24/.test(allText) && /공개: Class A 0 · Class B 6/.test(allText) && !allText.includes("priv-value") && !allText.includes("bucket-value"), "버킷별 합계(공개·비공개 이름만, 버킷 값 출력 없음)", allOut.filter((l) => l.includes("Class A")).join(" / "));
+  ok(allOut.some((l) => l.includes("wgba/local.kof98/1.0.0.wgba") && l.includes("비공개") && l.includes("범위 GET")) && allOut.some((l) => l.includes("roms.json") && l.includes("롬 가져오기")) && allOut.some((l) => l.includes("authentication.key") && l.includes("키 파일")), "비공개 객체 출처(.wgba 범위 GET·키 파일·roms.json)");
+  ok(allOut.some((l) => /^11-05 12시\s+24/.test(l)) && allOut.some((l) => /^11-05 13시\s+6/.test(l)), "시각별 상위(한국 시각)", allOut.slice(-2).join(" / "));
+  const privQuery = [];
+  await r2Stats({ days: 1, now, bucket: "private", env: { CF_API_TOKEN: TOKEN, R2_ACCOUNT_ID: "acct-value", R2_BUCKET: "bucket-value", R2_PRIVATE_BUCKET: "priv-value" }, fetchImpl: async (url, init) => (privQuery.push(JSON.parse(init.body)), new Response(JSON.stringify({ data: { viewer: { accounts: [{ d0: [] }] } } }), { status: 200 })), print: () => {} });
+  ok(privQuery[0].variables.b === "priv-value" && /bucketName: \$b/.test(privQuery[0].query), "--bucket private = R2_PRIVATE_BUCKET 로 거르기");
   const missing = await r2Stats({ env: {}, print: () => {} }).then(() => null, (error) => error);
   ok(missing && /CF_API_TOKEN/.test(missing.message), "환경 변수 없음 → 만들 토큰 안내", missing?.message);
 } finally {

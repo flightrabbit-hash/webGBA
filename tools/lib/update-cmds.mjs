@@ -631,9 +631,9 @@ export async function updateCommand(cmd, rest) {
     return adminKey({ dryRun: Boolean(o["--dry-run"]) });
   }
   if (cmd === "r2-stats") {
-    const o = parseList(rest, ["--days", "--since", "--until", "--top"]);
+    const o = parseList(rest, ["--days", "--since", "--until", "--top", "--bucket"]);
     if (o.positional.length) return -1;
-    return r2Stats({ days: o["--days"] ? Number(o["--days"]) : null, since: o["--since"] ?? null, until: o["--until"] ?? null, top: o["--top"] ? Number(o["--top"]) : 30 });
+    return r2Stats({ days: o["--days"] ? Number(o["--days"]) : null, since: o["--since"] ?? null, until: o["--until"] ?? null, top: o["--top"] ? Number(o["--top"]) : 30, bucket: o["--bucket"] ?? "public", hourly: Boolean(o["--hourly"]) });
   }
   return null;
 }
