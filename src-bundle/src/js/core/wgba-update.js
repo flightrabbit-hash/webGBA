@@ -111,7 +111,10 @@ export function updateSource({ gameId, update }, overrides = null) {
     const feed = overrides?.index ? new URL(`${gameId}/latest.json`, index.url).href : known.feed;
     return { feed, key: overrides?.index ? index.key : known.key, from: "known", index };
   }
-  if (update && feedUrlOk(update.feed) && keyOk(update.key)) return { feed: update.feed, key: update.key, from: "manifest" };
+  if (update && feedUrlOk(update.feed) && keyOk(update.key)) {
+    const ours = !overrides?.index && update.key === FEED_KEY && update.feed === `${FEED_HOST}/${gameId}/latest.json`;
+    return ours ? { feed: update.feed, key: update.key, from: "manifest", index: FEED_INDEX } : { feed: update.feed, key: update.key, from: "manifest" };
+  }
   return null;
 }
 

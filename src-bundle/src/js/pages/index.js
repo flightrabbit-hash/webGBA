@@ -2579,7 +2579,10 @@ function openUpdate(path) {
 
 const updatePaths = () => [...favorites(), ...(state.prefs.recent ?? []), ...state.entries];
 
+const autoUpdate = () => !(state.info?.settings?.useDevelopKit && state.prefs?.updateCheck === false);
+
 async function checkUpdates() {
+  if (!autoUpdate()) return;
   if (await appUpdater.check()) await appUpdater.open();
   await updater.check(updatePaths());
 }
@@ -2589,8 +2592,10 @@ async function checkUpdates() {
 async function boot() {
   state.info = await core.runtimeInfo();
   state.prefs = (await core.prefsGet()) ?? {};
-  updater.prepare();
-  appUpdater.prepare();
+  if (autoUpdate()) {
+    updater.prepare();
+    appUpdater.prepare();
+  }
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
   if (state.info.settings?.useDevelopKit) {

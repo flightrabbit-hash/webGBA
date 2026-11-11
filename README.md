@@ -1412,7 +1412,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 
 #### 12.2.1 업데이트 목록 `index.json` (webGBA 0.8.1~)
 
-알려진 게임 id 표의 게임은 앱 실행마다 게임별 `latest.json` 대신 버킷 최상위의 **목록** 1개만 조회합니다(게임 수와 무관하게 요청 1번). 목록 = 게임별 `latest.json` 봉투를 그대로 담고 목록 자체에도 서명한 파일입니다.
+알려진 게임 id 표의 게임과 설명서 `update`가 이 버킷의 `<게임 id>/latest.json`·같은 공개 키인 게임은 앱 실행마다 게임별 `latest.json` 대신 버킷 최상위의 **목록** 1개만 조회합니다(게임 수와 무관하게 요청 1번, 목록에 그 게임이 없거나 목록을 못 읽을 때만 게임별 `latest.json`). 목록 = 게임별 `latest.json` 봉투를 그대로 담고 목록 자체에도 서명한 파일입니다.
 
 ```json
 {

@@ -56,7 +56,7 @@ const pub = publicOf(privateKey);
 
 // 앱 폴더(옛 버전 흉내) + 보존 확인 표시
 guardOthers(exe, appDir);
-const app = prepareApp(exe, appDir);
+const app = prepareApp(exe, appDir, { updateCheck: true });
 const notices = fs.readFileSync(path.join(repo, "THIRD_PARTY_NOTICES"));
 fs.writeFileSync(path.join(appDir, "LICENSE"), "OLD LICENSE\n");
 fs.writeFileSync(path.join(appDir, "THIRD_PARTY_NOTICES"), notices);

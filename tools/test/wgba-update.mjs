@@ -165,6 +165,19 @@ const store = { getItem: () => JSON.stringify({ feeds: { "com.flightrabbit.rapid
 const overrides = readOverrides(store);
 ok(overrides.feeds["com.flightrabbit.rapid"] && !overrides.feeds["io.bad"], "시험 덮어쓰기: 루프백 http 만 받음");
 ok(updateSource({ gameId: "com.flightrabbit.rapid" }, overrides).from === "test", "시험 덮어쓰기가 먼저");
+const feedHost = known.index.url.replace(/\/index\.json$/, "");
+const ourManifest = updateSource({ gameId: "local.fort2b", update: { feed: `${feedHost}/local.fort2b/latest.json`, key: known.key } });
+ok(ourManifest?.from === "manifest" && ourManifest.index?.url === known.index.url, "표에 없는 id 라도 설명서 주소가 우리 R2·같은 키면 목록(index.json)으로 — 게임마다 latest.json 따로 받지 않음", JSON.stringify(ourManifest));
+ok(!updateSource({ gameId: "io.other", update: { feed: "https://feed.example/io.other/latest.json", key: pub } }).index && !updateSource({ gameId: "local.fort2b", update: { feed: `${feedHost}/local.other/latest.json`, key: known.key } }).index, "다른 서버·다른 id 경로의 설명서 주소 = 게임별 버전 파일 그대로");
+{
+  const hits = [];
+  const indexed = async (url) => {
+    hits.push(url.split("/").slice(-2).join("/"));
+    return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  await checkGames(["local.fort2b", "local.kikaioh", "com.flightrabbit.rapid"].map((id) => ({ key: id, gameId: id, version: "1.0.0", update: { feed: `${feedHost}/${id}/latest.json`, key: known.key } })), { fetchImpl: indexed, memory: null });
+  ok(hits.filter((h) => h.endsWith("index.json")).length === 1, "우리 R2 게임 여러 개 = index.json 1번으로 묶음(목록 실패 때만 게임별 대체)", hits.join(" "));
+}
 
 /* ── 설명서 update 검사 ── */
 const errs = (m) => {

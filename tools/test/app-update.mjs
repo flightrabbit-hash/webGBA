@@ -41,7 +41,7 @@ fs.rmSync(appDir, { recursive: true, force: true });
 fs.mkdirSync(games, { recursive: true });
 fs.mkdirSync(shots, { recursive: true });
 guardOthers(exe, appDir);
-const app = prepareApp(exe, appDir);
+const app = prepareApp(exe, appDir, { updateCheck: true });
 const game = path.join(games, "firered.wgba");
 fs.copyFileSync(opt.v130, game);
 const sav = path.join(games, "firered.sav");
