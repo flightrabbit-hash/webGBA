@@ -1165,7 +1165,7 @@ function layout() {
   } else {
     toolColumn = landscape && toolColumnFits(innerH);
     const toolSide = landscape ? (toolColumn ? TOOL_ART.w * 2 + TOOL_PAD * 2 : toolSideMin()) : 0;
-    const margin = overlay ? 0 : 16;
+    const margin = overlay || toolColumn ? 0 : 16;
     const rim = overlay ? 0 : sideEdge;
     const availW = innerW - margin - rim - toolSide * 2;
     const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - margin - (overlay ? 0 : edge * 2);
