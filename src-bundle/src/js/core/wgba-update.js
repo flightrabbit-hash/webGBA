@@ -226,7 +226,36 @@ export async function verifyIndex(text, key, { url = "", memory = null } = {}) {
   if (time < last) throw new UpdateError("indexOld", { time: signed.time });
   memory?.set(url, time);
   const table = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
-  return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps) };
+  return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps), groups: readGroups(signed.groups) };
+}
+
+export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
+const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;
+
+export function groupEntry(value) {
+  if (!value || typeof value !== "object" || !GAME_GROUPS.includes(value.group)) return null;
+  const category = typeof value.category === "string" ? value.category.trim() : "";
+  return { group: value.group, category: CATEGORY_RE.test(category) ? category : "" };
+}
+
+export function readGroups(value) {
+  const out = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [id, item] of Object.entries(value)) {
+    const entry = ID_RE.test(id) ? groupEntry(item) : null;
+    if (entry) out[id] = entry;
+  }
+  return out;
+}
+
+export async function indexGroups({ overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, cache = new Map(), memory = indexMemory() } = {}) {
+  if (overrides && !overrides.index) return null;
+  try {
+    const { list } = await loadIndex(overrides?.index ?? FEED_INDEX, { fetchImpl, timeout, cache, memory });
+    return list ? list.groups : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function indexedFeed(list, gameId, source) {

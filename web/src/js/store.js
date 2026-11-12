@@ -81,6 +81,11 @@ export function list(kind) {
   return run([META], "readonly", (tx) => tx.objectStore(META).index("kind").getAll(kind));
 }
 
+export async function usedBytes() {
+  const all = await run([META], "readonly", (tx) => tx.objectStore(META).getAll());
+  return (all ?? []).reduce((sum, item) => sum + (Number(item?.size) || 0), 0);
+}
+
 export function meta(key) {
   return run([META], "readonly", (tx) => tx.objectStore(META).get(key));
 }

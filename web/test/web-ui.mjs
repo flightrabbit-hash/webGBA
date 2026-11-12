@@ -1320,7 +1320,7 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     ok(`${key}|library 꺼낸 칸의 롬팩·이름·버튼이 칸 안 · 서로 겹침 0 · 가로 넘침 0 · 버튼 글 안 잘림`, within(lay.cardParts, lay.cardView) && !crosses(lay.cardParts) && lay.cardScroll <= 0 && lay.btnOver.length === 0, JSON.stringify({ parts: lay.cardParts.length, scroll: lay.cardScroll, over: lay.btnOver }));
     ok(`${key}|library 옆면은 책장 안(가로 넘침 0) · 겹침 0 · 칸 높이 하나`, lay.spines.length > 20 && lay.spines.every((x) => x.l >= lay.caseBox.l - 0.5 && x.r <= lay.caseBox.r + 0.5) && !crosses(lay.spines) && lay.spineRows === 1, JSON.stringify({ n: lay.spines.length, case: lay.caseBox }));
     ok(`${key}|library 롬팩 그림 정수 배율(CSS px/그림 px)·가장 가까운 점`, lay.arts.length > 20 && lay.arts.every((a) => Number.isInteger(+a.ratio.toFixed(3)) && a.ratio >= 1 && Math.abs(a.ratio - a.ratioH) < 0.001 && a.pixelated === "pixelated"), JSON.stringify([...new Set(lay.arts.map((a) => `${a.ratio}/${a.pixelated}`))]));
-    await measure(page, `${key}|library`, [".sheet__head", ".lib__name", ".lib__meta", ".lib__btns .btn", ".lib__shelfHead .btn", ".lib__count"]);
+    await measure(page, `${key}|library`, [".sheet__head", ".lib__name", ".lib__meta", ".lib__btns .btn", ".lib__shelfHead .btn", ".lib__count", ".lib__groups .btn"]);
     if (LIB_SHOTS[`${key}|library`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|library`]) });
 
     // 꺼내기·넣기·바꾸기(움직임 줄이기 = 바로): 위 꺼낸 칸·아래 책장 상자가 1px 도 안 움직임

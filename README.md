@@ -1433,6 +1433,7 @@ node tools/wgba.mjs pack -o game.wgba --wasm game.wasm --js game.js --manifest m
 - 대체: 목록이 존재하지 않음(404 등)·`wgbaIndex`가 모르는 번호·서명 불일치·이전보다 이른 시각·게임 누락·해시 불일치이면 해당 게임은 게임별 `latest.json`을 조회합니다. 서버에 닿지 않으면(오프라인) 대체하지 않고 넘어갑니다.
 - 옛 webGBA(0.8.0 이하)는 목록을 조회하지 않으므로 게임별 `latest.json`도 계속 발행합니다. manifest `update`의 다른 주소 버전 파일은 게임별 조회 그대로입니다.
 - 선택 필드 `apps`(봉투)·`signed.apps`(해시) = webGBA 자체 업데이트 항목(12.6, 0.9.0부터). 0.8.1 이하는 조회하지 않습니다.
+- 선택 필드 `signed.groups` = 게임 id → `{ "group": "emu" | "arcade" | "mobile", "category": "<코어·기판, 영문·숫자 1~24자>" }`(웹 라이브러리 그룹 버튼·카테고리). 서명 범위 안이라 값을 바꾸면 목록 전체가 서명 불일치로 거부됩니다. 이미 등록된 게임도 다음 목록 조회 때 값이 들어갑니다. 목록에 없는 게임·`.gba`·`.gb`·`.gbc`는 에뮬로 표시합니다. 옛 webGBA는 조회하지 않습니다(목록 확인은 그대로).
 
 #### 12.3 차이 패치 `.wgbd`
 
@@ -1491,7 +1492,7 @@ node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <
 - `feed`: 발행 폴더 = 버킷의 `<게임 id>/`와 같은 구조(`latest.json` · `patches/<SHA-256>.wgbd` · `full/<SHA-256>.wgbp`). 발행 폴더의 이전 `latest.json`(`--prev`로 다른 파일 지정 가능)의 `from` 표를 이어받고, 모든 이전 버전이 새 버전까지 이어지는지 확인한 뒤 서명합니다. 같은 `.wgba`로 다시 실행하면 `full`·`notes`를 이어받습니다.
   - `--old`(파일 또는 폴더 안 `.wgba`): 같은 id·낮은 버전마다 새 버전으로 바로 가는 패치를 생성합니다. 새 파일에 롬이 있으면 `--orig`가 필요하고, 원작 롬과 같은 구간이 있는 패치는 쓰지 않습니다(해당 옛 버전은 기존 단계 연쇄 유지). 바로 가는 패치가 생긴 옛 버전의 이전 건너뛰는 항목(바로 다음 버전이 아닌 곳으로 가는 항목)은 `from`에서 제외합니다 — 단계 항목은 유지, 파일은 그대로.
   - 묶음(발행 폴더의 상위 폴더)에 `index.json`이 있으면 목록도 다시 생성합니다(`--no-index`로 끔).
-- `index`: 묶음의 `<게임 id>/latest.json`(같은 키로 서명한 것)을 모두 담은 `index.json`을 생성합니다. 시각은 기존 목록보다 이르지 않게 정합니다.
+- `index`: 묶음의 `<게임 id>/latest.json`(같은 키로 서명한 것)을 모두 담은 `index.json`을 생성합니다. 시각은 기존 목록보다 이르지 않게 정합니다. 묶음에 `groups.json`(게임 id → `{ group, category }`, `$`로 시작하는 키는 설명)이 있으면 목록에 든 게임만 `signed.groups`에 넣고, 값이 규칙 밖이면 목록을 만들지 않습니다(`feed`의 목록 재생성도 같음). `groups.json`은 올리지 않습니다.
 - `verify`: 서명·파일 크기·SHA-256, `--wgba`로 준 옛 파일마다 끝까지 적용해 새 SHA-1과 비교합니다. 묶음이면 목록 서명과 게임마다 목록 항목 = `latest.json`인지도 확인하고(옛 파일은 id로 게임을 찾음), 게임 폴더면 상위 폴더 목록의 해당 게임 항목을 확인합니다.
 - `upload`: S3 호환 API(R2)로 패치·`.wgbp`를 먼저, `latest.json`을 다음에, `index.json`을 마지막에 올립니다(버킷에 같은 내용(크기·ETag MD5)이 이미 있으면 건너뜀 — 바뀌지 않은 `latest.json`도 다시 쓰지 않음). 버킷 확인은 목록 조회 1번(ListObjectsV2, 1,000개당 1번 = Class A)이고, 목록이 실패할 때만 파일마다 HEAD(Class B)로 확인합니다. `--dry-run`은 버킷에 연결하지 않고, `--dry-run --remote`는 목록 1번으로 버킷과 비교만 합니다(쓰기 없음). 묶음에 `index.json`이 있으면 게임 폴더를 주어도 묶음 전체를 올리고, 목록과 `latest.json`이 다르면 올리지 않습니다. 계정·키는 환경 변수 `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`에서만 조회하고 값을 출력하지 않습니다.
 - `r2-stats`: Cloudflare 분석 API(GraphQL `r2OperationsAdaptiveGroups`)로 R2 요청 수를 한국 날짜별·객체·동작·응답 코드별로 출력합니다(버킷 요청 0번, 기본 7일·최대 31일). 객체 이름으로 출처를 추정합니다 — `index.json` = webGBA 0.8.1 이상, `<게임 id>/latest.json` = 0.8.0 이하(또는 목록 실패 시 대체), `patches/`·`full/` = 업데이트 받기, HeadObject = 이전 `upload`·대시보드, 404·그 외 객체 = 외부 요청 의심, `roms.json` = 롬 가져오기 목록(서버 list), `authentication.key` = 관리자 서버 키 읽기, `wgba/…wgba` = 비공개 받기(또는 roms.json 이 없을 때 목록 머리 범위 GET). `--bucket` = `public`(기본, `R2_BUCKET`)·`private`(`R2_PRIVATE_BUCKET`)·`all`(버킷별 합계), `--hourly` = 한국 시각 시 단위 상위. 환경 변수 `CF_API_TOKEN`(Account Analytics 읽기 권한 API 토큰)·`R2_ACCOUNT_ID`·`R2_BUCKET`·`R2_PRIVATE_BUCKET`, 값은 출력하지 않습니다.

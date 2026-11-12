@@ -23,6 +23,7 @@ import { createMedia } from "./media.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 import { createUpdater } from "./update.js";
+import { GAME_GROUPS, groupEntry } from "./core/wgba-update.js";
 import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
 import { createAdminFlow } from "./app/admin-ui.js";
 
@@ -1141,7 +1142,10 @@ function layout() {
   if (!padOn) pad.releaseAll();
   pad.invalidate();
   fitRecent();
-  if (state.sheet === "library") lockCard();
+  if (state.sheet === "library") {
+    lockCard();
+    fitShelf();
+  }
   requestAnimationFrame(() => {
     if (boardState.open) {
       boardLayout();
@@ -1415,7 +1419,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = fals
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__storage, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
 const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -1813,6 +1817,41 @@ const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareNa
 const spineName = (rom) => (rom?.gameId && !rom.named ? pickText(rom.shortName, i18n.lang()) || displayName(rom) : displayName(rom));
 // 롬팩 아래 작은 글: .wgba 설명서 = v1.2.0, 옛 .wgba 로 되돌린 게임 = "옛 .wgba", 그 밖 = 형식
 const kindText = (rom) => (rom.gameId ? (rom.version ? `v${rom.version}` : t("web.lib.oldWgba")) : kindKey(metaKind(rom)) ? t(kindKey(metaKind(rom))) : `.${rom.type}`);
+const groupOf = (rom) => (GAME_GROUPS.includes(rom?.group) ? rom.group : "emu");
+const groupTable = new Map();
+
+function groupFields(gameId, keep = null) {
+  const entry = groupTable.get(gameId);
+  if (entry) return { group: entry.group, category: entry.category };
+  return GAME_GROUPS.includes(keep?.group) ? { group: keep.group, category: typeof keep.category === "string" ? keep.category : "" } : {};
+}
+
+async function applyGroups(table) {
+  for (const [id, item] of Object.entries(table ?? {})) {
+    const entry = groupEntry(item);
+    if (entry) groupTable.set(id, entry);
+  }
+  let roms = [];
+  try {
+    roms = await store.list(store.KIND_ROM);
+  } catch {
+    return 0;
+  }
+  let changed = 0;
+  for (const rom of roms) {
+    const entry = rom.gameId ? groupTable.get(rom.gameId) : null;
+    if (!entry || (rom.group === entry.group && rom.category === entry.category)) continue;
+    try {
+      await store.patch(rom.key, { group: entry.group, category: entry.category });
+      changed += 1;
+    } catch {}
+  }
+  if (changed) {
+    logLine("INFO", `라이브러리 그룹·카테고리 ${changed}개 갱신(업데이트 목록)`);
+    if (state.sheet === "library") renderSheet();
+  }
+  return changed;
+}
 
 /** 목차가 있으면 readWgba 결과, 없으면 null. 망가졌으면 보일 문장으로 던짐. */
 async function inspectWgba(bytes) {
@@ -1961,7 +2000,7 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
     else if (replace) target = replace;
   }
   // named = 사람이 정한 이름(이름 바꾸기·패치에서 고른 이름) → 라이브러리에 그 이름, 아니면 설명서 이름
-  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, named: keepName ? Boolean(target?.named) : named, file, type, sha1, added: target?.added ?? 0 };
+  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, named: keepName ? Boolean(target?.named) : named, file, type, sha1, added: target?.added ?? 0, ...groupFields(info.gameId, target?.gameId === info.gameId ? target : null) };
   const carts = Object.entries(wgba.images).map(([part, image]) => ({ part, bytes: image.bytes, format: image.format, width: image.width, height: image.height }));
   let saved = null;
   await store.persist();
@@ -1997,6 +2036,7 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
     await store.removeStates(saveIdOf(replace)).catch(() => {});
   }
   logLine("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 보관 → ${saved.record.key}${note ? ` (${note})` : ""}`);
+  if (!groupTable.has(info.gameId)) updater.groups().then((table) => table && applyGroups(table));
   return { meta: saved.record, note, wgba };
 }
 
@@ -2624,6 +2664,11 @@ function sizeCanvas(canvas, model) {
 
 const frontCache = new WeakMap();
 
+function frontCanvas(look) {
+  if (!frontCache.has(look)) frontCache.set(look, cartArt.drawFront(look.model, look.images, look.body));
+  return frontCache.get(look).canvas;
+}
+
 function frontOf(look) {
   const drawn = frontCache.get(look);
   if (!drawn) {
@@ -2663,6 +2708,20 @@ function packNode(rom, look, { running = false } = {}) {
 }
 
 /** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
+const sideCache = new Map();
+
+function sideOf(rom, look, spine) {
+  const { model } = look;
+  const key = [model.k, model.shape, model.color, look.body, model.parts.length ? `${rom.id}|${rom.build ?? ""}` : ""].join("|");
+  if (!sideCache.has(key)) sideCache.set(key, cartArt.drawSide(model, frontCanvas(look), spine));
+  const drawn = sideCache.get(key);
+  const canvas = document.createElement("canvas");
+  canvas.width = drawn.canvas.width;
+  canvas.height = drawn.canvas.height;
+  canvas.getContext("2d").drawImage(drawn.canvas, 0, 0);
+  return { canvas, at: drawn.at, visible: drawn.visible };
+}
+
 function spineArt(rom, look) {
   const { model, images, body } = look;
   const { canvas, band, textArea } = cartArt.drawSpine(model, images, body);
@@ -2670,6 +2729,13 @@ function spineArt(rom, look) {
   art.style.width = `${cssOf(model, canvas.width)}px`;
   art.style.height = `${cssOf(model, canvas.height)}px`;
   art.append(sizeCanvas(canvas, model));
+  const drawn = sideOf(rom, look, canvas);
+  const side = sizeCanvas(drawn.canvas, model);
+  side.classList.add("spine__side");
+  side.style.left = `${cssOf(model, drawn.at)}px`;
+  art.append(side);
+  art.dataset.side = String(cssOf(model, drawn.at + drawn.visible - canvas.width));
+  art.dataset.over = String(cssOf(model, drawn.canvas.width - drawn.visible));
   if (textArea) {
     const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
     const name = make("span", band ? "spine__name is-band" : "spine__name");
@@ -2934,6 +3000,11 @@ function item({ name, meta, current = false, onOpen, actions = [], key = "" }) {
   return li;
 }
 
+async function libStorageLine() {
+  const [estimate, mine] = await Promise.all([store.estimate(), store.usedBytes().catch(() => 0)]);
+  return estimate?.quota ? t("web.lib.storage", { used: fmtSize(estimate.usage ?? 0), mine: fmtSize(mine), quota: fmtSize(estimate.quota) }) : "";
+}
+
 async function storageLine() {
   const estimate = await store.estimate();
   return estimate?.quota ? t("web.storageUse", { used: fmtSize(estimate.usage ?? 0), quota: fmtSize(estimate.quota) }) : "";
@@ -2955,6 +3026,29 @@ function motion(node, frames, { fill = "none" } = {}) {
 
 const libSort = () => (state.prefs.libSort === "name" ? "name" : "recent");
 
+const libGroup = () => (GAME_GROUPS.includes(state.prefs.libGroup) ? state.prefs.libGroup : "all");
+
+function groupBar() {
+  const bar = make("div", "lib__groups");
+  bar.setAttribute("role", "radiogroup");
+  bar.setAttribute("aria-label", t("web.lib.group"));
+  const now = libGroup();
+  for (const id of ["all", ...GAME_GROUPS]) {
+    const label = t(`web.lib.group.${id}`);
+    const node = button({ label, title: t("web.lib.groupShow", { group: label }), kind: "small", action: "group", onClick: () => {
+      if (libGroup() === id) return;
+      savePrefs({ libGroup: id });
+      renderSheet();
+    } });
+    node.classList.add("lib__group");
+    node.dataset.group = id;
+    node.setAttribute("role", "radio");
+    node.setAttribute("aria-checked", String(id === now));
+    bar.append(node);
+  }
+  return bar;
+}
+
 function sortRoms(roms) {
   if (libSort() === "name") {
     const collator = new Intl.Collator(i18n.locale(), { numeric: true, sensitivity: "base" });
@@ -2974,17 +3068,19 @@ async function renderLibrary() {
   } catch {
     failed = true;
   }
+  const stored = roms.length;
+  const group = libGroup();
+  if (group !== "all") roms = roms.filter((rom) => groupOf(rom) === group);
   sortRoms(roms);
   const body = cartArt.themeBody();
   const looks = await Promise.all(roms.map((rom) => cartLook(rom, body)));
-  const total = roms.reduce((sum, rom) => sum + (rom.size ?? 0), 0);
-  const line = await storageLine();
+  const line = await libStorageLine();
   if (state.sheet !== "library" || token !== state.lib.token) return;
   const lib = state.lib;
   if (lib.refs) stopFlights(lib.refs);
   if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
   const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
-  // 책장 한 칸 높이 = 위 표시 자리 14 + 가장 큰 옆면 + 선반 14(옆면 그림이 k 3·4 로 크면 그만큼)
+  // 책장 한 칸 높이 = 위 표시 자리 14 + 가장 큰 옆면 + 선반 14(옆면 그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 비스듬한 앞면(크면 여러 칸)
   const spineH = Math.max(cartArt.SPINE[1] * cartArt.UNIT, ...looks.map((look) => cartArt.SPINE[1] * look.model.unit));
 
   const card = make("section", "lib__card");
@@ -2997,11 +3093,15 @@ async function renderLibrary() {
   head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })));
   if (admin.isOn()) head.append(button({ label: t("admin.import"), icon: "download", title: t("admin.import"), kind: "small", action: "admin-import", onClick: () => admin.importRoms() }));
   head.append(sortBtn);
+  const groups = groupBar();
   const shelf = make("div", "lib__case");
   shelf.style.setProperty("--slot-h", `${spineH + 28}px`);
+  const slotW = cartArt.SLOT * cartArt.UNIT;
+  shelf.style.setProperty("--slot-w", `${slotW}px`);
   shelf.setAttribute("role", "group");
   shelf.setAttribute("aria-label", t("web.library"));
   const spines = new Map();
+  let over = 0;
   for (const rom of roms) {
     const slot = make("button", "spine");
     slot.type = "button";
@@ -3009,6 +3109,10 @@ async function renderLibrary() {
     slot.setAttribute("aria-label", displayName(rom));
     slot.title = displayName(rom);
     const art = spineArt(rom, byKey.get(rom.key).look);
+    slot.style.setProperty("--side-w", `${art.dataset.side}px`);
+    over = Math.max(over, Number(art.dataset.over));
+    const span = Math.ceil((parseFloat(art.style.width) + Number(art.dataset.side)) / slotW);
+    if (span > 1) slot.style.gridColumn = `span ${span}`;
     if (state.game?.id === rom.id) art.append(make("span", "spine__run"));
     if (updater.pending(rom.key)) art.append(make("span", "spine__upd"));
     slot.append(art);
@@ -3030,13 +3134,15 @@ async function renderLibrary() {
     }),
   );
   shelf.append(add);
+  shelf.style.setProperty("--side-over", `${over}px`);
   const shelfBox = make("div", "lib__shelf");
-  // 책장 + 안내 줄을 한 굴림 칸에(낮은 화면에서도 안내 줄이 잘리지 않게). 게임이 적으면 책장이 빈 선반으로 칸을 채움.
+  // 책장은 테두리 상자 안에서만 굴림, 저장소 한 줄은 그 아래 늘 보이게. 게임이 적으면 상자에 들어가는 만큼 빈 선반(fitShelf).
   const scroller = make("div", "lib__scroll");
-  const notes = [make("p", "note", join(t("web.lib.usage", { count: roms.length, size: fmtSize(total) }), line)), make("p", "note", t("web.lib.noExport"))];
-  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : t("web.lib.empty")), ...notes);
-  else scroller.append(shelf, ...notes);
-  shelfBox.append(head, scroller);
+  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : stored ? t("web.lib.groupEmpty") : t("web.lib.empty")));
+  else scroller.append(shelf);
+  const storage = line ? make("p", "note lib__storage", line) : null;
+  if (storage) storage.title = line;
+  shelfBox.append(head, groups, scroller, ...(storage ? [storage] : []));
   const fly = make("div", "lib__fly");
   fly.setAttribute("aria-hidden", "true");
   lib.refs = { card, shelf, spines, byKey, saves, fly, runs: [], seq: 0, dim: 0, ms: 0, ease: "ease-out" };
@@ -3046,6 +3152,7 @@ async function renderLibrary() {
   const children = roms.length ? [card, shelfBox, fly] : [shelfBox];
   el.sheetBody.replaceChildren(...children);
   lockCard();
+  fitShelf();
   // 꺼낸 롬팩 자리가 책장 굴림 칸 밖이면 그 칸만 굴려 보이게(문서 전체는 굴리지 않음)
   const target = spines.get(lib.sel);
   if (target && target.offsetTop + target.offsetHeight > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = Math.max(0, target.offsetTop - (scroller.clientHeight - target.offsetHeight) / 2);
@@ -3104,6 +3211,18 @@ function fillCard(key) {
   grid.append(pack, side, btns);
   card.replaceChildren(grid);
   return pack;
+}
+
+function fitShelf() {
+  const refs = state.lib.refs;
+  const scroller = refs?.shelf.parentElement;
+  if (!scroller?.isConnected) return;
+  const slot = parseFloat(refs.shelf.style.getPropertyValue("--slot-h")) || 120;
+  const style = getComputedStyle(scroller);
+  const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  const rows = refs.spines.size ? Math.max(1, Math.floor(room / slot)) : 1;
+  const min = `${rows * slot}px`;
+  if (refs.shelf.style.minHeight !== min) refs.shelf.style.minHeight = min;
 }
 
 function lockCard() {
@@ -3169,6 +3288,7 @@ function cloneArt(node) {
   const copy = node.cloneNode(true);
   const from = node.querySelectorAll("canvas");
   copy.querySelectorAll("canvas").forEach((canvas, index) => canvas.getContext("2d").drawImage(from[index], 0, 0));
+  copy.querySelector(".spine__side")?.remove();
   return copy;
 }
 
@@ -5025,6 +5145,7 @@ const updater = createUpdater({
     await Promise.all(roms.map(async (rom) => updateLooks.set(rom.key, await cartLook(rom, body).catch(() => null))));
   },
   packArt: (rom) => (updateLooks.get(rom.key) ? packNode(rom, updateLooks.get(rom.key)) : null),
+  groups: (table) => applyGroups(table),
   refresh: () => {
     refreshStart();
     if (state.sheet === "library") renderSheet();
@@ -5217,7 +5338,7 @@ function startTouchDebug() {
   requestAnimationFrame(draw);
 }
 
-window.webgba = { player, pad, skin, store, state, layout, updater, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
+window.webgba = { player, pad, skin, store, state, layout, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);

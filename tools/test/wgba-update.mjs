@@ -1,14 +1,20 @@
-// 온라인 업데이트(규격 12장) 시험 — node 만, 롬·앱·네트워크 없이. node tools/test/wgba-update.mjs
+// 온라인 업데이트(규격 12장) 시험 — node 만, 롬·앱·네트워크 없이. node tools/test/wgba-update.mjs [--old-core <옛 src-bundle/src/js/core 폴더>]…
 // 손으로 짠 작은 wasm + 임의 바이트("rom" 조각 — 롬 아님)로 1.0.0 · 1.1.0(code 바뀜) · 1.2.0(롬 바뀜)을 묶어
 // 차이 패치(파일 그대로 · 롬 다시 묶기)·적용·SHA-1, 버전 파일 서명(변조·다른 키 거부)·경로(연쇄·모르는 SHA-1 → 전체 설치)·
 // 받기(크기·SHA-256)·같은 버전 파일 한 번만 받기·오프라인 조용히 넘어가기·설명서 update 검사·R2 서명(AWS 문서 시험 벡터).
 import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { pathToFileURL } from "url";
 import { checkManifest, packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
-import { applyDelta, checkGames, fetchChecked, planUpdate, readDeltaHead, readOverrides, runSteps, updateSource, UpdateError, verifyFeed } from "../../src-bundle/src/js/core/wgba-update.js";
+import { applyDelta, checkGames, fetchChecked, indexedFeed, indexGroups, planUpdate, readDeltaHead, readGroups, readOverrides, runSteps, updateSource, UpdateError, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { makeDelta } from "../lib/wgbd-make.mjs";
-import { publicOf, signText } from "../lib/update-cmds.mjs";
+import { buildIndex, publicOf, signText } from "../lib/update-cmds.mjs";
 import { signingKey, signRequest } from "../lib/r2.mjs";
 
+const OLD_CORES = [];
+for (let i = 2; i < process.argv.length; i++) if (process.argv[i] === "--old-core") OLD_CORES.push(path.resolve(process.argv[++i]));
 let failed = 0;
 const ok = (cond, text, detail = "") => {
   console.log(`${cond ? "통과" : "실패"} ${text}${detail ? ` — ${detail}` : ""}`);
@@ -177,6 +183,65 @@ ok(!updateSource({ gameId: "io.other", update: { feed: "https://feed.example/io.
   };
   await checkGames(["local.fort2b", "local.kikaioh", "com.flightrabbit.rapid"].map((id) => ({ key: id, gameId: id, version: "1.0.0", update: { feed: `${feedHost}/${id}/latest.json`, key: known.key } })), { fetchImpl: indexed, memory: null });
   ok(hits.filter((h) => h.endsWith("index.json")).length === 1, "우리 R2 게임 여러 개 = index.json 1번으로 묶음(목록 실패 때만 게임별 대체)", hits.join(" "));
+}
+
+/* ── 업데이트 목록 그룹·카테고리(웹 라이브러리) ── */
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgba-groups-"));
+  const quiet = console.log;
+  try {
+    for (const id of ["io.example.arc", "io.example.gba", "io.example.plain"]) {
+      fs.mkdirSync(path.join(root, id));
+      fs.writeFileSync(path.join(root, id, "latest.json"), envelope({ ...signed, id }));
+    }
+    console.log = () => {};
+    await buildIndex(root, privateKey, { time: "2026-11-12T00:00:00Z" });
+    const plain = fs.readFileSync(path.join(root, "index.json"), "utf8");
+    fs.writeFileSync(path.join(root, "groups.json"), JSON.stringify({ $comment: "x", "io.example.arc": { group: "arcade", category: "CPS1" }, "io.example.gba": { group: "emu", category: "GBA" }, "io.example.gone": { group: "mobile", category: "Android" } }));
+    await buildIndex(root, privateKey, { time: "2026-11-12T00:00:01Z" });
+    const text = fs.readFileSync(path.join(root, "index.json"), "utf8");
+    fs.writeFileSync(path.join(root, "groups.json"), JSON.stringify({ "io.example.arc": { group: "console", category: "CPS1" } }));
+    let bad = "";
+    try {
+      await buildIndex(root, privateKey, { time: "2026-11-12T00:00:02Z" });
+    } catch (error) {
+      bad = error.message;
+    }
+    console.log = quiet;
+    const signedIndex = JSON.parse(JSON.parse(text).signed);
+    ok(!JSON.parse(JSON.parse(plain).signed).groups, "groups.json 이 없으면 목록에 groups 없음(이전과 같은 목록)");
+    ok(JSON.stringify(signedIndex.groups) === JSON.stringify({ "io.example.arc": { group: "arcade", category: "CPS1" }, "io.example.gba": { group: "emu", category: "GBA" } }), "groups.json → signed.groups(목록에 든 게임만, 표에 없는 게임 빠짐, $ 키 무시)", JSON.stringify(signedIndex.groups));
+    ok(/groups.json 의 io.example.arc/.test(bad), "groups.json 값이 틀리면 목록을 만들지 않음", bad);
+    const list = await verifyIndex(text, pub);
+    ok(list.groups["io.example.arc"]?.group === "arcade" && list.groups["io.example.gba"]?.category === "GBA" && !list.groups["io.example.plain"], "새 클라이언트: 서명 확인 후 groups 조회", JSON.stringify(list.groups));
+    const forged = JSON.parse(text);
+    forged.signed = forged.signed.replace('"arcade"', '"mobile"');
+    ok((await rejects(() => verifyIndex(JSON.stringify(forged), pub), "feedSignature")) === true, "groups 를 바꾼 목록 = 서명 불일치로 거부");
+    const cleaned = readGroups({ "io.ok": { group: "emu", category: "GB" }, "io.long": { group: "arcade", category: "x".repeat(25) }, "io.bad": { group: "pc", category: "DOS" }, "Bad Id": { group: "emu", category: "GBA" }, "io.arr": [] });
+    ok(JSON.stringify(cleaned) === JSON.stringify({ "io.ok": { group: "emu", category: "GB" }, "io.long": { group: "arcade", category: "" } }), "모르는 group·틀린 id 는 빼고, 규칙 밖 카테고리는 빈 글", JSON.stringify(cleaned));
+    for (const id of ["io.example.arc", "io.example.plain"]) await indexedFeed(list, id, { key: pub, feed: `https://feed.invalid/${id}/latest.json` });
+    ok(true, "groups 가 든 목록에서 게임별 버전 파일 확인(indexedFeed) 그대로");
+    const hits = [];
+    const fetchImpl = async (url) => {
+      hits.push(url);
+      return { ok: true, status: 200, headers: new Headers({ "content-length": String(Buffer.byteLength(text)) }), arrayBuffer: async () => new TextEncoder().encode(text).buffer };
+    };
+    const cache = new Map();
+    const over = { feeds: {}, index: { url: "http://127.0.0.1:9/index.json", key: pub } };
+    const table = await indexGroups({ overrides: over, fetchImpl, cache, memory: null });
+    await indexGroups({ overrides: over, fetchImpl, cache, memory: null });
+    ok(table?.["io.example.arc"]?.category === "CPS1" && hits.length === 1, "indexGroups: 같은 캐시면 목록 1번만 받음", `요청 ${hits.length}`);
+    ok((await indexGroups({ overrides: { feeds: { x: {} }, index: null }, fetchImpl, cache: new Map(), memory: null })) === null && hits.length === 1, "시험 덮어쓰기에 목록이 없으면 실제 목록을 받지 않음");
+    for (const dir of OLD_CORES) {
+      const old = await import(pathToFileURL(path.join(dir, "wgba-update.js")).href);
+      const oldList = await old.verifyIndex(text, pub);
+      for (const id of ["io.example.arc", "io.example.plain"]) await old.indexedFeed(oldList, id, { key: pub, feed: `https://feed.invalid/${id}/latest.json` });
+      ok(Object.keys(oldList.hashes).length === 3, `옛 클라이언트(${path.basename(path.dirname(path.dirname(path.dirname(path.dirname(dir)))))}): groups 가 든 목록 = 서명·게임 확인 그대로(새 필드 무시)`);
+    }
+  } finally {
+    console.log = quiet;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /* ── 설명서 update 검사 ── */

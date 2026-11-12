@@ -1,4 +1,4 @@
-import { buildGauge, checkGames, fetchChecked, GAUGE, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
+import { buildGauge, checkGames, fetchChecked, GAUGE, indexGroups, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./app/update-pick.js";
 import { runPatchJob } from "./app/patch-loader.js";
 import { sha1Hex } from "./core/wgbp.js";
@@ -9,6 +9,7 @@ export function createUpdater(d) {
   let checked = false;
   let gathered = null;
   let shown = null;
+  const cache = new Map();
 
   const pending = (key) => {
     const item = items.get(key);
@@ -33,7 +34,8 @@ export function createUpdater(d) {
       return [];
     }
     const games = roms.filter((rom) => rom.gameId && rom.version).map((rom) => ({ key: rom.key, gameId: rom.gameId, version: rom.version, update: rom.update, rom }));
-    const found = await checkGames(games, { overrides: readOverrides(), log: d.log });
+    const found = await checkGames(games, { overrides: readOverrides(), log: d.log, cache });
+    if (roms.some((rom) => rom.gameId)) groups().then((table) => table && d.groups?.(table));
     if (found.some(({ game }) => !game.rom.sha1)) await ready;
     const out = [];
     for (const { game, feed } of found) {
@@ -46,6 +48,11 @@ export function createUpdater(d) {
       out.push({ game, feed, sha1 });
     }
     return out;
+  }
+
+  function groups() {
+    if (navigator.onLine === false) return Promise.resolve(null);
+    return indexGroups({ overrides: readOverrides(), cache });
   }
 
   function prepare({ ready = Promise.resolve() } = {}) {
@@ -184,6 +191,7 @@ export function createUpdater(d) {
 
   return {
     prepare,
+    groups,
     check,
     open,
     pending,

@@ -83,6 +83,16 @@
   --px-warn-side: var(--line-strong);
   --px-warn-hov: var(--global);
   --px-warn-ink: var(--bg-sunken);
+  --px-ok: var(--on);
+  --px-ok-hi: color-mix(in srgb, var(--on) 70%, var(--text));
+  --px-ok-side: color-mix(in srgb, var(--on) 55%, black);
+  --px-ok-hov: var(--on);
+  --px-ok-ink: var(--bg-sunken);
+  --px-ok-dim: color-mix(in srgb, var(--on) 28%, var(--bg-raised));
+  --px-ok-dim-hi: color-mix(in srgb, var(--on) 42%, var(--bg-raised));
+  --px-ok-dim-hov: color-mix(in srgb, var(--on) 36%, var(--bg-raised));
+  --px-ok-dim-ink: var(--text);
+  --px-ok-dim-side: color-mix(in srgb, var(--on) 32%, black);
   --px-off: var(--bg-raised);
   --px-off-hi: var(--bg-raised);
   --px-off-side: var(--line);
@@ -1574,8 +1584,11 @@ body[data-layout="landscape"] .lib__shelf {
   flex-direction: column;
   gap: var(--gap-2);
   min-height: 0;
+  padding: 0 4px 12px;
   overflow-y: auto;
   overscroll-behavior: none;
+  border: var(--px) solid var(--line);
+  background: var(--bg-sunken);
 }
 
 .lib__scroll .note {
@@ -1610,21 +1623,62 @@ body[data-layout="landscape"] .lib__shelf {
   margin-right: auto;
 }
 
+.lib__groups {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(4, minmax(max-content, 1fr));
+  gap: calc(var(--px) * 3);
+  padding: var(--px) var(--px) calc(var(--px) * 3);
+}
+
+.lib__groups .btn {
+  --face: var(--px-ok-dim);
+  --face-hi: var(--px-ok-dim-hi);
+  --face-side: var(--px-ok-dim-side);
+  --face-hov: var(--px-ok-dim-hov);
+  --face-ink: var(--px-ok-dim-ink);
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 2px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.lib__groups .btn[aria-checked="true"] {
+  --face: var(--px-ok);
+  --face-hi: var(--px-ok-hi);
+  --face-side: var(--px-ok-side);
+  --face-hov: var(--px-ok-hov);
+  --face-ink: var(--px-ok-ink);
+}
+
+.lib__storage {
+  flex: none;
+  height: 16px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 책장: 한 칸(--slot-h = 위 표시 자리 14 + 옆면 + 선반 14)마다 선반 판(윗면·앞면·그림자)을 배경으로 — 굴려도 같이 움직임 */
 .lib__case {
   --spine-out: 0.35;
-  --board: calc(var(--slot-h, 120px) - 14px);
-  display: flex;
-  flex: 1 0 auto;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 0 2px;
+  --shelf: 14px;
+  --board: calc(var(--slot-h, 120px) - var(--shelf));
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(auto-fill, var(--slot-w, 64px));
+  grid-auto-rows: var(--slot-h, 120px);
+  align-content: start;
+  justify-content: center;
+  gap: 0;
   min-height: var(--slot-h, 120px);
-  padding: 0 8px;
+  margin: auto 0;
+  padding: 0 var(--side-over, 0px) 0 0;
   border-radius: 0;
-  background-color: var(--bg-sunken);
   background-image: repeating-linear-gradient(to bottom, transparent 0 var(--board), var(--line-strong) var(--board) calc(var(--board) + 4px), var(--bg-hover) calc(var(--board) + 4px) calc(var(--board) + 10px), rgba(0, 0, 0, 0.45) calc(var(--board) + 10px) calc(var(--board) + 12px), transparent calc(var(--board) + 12px) var(--slot-h, 120px));
-  box-shadow: inset 0 0 0 var(--px) var(--line);
 }
 
 .spine {
@@ -1634,12 +1688,18 @@ body[data-layout="landscape"] .lib__shelf {
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
+  justify-self: start;
   height: var(--slot-h, 120px);
-  padding: 0 0 14px;
+  padding: 0 var(--side-w, 0px) var(--shelf, 14px) 0;
   border: 0;
   background: none;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.spine__side {
+  position: absolute;
+  top: 0;
 }
 
 .spine__art {
@@ -1729,6 +1789,7 @@ body[data-layout="landscape"] .lib__shelf {
 
 .spine--add {
   width: 44px;
+  margin-left: var(--side-over, 0px);
   color: var(--text-faint);
 }
 
@@ -1737,7 +1798,7 @@ body[data-layout="landscape"] .lib__shelf {
   position: absolute;
   left: 4px;
   right: 4px;
-  bottom: 14px;
+  bottom: var(--shelf, 14px);
   height: 92px;
   border: var(--px) dashed var(--line-strong);
 }
@@ -1745,7 +1806,7 @@ body[data-layout="landscape"] .lib__shelf {
 .spine--add .icon {
   position: absolute;
   left: 12px;
-  bottom: 50px;
+  bottom: calc(var(--shelf, 14px) + 36px);
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -362,7 +362,7 @@ function canvasOf(w, h) {
 export function drawFront(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(FRONT[0] * k, FRONT[1] * k);
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.imageSmoothingEnabled = false;
   const label = images.label ?? null;
   if (model.shape === "gb") {
@@ -390,7 +390,7 @@ export function drawFront(model, images, body) {
 export function drawSpine(model, images, body) {
   const { k } = model;
   const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.imageSmoothingEnabled = false;
   if (!images.spine) {
     blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
@@ -399,4 +399,75 @@ export function drawSpine(model, images, body) {
   const band = model.textArea ? spineBand(model, images.spine) : null;
   ctx.drawImage(band?.canvas ?? images.spine, 0, 0);
   return { canvas, band: Boolean(band), textArea: band?.textArea ?? model.textArea };
+}
+
+export const SIDE = 14;
+export const SLOT = SPINE[0] - 1 + SIDE;
+const SIDE_NEAR = 1.6;
+const SIDE_VANISH = 72;
+const SIDE_SHADE = [0.1, 0.18, 0.28, 0.4];
+
+function opaqueBox(canvas, data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data) {
+  const { width, height } = canvas;
+  let [x0, x1, y0, y1] = [width, 0, height, 0];
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (data[(y * width + x) * 4 + 3]) {
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x + 1);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y + 1);
+      }
+  return x1 > x0 ? { x0, x1, y0, y1 } : { x0: 0, x1: width, y0: 0, y1: height };
+}
+
+function edgeSpan(canvas) {
+  const { width, height } = canvas;
+  const data = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  const { x1 } = opaqueBox(canvas, data);
+  let [top, bottom] = [height, 0];
+  for (let y = 0; y < height; y++)
+    if (data[(y * width + x1 - 1) * 4 + 3]) {
+      top = Math.min(top, y);
+      bottom = y + 1;
+    }
+  return bottom > top ? { at: x1, top, bottom } : { at: x1, top: 0, bottom: height };
+}
+
+export function drawSide(model, front, spine) {
+  const { k } = model;
+  const visible = SIDE * k;
+  const h = spine.height;
+  const box = opaqueBox(front);
+  const edge = edgeSpan(spine);
+  const left = Math.min(box.x1 - 1, box.x0 + k);
+  const near = edge.bottom - edge.top;
+  const ox = SIDE_VANISH * k;
+  const p = SIDE_NEAR * ox;
+  const span = box.x1 - left;
+  const w = Math.max(visible, Math.ceil((span * ox) / (p + span)));
+  const canvas = canvasOf(w, h);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  const tops = [];
+  ctx.fillStyle = model.color ?? OUTLINE;
+  for (let x = 0; x < w; x++) {
+    const c = x + 0.5;
+    const sx = Math.min(box.x1 - 1, left + Math.floor((p * c) / (ox - c)));
+    const colH = Math.max(k, Math.round(near * (1 - c / ox)));
+    const top = edge.bottom - colH;
+    tops.push(top);
+    ctx.fillRect(x, top, 1, colH);
+    ctx.drawImage(front, sx, box.y0, 1, box.y1 - box.y0, x, top, 1, colH);
+  }
+  ctx.globalCompositeOperation = "source-atop";
+  for (let x = 0; x < w; x++) {
+    ctx.fillStyle = `rgba(0, 0, 0, ${SIDE_SHADE[Math.min(SIDE_SHADE.length - 1, Math.floor((x / w) * SIDE_SHADE.length))]})`;
+    ctx.fillRect(x, 0, 1, h);
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = OUTLINE;
+  for (let x = 0; x < w; x++) ctx.fillRect(x, tops[x], 1, k);
+  for (let x = w - k; x < w; x++) ctx.fillRect(x, tops[x], 1, edge.bottom - tops[x]);
+  return { canvas, at: Math.max(0, edge.at - k), visible };
 }
