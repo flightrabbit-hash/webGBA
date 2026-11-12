@@ -145,6 +145,7 @@ Web 版(`web/dist`)とマッチングサーバー(`api/v1/mp/[op].js`、Vercel �
 - **オンラインアップデート** — 説明書に `update`(`feed` = 署名付きバージョンファイルの `https://` アドレス、`key` = ECDSA P-256 公開鍵)を書くと、webGBA がアプリ起動のたびに 1 回確認し、プレイヤーが「アップデート」を押したときだけ差分パッチを適用します(署名・SHA-1 確認、失敗したら元のファイルのまま、セーブはそのまま)。webGBA の既知ゲーム id 表のゲームは、ゲームごとの `latest.json` の代わりに署名付き一覧 `index.json` を 1 回だけ読みます(0.8.1 以降、一覧がない・署名が合わないときはゲームごとに読む)。0.9.2 からは、説明書 `update` が同じバケットの `<ゲーム id>/latest.json`・同じ公開鍵のゲームも一覧で確認します。古いバージョンごとに最新版へ直接進むパッチ(`feed --old`)を置くと、アップデート 1 回 = パッチ 1 個です。配布ツールは `tools/wgba.mjs` の keygen・diff・feed・index・verify・upload・r2-stats(英語版規格 12 章・12.2.1)。webGBA 本体の配布は `app`(英語版規格 12.6)。
 - **GPU 描画(任意)** — ① Web API のゲームは、画面を CPU の代わりに WebGL2 で描けます。描画の規則(シェーダー GLSL ES 3.00)はゲームが用意し、`Web_GpuStart`・`Web_GpuList`・`Web_GpuListLen`・`Web_GpuListDone` などを公開して命令の一覧を書き、webGBA はその命令を順に実行します。新しいインポートはないため、この機能を知らない webGBA や WebGL2 のないブラウザーでは、これまでどおり画面バッファー(`Web_GetFramebuffer`)で描きます。説明書の項目は不要です(英語版規格 4.1.4)。
 - **連射を止める(任意)** — ① Web API のゲームは `Web_AutoFireOff()` を公開して 1 を返すと、その間 webGBA の連射を止められます(メニュー・バトル・名前入力など。押しているボタンは押したまま渡します)。この関数がないゲーム・この機能を知らない webGBA では、これまでどおり連射します(webGBA 0.9.0 以降、英語版規格 4.1.1・5.2)。
+- **モバイル・Android** — 説明書に `mobile` を書くとフィーチャーフォンのゲーム `.wmba`(`platform` = `WIPI-KTF`・`WIPI-SKT`・`WIPI-LGT`・`SKVM`・`GVM`・`BREW`・`J2ME`、名前の前に `[M] `、英語版規格 13 章)、`mobile.platform` が `"Android"` なら Android アプリ `.wapk`(② 自前の JS だけ、仮想キーなしの全画面・タッチ、名前の前に `[A] `、14 章)になります。ライブラリのグループ(`group`・`category`)も同じ章です(webGBA 0.10.0 以降)。
 
 ---
 

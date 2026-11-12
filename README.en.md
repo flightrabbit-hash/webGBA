@@ -1438,7 +1438,7 @@ For games in the known game id table, and games whose manifest `update` points a
 - Fallback: when the index is missing (404 etc.), has an unknown `wgbaIndex`, a bad signature, an older time, lacks the game or has a wrong hash, that game reads its own `latest.json`. When the server cannot be reached (offline) there is no fallback.
 - webGBA 0.8.0 and earlier do not read the index, so the per-game `latest.json` keeps being published. Version files at other addresses from manifest `update` are read per game as before.
 - Optional fields `apps` (envelopes) and `signed.apps` (hashes) = the webGBA self-update entry (12.6, from 0.9.0). 0.8.1 and earlier do not read them.
-- Optional field `signed.groups` = game id → `{ "group": "emu" | "arcade" | "mobile", "category": "<core or board, 1–24 ASCII characters>" }` (the web library group buttons and category). It is inside the signed text, so changing a value makes the whole index fail its signature. Games already in the library get the values at the next index check. Games missing from it use the manifest `group` (13.3); without one, `.wmba` files (manifest `mobile`) are shown as Mobile, and other games and `.gba`, `.gb`, `.gbc` files as Emulator. Older webGBA versions ignore it (the index check itself is unchanged).
+- Optional field `signed.groups` = game id → `{ "group": "emu" | "arcade" | "mobile", "category": "<core or board, 1–24 ASCII characters>" }` (the web library group buttons and category). It is inside the signed text, so changing a value makes the whole index fail its signature. Games already in the library get the values at the next index check. Games missing from it use the manifest `group` (13.3); without one, `.wmba` files (manifest `mobile`) are shown as Mobile, and other games and `.gba`, `.gb`, `.gbc` files as Emulator. Read from webGBA 0.10.0; 0.9.2 and earlier ignore it (the index check itself is unchanged).
 
 #### 12.3 Delta patch `.wgbd`
 
@@ -1529,7 +1529,7 @@ For the webGBA operator (game authors don't use this). Applies to the webGBA Win
 ### 13. Mobile `.wmba` (spec 1 extension)
 
 A `.wmba` is a feature-phone (mobile) game file. Its format is the same as `.wgba` (TOC, chunks, manifest — chapters 2 and 3); only the extension and the manifest's `mobile` field differ.
-When webGBA opens a `.wmba` it switches to the mobile layout (d-pad on the left, keypad and action key on the right) and shows the name with a `[M] ` prefix wherever names appear, such as the library.
+When webGBA opens a `.wmba` it switches to the mobile layout (d-pad on the left, keypad and action key on the right) and shows the name with a `[M] ` prefix wherever names appear, such as the library (from webGBA 0.10.0).
 
 #### 13.1 Contents
 
@@ -1621,7 +1621,7 @@ node tools/wgba.mjs check game.wmba   # checks mobile, WMFS, __adf__ and <AID>.j
 ### 14. Android `.wapk` (spec 1 extension)
 
 `.wapk` is a game made for Android from the start (a feature-phone game rebuilt as an Android app stays `.wmba`). The file format is the same as `.wgba`·`.wmba`; the manifest has `mobile.platform` `"Android"`.
-When webGBA opens a `.wapk` it shows no virtual d-pad or keypad, draws the game over the whole screen and sends screen touches and the mouse to the game as touches. Wherever names are shown (library etc.) the name gets the prefix `[A] `.
+When webGBA opens a `.wapk` it shows no virtual d-pad or keypad, draws the game over the whole screen and sends screen touches and the mouse to the game as touches. Wherever names are shown (library etc.) the name gets the prefix `[A] ` (from webGBA 0.10.0).
 
 #### 14.1 Contents
 
