@@ -3,7 +3,7 @@
 // 1) 목록 주입: 등록된 .wgba 에 index.json signed.groups 의 group·category 를 넣음(목록 1번), 목록에 없는 .wgba·.gba·.gb·.gbc 기본값(에뮬)
 // 2) 그룹 버튼(초록 버튼 라디오 4개): 고른 그룹만 책장에 · 기기에 기억(다시 열어도) · 빈 그룹 안내 · 세 언어 글 · 잉크 세로 가운데 · 같은 줄 위아래 일치
 // 3) 카테고리는 저장만(목록·꺼낸 칸에 배지 없음) · 가져오기(importGame)·업데이트 때 값 저장
-// 4) 롬팩 3D(옆면 + 비스듬한 앞면): 틈 없이 붙음 · 롬팩 사이 0 · 줄 끝 앞면 전체 · 정수 배율·가장 가까운 점 · 좌우 여백 같음 · 테두리 상자 안 굴림, 롬 많을 때 열기 시간·굴림 프레임(--base 와 비교)
+// 4) 롬팩 3D(위에서 본 2:1 평행 투영 — 옆면 라벨 띠·윗면 띠·앞면 틀 안 라벨 칸·뒷판·돌기): 한 덩어리 · 옆면 이름 그래픽(2줄까지) · 롬팩 사이 0 · 줄 끝 앞면 전체 · 정수 배율·가장 가까운 점 · 좌우 여백 같음 · 테두리 상자 안 굴림, 롬 많을 때 열기 시간·굴림 프레임(--base 와 비교)
 // 5) 하단 한 줄 "브라우저 저장소 …(webGBA …) / …", "이 앱에서만" 안내 없음
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -265,55 +265,50 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
     const caseNode = document.querySelector(".lib__case");
     const c = caseNode.getBoundingClientRect();
     const cs = getComputedStyle(caseNode);
-    const column = (canvas, x) => {
-      const data = canvas.getContext("2d").getImageData(x, 0, 1, canvas.height).data;
-      let top = -1;
-      let bottom = -1;
-      for (let y = 0; y < canvas.height; y++)
-        if (data[y * 4 + 3]) {
-          if (top < 0) top = y;
-          bottom = y + 1;
-        }
-      return [top, bottom];
+    const sc = caseNode.parentElement;
+    const sr = sc.getBoundingClientRect();
+    const ss = getComputedStyle(sc);
+    const holes = (canvas) => {
+      const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      for (let x = 0; x < canvas.width; x++) {
+        let first = -1;
+        let last = -1;
+        for (let y = 0; y < canvas.height; y++)
+          if (data[(y * canvas.width + x) * 4 + 3]) {
+            if (first < 0) first = y;
+            last = y;
+          }
+        for (let y = first; first >= 0 && y <= last; y++) if (!data[(y * canvas.width + x) * 4 + 3]) count++;
+      }
+      return count;
     };
     return {
       overflow: caseNode.scrollWidth - caseNode.clientWidth,
-      inner: (() => {
-        const sc = caseNode.parentElement;
-        const r = sc.getBoundingClientRect();
-        const ss = getComputedStyle(sc);
-        return { l: r.left + sc.clientLeft + parseFloat(ss.paddingLeft), r: r.left + sc.clientLeft + sc.clientWidth - parseFloat(ss.paddingRight) };
-      })(),
-      box: (() => {
-        const sc = caseNode.parentElement;
-        const ss = getComputedStyle(sc);
-        return { scrolls: ss.overflowY === "auto", border: [ss.borderTopWidth, ss.borderBottomWidth, ss.borderLeftWidth, ss.borderRightWidth].map(parseFloat), caseShadow: cs.boxShadow };
-      })(),
+      inner: { l: sr.left + sc.clientLeft + parseFloat(ss.paddingLeft), r: sr.left + sc.clientLeft + sc.clientWidth - parseFloat(ss.paddingRight) },
+      box: { scrolls: ss.overflowY === "auto", border: [ss.borderTopWidth, ss.borderBottomWidth, ss.borderLeftWidth, ss.borderRightWidth].map(parseFloat), caseShadow: cs.boxShadow },
       slots: [...document.querySelectorAll(".lib__case .spine[data-key]")].map((slot) => {
         const artNode = slot.querySelector(".spine__art");
         const art = artNode.getBoundingClientRect();
-        const spineCanvas = artNode.querySelector("canvas");
-        const sideNode = slot.querySelector(".spine__side");
-        const side = sideNode.getBoundingClientRect();
+        const iso = artNode.querySelector(".spine__iso");
+        const r = iso.getBoundingClientRect();
         const box = slot.getBoundingClientRect();
-        const scale = art.width / spineCanvas.width;
-        let right = spineCanvas.width;
-        while (right > 0 && column(spineCanvas, right - 1)[0] < 0) right--;
-        const edge = column(spineCanvas, right - 1);
-        const near = column(sideNode, 0);
-        return { inCase: box.left >= c.left - 0.5 && box.right <= c.right + 0.5, overlap: art.left + right * scale - side.left, nearSame: near[0] === edge[0] && near[1] === edge[1], width: Math.abs(box.width - (art.width + Number(artNode.dataset.side))) < 0.5 && side.right >= box.right - 0.5, slotRight: box.right, ratio: side.width / sideNode.width, ratioH: side.height / sideNode.height, pixel: getComputedStyle(sideNode).imageRendering, left: box.left, right: side.right, top: Math.round(box.top) };
+        const label = artNode.querySelector(".spine__label");
+        const lr = label?.getBoundingClientRect();
+        return { inCase: box.left >= c.left - 0.5 && box.right <= c.right + 0.5, attached: Math.abs(r.left - art.left) < 0.5 && Math.abs(r.top - art.top) < 0.5, width: Math.abs(box.width - art.width) < 0.5 && r.right >= box.right - 0.5, slotRight: box.right, ratio: r.width / iso.width, ratioH: r.height / iso.height, pixel: getComputedStyle(iso).imageRendering, holes: holes(iso), named: Boolean(label), lines: label?.dataset.lines.split("\n") ?? [], labelIn: label ? lr.left >= art.left - 0.5 && lr.right <= art.right + 0.5 && lr.top >= r.top && lr.bottom <= r.bottom : false, left: box.left, right: r.right, top: Math.round(box.top) };
       }),
     };
   });
   const rows = [...new Set(shelf.slots.map((s) => s.top))].map((top) => shelf.slots.filter((s) => s.top === top).length);
-  ok("롬팩 3D: 앞면이 옆면 외곽선 1칸에 겹쳐 틈 0 · 맞닿는 세로 줄 높이 같음(기본·GB 모양·그림 롬팩 모두)", shelf.slots.every((s) => s.overlap > 0 && s.overlap <= 4.01 && s.nearSame), JSON.stringify([...new Set(shelf.slots.map((s) => `${+s.overlap.toFixed(2)}/${s.nearSame}`))]));
-  ok("롬팩 3D: 칸 폭 = 옆면 + 보이는 앞면(앞면은 칸 끝까지 이상) · 정수 배율 · 가장 가까운 점", shelf.slots.every((s) => s.width && Number.isInteger(+s.ratio.toFixed(3)) && Math.abs(s.ratio - s.ratioH) < 0.001 && s.pixel === "pixelated"), JSON.stringify([...new Set(shelf.slots.map((s) => `${s.ratio}/${s.pixel}`))]));
+  ok("롬팩 3D(위에서 본 평행 투영): 그림 한 장 · 실루엣 안 빈 화소 0(옆면·앞면·윗면·뒷판 한 덩어리) · 칸 폭 = 옆면 + 보이는 앞면(앞면은 칸 끝 이상) · 정수 배율 · 가장 가까운 점", shelf.slots.every((s) => s.attached && s.width && s.holes === 0 && Number.isInteger(+s.ratio.toFixed(3)) && Math.abs(s.ratio - s.ratioH) < 0.001 && s.pixel === "pixelated"), JSON.stringify([...new Set(shelf.slots.map((s) => `${s.ratio}/${s.pixel}/빈 ${s.holes}`))]));
+  const named = shelf.slots.filter((s) => s.named);
+  ok("옆면 이름: 라벨 띠 안 그래픽(canvas) · 긴 이름 2줄·짧은 이름 1줄 · 옆면 칸 안", named.length === shelf.slots.length && named.every((s) => s.labelIn && s.lines.length >= 1 && s.lines.length <= 2) && named.some((s) => s.lines.length === 2) && named.some((s) => s.lines.length === 1), JSON.stringify(named.slice(0, 6).map((s) => s.lines.join("/"))));
   const firstRow = shelf.slots.filter((s) => s.top === shelf.slots[0].top);
   const margins = [firstRow[0].left - shelf.inner.l, shelf.inner.r - firstRow[firstRow.length - 1].right];
   const gaps = firstRow.slice(1).map((s, i) => +(s.left - firstRow[i].slotRight).toFixed(2));
   ok("롬팩 사이 여백 0(다음 롬팩 옆면이 앞 롬팩 앞면 위에) · 줄 끝 롬팩은 앞면 전체가 상자 안", gaps.every((g) => g === 0) && firstRow[firstRow.length - 1].right <= shelf.inner.r + 0.5, `사이 ${gaps.join(",")}`);
   ok("롬팩 목록 = 테두리 상자 안에서만 굴림(상하좌우 테두리 · 책장 자체 테두리 없음)", shelf.box.scrolls && shelf.box.border.every((w) => w > 0) && shelf.box.caseShadow === "none", JSON.stringify(shelf.box));
-  ok("롬팩 3D: 책장 밖 넘침 0 · 390 폭 한 줄 5개 · 좌우 여백 같음(마지막 앞면까지 보임)", shelf.overflow <= 0 && shelf.slots.every((s) => s.inCase) && rows[0] === 5 && Math.abs(margins[0] - margins[1]) <= 0.5, `줄마다 ${rows.join(",")} · 넘침 ${shelf.overflow} · 여백 ${margins.map((m) => m.toFixed(1)).join("/")}`);
+  ok("롬팩 3D: 책장 밖 넘침 0 · 390 폭 한 줄 4개 · 좌우 여백 같음(마지막 앞면까지 보임)", shelf.overflow <= 0 && shelf.slots.every((s) => s.inCase) && rows[0] === 4 && Math.abs(margins[0] - margins[1]) <= 0.5, `줄마다 ${rows.join(",")} · 넘침 ${shelf.overflow} · 여백 ${margins.map((m) => m.toFixed(1)).join("/")}`);
   await page.screenshot({ path: path.join(opt.shots, "라이브러리_롬팩3D_390x844.png") });
   await inkCenter(page, "그룹 버튼", ".lib__groups .btn");
 

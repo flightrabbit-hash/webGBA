@@ -2664,11 +2664,6 @@ function sizeCanvas(canvas, model) {
 
 const frontCache = new WeakMap();
 
-function frontCanvas(look) {
-  if (!frontCache.has(look)) frontCache.set(look, cartArt.drawFront(look.model, look.images, look.body));
-  return frontCache.get(look).canvas;
-}
-
 function frontOf(look) {
   const drawn = frontCache.get(look);
   if (!drawn) {
@@ -2708,68 +2703,40 @@ function packNode(rom, look, { running = false } = {}) {
 }
 
 /** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
-const sideCache = new Map();
+const isoCache = new Map();
 
-function sideOf(rom, look, spine) {
-  const { model } = look;
-  const key = [model.k, model.shape, model.color, look.body, model.parts.length ? `${rom.id}|${rom.build ?? ""}` : ""].join("|");
-  if (!sideCache.has(key)) sideCache.set(key, cartArt.drawSide(model, frontCanvas(look), spine));
-  const drawn = sideCache.get(key);
+function isoOf(rom, look) {
+  const { model, images } = look;
+  const key = [model.k, model.shape, model.color, model.parts.length ? `${rom.id}|${rom.build ?? ""}` : ""].join("|");
+  if (!isoCache.has(key)) isoCache.set(key, cartArt.drawIso(model, cartArt.labelArt(model, images)));
+  const drawn = isoCache.get(key);
   const canvas = document.createElement("canvas");
   canvas.width = drawn.canvas.width;
   canvas.height = drawn.canvas.height;
   canvas.getContext("2d").drawImage(drawn.canvas, 0, 0);
-  return { canvas, at: drawn.at, visible: drawn.visible };
+  return { ...drawn, canvas };
 }
 
+/** 책장 롬팩 — 옆면(라벨 띠) + 앞면(틀 안 라벨 칸에 롬팩 그림) + 윗면·뒷판(위에서 본 2:1 평행 투영). */
 function spineArt(rom, look) {
-  const { model, images, body } = look;
-  const { canvas, band, textArea } = cartArt.drawSpine(model, images, body);
+  const { model } = look;
+  const iso = isoOf(rom, look);
   const art = make("span", "spine__art");
-  art.style.width = `${cssOf(model, canvas.width)}px`;
-  art.style.height = `${cssOf(model, canvas.height)}px`;
-  art.append(sizeCanvas(canvas, model));
-  const drawn = sideOf(rom, look, canvas);
-  const side = sizeCanvas(drawn.canvas, model);
-  side.classList.add("spine__side");
-  side.style.left = `${cssOf(model, drawn.at)}px`;
-  art.append(side);
-  art.dataset.side = String(cssOf(model, drawn.at + drawn.visible - canvas.width));
-  art.dataset.over = String(cssOf(model, drawn.canvas.width - drawn.visible));
-  if (textArea) {
-    const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
-    const name = make("span", band ? "spine__name is-band" : "spine__name");
-    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
-    if (!band) name.style.color = cartArt.LABEL_INK;
-    const text = make("span", "spine__text");
-    Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
-    const lines = spineLines(spineName(rom), w, h, SPINE_PAD * model.unit);
-    for (const line of lines) {
-      const node = make("span", "spine__line", line.text);
-      Object.assign(node.style, { left: `${line.left}px`, top: `${line.top}px` });
-      text.append(node);
-    }
-    if (lines[0]?.shift) text.style.transform = `translateX(${w}px) rotate(90deg) translateY(${lines[0].shift}px)`;
-    name.append(text);
-    art.append(name);
-  }
+  art.style.width = `${cssOf(model, iso.visible)}px`;
+  art.style.height = `${cssOf(model, iso.canvas.height)}px`;
+  const pic = sizeCanvas(iso.canvas, model);
+  pic.classList.add("spine__iso");
+  art.append(pic);
+  art.dataset.over = String(cssOf(model, iso.canvas.width - iso.visible));
+  const label = spineLabel(spineName(rom), model.unit);
+  if (label) art.append(label);
   return art;
 }
 
-const SPINE_FONT = 12;
-const SPINE_LINE = 14;
-const SPINE_INK = 13;
-const SPINE_PAD = 2;
+const SPINE_TEXT = { size: 14, line: 15, lines: 2, slope: 0.5 };
 
-function spineLines(raw, w, h, pad) {
-  const style = { fontStyle: "normal", fontWeight: "400", fontSize: `${SPINE_FONT}px`, fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim() };
-  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  const ctx = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
-  ctx.font = font;
-  const length = Math.max(0, h - pad * 2);
-  const widthOf = (text) => ctx.measureText(text).width;
-  const fits = (text) => widthOf(text) <= length;
-  const most = Math.max(1, Math.min(2, Math.floor((w - SPINE_INK) / SPINE_LINE) + 1));
+function nameLines(ctx, raw, room) {
+  const fits = (text) => ctx.measureText(text).width <= room;
   const clip = (chars) => {
     for (let n = chars.length; n > 0; n--) {
       const text = `${chars.slice(0, n).join("").trimEnd()}…`;
@@ -2779,13 +2746,13 @@ function spineLines(raw, w, h, pad) {
   };
   const lines = [];
   let rest = String(raw ?? "").trim().replace(/\s+/g, " ");
-  while (rest && lines.length < most) {
-    const chars = Array.from(rest);
+  while (rest && lines.length < SPINE_TEXT.lines) {
     if (fits(rest)) {
       lines.push(rest);
       break;
     }
-    if (lines.length === most - 1) {
+    const chars = Array.from(rest);
+    if (lines.length === SPINE_TEXT.lines - 1) {
       lines.push(clip(chars));
       break;
     }
@@ -2798,20 +2765,46 @@ function spineLines(raw, w, h, pad) {
     lines.push(chars.slice(0, cut).join("").trimEnd());
     rest = chars.slice(cut).join("").trimStart();
   }
-  if (!lines.length) return [];
-  const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line), INK_ALPHA, 0, true));
-  const top = Math.min(...inks.map((ink, i) => i * SPINE_LINE + ink.top));
-  const bottom = Math.max(...inks.map((ink, i) => i * SPINE_LINE + ink.bottom));
-  const lift = baselineOffset(style, SPINE_LINE);
-  const device = Math.max(1, window.devicePixelRatio || 1);
-  const left = (i) => Math.floor(((h - (inks[i].right - inks[i].left)) / 2 - inks[i].left) * device) / device;
-  if (lines.length === 1) {
-    const base = Math.floor((w - (bottom - top)) / 2) - top;
-    return [{ text: lines[0], top: Math.round(base - lift), left: left(0) }];
-  }
-  const exact = (w - (bottom - top)) / 2 - top - lift;
-  const shift = Math.round(exact * device) / device - Math.round(exact);
-  return lines.map((text, i) => ({ text, top: Math.round(exact) + i * SPINE_LINE, left: left(i), shift }));
+  return lines;
+}
+
+/** 옆면 라벨 띠의 이름: 원래 글꼴 크기로 그린 뒤 옆면 기울기(2:1)대로 열마다 내려 그래픽으로 줄임(두 줄이 띠 폭에 맞게). */
+function spineLabel(name, unit) {
+  const { ISO, isoBox } = cartArt;
+  const box = isoBox();
+  const [s0, s1] = ISO.strip;
+  const width = (s1 - s0) * unit;
+  const [top0, bottom0] = box.strip(s0);
+  const height = (bottom0 - top0 - 2) * unit;
+  const across = SPINE_TEXT.line * SPINE_TEXT.lines + 2;
+  const scale = width / across;
+  const along = height / scale;
+  const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+  const texture = document.createElement("canvas");
+  texture.width = Math.ceil(across * dpr);
+  texture.height = Math.ceil(along * dpr);
+  const tc = texture.getContext("2d");
+  tc.scale(dpr, dpr);
+  tc.font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-ui").trim()}`;
+  const lines = nameLines(tc, name, along - 6);
+  if (!lines.length) return null;
+  tc.fillStyle = cartArt.LABEL_INK;
+  tc.textBaseline = "middle";
+  tc.translate(across, 0);
+  tc.rotate(Math.PI / 2);
+  const start = (across - lines.length * SPINE_TEXT.line) / 2;
+  lines.forEach((line, i) => tc.fillText(line, Math.round((along - tc.measureText(line).width) / 2), start + SPINE_TEXT.line * (i + 0.5)));
+  const out = document.createElement("canvas");
+  out.className = "spine__label";
+  out.width = Math.round(width * dpr);
+  out.height = Math.round((height + width * SPINE_TEXT.slope) * dpr);
+  Object.assign(out.style, { left: `${s0 * unit}px`, top: `${(top0 + 1) * unit}px`, width: `${width}px`, height: `${height + width * SPINE_TEXT.slope}px` });
+  out.dataset.lines = lines.join("\n");
+  const oc = out.getContext("2d");
+  oc.imageSmoothingEnabled = true;
+  oc.imageSmoothingQuality = "high";
+  for (let dc = 0; dc < out.width; dc++) oc.drawImage(texture, dc / scale, 0, 1 / scale, texture.height, dc, dc * SPINE_TEXT.slope, 1, height * dpr);
+  return out;
 }
 
 async function loadRoms() {
@@ -3080,8 +3073,9 @@ async function renderLibrary() {
   if (lib.refs) stopFlights(lib.refs);
   if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
   const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
-  // 책장 한 칸 높이 = 위 표시 자리 14 + 가장 큰 옆면 + 선반 14(옆면 그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 비스듬한 앞면(크면 여러 칸)
-  const spineH = Math.max(cartArt.SPINE[1] * cartArt.UNIT, ...looks.map((look) => cartArt.SPINE[1] * look.model.unit));
+  // 책장 한 칸 높이 = 위 표시 자리 14 + 롬팩 그림 + 선반 14(그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 보이는 앞면(크면 여러 칸)
+  const isoH = cartArt.isoBox().H;
+  const spineH = Math.max(isoH * cartArt.UNIT, ...looks.map((look) => isoH * look.model.unit));
 
   const card = make("section", "lib__card");
   card.setAttribute("aria-live", "polite");
@@ -3109,9 +3103,8 @@ async function renderLibrary() {
     slot.setAttribute("aria-label", displayName(rom));
     slot.title = displayName(rom);
     const art = spineArt(rom, byKey.get(rom.key).look);
-    slot.style.setProperty("--side-w", `${art.dataset.side}px`);
     over = Math.max(over, Number(art.dataset.over));
-    const span = Math.ceil((parseFloat(art.style.width) + Number(art.dataset.side)) / slotW);
+    const span = Math.ceil(parseFloat(art.style.width) / slotW);
     if (span > 1) slot.style.gridColumn = `span ${span}`;
     if (state.game?.id === rom.id) art.append(make("span", "spine__run"));
     if (updater.pending(rom.key)) art.append(make("span", "spine__upd"));
@@ -3288,7 +3281,7 @@ function cloneArt(node) {
   const copy = node.cloneNode(true);
   const from = node.querySelectorAll("canvas");
   copy.querySelectorAll("canvas").forEach((canvas, index) => canvas.getContext("2d").drawImage(from[index], 0, 0));
-  copy.querySelector(".spine__side")?.remove();
+  if (copy.classList.contains("spine__art")) copy.style.overflow = "hidden";
   return copy;
 }
 

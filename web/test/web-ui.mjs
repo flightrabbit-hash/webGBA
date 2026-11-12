@@ -1501,7 +1501,7 @@ async function libraryMotion(engine, launcher, view, { shots = false } = {}) {
   const firstW = firstGhost ? firstGhost.fronts.find((x) => x.g).b : null;
   ok(
     `${key} 꺼내기: 책장 칸 → 꺼낸 칸으로 날며 옆면 → 앞면(중간 ${ghostMid}프레임, 옆면·앞면 함께 ${crossMid}프레임) · 끝 ${settledAt(pull.frames)}ms(${flyMs}ms) · 꺼낸 자리 반투명 ${pf.arts[keys[3]]}`,
-    ghostMid >= 2 && crossMid >= 1 && firstW && firstW[2] - firstW[0] < (realFront.b[2] - realFront.b[0]) / 2 && pf.key === keys[3] && realFront.o === 1 && pf.arts[keys[3]] === 0.35 && pf.outs.join() === keys[3] && settledAt(pull.frames) >= flyMs * 0.8 && settledAt(pull.frames) <= flyMs + 150,
+    ghostMid >= 2 && crossMid >= 1 && firstW && firstW[2] - firstW[0] < realFront.b[2] - realFront.b[0] && pf.key === keys[3] && realFront.o === 1 && pf.arts[keys[3]] === 0.35 && pf.outs.join() === keys[3] && settledAt(pull.frames) >= flyMs * 0.8 && settledAt(pull.frames) <= flyMs + 150,
     JSON.stringify({ firstW, last: pf.fronts }),
   );
   if (shots) await page.screenshot({ path: path.join(SHOTS, `라이브러리_꺼낸상태_반투명_${view.name}.png`) });

@@ -1697,9 +1697,13 @@ body[data-layout="landscape"] .lib__shelf {
   touch-action: manipulation;
 }
 
-.spine__side {
+.spine__iso {
+  pointer-events: none;
+}
+
+.spine__label {
   position: absolute;
-  top: 0;
+  pointer-events: none;
 }
 
 .spine__art {
@@ -1721,32 +1725,6 @@ body[data-layout="landscape"] .lib__shelf {
     outline: var(--px) solid var(--accent);
     outline-offset: var(--px);
   }
-}
-
-.spine__name {
-  position: absolute;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.spine__name.is-band {
-  color: var(--screen-ink);
-}
-
-.spine__text {
-  position: absolute;
-  top: 0;
-  left: 0;
-  font-family: var(--font-small);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 14px;
-  white-space: pre;
-  transform-origin: 0 0;
-}
-
-.spine__line {
-  position: absolute;
 }
 
 .spine__run {
