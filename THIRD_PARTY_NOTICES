@@ -17,6 +17,11 @@ BIOS is used). You open ROMs that you own.
 앱 아이콘은 아비터(Arbiter)와 같은 그림이며 같은 저작권자의 것입니다.
 The app icon is the same artwork as Arbiter, by the same author.
 
+웹 라이브러리 롬팩 그림(web/src/art/rompack.png)은 PixelLab 으로 만든 그림이며
+webGBA 저작권자(flightrabbit)의 것입니다.
+The web library cartridge artwork (web/src/art/rompack.png) was made with
+PixelLab and belongs to the webGBA author (flightrabbit).
+
 ------------------------------------------------------------------------------
 포함된 오픈소스 / Included open source
 ------------------------------------------------------------------------------

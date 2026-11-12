@@ -23,6 +23,7 @@ import { createMedia } from "./media.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 import { createUpdater } from "./update.js";
+import { GAME_GROUPS, groupEntry } from "./core/wgba-update.js";
 import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
 import { createAdminFlow } from "./app/admin-ui.js";
 
@@ -1141,7 +1142,10 @@ function layout() {
   if (!padOn) pad.releaseAll();
   pad.invalidate();
   fitRecent();
-  if (state.sheet === "library") lockCard();
+  if (state.sheet === "library") {
+    lockCard();
+    fitShelf();
+  }
   requestAnimationFrame(() => {
     if (boardState.open) {
       boardLayout();
@@ -1415,7 +1419,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = fals
   return result;
 }
 
-const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
+const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__storage, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
 const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
@@ -1813,6 +1817,41 @@ const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareNa
 const spineName = (rom) => (rom?.gameId && !rom.named ? pickText(rom.shortName, i18n.lang()) || displayName(rom) : displayName(rom));
 // 롬팩 아래 작은 글: .wgba 설명서 = v1.2.0, 옛 .wgba 로 되돌린 게임 = "옛 .wgba", 그 밖 = 형식
 const kindText = (rom) => (rom.gameId ? (rom.version ? `v${rom.version}` : t("web.lib.oldWgba")) : kindKey(metaKind(rom)) ? t(kindKey(metaKind(rom))) : `.${rom.type}`);
+const groupOf = (rom) => (GAME_GROUPS.includes(rom?.group) ? rom.group : "emu");
+const groupTable = new Map();
+
+function groupFields(gameId, keep = null) {
+  const entry = groupTable.get(gameId);
+  if (entry) return { group: entry.group, category: entry.category };
+  return GAME_GROUPS.includes(keep?.group) ? { group: keep.group, category: typeof keep.category === "string" ? keep.category : "" } : {};
+}
+
+async function applyGroups(table) {
+  for (const [id, item] of Object.entries(table ?? {})) {
+    const entry = groupEntry(item);
+    if (entry) groupTable.set(id, entry);
+  }
+  let roms = [];
+  try {
+    roms = await store.list(store.KIND_ROM);
+  } catch {
+    return 0;
+  }
+  let changed = 0;
+  for (const rom of roms) {
+    const entry = rom.gameId ? groupTable.get(rom.gameId) : null;
+    if (!entry || (rom.group === entry.group && rom.category === entry.category)) continue;
+    try {
+      await store.patch(rom.key, { group: entry.group, category: entry.category });
+      changed += 1;
+    } catch {}
+  }
+  if (changed) {
+    logLine("INFO", `라이브러리 그룹·카테고리 ${changed}개 갱신(업데이트 목록)`);
+    if (state.sheet === "library") renderSheet();
+  }
+  return changed;
+}
 
 /** 목차가 있으면 readWgba 결과, 없으면 null. 망가졌으면 보일 문장으로 던짐. */
 async function inspectWgba(bytes) {
@@ -1961,7 +2000,7 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
     else if (replace) target = replace;
   }
   // named = 사람이 정한 이름(이름 바꾸기·패치에서 고른 이름) → 라이브러리에 그 이름, 아니면 설명서 이름
-  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, named: keepName ? Boolean(target?.named) : named, file, type, sha1, added: target?.added ?? 0 };
+  const meta = { ...info, id: target?.id || store.newId(), name: keepName && target?.name ? target.name : name, named: keepName ? Boolean(target?.named) : named, file, type, sha1, added: target?.added ?? 0, ...groupFields(info.gameId, target?.gameId === info.gameId ? target : null) };
   const carts = Object.entries(wgba.images).map(([part, image]) => ({ part, bytes: image.bytes, format: image.format, width: image.width, height: image.height }));
   let saved = null;
   await store.persist();
@@ -1997,6 +2036,7 @@ async function importGame(name, bytes, { replace = null, sha1 = "", file = name,
     await store.removeStates(saveIdOf(replace)).catch(() => {});
   }
   logLine("INFO", `.wgba ${info.gameId} ${info.version} 빌드 ${info.build.slice(0, 8)} 보관 → ${saved.record.key}${note ? ` (${note})` : ""}`);
+  if (!groupTable.has(info.gameId)) updater.groups().then((table) => table && applyGroups(table));
   return { meta: saved.record, note, wgba };
 }
 
@@ -2663,47 +2703,40 @@ function packNode(rom, look, { running = false } = {}) {
 }
 
 /** 옆면(등) — 책장에 꽂힌 모습. 이름은 textArea 에 세로 글. */
+const isoCache = new Map();
+
+function isoOf(rom, look) {
+  const { model, images } = look;
+  const key = [model.k, model.shape, model.color, model.parts.length ? `${rom.id}|${rom.build ?? ""}` : ""].join("|");
+  if (!isoCache.has(key)) isoCache.set(key, cartArt.drawIso(model, cartArt.labelArt(model, images)));
+  const drawn = isoCache.get(key);
+  const canvas = document.createElement("canvas");
+  canvas.width = drawn.canvas.width;
+  canvas.height = drawn.canvas.height;
+  canvas.getContext("2d").drawImage(drawn.canvas, 0, 0);
+  return { ...drawn, canvas };
+}
+
+/** 책장 롬팩 — 옆면(라벨 띠) + 앞면(틀 안 라벨 칸에 롬팩 그림) + 윗면·뒷판(위에서 본 2:1 평행 투영). */
 function spineArt(rom, look) {
-  const { model, images, body } = look;
-  const { canvas, band, textArea } = cartArt.drawSpine(model, images, body);
+  const { model } = look;
+  const iso = isoOf(rom, look);
   const art = make("span", "spine__art");
-  art.style.width = `${cssOf(model, canvas.width)}px`;
-  art.style.height = `${cssOf(model, canvas.height)}px`;
-  art.append(sizeCanvas(canvas, model));
-  if (textArea) {
-    const [x, y, w, h] = textArea.map((v) => Math.round(cssOf(model, v)));
-    const name = make("span", band ? "spine__name is-band" : "spine__name");
-    Object.assign(name.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
-    if (!band) name.style.color = cartArt.LABEL_INK;
-    const text = make("span", "spine__text");
-    Object.assign(text.style, { width: `${h}px`, height: `${w}px`, transform: `translateX(${w}px) rotate(90deg)` });
-    const lines = spineLines(spineName(rom), w, h, SPINE_PAD * model.unit);
-    for (const line of lines) {
-      const node = make("span", "spine__line", line.text);
-      Object.assign(node.style, { left: `${line.left}px`, top: `${line.top}px` });
-      text.append(node);
-    }
-    if (lines[0]?.shift) text.style.transform = `translateX(${w}px) rotate(90deg) translateY(${lines[0].shift}px)`;
-    name.append(text);
-    art.append(name);
-  }
+  art.style.width = `${cssOf(model, iso.visible)}px`;
+  art.style.height = `${cssOf(model, iso.canvas.height)}px`;
+  const pic = sizeCanvas(iso.canvas, model);
+  pic.classList.add("spine__iso");
+  art.append(pic);
+  art.dataset.over = String(cssOf(model, iso.canvas.width - iso.visible));
+  const label = spineLabel(spineName(rom), model.unit);
+  if (label) art.append(label);
   return art;
 }
 
-const SPINE_FONT = 12;
-const SPINE_LINE = 14;
-const SPINE_INK = 13;
-const SPINE_PAD = 2;
+const SPINE_TEXT = { size: 12, line: 14, lines: 1, room: "가나다라마 바사아" };
 
-function spineLines(raw, w, h, pad) {
-  const style = { fontStyle: "normal", fontWeight: "400", fontSize: `${SPINE_FONT}px`, fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim() };
-  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  const ctx = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
-  ctx.font = font;
-  const length = Math.max(0, h - pad * 2);
-  const widthOf = (text) => ctx.measureText(text).width;
-  const fits = (text) => widthOf(text) <= length;
-  const most = Math.max(1, Math.min(2, Math.floor((w - SPINE_INK) / SPINE_LINE) + 1));
+function nameLines(ctx, raw, room) {
+  const fits = (text) => ctx.measureText(text).width <= room;
   const clip = (chars) => {
     for (let n = chars.length; n > 0; n--) {
       const text = `${chars.slice(0, n).join("").trimEnd()}…`;
@@ -2713,13 +2746,13 @@ function spineLines(raw, w, h, pad) {
   };
   const lines = [];
   let rest = String(raw ?? "").trim().replace(/\s+/g, " ");
-  while (rest && lines.length < most) {
-    const chars = Array.from(rest);
+  while (rest && lines.length < SPINE_TEXT.lines) {
     if (fits(rest)) {
       lines.push(rest);
       break;
     }
-    if (lines.length === most - 1) {
+    const chars = Array.from(rest);
+    if (lines.length === SPINE_TEXT.lines - 1) {
       lines.push(clip(chars));
       break;
     }
@@ -2732,20 +2765,71 @@ function spineLines(raw, w, h, pad) {
     lines.push(chars.slice(0, cut).join("").trimEnd());
     rest = chars.slice(cut).join("").trimStart();
   }
-  if (!lines.length) return [];
-  const inks = lines.map((line) => glyphInk(font, line, ctx.measureText(line), INK_ALPHA, 0, true));
-  const top = Math.min(...inks.map((ink, i) => i * SPINE_LINE + ink.top));
-  const bottom = Math.max(...inks.map((ink, i) => i * SPINE_LINE + ink.bottom));
-  const lift = baselineOffset(style, SPINE_LINE);
-  const device = Math.max(1, window.devicePixelRatio || 1);
-  const left = (i) => Math.floor(((h - (inks[i].right - inks[i].left)) / 2 - inks[i].left) * device) / device;
-  if (lines.length === 1) {
-    const base = Math.floor((w - (bottom - top)) / 2) - top;
-    return [{ text: lines[0], top: Math.round(base - lift), left: left(0) }];
-  }
-  const exact = (w - (bottom - top)) / 2 - top - lift;
-  const shift = Math.round(exact * device) / device - Math.round(exact);
-  return lines.map((text, i) => ({ text, top: Math.round(exact) + i * SPINE_LINE, left: left(i), shift }));
+  return lines;
+}
+
+/** 옆면 라벨 띠의 이름(한 줄, 넘치면 말줄임): 굵은 글꼴 원래 크기로 그린 뒤 잉크 상자를 띠 가운데로 맞추고, 한글 9자(SPINE_TEXT.room)가 띠 길이에 들어가게 줄이며 띠 기울기대로 열마다 내림. */
+function spineLabel(name, unit) {
+  const tpl = cartArt.isoInfo();
+  if (!tpl?.strip.length) return null;
+  const first = tpl.strip[0];
+  const last = tpl.strip[tpl.strip.length - 1];
+  const slope = (last.top - first.top) / Math.max(1, last.x - first.x);
+  const rows = Math.floor(Math.min(...tpl.strip.map((r) => r.bottom - (first.top + slope * (r.x - first.x)))));
+  const width = (last.x + 1 - first.x) * unit;
+  const height = rows * unit;
+  const font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim()}`;
+  const probe = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
+  probe.font = font;
+  const scale = Math.min(width / (SPINE_TEXT.line * SPINE_TEXT.lines + 2), height / (probe.measureText(SPINE_TEXT.room).width + 6));
+  const across = width / scale;
+  const along = height / scale;
+  const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+  const tw = Math.ceil(across * dpr);
+  const th = Math.ceil(along * dpr);
+  const raw = document.createElement("canvas");
+  raw.width = tw;
+  raw.height = th;
+  const rc = raw.getContext("2d", { willReadFrequently: true });
+  rc.scale(dpr, dpr);
+  rc.font = font;
+  const lines = nameLines(rc, name, along - 4);
+  if (!lines.length) return null;
+  rc.fillStyle = cartArt.LABEL_INK;
+  rc.textBaseline = "middle";
+  rc.translate(across, 0);
+  rc.rotate(Math.PI / 2);
+  const start = (across - lines.length * SPINE_TEXT.line) / 2;
+  lines.forEach((line, i) => rc.fillText(line, (along - rc.measureText(line).width) / 2, start + SPINE_TEXT.line * (i + 0.5)));
+  const ink = rc.getImageData(0, 0, tw, th).data;
+  let [ix0, ix1, iy0, iy1] = [tw, -1, th, -1];
+  for (let y = 0; y < th; y++)
+    for (let x = 0; x < tw; x++)
+      if (ink[(y * tw + x) * 4 + 3] > 24) {
+        ix0 = Math.min(ix0, x);
+        ix1 = Math.max(ix1, x);
+        iy0 = Math.min(iy0, y);
+        iy1 = Math.max(iy1, y);
+      }
+  if (ix1 < 0) return null;
+  const texture = document.createElement("canvas");
+  texture.width = tw;
+  texture.height = th;
+  texture.getContext("2d").drawImage(raw, Math.floor((tw - (ix1 - ix0 + 1)) / 2) - ix0, Math.floor((th - (iy1 - iy0 + 1)) / 2) - iy0);
+  const out = document.createElement("canvas");
+  out.className = "spine__label";
+  out.width = Math.round(width * dpr);
+  out.height = Math.round((height + width * slope) * dpr);
+  Object.assign(out.style, { left: `${first.x * unit}px`, top: `${first.top * unit}px`, width: `${width}px`, height: `${out.height / dpr}px` });
+  out.dataset.lines = lines.join("\n");
+  out.dataset.slope = String(slope);
+  out.dataset.scale = scale.toFixed(3);
+  out.dataset.rows = String(height * dpr);
+  const oc = out.getContext("2d");
+  oc.imageSmoothingEnabled = true;
+  oc.imageSmoothingQuality = "high";
+  for (let dc = 0; dc < out.width; dc++) oc.drawImage(texture, dc / scale, 0, 1 / scale, th, dc, dc * slope, 1, height * dpr);
+  return out;
 }
 
 async function loadRoms() {
@@ -2934,6 +3018,11 @@ function item({ name, meta, current = false, onOpen, actions = [], key = "" }) {
   return li;
 }
 
+async function libStorageLine() {
+  const [estimate, mine] = await Promise.all([store.estimate(), store.usedBytes().catch(() => 0)]);
+  return estimate?.quota ? t("web.lib.storage", { used: fmtSize(estimate.usage ?? 0), mine: fmtSize(mine), quota: fmtSize(estimate.quota) }) : "";
+}
+
 async function storageLine() {
   const estimate = await store.estimate();
   return estimate?.quota ? t("web.storageUse", { used: fmtSize(estimate.usage ?? 0), quota: fmtSize(estimate.quota) }) : "";
@@ -2955,6 +3044,32 @@ function motion(node, frames, { fill = "none" } = {}) {
 
 const libSort = () => (state.prefs.libSort === "name" ? "name" : "recent");
 
+const libGroup = () => (GAME_GROUPS.includes(state.prefs.libGroup) ? state.prefs.libGroup : "all");
+
+const adminGroup = () => (GAME_GROUPS.includes(state.prefs.adminGroup) ? state.prefs.adminGroup : "all");
+
+/** 초록 그룹 버튼 4개(라디오). 누르면 그 자리에서 선택 표시를 바꾸고 onPick(id). */
+function groupButtons(value, onPick) {
+  const bar = make("div", "lib__groups");
+  bar.setAttribute("role", "radiogroup");
+  bar.setAttribute("aria-label", t("web.lib.group"));
+  const nodes = ["all", ...GAME_GROUPS].map((id) => {
+    const label = t(`web.lib.group.${id}`);
+    const node = button({ label, title: t("web.lib.groupShow", { group: label }), kind: "small", action: "group", onClick: () => {
+      if (node.getAttribute("aria-checked") === "true") return;
+      for (const other of nodes) other.setAttribute("aria-checked", String(other === node));
+      onPick(id);
+    } });
+    node.classList.add("lib__group");
+    node.dataset.group = id;
+    node.setAttribute("role", "radio");
+    node.setAttribute("aria-checked", String(id === value));
+    return node;
+  });
+  bar.append(...nodes);
+  return bar;
+}
+
 function sortRoms(roms) {
   if (libSort() === "name") {
     const collator = new Intl.Collator(i18n.locale(), { numeric: true, sensitivity: "base" });
@@ -2974,18 +3089,22 @@ async function renderLibrary() {
   } catch {
     failed = true;
   }
+  await cartArt.loadIso().catch((error) => logLine("WARN", `롬팩 그림을 읽지 못했습니다: ${reason(error)}`));
+  const stored = roms.length;
+  const group = libGroup();
+  if (group !== "all") roms = roms.filter((rom) => groupOf(rom) === group);
   sortRoms(roms);
   const body = cartArt.themeBody();
   const looks = await Promise.all(roms.map((rom) => cartLook(rom, body)));
-  const total = roms.reduce((sum, rom) => sum + (rom.size ?? 0), 0);
-  const line = await storageLine();
+  const line = await libStorageLine();
   if (state.sheet !== "library" || token !== state.lib.token) return;
   const lib = state.lib;
   if (lib.refs) stopFlights(lib.refs);
   if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
   const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
-  // 책장 한 칸 높이 = 위 표시 자리 14 + 가장 큰 옆면 + 선반 14(옆면 그림이 k 3·4 로 크면 그만큼)
-  const spineH = Math.max(cartArt.SPINE[1] * cartArt.UNIT, ...looks.map((look) => cartArt.SPINE[1] * look.model.unit));
+  // 책장 한 칸 높이 = 위 표시 자리 14 + 롬팩 그림 + 선반 14(그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 보이는 앞면(크면 여러 칸)
+  const isoH = cartArt.isoInfo()?.h ?? 0;
+  const spineH = Math.max(isoH * cartArt.UNIT, ...looks.map((look) => isoH * look.model.unit));
 
   const card = make("section", "lib__card");
   card.setAttribute("aria-live", "polite");
@@ -2997,11 +3116,18 @@ async function renderLibrary() {
   head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })));
   if (admin.isOn()) head.append(button({ label: t("admin.import"), icon: "download", title: t("admin.import"), kind: "small", action: "admin-import", onClick: () => admin.importRoms() }));
   head.append(sortBtn);
+  const groups = groupButtons(libGroup(), (id) => {
+    savePrefs({ libGroup: id });
+    renderSheet();
+  });
   const shelf = make("div", "lib__case");
   shelf.style.setProperty("--slot-h", `${spineH + 28}px`);
+  const slotW = cartArt.isoSlot() * cartArt.UNIT;
+  shelf.style.setProperty("--slot-w", `${slotW}px`);
   shelf.setAttribute("role", "group");
   shelf.setAttribute("aria-label", t("web.library"));
   const spines = new Map();
+  let over = 0;
   for (const rom of roms) {
     const slot = make("button", "spine");
     slot.type = "button";
@@ -3009,6 +3135,9 @@ async function renderLibrary() {
     slot.setAttribute("aria-label", displayName(rom));
     slot.title = displayName(rom);
     const art = spineArt(rom, byKey.get(rom.key).look);
+    over = Math.max(over, Number(art.dataset.over));
+    const span = Math.ceil(parseFloat(art.style.width) / slotW);
+    if (span > 1) slot.style.gridColumn = `span ${span}`;
     if (state.game?.id === rom.id) art.append(make("span", "spine__run"));
     if (updater.pending(rom.key)) art.append(make("span", "spine__upd"));
     slot.append(art);
@@ -3030,13 +3159,15 @@ async function renderLibrary() {
     }),
   );
   shelf.append(add);
+  shelf.style.setProperty("--side-over", `${over}px`);
   const shelfBox = make("div", "lib__shelf");
-  // 책장 + 안내 줄을 한 굴림 칸에(낮은 화면에서도 안내 줄이 잘리지 않게). 게임이 적으면 책장이 빈 선반으로 칸을 채움.
+  // 책장은 테두리 상자 안에서만 굴림, 저장소 한 줄은 그 아래 늘 보이게. 게임이 적으면 상자에 들어가는 만큼 빈 선반(fitShelf).
   const scroller = make("div", "lib__scroll");
-  const notes = [make("p", "note", join(t("web.lib.usage", { count: roms.length, size: fmtSize(total) }), line)), make("p", "note", t("web.lib.noExport"))];
-  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : t("web.lib.empty")), ...notes);
-  else scroller.append(shelf, ...notes);
-  shelfBox.append(head, scroller);
+  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : stored ? t("web.lib.groupEmpty") : t("web.lib.empty")));
+  else scroller.append(shelf);
+  const storage = line ? make("p", "note lib__storage", line) : null;
+  if (storage) storage.title = line;
+  shelfBox.append(head, groups, scroller, ...(storage ? [storage] : []));
   const fly = make("div", "lib__fly");
   fly.setAttribute("aria-hidden", "true");
   lib.refs = { card, shelf, spines, byKey, saves, fly, runs: [], seq: 0, dim: 0, ms: 0, ease: "ease-out" };
@@ -3046,6 +3177,7 @@ async function renderLibrary() {
   const children = roms.length ? [card, shelfBox, fly] : [shelfBox];
   el.sheetBody.replaceChildren(...children);
   lockCard();
+  fitShelf();
   // 꺼낸 롬팩 자리가 책장 굴림 칸 밖이면 그 칸만 굴려 보이게(문서 전체는 굴리지 않음)
   const target = spines.get(lib.sel);
   if (target && target.offsetTop + target.offsetHeight > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = Math.max(0, target.offsetTop - (scroller.clientHeight - target.offsetHeight) / 2);
@@ -3104,6 +3236,18 @@ function fillCard(key) {
   grid.append(pack, side, btns);
   card.replaceChildren(grid);
   return pack;
+}
+
+function fitShelf() {
+  const refs = state.lib.refs;
+  const scroller = refs?.shelf.parentElement;
+  if (!scroller?.isConnected) return;
+  const slot = parseFloat(refs.shelf.style.getPropertyValue("--slot-h")) || 120;
+  const style = getComputedStyle(scroller);
+  const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  const rows = refs.spines.size ? Math.max(1, Math.floor(room / slot)) : 1;
+  const min = `${rows * slot}px`;
+  if (refs.shelf.style.minHeight !== min) refs.shelf.style.minHeight = min;
 }
 
 function lockCard() {
@@ -3169,6 +3313,7 @@ function cloneArt(node) {
   const copy = node.cloneNode(true);
   const from = node.querySelectorAll("canvas");
   copy.querySelectorAll("canvas").forEach((canvas, index) => canvas.getContext("2d").drawImage(from[index], 0, 0));
+  if (copy.classList.contains("spine__art")) copy.style.overflow = "hidden";
   return copy;
 }
 
@@ -5025,6 +5170,7 @@ const updater = createUpdater({
     await Promise.all(roms.map(async (rom) => updateLooks.set(rom.key, await cartLook(rom, body).catch(() => null))));
   },
   packArt: (rom) => (updateLooks.get(rom.key) ? packNode(rom, updateLooks.get(rom.key)) : null),
+  groups: (table) => applyGroups(table),
   refresh: () => {
     refreshStart();
     if (state.sheet === "library") renderSheet();
@@ -5061,6 +5207,12 @@ const admin = createAdminFlow({
     return t("admin.list.text");
   },
   allText: (count) => t("admin.emptyAll", { count }),
+  groupsReady: () => updater.groups().then((table) => table && applyGroups(table)).catch(() => {}),
+  groupOf: (id) => groupTable.get(id)?.group ?? "",
+  groupBar: (onPick) => ({ node: groupButtons(adminGroup(), (id) => {
+    savePrefs({ adminGroup: id });
+    onPick(id);
+  }), value: adminGroup(), emptyText: t("web.lib.groupEmpty") }),
   icon: (name) => iconNode(name),
   notify: (text, level = "info") => toast(text, level),
   changed: () => {
@@ -5217,7 +5369,7 @@ function startTouchDebug() {
   requestAnimationFrame(draw);
 }
 
-window.webgba = { player, pad, skin, store, state, layout, updater, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
+window.webgba = { player, pad, skin, store, state, layout, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);

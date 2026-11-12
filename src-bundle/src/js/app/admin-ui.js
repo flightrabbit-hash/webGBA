@@ -275,6 +275,7 @@ export function createAdminFlow(d) {
     if (!got) return null;
     const session = got.rec;
     const ids = await d.registeredIds();
+    await d.groupsReady?.();
     if (!got.wanted()) return null;
     const stored = (got.listing.items ?? []).filter((game) => game && typeof game.id === "string" && typeof game.key === "string");
     const games = stored.filter((game) => !ids.has(game.id));
@@ -344,9 +345,25 @@ export function createAdminFlow(d) {
         d.centerDialog?.();
       },
     });
+    const groupOf = (item) => item.game.group || d.groupOf?.(item.game.id) || "emu";
+    const empty = make("p", "anote", "");
+    empty.hidden = true;
+    const filter = (id) => {
+      let shown = 0;
+      for (const li of picker.node.querySelectorAll(".upick__item")) {
+        const item = items.find((x) => x.key === li.dataset.key);
+        li.hidden = Boolean(item) && id !== "all" && groupOf(item) !== id;
+        if (!li.hidden) shown += 1;
+      }
+      empty.hidden = shown > 0;
+      picker.center();
+      d.centerDialog?.();
+    };
+    const groups = d.groupBar ? d.groupBar(filter) : null;
+    if (groups) empty.textContent = groups.emptyText;
     const view = d.dialog({
       title: t("admin.list.title", { count: items.length }),
-      body: [lead, picker.node],
+      body: [lead, ...(groups ? [groups.node, empty] : []), picker.node],
       kind: "pick",
       actions: [
         { label: d.labels.close, value: false },
@@ -354,6 +371,7 @@ export function createAdminFlow(d) {
       ],
     });
     [close, go] = view.buttons;
+    if (groups) filter(groups.value);
     picker.refresh();
     picker.center();
     window.addEventListener("resize", picker.center);

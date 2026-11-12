@@ -146,7 +146,15 @@ async function bucketHead(priv, key, size) {
  * 비공개 버킷 목록(objects) → 공개 버킷 roms.json(게임 id 마다 최신 하나 · 이름·저장 이름·라벨 그림). 서버 list 는 이 파일만 1번 읽는다.
  * 머리 출처 = 이번에 올린 로컬 파일 → 이전 roms.json(같은 키·크기·ETag) → 버킷 범위 GET(처음 한 번만) 순.
  */
-export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun = false, now = () => new Date().toISOString() } = {}) {
+/** 발행 묶음 groups.json → { <게임 id>: { group, category } } (없으면 {}). */
+export function readGroupsFile(file) {
+  if (!file || !fs.existsSync(file)) return {};
+  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? Object.fromEntries(Object.entries(raw).filter(([id]) => !id.startsWith("$"))) : {};
+}
+
+export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun = false, now = () => new Date().toISOString(), groups = {} } = {}) {
+  const groupOf = (id) => (groups[id] ? { group: groups[id].group, category: groups[id].category } : {});
   const latest = new Map();
   let loose = 0;
   for (const [key, info] of objects) {
@@ -174,7 +182,7 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
     let head = null;
     if (local.has(want.key)) head = readHead(local.get(want.key));
     else if (prev && prev.size === want.size && prev.etag === want.etag) {
-      items.push(romItem({ ...prev, ...want }));
+      items.push(romItem({ ...prev, ...want, group: null, category: null, ...groupOf(want.id) }));
       continue;
     } else {
       ranged++;
@@ -184,7 +192,7 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
       console.log(`roms.json 뺌  ${want.key}(머리를 읽지 못했거나 id 가 다름)`);
       continue;
     }
-    items.push(romItem({ ...want, names: head.names, short: head.short, label: head.label }));
+    items.push(romItem({ ...want, names: head.names, short: head.short, label: head.label, ...groupOf(want.id) }));
   }
   const body = romsText(items, now());
   const same = oldText && oldText.replace(/"time":"[^"]*"/, "") === body.replace(/"time":"[^"]*"/, "");
@@ -199,7 +207,7 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
 }
 
 /** 이미 올라간 이전 버전 정리: 게임 id 마다 가장 높은 버전만 남김 → roms.json 갱신. */
-export async function privatePrune({ dryRun = false, config = null, publicConfig = null } = {}) {
+export async function privatePrune({ dryRun = false, config = null, publicConfig = null, groups = {} } = {}) {
   const r2 = config ?? privateConfig();
   const pub = publicConfig ?? romsConfig(r2);
   const listed = await r2List(r2, { prefix: "wgba/" });
@@ -211,12 +219,12 @@ export async function privatePrune({ dryRun = false, config = null, publicConfig
   const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
   console.log(`${dryRun ? "--dry-run: 삭제하지 않았습니다 — 삭제할 것" : "비공개 버킷 정리 완료 — 삭제"} ${done.count}개 ${n(done.bytes)}바이트 · 남김 ${[...keep].map(([id, v]) => `${id} ${v}`).join(", ")}`);
   for (const key of done.removed) listed.objects.delete(key);
-  await writeRoms(r2, pub, listed.objects, { dryRun });
+  await writeRoms(r2, pub, listed.objects, { dryRun, groups });
   return 0;
 }
 
 /** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번) → 이전 버전 삭제 → 공개 버킷 roms.json 갱신. */
-export async function privateUpload(files, { dryRun = false, remote = false, config = null, publicConfig = null } = {}) {
+export async function privateUpload(files, { dryRun = false, remote = false, config = null, publicConfig = null, groups = {} } = {}) {
   const plan = [];
   for (const file of files) {
     const bytes = new Uint8Array(fs.readFileSync(file));
@@ -265,6 +273,6 @@ export async function privateUpload(files, { dryRun = false, remote = false, con
     local.set(item.key, item.bytes);
     if (dryRun && !listed.objects.has(item.key)) listed.objects.set(item.key, { size: item.bytes.length, etag: crypto.createHash("md5").update(item.bytes).digest("hex") });
   }
-  await writeRoms(r2, publicConfig ?? romsConfig(r2), listed.objects, { local, dryRun });
+  await writeRoms(r2, publicConfig ?? romsConfig(r2), listed.objects, { local, dryRun, groups });
   return 0;
 }

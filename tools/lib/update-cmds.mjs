@@ -10,6 +10,7 @@
 //        --old: 옛 버전마다 새 버전으로 바로 가는 패치를 만들어 더한다(원작 롬 검사는 패치마다, 걸리면 그 패치만 뺌).
 //        발행 폴더 묶음(위 폴더)에 index.json 이 있으면 목록도 다시 만든다(--no-index 로 끔).
 //   index --root <발행 폴더 묶음> --key <비밀 키.pem>   <묶음>/<게임 id>/latest.json 을 모두 담은 서명 목록 <묶음>/index.json
+//        묶음의 groups.json(게임 id → { group: emu|arcade|mobile, category })이 있으면 목록 signed.groups 에 넣는다(웹 라이브러리 그룹·카테고리, 옛 webGBA 는 조회하지 않음).
 //   verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…   서명·파일 크기·SHA-256, 옛 파일마다 끝까지 적용.
 //        묶음이면 목록 서명·게임마다 latest.json 과 같은지, 게임 폴더면 목록이 있을 때 그 게임 줄이 latest.json 과 같은지도 본다.
 //   upload <발행 폴더|묶음> [--dry-run [--remote]]   R2 에 올리기(patches·full 먼저, latest.json 다음, index.json 마지막). 환경 변수 R2_ACCOUNT_ID ·
@@ -25,10 +26,10 @@ import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
 import { r2Config, r2Head, r2List, r2Put } from "./r2.mjs";
 import { r2Stats } from "./r2-stats.mjs";
-import { adminKey, privatePrune, privateUpload } from "./admin-cmds.mjs";
+import { adminKey, privatePrune, privateUpload, readGroupsFile } from "./admin-cmds.mjs";
 import { appDirs, appIndexPart, appPlan, appPublish, isAppDir, verifyAppDir, APP_BASE } from "./app-cmds.mjs";
 import { indexedApp } from "../../src-bundle/src/js/core/app-update.js";
-import { applyDelta, FEED_FORMAT, fromBase64, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
+import { applyDelta, FEED_FORMAT, fromBase64, groupEntry, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { compareVersions, ID_RE, VERSION_RE } from "../../src-bundle/src/js/core/wgba-format.js";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
 
@@ -273,6 +274,13 @@ export async function feed({ dir, key, wgba, patches = [], olds = [], origs = []
   return 0;
 }
 
+/** upload 의 발행 폴더(묶음 또는 게임 폴더) 옆 groups.json — roms.json 에 그룹을 넣을 때. */
+function groupsBeside(dir) {
+  if (!dir) return null;
+  for (const at of [dir, path.dirname(path.resolve(dir))]) if (fs.existsSync(path.join(at, "groups.json"))) return path.join(at, "groups.json");
+  return null;
+}
+
 function readIndexFile(root) {
   const file = path.join(root, "index.json");
   const text = fs.readFileSync(file, "utf8");
@@ -287,6 +295,30 @@ function gameDirs(root) {
     .filter((entry) => entry.isDirectory() && ID_RE.test(entry.name) && fs.existsSync(path.join(root, entry.name, "latest.json")) && !isAppDir(path.join(root, entry.name)))
     .map((entry) => entry.name)
     .sort();
+}
+
+/**
+ * 묶음의 groups.json → 목록에 든 게임만 { <id>: { group, category } }(id 순). 파일이 없으면 {}(목록에 groups 없음).
+ * 값이 틀린 줄은 발행을 멈춘다. 목록에 없는 id 는 뺀다, 표에 없는 게임은 앱 기본값(에뮬)으로 보인다.
+ */
+export function readGroupTable(root, ids) {
+  const file = path.join(root, "groups.json");
+  if (!fs.existsSync(file)) return {};
+  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("groups.json 은 { \"<게임 id>\": { \"group\": \"emu|arcade|mobile\", \"category\": \"…\" } } 형식이어야 합니다");
+  const out = {};
+  const extra = [];
+  for (const id of Object.keys(raw).sort()) {
+    if (id.startsWith("$")) continue;
+    const entry = groupEntry(raw[id]);
+    if (!ID_RE.test(id) || !entry || entry.category !== String(raw[id].category ?? "").trim()) throw new Error(`groups.json 의 ${id} 값이 틀렸습니다(group = emu|arcade|mobile, category = 영문·숫자 1~24자)`);
+    if (ids.includes(id)) out[id] = entry;
+    else extra.push(id);
+  }
+  const missing = ids.filter((id) => !out[id]);
+  if (extra.length) console.log(`groups.json 에만 있음(목록에 넣지 않음): ${extra.join(", ")}`);
+  if (missing.length) console.log(`groups.json 에 없음(앱 기본값 에뮬): ${missing.join(", ")}`);
+  return out;
 }
 
 /**
@@ -325,7 +357,8 @@ export async function buildIndex(root, secret, { time = null } = {}) {
     const before = readIndexFile(root).signed.time;
     if (Date.parse(before) > Date.parse(at)) at = before;
   }
-  const text = JSON.stringify({ time: at, feeds: hashes, ...(appIds.length ? { apps: app.hashes } : {}) });
+  const groups = readGroupTable(root, ids);
+  const text = JSON.stringify({ time: at, feeds: hashes, ...(appIds.length ? { apps: app.hashes } : {}), ...(Object.keys(groups).length ? { groups } : {}) });
   const envelope = { wgbaIndex: INDEX_FORMAT, signed: text, signature: signText(text, secret), feeds, ...(appIds.length ? { apps: app.apps } : {}) };
   const body = `${JSON.stringify(envelope, null, 1)}\n`;
   if (Buffer.byteLength(body) > INDEX_MAX) throw new Error(`index.json 이 ${n(Buffer.byteLength(body))}바이트로 앱 한도 ${n(INDEX_MAX)}바이트를 넘습니다`);
@@ -333,7 +366,7 @@ export async function buildIndex(root, secret, { time = null } = {}) {
   for (const id of ids) await indexedFeed(list, id, { key: pub, feed: `https://feed.invalid/${id}/latest.json` });
   if (appIds.length && !(await indexedApp(list, { key: pub, feed: APP_BASE }))) throw new Error("목록의 webGBA 항목을 확인하지 못했습니다");
   writeAtomic(path.join(root, "index.json"), Buffer.from(body, "utf8"));
-  console.log(`index.json 게임 ${ids.length}개${appIds.length ? ` + 앱 ${appIds.join(", ")}` : ""} · ${n(Buffer.byteLength(body))}바이트 · 시각 ${at} · 서명 확인 통과(${ids.join(", ")})`);
+  console.log(`index.json 게임 ${ids.length}개${appIds.length ? ` + 앱 ${appIds.join(", ")}` : ""}${Object.keys(groups).length ? ` · 그룹 ${Object.keys(groups).length}개` : ""} · ${n(Buffer.byteLength(body))}바이트 · 시각 ${at} · 서명 확인 통과(${ids.join(", ")})`);
   return 0;
 }
 
@@ -398,7 +431,7 @@ async function verifyIndexFile(root, publicKey, only = null) {
   }
   const ids = Object.keys(signed.feeds ?? {}).sort();
   const appIds = Object.keys(signed.apps ?? {}).sort();
-  console.log(`목록 서명 통과 index.json · 게임 ${ids.length}개${appIds.length ? ` · 앱 ${appIds.join(", ")}` : ""} · 시각 ${signed.time}`);
+  console.log(`목록 서명 통과 index.json · 게임 ${ids.length}개${appIds.length ? ` · 앱 ${appIds.join(", ")}` : ""}${Object.keys(list.groups).length ? ` · 그룹 ${Object.keys(list.groups).length}개` : ""} · 시각 ${signed.time}`);
   for (const id of appIds.filter((id) => !only || only.includes(id))) {
     const file = path.join(root, id, "latest.json");
     try {
@@ -613,17 +646,17 @@ export async function updateCommand(cmd, rest) {
     return verify(o.positional[0], { pub: o["--pub"] ?? null, key: o["--key"] ?? null, olds: o["--wgba"] });
   }
   if (cmd === "upload") {
-    const o = parseList(rest, [], ["--wgba"]);
+    const o = parseList(rest, ["--groups"], ["--wgba"]);
     if (o.positional.length > 1 || (!o.positional.length && !o["--wgba"].length)) return -1;
     if (o["--remote"] && !o["--dry-run"]) return -1;
     const flags = { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) };
-    if (o["--wgba"].length) await privateUpload(o["--wgba"], flags);
+    if (o["--wgba"].length) await privateUpload(o["--wgba"], { ...flags, groups: readGroupsFile(o["--groups"] ?? groupsBeside(o.positional[0])) });
     return o.positional.length ? upload(o.positional[0], flags) : 0;
   }
   if (cmd === "private-prune") {
-    const o = parseList(rest, []);
+    const o = parseList(rest, ["--groups"]);
     if (o.positional.length) return -1;
-    return privatePrune({ dryRun: Boolean(o["--dry-run"]) });
+    return privatePrune({ dryRun: Boolean(o["--dry-run"]), groups: readGroupsFile(o["--groups"] ?? null) });
   }
   if (cmd === "admin-key") {
     const o = parseList(rest, []);

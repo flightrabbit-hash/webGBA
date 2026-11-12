@@ -46,12 +46,6 @@ function tones(color) {
   return { hi: mix(c, WHITE, 0.3), base: hexOf(c), lo: mix(c, BLACK, 0.3), sh: mix(c, BLACK, 0.55) };
 }
 
-const BAND_ALPHA = 0.5;
-const bandRgb = (color) => {
-  const body = rgbOf(color) ?? BLACK;
-  return WHITE.map((v, i) => Math.round(v + (body[i] - v) * BAND_ALPHA));
-};
-
 /** 테마에서 만든 기본 몸통 색(--bg-raised 를 흰색 쪽으로 28%). 테마가 바뀌면 다시 부른다. */
 export function themeBody() {
   const raised = rgbOf(getComputedStyle(document.documentElement).getPropertyValue("--bg-raised")) ?? [21, 29, 51];
@@ -200,30 +194,6 @@ function gbFront(color) {
   return g;
 }
 
-/** 기본 옆면 18×46 칸(이름 띠 = CART_DEFAULT_TEXT_AREA 자리, 그림 옆면 띠와 같은 색 규칙). */
-function defaultSpine(color, shape = "gba") {
-  const [W, H] = SPINE;
-  const t = tones(color);
-  const g = grid(W, H);
-  const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !(y === 0 && (x === 0 || x === W - 1));
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) if (inside(x, y)) g.set(x, y, !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1) ? OUTLINE : t.base);
-  const paint = (x, y, c) => {
-    if (inside(x, y) && g.get(x, y) !== OUTLINE) g.px[y * W + x] = c;
-  };
-  for (let x = 0; x < W; x++) paint(x, 1, t.hi);
-  for (let y = 0; y < H; y++) {
-    paint(1, y, t.hi);
-    paint(W - 2, y, t.lo);
-  }
-  const [ax, ay, aw, ah] = CART_DEFAULT_TEXT_AREA;
-  const band = hexOf(bandRgb(color));
-  for (let y = ay; y < ay + ah; y++) for (let x = ax; x < ax + aw; x++) paint(x, y, band);
-  for (const y of shape === "gb" ? [2, H - 4] : [H - 5, H - 3]) for (let x = 3; x <= W - 4; x++) paint(x, y, t.lo);
-  if (shape === "gb") for (let x = 3; x <= W - 4; x++) paint(x, 3, t.hi);
-  return g;
-}
-
 // ── 게임 항목 → 그림 모양 ──
 const ints = (list, n) => Array.isArray(list) && list.length === n && list.every((v) => Number.isInteger(v) && v >= 0);
 
@@ -251,69 +221,6 @@ export function cartModel(rom) {
     if (ints(area, 4) && area[2] > 0 && area[3] > 0 && area[0] + area[2] <= SPINE[0] * k && area[1] + area[3] <= SPINE[1] * k) textArea = [...area];
   }
   return { k, unit: Math.max(UNIT, k), color, parts, labelAt, textArea, shape };
-}
-
-const BAND_SHARE = 0.6;
-const BAND_NEAR = 48;
-const bandCache = new WeakMap();
-
-const brightness = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-
-function spineBand(model, bitmap) {
-  const key = `${model.color}|${model.textArea.join()}`;
-  let byKey = bandCache.get(bitmap);
-  if (!byKey) bandCache.set(bitmap, (byKey = new Map()));
-  if (byKey.has(key)) return byKey.get(key);
-  const { width, height } = bitmap;
-  const canvas = canvasOf(width, height);
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0);
-  const image = ctx.getImageData(0, 0, width, height);
-  const { data } = image;
-  const at = (x, y) => (y * width + x) * 4;
-  const rgbAt = (o) => [data[o], data[o + 1], data[o + 2]];
-  const paint = (o, rgb) => {
-    data.set(rgb, o);
-    data[o + 3] = 255;
-  };
-  const [ax, ay, aw, ah] = model.textArea;
-  const count = new Map();
-  for (let y = ay; y < ay + ah; y++)
-    for (let x = ax; x < ax + aw; x++) {
-      const o = at(x, y);
-      if (data[o + 3] < 255) continue;
-      const rgb = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
-      count.set(rgb, (count.get(rgb) ?? 0) + 1);
-    }
-  let paper = 0;
-  let most = 0;
-  for (const [rgb, n] of count) if (n > most) [paper, most] = [rgb, n];
-  let band = null;
-  if (most >= aw * ah * BAND_SHARE) {
-    const base = [paper >> 16, (paper >> 8) & 255, paper & 255];
-    const body = rgbOf(model.color) ?? BLACK;
-    const tone = bandRgb(model.color);
-    for (let y = ay; y < ay + ah; y++)
-      for (let x = ax; x < ax + aw; x++) {
-        const o = at(x, y);
-        if (data[o + 3] === 255 && [0, 1, 2].every((i) => Math.abs(data[o + i] - base[i]) <= BAND_NEAR)) paint(o, body);
-      }
-    for (const top of [ay - model.k, ay + ah]) {
-      if (top < 0 || top + model.k > height) continue;
-      const strip = [];
-      for (let y = top; y < top + model.k; y++) for (let x = ax; x < ax + aw; x++) strip.push(at(x, y));
-      const first = rgbAt(strip[0]);
-      const one = strip.every((o) => data[o + 3] === 255 && [0, 1, 2].every((i) => data[o + i] === first[i]));
-      if (one && brightness(first) > brightness(body)) strip.forEach((o) => paint(o, body));
-    }
-    const area = CART_DEFAULT_TEXT_AREA.map((v) => v * model.k);
-    const [bx, by, bw, bh] = area;
-    for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) paint(at(x, y), tone);
-    ctx.putImageData(image, 0, 0);
-    band = { canvas, textArea: area };
-  }
-  byKey.set(key, band);
-  return band;
 }
 
 const imageCache = new Map();
@@ -386,17 +293,199 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-/** 옆면 canvas(18k×46k) + 이름 자리. band = 기본 이름 자리에 롬팩 색 띠(그림 옆면은 종이를 롬팩 색으로 바꾼 후). */
-export function drawSpine(model, images, body) {
+const ISO_URL = "/art/rompack.png";
+const ISO_STRETCH = 5;
+const ISO_SHOW = 17;
+let isoTpl = null;
+let isoWork = null;
+
+const hslOf = ([r, g, b]) => {
+  const [R, G, B] = [r / 255, g / 255, b / 255];
+  const max = Math.max(R, G, B);
+  const min = Math.min(R, G, B);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === R ? (G - B) / d + (G < B ? 6 : 0) : max === G ? (B - R) / d + 2 : (R - G) / d + 4;
+  return [h * 60, s, l];
+};
+
+const rgbOfHsl = ([h, s, l]) => {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r, g, b].map((v) => Math.round((v + m) * 255));
+};
+
+/**
+ * 롬팩 시안(16색 그림) → 칸 정보. 몸체 색(붉은 계열)만 롬팩 색으로 바꾸고, 앞면은 라벨 가운데 두 열을 stretch 번 반복해
+ * 늘린다(반복마다 오른쪽이 1칸 올라감 = 2:1 사선 그대로). image = { width, height, data(RGBA) }.
+ */
+export function isoTemplate({ width, height, data }, stretch = ISO_STRETCH) {
+  let [x0, x1, y0, y1] = [width, 0, height, 0];
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (data[(y * width + x) * 4 + 3] >= 128) {
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x + 1);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y + 1);
+      }
+  const w0 = x1 - x0;
+  const h0 = y1 - y0;
+  const colors = [];
+  const counts = [];
+  const indexOf = new Map();
+  const src = new Uint8Array(w0 * h0).fill(255);
+  for (let y = 0; y < h0; y++)
+    for (let x = 0; x < w0; x++) {
+      const o = ((y + y0) * width + x + x0) * 4;
+      if (data[o + 3] < 128) continue;
+      const key = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
+      if (!indexOf.has(key)) {
+        indexOf.set(key, colors.length);
+        colors.push([data[o], data[o + 1], data[o + 2]]);
+        counts.push(0);
+      }
+      const i = indexOf.get(key);
+      src[y * w0 + x] = i;
+      counts[i] += 1;
+    }
+  const hsl = colors.map(hslOf);
+  const kind = hsl.map(([h, s, l], i) => {
+    if (l < 0.08) return "line";
+    if (l > 0.55 && h > 15 && h < 50 && s > 0.15) return "strip";
+    if ((h < 30 || h > 330) && s > 0.08) return "body";
+    return "keep";
+  });
+  const paper = counts.reduce((best, n, i) => (kind[i] === "keep" && hsl[i][2] > 0.6 && n > (counts[best] ?? -1) ? i : best), -1);
+  const body = counts.reduce((best, n, i) => (kind[i] === "body" && n > (counts[best] ?? -1) ? i : best), -1);
+  const column = (grid, w, h, x, test) => {
+    let top = -1;
+    let bottom = -1;
+    let n = 0;
+    for (let y = 0; y < h; y++)
+      if (test(grid[y * w + x])) {
+        if (top < 0) top = y;
+        bottom = y + 1;
+        n += 1;
+      }
+    return { top, bottom, n };
+  };
+  const isPaper = (i) => i === paper;
+  const labelCols = [];
+  for (let x = 0; x < w0; x++) if (column(src, w0, h0, x, isPaper).n > 8) labelCols.push(x);
+  const mid = labelCols[0] + Math.floor((labelCols[labelCols.length - 1] - labelCols[0]) / 2);
+  const w = w0 + stretch * 2;
+  const h = h0 + stretch;
+  const idx = new Uint8Array(w * h).fill(255);
+  for (let x = 0; x < w; x++) {
+    let sx;
+    let dy;
+    if (x < mid) [sx, dy] = [x, stretch];
+    else if (x < mid + stretch * 2) [sx, dy] = [mid + ((x - mid) % 2), stretch - Math.floor((x - mid) / 2)];
+    else [sx, dy] = [x - stretch * 2, 0];
+    for (let y = 0; y < h0; y++) idx[(y + dy) * w + x] = src[y * w0 + sx];
+  }
+  const runs = (test) => {
+    const out = [];
+    for (let x = 0; x < w; x++) {
+      const r = column(idx, w, h, x, test);
+      if (r.n) out.push({ x, top: r.top, bottom: r.bottom });
+    }
+    return out;
+  };
+  const label = runs(isPaper).filter((r) => r.bottom - r.top > 8);
+  const strip = runs((i) => kind[i] === "strip");
+  const stripRight = strip[strip.length - 1].x;
+  let seam = stripRight + 1;
+  while (seam < w && column(idx, w, h, seam, (i) => kind[i] === "line").n < 30) seam++;
+  const stripRef = counts.reduce((best, n, i) => (kind[i] === "strip" && n > (counts[best] ?? -1) ? i : best), -1);
+  return { w, h, idx, colors, hsl, kind, body, paper, stripRef, seam, label, strip };
+}
+
+export function loadIso() {
+  if (isoTpl) return Promise.resolve(isoTpl);
+  if (!isoWork) {
+    isoWork = (async () => {
+      const bitmap = await createImageBitmap(await (await fetch(ISO_URL)).blob());
+      const canvas = canvasOf(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0);
+      isoTpl = isoTemplate(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      return isoTpl;
+    })().catch((error) => {
+      isoWork = null;
+      throw error;
+    });
+  }
+  return isoWork;
+}
+
+export const isoInfo = () => isoTpl;
+export const isoSlot = () => (isoTpl ? isoTpl.seam + 1 + ISO_SHOW : 0);
+
+const ISO_PAPER = { sat: 0.45, light: [0.62, 0.84], lift: 0.32 };
+const ISO_STRIP = { sat: 0.35, light: [0.84, 0.94], lift: 0.5 };
+
+/** 시안 팔레트 → 이 롬팩 색: 몸체 색은 색상·채도를 바꾸고 밝기는 시안의 단계 비율 그대로, 그림 칸 종이·옆면 띠는 롬팩 색의 밝은 단계(글자가 읽히게 밝기 하한), 외곽선은 그대로. */
+function isoPalette(tpl, color) {
+  const [ht, st, lt] = hslOf(rgbOf(color) ?? [96, 104, 128]);
+  const [, sr, lr] = tpl.hsl[tpl.body];
+  const tint = ({ sat, light, lift }, offset = 0) => rgbOfHsl([ht, st * sat, Math.min(light[1], Math.max(light[0], lt + lift) + offset)]);
+  return tpl.colors.map((rgb, i) => {
+    if (i === tpl.paper) return tint(ISO_PAPER);
+    if (tpl.kind[i] === "strip") return tint(ISO_STRIP, tpl.hsl[i][2] - tpl.hsl[tpl.stripRef][2]);
+    if (tpl.kind[i] !== "body") return rgb;
+    const [, s, l] = tpl.hsl[i];
+    const w = Math.min(1, s / sr);
+    const light = Math.min(0.95, l * (1 - w) + ((l * lt) / lr) * w);
+    return rgbOfHsl([ht, Math.min(1, (s * st) / sr), light]);
+  });
+}
+
+/** 책장 롬팩(시안 그림 + 롬팩 색 + 라벨 칸 안 롬팩 그림). 시안 1화소 = k 그림 픽셀. */
+export function drawIso(model, art) {
+  const tpl = isoTpl;
   const { k } = model;
-  const canvas = canvasOf(SPINE[0] * k, SPINE[1] * k);
+  const pal = isoPalette(tpl, model.color);
+  const small = canvasOf(tpl.w, tpl.h);
+  const sctx = small.getContext("2d");
+  const image = sctx.createImageData(tpl.w, tpl.h);
+  for (let i = 0; i < tpl.idx.length; i++) {
+    const c = tpl.idx[i];
+    if (c === 255) continue;
+    image.data.set([...pal[c], 255], i * 4);
+  }
+  sctx.putImageData(image, 0, 0);
+  const canvas = canvasOf(tpl.w * k, tpl.h * k);
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  if (!images.spine) {
-    blit(ctx, defaultSpine(model.color ?? body, model.shape), k);
-    return { canvas, band: true, textArea: CART_DEFAULT_TEXT_AREA.map((v) => v * k) };
+  ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
+  if (art && tpl.label.length > 2) {
+    const cols = tpl.label.slice(1, -1);
+    const rows = Math.min(...cols.map((r) => r.bottom - r.top - 2));
+    const scale = Math.min((cols.length * k) / art.w, (rows * k) / art.h);
+    const dw = Math.max(1, Math.floor(art.w * scale));
+    const dh = Math.max(1, Math.floor(art.h * scale));
+    const left = cols[0].x * k + Math.floor((cols.length * k - dw) / 2);
+    const lift = Math.floor((rows * k - dh) / 2);
+    const byX = new Map(cols.map((r) => [r.x, r]));
+    for (let dx = 0; dx < dw; dx++) {
+      const run = byX.get(Math.floor((left + dx) / k));
+      if (!run) continue;
+      const sx = art.x + Math.floor(((dx + 0.5) * art.w) / dw);
+      const top = (run.top + 1) * k + lift;
+      ctx.drawImage(art.image, sx, art.y, 1, art.h, left + dx, top, 1, Math.min(dh, (run.bottom - 1) * k - top));
+    }
   }
-  const band = model.textArea ? spineBand(model, images.spine) : null;
-  ctx.drawImage(band?.canvas ?? images.spine, 0, 0);
-  return { canvas, band: Boolean(band), textArea: band?.textArea ?? model.textArea };
+  return { canvas, visible: isoSlot() * k };
+}
+
+export function labelArt(model, images) {
+  if (images.label) return { image: images.label, x: 0, y: 0, w: images.label.width, h: images.label.height };
+  if (images.front) return { image: images.front, x: model.labelAt[0], y: model.labelAt[1], w: LABEL[0] * model.k, h: LABEL[1] * model.k };
+  return null;
 }
