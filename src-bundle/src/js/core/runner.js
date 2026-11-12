@@ -63,7 +63,7 @@
   let paused = false;
   let speed = 1;
   let volume = 1;
-  const listeners = { button: new Set(), pause: new Set(), resume: new Set(), speed: new Set() };
+  const listeners = { button: new Set(), pause: new Set(), resume: new Set(), speed: new Set(), touch: new Set(), resize: new Set() };
   const emit = (name, value) => {
     for (const fn of listeners[name]) {
       try {
@@ -359,11 +359,103 @@
     });
   }
 
+  const TOUCH_MAX = 10;
+  const touchList = [];
+  const touchOf = new Map();
+  let touchAttached = false;
+  let touchFill = null;
+  function canvasBox() {
+    const r = canvas.getBoundingClientRect();
+    const cw = canvas.width || 1;
+    const ch = canvas.height || 1;
+    touchFill ??= getComputedStyle(canvas).objectFit === "fill";
+    if (touchFill) return { x: r.left, y: r.top, sx: r.width / cw || 1, sy: r.height / ch || 1, cw, ch };
+    const s = Math.min(r.width / cw, r.height / ch) || 1;
+    return { x: r.left + (r.width - cw * s) / 2, y: r.top + (r.height - ch * s) / 2, sx: s, sy: s, cw, ch };
+  }
+  const touchPoint = (event, box) => ({ x: (event.clientX - box.x) / box.sx, y: (event.clientY - box.y) / box.sy });
+  const touchCopy = () => touchList.map((t) => ({ id: t.id, x: t.x, y: t.y }));
+  function touchEmit(action, t, time) {
+    emit("touch", { action, id: t.id, index: touchList.indexOf(t), x: t.x, y: t.y, time, touches: touchCopy() });
+  }
+  function touchDown(event) {
+    if (!event.isTrusted || paused || !started) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (touchOf.has(event.pointerId) || touchList.length >= TOUCH_MAX) return;
+    const box = canvasBox();
+    const p = touchPoint(event, box);
+    if (p.x < 0 || p.y < 0 || p.x >= box.cw || p.y >= box.ch) return;
+    let id = 0;
+    while (touchList.some((t) => t.id === id)) id++;
+    const t = { id, x: p.x, y: p.y };
+    const at = touchList.findIndex((other) => other.id > id);
+    touchList.splice(at < 0 ? touchList.length : at, 0, t);
+    touchOf.set(event.pointerId, t);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {}
+    event.preventDefault();
+    touchEmit("down", t, event.timeStamp);
+  }
+  function touchMove(event) {
+    const t = touchOf.get(event.pointerId);
+    if (!t || !event.isTrusted) return;
+    const p = touchPoint(event, canvasBox());
+    if (p.x === t.x && p.y === t.y) return;
+    t.x = p.x;
+    t.y = p.y;
+    touchEmit("move", t, event.timeStamp);
+  }
+  function touchUp(event) {
+    const t = touchOf.get(event.pointerId);
+    if (!t || !event.isTrusted) return;
+    if (event.type === "pointercancel") return touchCancel(event.timeStamp);
+    const p = touchPoint(event, canvasBox());
+    t.x = p.x;
+    t.y = p.y;
+    touchEmit("up", t, event.timeStamp);
+    touchList.splice(touchList.indexOf(t), 1);
+    touchOf.delete(event.pointerId);
+  }
+  function touchCancel(time = now()) {
+    if (!touchList.length) return;
+    const first = touchList[0];
+    emit("touch", { action: "cancel", id: first.id, index: 0, x: first.x, y: first.y, time, touches: touchCopy() });
+    touchList.length = 0;
+    touchOf.clear();
+  }
+  function touchAttach() {
+    if (touchAttached) return;
+    touchAttached = true;
+    canvas.addEventListener("pointerdown", touchDown);
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    W.addEventListener("pointermove", touchMove, true);
+    W.addEventListener("pointerup", touchUp, true);
+    W.addEventListener("pointercancel", touchUp, true);
+    W.addEventListener("blur", () => touchCancel());
+  }
+
+  const viewNow = () => {
+    const width = W.innerWidth;
+    const height = W.innerHeight;
+    return { width, height, dpr: W.devicePixelRatio || 1, orientation: width >= height ? "landscape" : "portrait" };
+  };
+  let viewLast = "";
+  W.addEventListener("resize", () => {
+    const v = viewNow();
+    const key = `${v.width}x${v.height}@${v.dpr}`;
+    if (key === viewLast) return;
+    viewLast = key;
+    touchCancel();
+    emit("resize", v);
+  });
+
   // ── 일시정지·빨리 감기 ──
   function setPaused(value) {
     if (value === paused) return;
     paused = value;
     if (paused) {
+      touchCancel();
       for (const ac of contexts) {
         if (ac.state === "running") {
           pausedByUs.add(ac);
@@ -533,12 +625,27 @@
           tellState();
         },
       }),
-      input: Object.freeze({ held: heldView }),
+      input: Object.freeze({
+        held: heldView,
+        get touches() {
+          touchAttach();
+          return touchCopy();
+        },
+      }),
+      get view() {
+        return viewNow();
+      },
       on: (name, fn) => {
         const set = listeners[name];
         if (!set || typeof fn !== "function") return () => {};
         set.add(fn);
         if (name === "speed" && speed !== 1) fn(speed);
+        if (name === "touch") touchAttach();
+        if (name === "resize") {
+          const v = viewNow();
+          viewLast = `${v.width}x${v.height}@${v.dpr}`;
+          fn(v);
+        }
         return () => set.delete(fn);
       },
       audioContext: sharedAudio,

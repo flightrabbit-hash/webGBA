@@ -12,6 +12,8 @@ const TOOL_ICONS = {
   btnSound: (s) => (s.muted ? "soundOff" : "soundOn"),
   btnSettings: () => "settings",
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
+  btnBack: () => "androidBack",
+  btnAppMenu: () => "androidMenu",
 };
 
 const TOOL_DANGER = new Set(["btnQuit"]);

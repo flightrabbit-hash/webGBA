@@ -97,6 +97,8 @@
         <div class="bar__side">
           <button class="tool tool--menu" id="btnMenu" type="button" data-i18n-title="title.menu" data-i18n-aria="title.menu" aria-expanded="false"></button>
           <div class="bar__group bar__group--files">
+            <button class="tool" id="btnBack" type="button" data-i18n-title="web.wapk.back" data-i18n-aria="web.wapk.back" hidden></button>
+            <button class="tool" id="btnAppMenu" type="button" data-i18n-title="web.wapk.appMenu" data-i18n-aria="web.wapk.appMenu" hidden></button>
             <button class="tool" id="btnOpen" type="button" data-i18n-title="web.open" data-i18n-aria="web.open"></button>
             <button class="tool" id="btnLibrary" type="button" data-i18n-title="web.library" data-i18n-aria="web.library"></button>
             <button class="tool" id="btnSaves" type="button" data-i18n-title="web.saves" data-i18n-aria="web.saves"></button>
@@ -136,6 +138,12 @@
               <button class="btn" id="veilReset" type="button"><span class="icon" data-icon="refresh"></span><span data-i18n="menu.reset"></span></button>
               <button class="btn btn--danger" id="veilClose" type="button"><span class="icon" data-icon="exit"></span><span data-i18n="web.closeGame"></span></button>
             </div>
+          </div>
+          <div class="veil turn" id="turn" role="status" aria-live="polite" hidden>
+            <span class="icon turn__icon" data-icon="refresh" aria-hidden="true"></span>
+            <p class="veil__title" id="turnTitle"></p>
+            <p class="turn__text" id="turnText"></p>
+            <button class="btn btn--primary" id="turnLock" type="button" hidden><span class="btn__label" data-i18n="web.wapk.lock"></span></button>
           </div>
         </div>
       </main>

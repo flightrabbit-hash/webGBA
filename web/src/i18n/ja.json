@@ -215,5 +215,13 @@
   "web.rs.emptyHint": "1~5を押すとプリセットを作ります。",
   "cfg.muted": "ミュート",
   "key.LEFT": "左 ←",
-  "key.RIGHT": "右 →"
+  "key.RIGHT": "右 →",
+  "web.wapk.back": "戻る (Android 戻るキー)",
+  "web.wapk.appMenu": "メニューキー (Android メニューキー)",
+  "web.wapk.turnLandscape": "横向きにしてください",
+  "web.wapk.turnPortrait": "縦向きにしてください",
+  "web.wapk.turnLandscapeText": "このゲームは横画面でのみ動作します。画面の回転ロックを使用中の場合は解除してください。",
+  "web.wapk.turnPortraitText": "このゲームは縦画面でのみ動作します。画面の回転ロックを使用中の場合は解除してください。",
+  "web.wapk.lock": "全画面で固定",
+  "web.wapk.keysNeeded": "このゲームにはキーボードまたはゲームパッドが必要です"
 }

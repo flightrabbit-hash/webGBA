@@ -2,7 +2,7 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
 import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
 import { bootScript } from "./core/script-host.js";
-import { MOBILE_ROLES, resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
+import { androidOf, MOBILE_ROLES, resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
 import { KEYPAD_GAP, SIZES as PX_SIZES } from "./pixel-ui.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "./app/net-window.js";
 import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
@@ -61,6 +61,12 @@ const el = {
   btnMenu: $("btnMenu"),
   btnSettings: $("btnSettings"),
   btnFull: $("btnFull"),
+  btnBack: $("btnBack"),
+  btnAppMenu: $("btnAppMenu"),
+  turn: $("turn"),
+  turnTitle: $("turnTitle"),
+  turnText: $("turnText"),
+  turnLock: $("turnLock"),
   stage: $("stage"),
   screen: $("screen"),
   canvas: $("canvas"),
@@ -97,9 +103,9 @@ const el = {
   gate: $("gate"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wasm", "wgbp"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wapk", "wasm", "wgbp"]);
 const ROM_EXT = new Set(["gba", "agb", "bin", "zip"]);
-const WASM_EXT = new Set(["wgba", "wmba", "wasm"]);
+const WASM_EXT = new Set(["wgba", "wmba", "wapk", "wasm"]);
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
 const NAMED_CODES = ["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "Space", "Enter", "Backspace", "Tab", "NumpadEnter"];
 const SPEEDS = [1, 1.5, 2, 3, 4];
@@ -118,6 +124,7 @@ const AUTO_SAVE_DEFAULT = 5;
 const NET_BACK_KEY = "webgba.netBack";
 const NET_SEAT_KEY = "webgba.netSeat";
 const PAD_MODES = ["on", "overlay", "off"];
+const ROLE_TAP_MS = 120;
 
 const state = {
   prefs: store.loadPrefs(),
@@ -620,7 +627,7 @@ const padCode = (name) => `Pad:${name}`;
 // 터치 버튼 자리 ← role(규격 5.2). 게임이 그 role 버튼을 정의했을 때만 그 자리가 보이고, 누르면 그 버튼(① bit)을 보낸다.
 // C·D 는 c·d role 을 정의한 게임에서만 A·B 위에(키보드 기본 C·I / V·U — ROLE_KEYS). l2·r2·extra 는 터치 자리가 아직 없음(키보드·게임패드만).
 const EXTRA_PAD = ["C", "D"];
-const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT", ok: "OK", soft1: "SOFT1", soft2: "SOFT2", clear: "CLEAR", num1: "N1", num2: "N2", num3: "N3", num4: "N4", num5: "N5", num6: "N6", num7: "N7", num8: "N8", num9: "N9", star: "STAR", num0: "N0", hash: "HASH" };
+const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT", ok: "OK", soft1: "SOFT1", soft2: "SOFT2", clear: "CLEAR", num1: "N1", num2: "N2", num3: "N3", num4: "N4", num5: "N5", num6: "N6", num7: "N7", num8: "N8", num9: "N9", star: "STAR", num0: "N0", hash: "HASH", back: "BACK", menu: "MENU" };
 const MOBILE_SIDE = 16;
 const MOBILE_SCREEN_MIN = 0.5;
 const mobileDrop = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mobile-drop")) || 0;
@@ -741,7 +748,7 @@ function setInput(input) {
     el.dpad.toggleAttribute("data-off", dirOff);
     changed = true;
   }
-  const mobile = next.buttons.some((b) => MOBILE_ROLES.includes(b.role));
+  const mobile = !state.wapk && next.buttons.some((b) => MOBILE_ROLES.includes(b.role));
   if (mobile !== Boolean(state.mobile)) {
     state.mobile = mobile;
     document.body.toggleAttribute("data-mobile", mobile);
@@ -757,6 +764,87 @@ function setScreen(screen) {
   state.screen = screen;
   if (screen?.stretch) document.body.dataset.stretch = "";
   else delete document.body.dataset.stretch;
+}
+
+function setWapk(info) {
+  if (!info && state.wapk) leaveWapk();
+  state.wapk = info;
+  if (info) document.body.dataset.wapk = info.orientation;
+  else delete document.body.dataset.wapk;
+  if (!info) syncTurn();
+}
+
+const isFull = () => Boolean(document.fullscreenElement ?? document.webkitFullscreenElement);
+
+function wapkTurn() {
+  const want = state.wapk?.orientation;
+  if (!state.game || !coarse.matches || (want !== "landscape" && want !== "portrait")) return "";
+  return (want === "landscape") === window.innerWidth > window.innerHeight ? "" : want;
+}
+
+const canLockTurn = () => typeof screen.orientation?.lock === "function" && Boolean(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+
+function syncTurn() {
+  const want = wapkTurn();
+  if ((el.turn.dataset.want ?? "") !== want) {
+    if (want) el.turn.dataset.want = want;
+    else delete el.turn.dataset.want;
+    const portrait = want === "portrait";
+    el.turnTitle.textContent = !want ? "" : portrait ? t("web.wapk.turnPortrait") : t("web.wapk.turnLandscape");
+    el.turnText.textContent = !want ? "" : portrait ? t("web.wapk.turnPortraitText") : t("web.wapk.turnLandscapeText");
+    el.turnLock.hidden = !canLockTurn();
+    el.turn.hidden = !want;
+  }
+  if (holds.has("turn") !== Boolean(want)) hold("turn", Boolean(want));
+}
+
+async function wapkFullscreen() {
+  if (!isFull()) {
+    const root = document.documentElement;
+    const enter = root.requestFullscreen ?? root.webkitRequestFullscreen;
+    if (!enter) return false;
+    try {
+      await enter.call(root, { navigationUI: "hide" });
+      state.wapkFull = true;
+    } catch {
+      return false;
+    }
+  }
+  const want = state.wapk?.orientation;
+  if (want !== "landscape" && want !== "portrait") return true;
+  try {
+    await screen.orientation.lock(want);
+    state.wapkLocked = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function leaveWapk() {
+  if (state.wapkLocked) {
+    state.wapkLocked = false;
+    try {
+      screen.orientation.unlock();
+    } catch {}
+  }
+  if (state.wapkFull) {
+    state.wapkFull = false;
+    if (isFull()) {
+      try {
+        (document.exitFullscreen ?? document.webkitExitFullscreen).call(document)?.catch?.(() => {});
+      } catch {}
+    }
+  }
+}
+
+function pressRole(role) {
+  const slot = TOUCH_SLOT[role];
+  if (!slot || !state.input.buttons.some((b) => b.role === role && b.touch !== "hide")) return;
+  setMenu(false, { instant: true });
+  const code = padCode(slot);
+  player.keyDown(code);
+  setTimeout(() => player.keyUp(code), ROLE_TAP_MS);
 }
 
 /** 시험·개발용: 설명서 input 객체(또는 null)로 바로 setInput — window.webgba.setInput({ preset: "gba", buttons: [...] }). */
@@ -957,7 +1045,8 @@ function placeTools(slots) {
   toolHomes ??= [...el.bar.querySelectorAll(".bar__group--quick .tool, .bar__group--right .tool")].map((node) => [node, node.parentElement]);
   const side = el.bar.querySelector(".bar__side");
   const target = new Map(toolHomes);
-  if (slots) {
+  if (slots === "all") for (const [node] of toolHomes) target.set(node, el.menuPanel);
+  else if (slots) {
     const shown = (id) => !$(id).hidden;
     let left = slots - 1;
     if (shown("btnNet")) target.set(el.btnQuick, el.menuPanel);
@@ -1000,7 +1089,7 @@ function layout() {
   const height = window.innerHeight;
   const landscape = window.innerWidth > height;
   const mode = padMode();
-  const padOn = mode !== "off";
+  const padOn = mode !== "off" && !state.wapk;
   const overlay = padOn && landscape && mode === "overlay";
   const boardOpen = landscape && boardState.open;
   const inline = boardOpen && padOn && !overlay;
@@ -1087,7 +1176,12 @@ function layout() {
   root.setProperty("--pill-bottom", `${PAD_SPACE.landscape.nice.bottom}px`);
   let drop = 0;
   let keypadDrop = 0;
-  if (padOn && !landscape) {
+  if (state.wapk) {
+    sw = innerW;
+    sh = innerH;
+    placeTools("all");
+    root.setProperty("--side", "0px");
+  } else if (padOn && !landscape) {
     if (mobile) drop = Math.round(innerH * mobileDrop());
     const total = innerH - el.bar.offsetHeight - edge * 2 - drop;
     const fullW = mobile ? innerW - MOBILE_SIDE * 2 : innerW;
@@ -1219,15 +1313,18 @@ function layout() {
   root.setProperty("--mobile-drop-px", `${drop}px`);
   root.setProperty("--mobile-keypad-drop-px", `${keypadDrop}px`);
   root.setProperty("--keypad-gap", `${KEYPAD_GAP * unit}px`);
-  const frameW = Math.round(sw * dpr) + (landscape ? ring * FRAME_ROWS * 2 : 0);
-  const frameH = Math.round(sh * dpr) + ring * FRAME_ROWS * 2;
-  skin.frame(el.frame, { width: frameW, height: frameH, ring, full: landscape });
-  el.frame.style.width = `${frameW / dpr}px`;
-  el.frame.style.height = `${frameH / dpr}px`;
+  if (!state.wapk) {
+    const frameW = Math.round(sw * dpr) + (landscape ? ring * FRAME_ROWS * 2 : 0);
+    const frameH = Math.round(sh * dpr) + ring * FRAME_ROWS * 2;
+    skin.frame(el.frame, { width: frameW, height: frameH, ring, full: landscape });
+    el.frame.style.width = `${frameW / dpr}px`;
+    el.frame.style.height = `${frameH / dpr}px`;
+  }
   pad.enabled = padOn;
   if (!padOn) pad.releaseAll();
   pad.invalidate();
   fitRecent();
+  syncTurn();
   if (state.sheet === "library") {
     lockCard();
     fitShelf();
@@ -1284,7 +1381,8 @@ function syncControls() {
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
   if (el.btnQuit.disabled !== !running) el.btnQuit.disabled = !running;
   if (el.btnPause.disabled !== (!running || userPaused)) el.btnPause.disabled = !running || userPaused;
-  if (el.btnPause.hidden !== !coarse.matches) el.btnPause.hidden = !coarse.matches;
+  const pauseShown = coarse.matches && !state.wapk;
+  if (el.btnPause.hidden !== !pauseShown) el.btnPause.hidden = !pauseShown;
   const netLive = running && Boolean(player.net.request || player.net.active);
   const netOn = netLive || (running && player.net.newer);
   if (el.btnNet.hidden !== !netOn || el.btnFast.hidden !== netLive) {
@@ -1309,6 +1407,9 @@ function syncControls() {
   const netLabel = !netLive && player.net.newer ? "net.newer" : accept ? (accept.on ? "net.buttonAccept" : "net.buttonPaused") : boardWanted() ? "board.open" : player.net.waiting ? "net.buttonWait" : "net.button";
   if (el.btnNet.dataset.i18nTitle !== netLabel) setLabel(el.btnNet, netLabel);
   el.btnNet.setAttribute("aria-pressed", String(player.net.active));
+  const roles = new Set(running && state.wapk ? state.input.buttons.map((b) => b.role) : []);
+  if (el.btnBack.hidden !== !roles.has("back")) el.btnBack.hidden = !roles.has("back");
+  if (el.btnAppMenu.hidden !== !roles.has("menu")) el.btnAppMenu.hidden = !roles.has("menu");
   syncTools();
   syncMedia();
 }
@@ -1864,7 +1965,7 @@ function logLine(level, text) {
 
 const typeOf = (name) => {
   const ext = extOf(name);
-  return ext === "agb" || ext === "bin" ? "gba" : ext === "wmba" ? "wgba" : ext;
+  return ext === "agb" || ext === "bin" ? "gba" : ext === "wmba" || ext === "wapk" ? "wgba" : ext;
 };
 
 function storedType(file, bytes) {
@@ -1900,10 +2001,14 @@ const saveIdOf = (meta) => meta?.gameId || meta?.id || "";
 const titleOf = (meta) => (meta?.gameId ? pickText(meta.title, i18n.lang()) || meta.name : meta?.name ?? "");
 const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
 // 라이브러리에 보일 이름: 설명서 게임은 설명서 이름(사람이 이름을 바꿨으면 그 이름), 그 밖은 보관 이름(확장자 뺌).
-const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wmba|wasm)$/i;
+const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wmba|wapk|wasm)$/i;
 const bareName = (name) => String(name ?? "").replace(GAME_EXT, "") || String(name ?? "");
 const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareName(rom.name) : bareName(rom?.name));
-const fileType = (rom, other) => (extOf(rom?.file || rom?.name || "") === "wmba" ? ".wmba" : other);
+const PACK_EXT = new Set(["wgba", "wmba", "wapk"]);
+const fileType = (rom, other) => {
+  const ext = extOf(rom?.file || rom?.name || "");
+  return PACK_EXT.has(ext) ? `.${ext}` : rom?.android ? ".wapk" : rom?.mobile ? ".wmba" : other;
+};
 const gameTitle = (game) => (game.gameId && !game.named ? game.title || bareName(game.name) : bareName(game.name));
 const DIGIT_FINAL = "1101001110";
 
@@ -2193,7 +2298,7 @@ async function readSave(id) {
   }
 }
 
-const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|wmba|wasm)$/i, "")}.sav`;
+const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|wmba|wapk|wasm)$/i, "")}.sav`;
 
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
 async function startHosted(host, meta, input = null, net = null, kind = null) {
@@ -2235,7 +2340,13 @@ const scriptReserved = () => [...new Set([...(keyTable().FAST ?? []), "Tab", "Pa
 async function openScript(meta, wgba) {
   const save = await readSave(saveIdOf(meta));
   const input = resolveInput(wgba.manifest);
-  const { host } = await bootScript({
+  const android = androidOf(wgba.manifest);
+  if (android) {
+    setWapk(android);
+    layout();
+    if (coarse.matches && navigator.userActivation?.isActive !== false) wapkFullscreen().then(() => layout());
+  }
+  const booted = bootScript({
     wgba,
     input,
     save,
@@ -2251,7 +2362,18 @@ async function openScript(meta, wgba) {
     onFrame: (frame) => (state.scriptFrame = frame),
     onHostKey: frameKey,
   });
+  let host;
+  try {
+    ({ host } = await booted);
+  } catch (error) {
+    if (android) {
+      setWapk(null);
+      layout();
+    }
+    throw error;
+  }
   await startHosted(host, meta, input, { manifest: wgba.manifest, build: wgba.build });
+  if (android?.input === "keys" && coarse.matches) setTimeout(() => state.wapk && toast(t("web.wapk.keysNeeded"), "warn"), 2600);
   return meta.name;
 }
 
@@ -2749,7 +2871,8 @@ async function closeGame({ quiet = false } = {}) {
   state.audioHeld = false;
   media.setGame(null);
   pad.releaseAll();
-  const reshape = Boolean(state.screen);
+  const reshape = Boolean(state.screen) || Boolean(state.wapk);
+  setWapk(null);
   setScreen(null);
   setInput(null);
   syncControls();
@@ -4995,6 +5118,9 @@ function wire() {
   }
   el.btnFast.addEventListener("click", toggleFast);
   el.btnFull.addEventListener("click", toggleFullscreen);
+  el.btnBack.addEventListener("click", () => pressRole("back"));
+  el.btnAppMenu.addEventListener("click", () => pressRole("menu"));
+  el.turnLock.addEventListener("click", () => wapkFullscreen().then(() => layout()));
   el.btnFull.hidden = !(document.fullscreenEnabled || document.webkitFullscreenEnabled);
   el.veilResume.addEventListener("click", () => hold("user", false));
   el.veilReset.addEventListener("click", resetGame);

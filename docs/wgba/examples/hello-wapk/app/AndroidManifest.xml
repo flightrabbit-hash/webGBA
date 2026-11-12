@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder for the example only. A real .wapk keeps the apk's binary AndroidManifest.xml as it is. -->
+<manifest package="com.example.hellowapk" android:versionCode="1" android:versionName="1.0">
+  <uses-sdk android:minSdkVersion="7" />
+  <application><activity android:name=".Main" android:screenOrientation="landscape" /></application>
+</manifest>
