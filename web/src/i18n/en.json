@@ -31,7 +31,7 @@
   "web.deleted": "Deleted {name}",
   "web.lib.empty": "Your library is empty. Running a game adds its cartridge here.",
   "web.zipNoGame": "There is no game file (.gba · .gb · .gbc · .wgba) in {rom}",
-  "web.lib.storage": "Storage {used} (webGBA {mine}) / {quota}",
+  "web.lib.storage": "Storage {used} (game files {mine}) / {quota}",
   "web.lib.added": "Added {date}",
   "web.lib.current": "Running",
   "web.lib.missing": "The game was not found in the library. Please open the file again",
@@ -207,5 +207,13 @@
   "web.update.later": "Later",
   "web.update.all": "Update all",
   "web.update.chosen": "Update {n}",
-  "web.update.close": "Close"
+  "web.update.close": "Close",
+  "web.closeAsk.title": "Quit the game?",
+  "web.closeAsk.text": "Progress not saved inside the game will be lost.",
+  "web.closeAsk.ok": "Quit",
+  "web.help.mute": "Mute / unmute",
+  "web.rs.emptyHint": "Tap 1–5 to make a preset.",
+  "cfg.muted": "Mute",
+  "key.LEFT": "Left ←",
+  "key.RIGHT": "Right →"
 }

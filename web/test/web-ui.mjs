@@ -367,7 +367,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       const hits = list.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b));
       // 가로: 좌·우 칸 위 한 줄씩(버튼 크기를 줄여 맞추고, 32px 아래가 될 때만 햄버거 메뉴 안으로) — 보이는 것 + 메뉴 안 = 기능 버튼 8개 모두, 게임 종료는 햄버거가 있으면 메뉴 마지막·없으면 상단 좌측 묶음
       const inMenu = await page.evaluate(() => (getComputedStyle(document.querySelector("#btnMenu")).display === "none" ? [] : [...document.querySelectorAll(".bar__group--files .tool")].filter((b) => !b.hidden).map((b) => b.id)));
-      const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu" && id !== "btnQuit"));
+      const all = new Set([...list.map((x) => x.id), ...inMenu].filter((id) => id !== "btnMenu" && id !== "btnQuit" && id !== "btnPause"));
       const oneRow = new Set(list.map((x) => Math.round(x.t))).size === 1;
       const quitPlace = inMenu.length ? inMenu.at(-1) === "btnQuit" : list.some((x) => x.id === "btnQuit");
       ok(`${base}|bar 가로: 한 줄 기능 버튼(32px 이상)·나머지는 메뉴 안(모두 ${all.size}개)·겹침 0·화면 안·게임 화면/버튼과 겹치지 않음`, oneRow && all.size === 8 && quitPlace && list.every((x) => x.r - x.l >= 32) && (inMenu.length === 0 || list[0]?.id === "btnMenu") && !overlap(list) && list.every((x) => x.l >= 0 && x.t >= 0 && x.r <= view.viewport.width && x.b <= view.viewport.height) && !hits, JSON.stringify({ shown: list.map((x) => x.id), inMenu }));
@@ -377,8 +377,8 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       ok(`${base}|bar 세로: 햄버거 + 퀵슬롯 + 기능 버튼 4개·겹침 0·화면 안`, closed.length === 6 && closed[0].id === "btnMenu" && closed[1].id === "btnQuick" && !overlap(closed) && inView(closed), JSON.stringify(closed.map((x) => x.id)));
       await page.click("#btnMenu");
       await page.waitForTimeout(250);
-      const opened = await page.evaluate(() => [...document.querySelectorAll(".bar__group--files .tool")].map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
-      ok(`${base}|menu 햄버거: 파일 열기·라이브러리·세이브·게임 종료 4개 펼침·화면 안`, opened.length === 4 && opened[3].id === "btnQuit" && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
+      const opened = await page.evaluate(() => [...document.querySelectorAll(".bar__group--files .tool")].filter((b) => !b.hidden).map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
+      ok(`${base}|menu 햄버거: 파일 열기·라이브러리·세이브·일시정지(터치)·게임 종료 5개 펼침·화면 안`, opened.map((x) => x.id).join() === "btnOpen,btnLibrary,btnSaves,btnPause,btnQuit" && inView(opened) && !overlap(opened), JSON.stringify(opened.map((x) => x.id)));
       await fits(page, `${base}|menu`, ".bar__group--files");
       await snap(page, `${base}|menu`);
       await page.click("#btnMenu");
@@ -518,7 +518,7 @@ for (const view of SKIP_MAIN ? [] : VIEWS) {
       const overlap = lines.some((a, i) => i > 0 && a.top < lines[i - 1].bottom - 0.5);
       return { game: groups[0]?.textContent.includes("Star Garden") && groups[0].textContent.includes("dev.example.star"), audio: lines.some((l) => /^(소리|Sound|サウンド|音)/.test(l.text)), overlap, count: lines.length };
     });
-    ok(`${base}|info 게임 묶음 + 소리 줄 함께 · 겹침 0`, infoLines.game && infoLines.audio && !infoLines.overlap, JSON.stringify(infoLines));
+    ok(`${base}|info 게임 묶음 · 소리 진단 줄 없음(개발 표시 ?dev=1 에서만, 결정 300) · 겹침 0`, infoLines.game && !infoLines.audio && !infoLines.overlap, JSON.stringify(infoLines));
     // 상태 줄(게임 id 줄·버전 줄·소리 줄)과 묶음 제목. 설명 글(.note 문단)은 줄 칸이 아니라 재지 않음.
     await measure(page, `${base}|info`, [".sheet__head", "#sheetBody .group__title", "#sheetBody .info__line"]);
     await snap(page, `${base}|info`);
@@ -556,7 +556,7 @@ for (const width of SKIP_MAIN ? [] : [320, 360, 375, 390, 414, 430]) {
   await page.click("#btnMenu");
   await page.waitForTimeout(250);
   const files = await boxesOf(".bar__group--files .tool");
-  ok(`너비 ${width}: 햄버거 메뉴 4개 겹침 0·화면 밖 0`, files.length === 4 && !overlap(files) && files.every((x) => x.l >= 0 && x.r <= width));
+  ok(`너비 ${width}: 햄버거 메뉴 5개(일시정지 포함) 겹침 0·화면 밖 0`, files.length === 5 && !overlap(files) && files.every((x) => x.l >= 0 && x.r <= width), JSON.stringify(files.map((x) => [x.id, Math.round(x.l), Math.round(x.r)])));
   if (width === 320) await page.screenshot({ path: path.join(SHOTS, "세로_320x760_햄버거.png") });
   await context.close();
 }
@@ -1383,7 +1383,7 @@ for (const view of LIBRARY ? LIB_VIEWS : []) {
     await page.waitForTimeout(400);
     const run = await libraryLayout(page);
     const runButtons = await page.$$eval(".lib__btns .btn", (nodes) => nodes.map((node) => node.dataset.action));
-    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 종료(btn--warn)·이름·지우기(btn--danger) · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && Boolean(await page.$('.lib__btns .btn--warn[data-action="close-game"]')) && Boolean(await page.$('.lib__btns .btn--danger[data-action="delete"]')) && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
+    ok(`${key}|running 실행 중 칸: 계속하기·세이브·다시 시작·게임 종료(btn--danger, 결정 300)·이름·지우기(btn--danger) · 칸 안 · 겹침 0 · 버튼 글 안 잘림`, runButtons.join() === "resume,saves,reset,close-game,rename,delete" && Boolean(await page.$('.lib__btns .btn--danger[data-action="close-game"]')) && Boolean(await page.$('.lib__btns .btn--danger[data-action="delete"]')) && within(run.cardParts, landscape ? { ...run.cardView, b: Infinity } : run.cardView) && !crosses(run.cardParts) && run.cardScroll <= 0 && run.btnOver.length === 0 && Boolean(await page.$(".lib__card .pack__chip")) && Boolean(await page.$('.spine[data-key="rom:art"] .spine__run')), `${runButtons.join()} · 잘림 ${run.btnOver.join("/")}`);
     await measure(page, `${key}|running`, [".lib__btns .btn", ".pack__chip"]);
     if (LIB_SHOTS[`${key}|running`]) await page.screenshot({ path: path.join(SHOTS, LIB_SHOTS[`${key}|running`]) });
     const runBase = await frame();
@@ -2723,7 +2723,7 @@ async function overlayChecks() {
   const S = B.SCREEN;
   const parts = PAD_PARTS.map((n) => [n, B[n]]);
   const inside = parts.every(([, b]) => b && b.l >= S.l && b.r <= S.r && b.t >= S.t && b.b <= S.b);
-  ok(`가로 오버레이: data-pad overlay · 게임 화면 = 숨김과 같은 최대 크기(${st.sw}x${st.sh}) · 버튼 7개 모두 게임 화면 안`, st.pad === "overlay" && st.sw === offState.sw && st.sh === offState.sh && inside, JSON.stringify({ screen: S, parts: Object.fromEntries(parts) }));
+  ok(`가로 오버레이: data-pad overlay · 게임 화면 = 높이 전체(${st.sw}x${st.sh}, 숨김 ${offState.sw}x${offState.sh} 이상) · 버튼 7개 모두 게임 화면 안`, st.pad === "overlay" && st.sh === land.viewport.height && S.t === 0 && st.sw >= offState.sw && inside, JSON.stringify({ screen: S, parts: Object.fromEntries(parts) }));
   const hits = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
     const [n1, x] = parts[i];
@@ -2846,7 +2846,7 @@ async function settextChecks() {
   const { context, page } = await aspectPage({ viewport: { width: 390, height: 844 }, dpr: 2, mobile: true }, {}, { prefs: { lang: "ko" } });
   const words = await (await fetch(new URL("/i18n/ko.json", URL_BASE))).json();
   for (const [sheet, selector, word, shot] of [
-    ["library", ".lib__empty", "web.lib.empty", "세로_390x844_빈_라이브러리.png"],
+    ["library", ".lib__emptyText", "web.lib.empty", "세로_390x844_빈_라이브러리.png"],
     ["saves", "#sheetBody .empty", "web.save.empty", ""],
   ]) {
     await page.evaluate((name) => window.webgba.openSheet(name), sheet);
@@ -2859,9 +2859,11 @@ async function settextChecks() {
       range.selectNodeContents(n);
       const lines = [...range.getClientRects()].map((c) => Math.round(c.top)).filter((v, i, a) => a.indexOf(v) === i).length;
       const text = range.getBoundingClientRect();
-      return { text: n.textContent, align: getComputedStyle(n).textAlign, lines, left: +(text.left - host.left).toFixed(2), right: +(host.right - text.right).toFixed(2) };
+      const add = document.querySelector(".lib__case .spine--add")?.getBoundingClientRect();
+      return { text: n.textContent, align: getComputedStyle(n).textAlign, lines, left: +(text.left - host.left).toFixed(2), right: +(host.right - text.right).toFixed(2), addRight: add ? add.right : null, textLeft: text.left };
     }, selector);
-    ok(`빈 ${sheet}: 문구 '${words[word]}' · 가운데 정렬(좌우 여백 차이 ${Math.abs(info.left - info.right).toFixed(2)}px) · ${info.lines}줄`, info.text === words[word] && info.align === "center" && Math.abs(info.left - info.right) <= 1, JSON.stringify(info));
+    if (sheet === "library") ok(`빈 ${sheet}: 문구 '${words[word]}' · 첫 선반 + 칸 우측(결정 300) · ${info.lines}줄`, info.text === words[word] && info.addRight !== null && info.textLeft > info.addRight, JSON.stringify(info));
+    else ok(`빈 ${sheet}: 문구 '${words[word]}' · 가운데 정렬(좌우 여백 차이 ${Math.abs(info.left - info.right).toFixed(2)}px) · ${info.lines}줄`, info.text === words[word] && info.align === "center" && Math.abs(info.left - info.right) <= 1, JSON.stringify(info));
     await measure(page, `390x844|ko|빈 ${sheet}`, [selector]);
     if (shot) await page.screenshot({ path: path.join(shots, shot) });
     await page.click("#sheetClose");
@@ -3161,6 +3163,7 @@ if (CHOICE) {
     page.on("pageerror", (e) => page.errors.push(e.message));
     await page.goto(URL_BASE);
     await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
+    await page.addStyleTag({ content: "#toast{visibility:hidden !important}" });
     await page.evaluate(() => window.webgba.openSheet("settings"));
     await page.waitForSelector("#sheet:not([hidden])");
     await page.waitForTimeout(300);

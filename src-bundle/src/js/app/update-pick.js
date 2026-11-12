@@ -65,7 +65,7 @@ export function rowMeta(item) {
   return t("update.row.patch", { versions, size: sizeText(item.size) });
 }
 
-const usable = (item) => item.kind === "patch" && !item.running && (item.state === "ready" || item.state === "failed");
+const usable = (item) => !item.hidden && item.kind === "patch" && !item.running && (item.state === "ready" || item.state === "failed");
 
 export function updatePicker({ items, art = () => null, button, kinds = {}, apply, install, stop, onChange = () => {}, metaOf = rowMeta, labelOf = null, listLabel = "", startOn = true }) {
   const root = make("div", button ? "zpick upick" : "zpick upick upick--bare");

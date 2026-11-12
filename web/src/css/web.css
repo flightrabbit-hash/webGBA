@@ -499,6 +499,11 @@ body:not([data-view="start"]) .start {
   flex-direction: row;
   justify-content: space-between;
   min-height: 32px;
+  margin-top: auto;
+}
+
+.start.has-list .recent__all {
+  margin-bottom: auto;
 }
 
 .start.has-list .start__hint {
@@ -781,13 +786,13 @@ body:not([data-view="start"]) .start {
 }
 
 .toast {
-  position: absolute;
-  left: 8px;
-  right: 8px;
+  position: fixed;
+  left: var(--toast-l, 8px);
+  right: var(--toast-r, 8px);
   width: fit-content;
-  bottom: 8px;
-  z-index: 3;
-  max-width: calc(100% - 16px);
+  bottom: var(--toast-b, 8px);
+  z-index: 40;
+  max-width: calc(100% - var(--toast-l, 8px) - var(--toast-r, 8px));
   margin: 0 auto;
   padding: 6px 10px;
   --ol: var(--line-strong);
@@ -800,6 +805,13 @@ body:not([data-view="start"]) .start {
   line-height: 16px;
   text-align: center;
   pointer-events: none;
+}
+
+.toast[data-over] {
+  left: max(var(--gap-4), env(safe-area-inset-left));
+  right: max(var(--gap-4), env(safe-area-inset-right));
+  bottom: calc(var(--gap-4) + env(safe-area-inset-bottom));
+  max-width: calc(100% - var(--gap-4) * 2);
 }
 
 .toast.is-error {
@@ -1130,6 +1142,19 @@ body[data-pad="overlay"] .app:has(#pauseVeil:not([hidden])) .pad {
   display: none;
 }
 
+body[data-pad="overlay"] .frame {
+  display: none;
+}
+
+body[data-view="start"] .pad .key,
+body[data-view="start"] .pad .dpad {
+  opacity: 0.4;
+}
+
+body[data-layout="landscape"][data-tools="inline"] #btnPause {
+  display: none;
+}
+
 .touch-debug {
   position: fixed;
   top: env(safe-area-inset-top, 0px);
@@ -1375,7 +1400,8 @@ body[data-pad="overlay"] .app:has(#pauseVeil:not([hidden])) .pad {
 
 @media (min-width: 700px) and (min-height: 560px) {
   .sheet[data-sheet="library"] .sheet__panel {
-    height: min(100%, 760px);
+    height: auto;
+    max-height: min(100%, 760px);
   }
 }
 
@@ -1794,14 +1820,29 @@ body[data-layout="landscape"] .lib__shelf {
   }
 }
 
+.lib__case.is-empty {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
 .lib__empty {
-  flex: none;
-  margin: 0;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  height: 92px;
+  margin: 0 0 var(--shelf, 14px) var(--gap-2);
+}
+
+.lib__emptyText {
+  display: block;
   color: var(--text-dim);
   font-size: 13px;
   line-height: 20px;
-  text-align: center;
+  text-align: left;
   word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .start__actions--left {
@@ -2309,6 +2350,7 @@ body[data-layout="landscape"] .lib__shelf {
 
 .field > .btn {
   flex: none;
+  margin-right: var(--px);
 }
 
 .sheet[data-sheet="rs"] .sheet__panel {
@@ -2908,6 +2950,47 @@ body[data-layout="landscape"] .lib__shelf {
   font-family: var(--font-small);
   font-size: 12px;
   line-height: 16px;
+}
+
+@media (max-height: 480px) {
+  .dialog[data-kind="pin"] .dialog__card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    column-gap: var(--gap-4);
+    row-gap: var(--gap-3);
+    width: min(100%, 560px);
+  }
+
+  .dialog[data-kind="pin"] .dialog__body,
+  .dialog[data-kind="pin"] .apad {
+    display: contents;
+  }
+
+  .dialog[data-kind="pin"] .dialog__title,
+  .dialog[data-kind="pin"] .dialog__body > p,
+  .dialog[data-kind="pin"] .apad__top,
+  .dialog[data-kind="pin"] .apad__state {
+    grid-column: 1;
+    margin: 0;
+  }
+
+  .dialog[data-kind="pin"] .apad__top {
+    justify-self: start;
+  }
+
+  .dialog[data-kind="pin"] .apad__keys {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    align-self: center;
+  }
+
+  .dialog[data-kind="pin"] .dialog__actions {
+    grid-column: 1;
+    grid-row: -2 / -1;
+    align-self: end;
+    margin-top: 0;
+  }
 }
 
 .dialog__body p.anote {
@@ -4798,7 +4881,7 @@ body[data-layout="landscape"] .mpb__panel {
   flex: none;
   width: 156px;
   height: 36px;
-  margin: 0;
+  margin: 0 var(--px) 0 0;
 }
 
 :root {
@@ -4836,8 +4919,14 @@ body[data-mobile] .keypad {
   align-content: center;
 }
 
+body[data-mobile] .keypad .key--clear {
+  grid-column: 1;
+  justify-self: center;
+  margin-top: var(--keypad-gap, 4px);
+}
+
 body[data-mobile] .keypad .key--ok {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   justify-self: center;
   margin-top: var(--keypad-gap, 4px);
 }
@@ -4854,11 +4943,6 @@ body[data-layout="portrait"][data-mobile] .key--soft1 {
 body[data-layout="portrait"][data-mobile] .key--soft2 {
   grid-area: r;
   justify-self: end;
-}
-
-body[data-layout="portrait"][data-mobile] .key--clear {
-  grid-area: sel;
-  justify-self: start;
 }
 
 body[data-layout="portrait"][data-mobile] .keypad {
@@ -4879,12 +4963,6 @@ body[data-layout="landscape"][data-mobile] .key--soft2 {
   justify-self: end;
   align-self: start;
   margin: var(--lr-top, 8px) 10px 0 0;
-}
-
-body[data-layout="landscape"][data-mobile] .key--clear {
-  grid-area: sel;
-  place-self: center;
-  margin-bottom: var(--pill-bottom, 10px);
 }
 
 body[data-layout="landscape"][data-mobile] .keypad {

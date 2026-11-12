@@ -703,6 +703,7 @@
     canvas.width = data.manifest.screen?.width ?? 240;
     canvas.height = data.manifest.screen?.height ?? 160;
     tap.setAttribute("aria-label", String(data.text?.tap ?? "▶"));
+    tap.textContent = String(data.text?.tap ?? "");
     setVolume(data.volume ?? 1);
     if (data.paused) setPaused(true);
     speed = Number(data.speed) || 1;

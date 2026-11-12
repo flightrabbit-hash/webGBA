@@ -285,23 +285,21 @@ const STICK_ROUTE = [
   await context.close();
 }
 
-// 2) PC(마우스, pointer fine): navigator.vibrate 가 있어도 회색 + "지원하지 않습니다", 설정이 켜져 있어도 진동 없음
+// 2) PC(마우스, pointer fine): navigator.vibrate 가 있어도 진동 줄 두 개 숨김(결정 300), 설정이 켜져 있어도 진동 없음
 {
   const { context, page } = await open({ mobile: false, prefs: { vibrate: true, vibrateDir: true } });
   const row = await vibrateRow(page);
-  ok("PC: \"버튼 진동\" 회색(누를 수 없음) · \"이 기기는 진동을 지원하지 않습니다\"", row && row.disabled && row.off && row.checked === "false" && row.note === "이 기기는 진동을 지원하지 않습니다" && row.opacity < 1, JSON.stringify(row));
   const dirRow = await vibrateRow(page, "방향 진동");
-  ok("PC: \"방향 진동\"도 회색 · 같은 안내", dirRow && dirRow.disabled && dirRow.off && dirRow.checked === "false" && dirRow.note === "이 기기는 진동을 지원하지 않습니다" && dirRow.opacity < 1, JSON.stringify(dirRow));
+  ok("PC: \"버튼 진동\"·\"방향 진동\" 줄 숨김", row === null && dirRow === null, JSON.stringify({ row, dirRow }));
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SHOTS, "설정_버튼진동_PC_지원안함.png") });
   const clicked = await page.evaluate(() => {
-    [...document.querySelectorAll(".switch")].find((n) => n.getAttribute("aria-label") === "버튼 진동").click();
     document.getElementById("sheetClose").click();
     return JSON.parse(localStorage.getItem("webgba.prefs")).vibrate;
   });
   await page.waitForTimeout(400);
   const log = await press(page, tap('[data-key="A"]'));
-  ok(`PC: 눌러도 값 안 바뀜 · A 눌러도 진동 0(${buzzes(log)})`, clicked === true && buzzes(log) === 0, log.join(" "));
+  ok(`PC: 설정 값 그대로 · A 눌러도 진동 0(${buzzes(log)})`, clicked === true && buzzes(log) === 0, log.join(" "));
   const pcStick = await pressTimed(page, STICK_ROUTE);
   ok(`PC: 방향 진동이 켜진 설정이어도 스틱 방향 → 진동 0(방향 입력 ${dirKeys(pcStick)}번)`, buzzes(pcStick) === 0 && dirKeys(pcStick) > 0, pcStick.join(" "));
   ok("PC: 페이지 오류 없음", page.errors.length === 0, page.errors.join(" | "));

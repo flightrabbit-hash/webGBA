@@ -353,9 +353,11 @@ export function createAdminFlow(d) {
       for (const li of picker.node.querySelectorAll(".upick__item")) {
         const item = items.find((x) => x.key === li.dataset.key);
         li.hidden = Boolean(item) && id !== "all" && groupOf(item) !== id;
+        if (item) item.hidden = li.hidden;
         if (!li.hidden) shown += 1;
       }
       empty.hidden = shown > 0;
+      picker.refresh();
       picker.center();
       d.centerDialog?.();
     };

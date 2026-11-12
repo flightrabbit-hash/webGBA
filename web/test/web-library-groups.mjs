@@ -4,7 +4,7 @@
 // 2) 그룹 버튼(초록 버튼 라디오 4개): 고른 그룹만 책장에 · 기기에 기억(다시 열어도) · 빈 그룹 안내 · 세 언어 글 · 잉크 세로 가운데 · 같은 줄 위아래 일치
 // 3) 카테고리는 저장만(목록·꺼낸 칸에 배지 없음) · 가져오기(importGame)·업데이트 때 값 저장
 // 4) 롬팩 3D(위에서 본 2:1 평행 투영 — 옆면 라벨 띠·윗면 띠·앞면 틀 안 라벨 칸·뒷판·돌기): 한 덩어리 · 옆면 이름 그래픽(2줄까지) · 롬팩 사이 0 · 줄 끝 앞면 전체 · 정수 배율·가장 가까운 점 · 좌우 여백 같음 · 테두리 상자 안 굴림, 롬 많을 때 열기 시간·굴림 프레임(--base 와 비교)
-// 5) 하단 한 줄 "브라우저 저장소 …(webGBA …) / …", "이 앱에서만" 안내 없음
+// 5) 하단 한 줄 "브라우저 저장소 …(게임 파일 …) / …", "이 앱에서만" 안내 없음
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -402,7 +402,7 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
   await page.evaluate(() => window.webgba.renderSheet());
   await page.waitForTimeout(400);
   const foot = await page.evaluate(() => ({ notes: [...document.querySelectorAll(".sheet__body .note")].map((n) => ({ cls: n.className, text: n.textContent, title: n.title === n.textContent, ellipsis: getComputedStyle(n).textOverflow, over: n.scrollWidth - n.clientWidth, last: n === n.parentElement.lastElementChild && n.parentElement.classList.contains("lib__shelf") })), old: document.querySelector(".sheet__body").textContent.includes("이 앱에서만") }));
-  ok("하단: \"브라우저 저장소 현재(webGBA 사용) / 전체\" 한 줄만(책장 굴림 칸 밖 맨 아래) · 게임 수·총용량·\"이 앱에서만\" 없음", foot.notes.length === 1 && foot.notes[0].cls.includes("lib__storage") && foot.notes[0].last && foot.notes[0].title && foot.notes[0].ellipsis === "ellipsis" && /^브라우저 저장소 \S+\(webGBA \S+\) \/ \S+$/.test(foot.notes[0].text) && foot.notes[0].over <= 0 && !foot.old, JSON.stringify(foot));
+  ok("하단: \"브라우저 저장소 현재(게임 파일 크기) / 전체\" 한 줄만(책장 굴림 칸 밖 맨 아래) · 게임 수·총용량·\"이 앱에서만\" 없음", foot.notes.length === 1 && foot.notes[0].cls.includes("lib__storage") && foot.notes[0].last && foot.notes[0].title && foot.notes[0].ellipsis === "ellipsis" && /^브라우저 저장소 \S+\(게임 파일 \S+\) \/ \S+$/.test(foot.notes[0].text) && foot.notes[0].over <= 0 && !foot.old, JSON.stringify(foot));
   await inkCenter(page, "하단 저장소 줄", ".lib__storage");
   await page.screenshot({ path: path.join(opt.shots, "라이브러리_저장소줄_390x844.png") });
   ok("페이지 오류 없음(한국어 390x844)", errors.length === 0, errors.join(" | "));
@@ -410,7 +410,7 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
 }
 
 /* ── 2. 세 언어 글 · 좁은 화면 · 가로 화면 ── */
-for (const view of [{ lang: "en", width: 320, height: 568, words: "All,Emulator,Arcade,Mobile", storage: /^Storage \S+ \(webGBA \S+\) \/ \S+$/ }, { lang: "ja", width: 844, height: 390, words: "すべて,エミュ,アーケード,モバイル", storage: /^保存領域 \S+\(webGBA \S+\) \/ \S+$/ }]) {
+for (const view of [{ lang: "en", width: 320, height: 568, words: "All,Emulator,Arcade,Mobile", storage: /^Storage \S+ \(game files \S+\) \/ \S+$/ }, { lang: "ja", width: 844, height: 390, words: "すべて,エミュ,アーケード,モバイル", storage: /^保存領域 \S+\(ゲームファイル \S+\) \/ \S+$/ }]) {
   const key = `${view.lang} ${view.width}x${view.height}`;
   const { context, page, errors } = await open({ lang: view.lang, width: view.width, height: view.height, index: false });
   await seed(page, 9);

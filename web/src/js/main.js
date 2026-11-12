@@ -53,6 +53,7 @@ const el = {
   menuPanel: document.querySelector(".bar__group--files"),
   btnSaves: $("btnSaves"),
   btnQuit: $("btnQuit"),
+  btnPause: $("btnPause"),
   btnQuick: $("btnQuick"),
   btnNet: $("btnNet"),
   btnFast: $("btnFast"),
@@ -102,6 +103,7 @@ const WASM_EXT = new Set(["wgba", "wmba", "wasm"]);
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
 const NAMED_CODES = ["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "Space", "Enter", "Backspace", "Tab", "NumpadEnter"];
 const SPEEDS = [1, 1.5, 2, 3, 4];
+const MUTE_KEY = "KeyM";
 const HOLD_SPEED = 4;
 const LICENSE_LINE = "webGBA — MIT License, © 2026 flightrabbit";
 const BLOG_URL = "https://flightrabbit.tistory.com";
@@ -793,8 +795,25 @@ function toast(text, level = "info", ms = TOAST_MS) {
   el.toast.replaceChildren(make("span", "toast__text", text));
   el.toast.classList.toggle("is-error", level === "error");
   el.toast.classList.toggle("is-warn", level === "warn");
+  placeToast();
   showNow(el.toast);
   if (level !== "error") state.toastTimer = setTimeout(() => hideLater(el.toast), level === "warn" ? ms * 1.6 : ms);
+}
+
+function placeToast() {
+  const over = Boolean(state.sheet) || holds.has("dialog") || holds.has("choice");
+  if (over !== el.toast.hasAttribute("data-over")) el.toast.toggleAttribute("data-over", over);
+  if (over) return;
+  const box = el.screen.getBoundingClientRect();
+  if (!box.width) return;
+  const style = el.toast.style;
+  const set = (name, value) => {
+    const text = `${Math.round(value)}px`;
+    if (style.getPropertyValue(name) !== text) style.setProperty(name, text);
+  };
+  set("--toast-l", box.left + 8);
+  set("--toast-r", window.innerWidth - box.right + 8);
+  set("--toast-b", window.innerHeight - box.bottom + 8);
 }
 
 function clearToast(text) {
@@ -877,6 +896,10 @@ const boardSide = (width) => Math.min(BOARD_SIDE_MAX, Math.floor(width * BOARD_S
 const ART_REF = 4;
 const FACE_CAP_PORTRAIT = ART_REF * 0.875;
 const DIR_CAP_PORTRAIT = ART_REF * 1.25;
+const TABLET_SIDE = 700;
+const TABLET_CAP = 1.25;
+const MOBILE_DIR_CAP = ART_REF;
+const MOBILE_FINE_CAP = 3;
 const PAD_SPACE = {
   portrait: { nice: { top: 10, bottom: 14, gap: 8 }, min: { top: 4, bottom: 4, gap: 4 } },
   landscape: { nice: { top: 8, bottom: 10, gap: 8 }, min: { top: 4, bottom: 4, gap: 2 } },
@@ -907,9 +930,9 @@ function toolPlan(side, dpr) {
 
 const toolSideMin = () => TOOL_MIN * 2 + TOOL_GAP + TOOL_PAD * 2;
 
-// 우측 묶음 우선순위(앞이 먼저 보임). 메뉴(좌측 첫 칸)·설정·멀티플레이(인원 배지)·전체 화면은 늘 보이게 — 우측이 넘치면 좌측 빈칸으로.
-const TOOL_RIGHT_ORDER = ["btnSettings", "btnNet", "btnFull", "btnFast", "btnSound"];
-const TOOL_KEEP = new Set(["btnSettings", "btnNet", "btnFull"]);
+// 우측 묶음 우선순위(앞이 먼저 보임). 메뉴(좌측 첫 칸)·설정·소리·멀티플레이(인원 배지)는 늘 보이게 — 우측이 넘치면 좌측 빈칸으로.
+const TOOL_RIGHT_ORDER = ["btnSettings", "btnSound", "btnNet", "btnFast", "btnFull"];
+const TOOL_KEEP = new Set(["btnSettings", "btnNet", "btnSound"]);
 let toolHomes = null;
 
 // slots = 0(세로, 또는 가로에서 모두 들어감)이면 처음 자리로. 자리가 같으면 DOM 을 건드리지 않는다(잉크 맞춤 MutationObserver 를 깨우지 않게).
@@ -946,7 +969,7 @@ function padParts() {
   const slots = touchSlots();
   return {
     lr: slots.has("L") || slots.has("R") || slots.has("SOFT1") || slots.has("SOFT2"),
-    pills: slots.has("START") || slots.has("SELECT") || slots.has("CLEAR"),
+    pills: slots.has("START") || slots.has("SELECT"),
     dir: DIRS.some((name) => slots.has(name)),
   };
 }
@@ -1067,8 +1090,9 @@ function layout() {
       const screenH = Math.min(fullH, total - need(PAD_SPACE.portrait.nice));
       return { s, need, rowW, screenH, fits: wide && screenH >= Math.min(fullH, total * MOBILE_SCREEN_MIN) };
     };
+    const capOf = (cap) => (Math.min(innerW, innerH) >= TABLET_SIDE ? Math.floor(cap * TABLET_CAP * dpr) / dpr : cap);
     let p;
-    [art, p] = pickScale(FACE_CAP_PORTRAIT, plan, (q) => q.fits);
+    [art, p] = pickScale(capOf(FACE_CAP_PORTRAIT), plan, (q) => q.fits);
     if (mobile) {
       sw = Math.floor((Math.max(120, p.screenH) * aw) / ah);
       sh = Math.floor((sw * ah) / aw);
@@ -1078,7 +1102,7 @@ function layout() {
     const space = fitted && p.need(fitted) <= padH ? fitted : PAD_SPACE.portrait.min;
     const base = portraitBase(p.s, space);
     const bandH = padH - space.top - p.s.lrH - space.gap * 2 - p.s.pillH - space.bottom;
-    dirArt = pickDir(base, innerW - p.s.faceW - PAD_SIDE.min * 2 - PAD_GAP_X, bandH, DIR_CAP_PORTRAIT);
+    dirArt = pickDir(base, innerW - p.s.faceW - PAD_SIDE.min * 2 - PAD_GAP_X, bandH, capOf(mobile ? MOBILE_DIR_CAP : DIR_CAP_PORTRAIT));
     const rowW = Math.max(p.rowW, (parts.dir ? ART.stick * dirArt : 0) + p.s.faceW);
     const side = clamp(Math.floor((innerW - rowW - 12) / 2), PAD_SIDE.min, PAD_SIDE.nice);
     nudge(base, p.s.u, dirArt);
@@ -1105,7 +1129,7 @@ function layout() {
       return space ? { s, space } : null;
     };
     let p;
-    [art, p] = pickScale(ART_REF, plan, Boolean);
+    [art, p] = pickScale(mobile && !coarse.matches ? MOBILE_FINE_CAP : ART_REF, plan, Boolean);
     p ??= { s: sizes(art), space: PAD_SPACE.landscape.min };
     const top = block.h + (p.s.lrH ? p.space.top + p.s.lrH : 0);
     const bottom = p.s.pillH ? p.s.pillH + p.space.bottom : 0;
@@ -1126,11 +1150,13 @@ function layout() {
     if (inline) root.setProperty("--mpb-w", `${board}px`);
   } else {
     const toolSide = landscape ? toolSideMin() : 0;
-    const availW = innerW - 16 - sideEdge - toolSide * 2;
-    const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - 16 - edge * 2;
+    const margin = overlay ? 0 : 16;
+    const rim = overlay ? 0 : sideEdge;
+    const availW = innerW - margin - rim - toolSide * 2;
+    const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - margin - (overlay ? 0 : edge * 2);
     sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
-    const wide = Math.floor((innerW - sw - sideEdge) / 2);
+    const wide = Math.floor((innerW - sw - rim) / 2);
     if (landscape) root.setProperty("--tool-side", `${wide}px`);
     const block = landscape ? toolPlan(wide, dpr) : null;
     placeTools(block?.slots ?? 0);
@@ -1195,6 +1221,7 @@ function layout() {
       boardLayout();
       renderBoard();
     }
+    if (!el.toast.hidden) placeToast();
     centerInk(document);
   });
 }
@@ -1240,6 +1267,8 @@ function syncControls() {
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
   if (el.btnQuit.disabled !== !running) el.btnQuit.disabled = !running;
+  if (el.btnPause.disabled !== (!running || userPaused)) el.btnPause.disabled = !running || userPaused;
+  if (el.btnPause.hidden !== !coarse.matches) el.btnPause.hidden = !coarse.matches;
   const netLive = running && Boolean(player.net.request || player.net.active);
   const netOn = netLive || (running && player.net.newer);
   if (el.btnNet.hidden !== !netOn || el.btnFast.hidden !== netLive) {
@@ -1464,7 +1493,7 @@ function glyphInk(font, text, metrics, alpha = INK_ALPHA, baseY = 0, span = fals
 }
 
 const INK_SINGLE = `${BOARD_TEXTS}, ` + ".net-room-code, .net-cell__digit, .net-cant__text, .net-sech__name, .net-sech__sub, .net-nickline__label, .net-nickline__name, .net-info__text, .net-banner__title, .sheet__chipText, .tool__badgeText, .gate__digit, .toast__text, .gate__text, .btn__label, .loader__label, .loader__percent, .loader__time, .sheet__title, .group__title, .veil__title, .notice__text, .dialog__hint, .start__hint, .seg__label, .slot__time, .slot__tag, .slot__empty, .recent__name, .recent__meta, .recent__allLabel, .lib__name, .lib__meta, .lib__storage, .lib__count, .lib__hint, .pack__chipText, .info__line, .pick__value, .choice__label, .rs-key__label, .apad__label, .apad__state, .anote";
-const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text";
+const INK_BLOCK = ".item__main, .field__text, .pack__label, .rs-step__text, .lib__empty";
 const FIT_ROWS = ".field, .choice__opt";
 const FIT_TEXT = ".field__label, .field__note, .choice__label";
 const FIT_CONTROLS = ".pick, .switch, input[type=range], input[type=color], .cfg-nick, .field > .btn, .rs-num";
@@ -1603,6 +1632,7 @@ function hold(reasonName, on) {
     const want = holds.size > 0;
     if (player.paused !== want) player.setPaused(want);
   }
+  if (!el.toast.hidden) placeToast();
   syncControls();
   updateWake();
 }
@@ -1857,6 +1887,23 @@ const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
 const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wmba|wasm)$/i;
 const bareName = (name) => String(name ?? "").replace(GAME_EXT, "") || String(name ?? "");
 const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareName(rom.name) : bareName(rom?.name));
+const fileType = (rom, other) => (extOf(rom?.file || rom?.name || "") === "wmba" ? ".wmba" : other);
+const gameTitle = (game) => (game.gameId && !game.named ? game.title || bareName(game.name) : bareName(game.name));
+const DIGIT_FINAL = "1101001110";
+
+function finalConsonant(text) {
+  const last = Array.from(String(text ?? "").trim()).pop() ?? "";
+  const code = last.codePointAt(0) ?? 0;
+  if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 !== 0;
+  if (/^\d$/.test(last)) return DIGIT_FINAL[Number(last)] === "1";
+  return null;
+}
+
+function objectName(name) {
+  if (i18n.lang() !== "ko") return name;
+  const final = finalConsonant(name);
+  return `${name}${final === null ? "을(를)" : final ? "을" : "를"}`;
+}
 // 옆면 세로 글: shortName → 이름
 const spineName = (rom) => (rom?.gameId && !rom.named ? pickText(rom.shortName, i18n.lang()) || displayName(rom) : displayName(rom));
 // 롬팩 아래 작은 글: .wgba 설명서 = v1.2.0, 옛 .wgba 로 되돌린 게임 = "옛 .wgba", 그 밖 = 형식
@@ -2135,7 +2182,7 @@ const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|w
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
 async function startHosted(host, meta, input = null, net = null, kind = null) {
   const saveId = saveIdOf(meta);
-  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), names: meta.gameId ? meta.title : null, author: meta.author ?? "", build: meta.build ?? "", kind };
+  state.game = { id: meta.id, name: meta.name, type: meta.type, key: store.romKey(meta.id), saveId, gameId: meta.gameId ?? "", version: meta.version ?? "", title: titleOf(meta), named: Boolean(meta.named), names: meta.gameId ? meta.title : null, author: meta.author ?? "", build: meta.build ?? "", kind };
   context.game = meta.name;
   context.version = meta.gameId ? meta.version ?? "" : "";
   state.quick.played = 0;
@@ -2667,6 +2714,13 @@ function openFiles(files) {
   return openFile(games[0]);
 }
 
+async function askCloseGame() {
+  if (!state.game) return false;
+  if (!(await confirmDialog(t("web.closeAsk.title"), t("web.closeAsk.text"), t("web.closeAsk.ok"), true))) return false;
+  await closeGame();
+  return true;
+}
+
 async function closeGame({ quiet = false } = {}) {
   if (!state.game) return;
   if (player.active) await player.stop();
@@ -3063,9 +3117,11 @@ function item({ name, meta, current = false, onOpen, actions = [], key = "" }) {
   return li;
 }
 
-async function libStorageLine() {
-  const [estimate, mine] = await Promise.all([store.estimate(), store.usedBytes().catch(() => 0)]);
-  return estimate?.quota ? t("web.lib.storage", { used: fmtSize(estimate.usage ?? 0), mine: fmtSize(mine), quota: fmtSize(estimate.quota) }) : "";
+async function libStorageLine(hasGames = true) {
+  const [estimate, mine] = await Promise.all([store.estimate(), hasGames ? store.usedBytes().catch(() => 0) : 0]);
+  if (!estimate?.quota) return "";
+  const used = fmtSize(estimate.usage ?? 0);
+  return hasGames ? t("web.lib.storage", { used, mine: fmtSize(mine), quota: fmtSize(estimate.quota) }) : t("web.storageUse", { used, quota: fmtSize(estimate.quota) });
 }
 
 async function storageLine() {
@@ -3141,7 +3197,7 @@ async function renderLibrary() {
   sortRoms(roms);
   const body = cartArt.themeBody();
   const looks = await Promise.all(roms.map((rom) => cartLook(rom, body)));
-  const line = await libStorageLine();
+  const line = await libStorageLine(stored > 0);
   if (state.sheet !== "library" || token !== state.lib.token) return;
   const lib = state.lib;
   if (lib.refs) stopFlights(lib.refs);
@@ -3158,7 +3214,15 @@ async function renderLibrary() {
     savePrefs({ libSort: libSort() === "name" ? "recent" : "name" });
     renderSheet();
   } });
-  head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })));
+  const addFiles = () =>
+    pickFile({ multiple: true }).then((files) => {
+      if (!files.length) return;
+      closeSheet();
+      openFiles(files);
+    });
+  const headAdd = button({ icon: "plus", title: t("web.openShort"), kind: "small", action: "add-file-head", onClick: addFiles });
+  headAdd.hidden = true;
+  head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })), headAdd);
   if (admin.isOn()) head.append(button({ label: t("admin.import"), icon: "download", title: t("admin.import"), kind: "small", action: "admin-import", onClick: () => admin.importRoms() }));
   head.append(sortBtn);
   const groups = groupButtons(libGroup(), (id) => {
@@ -3196,26 +3260,25 @@ async function renderLibrary() {
   add.title = t("web.openShort");
   add.setAttribute("aria-label", t("web.openShort"));
   add.append(iconNode("plus"));
-  add.addEventListener("click", () =>
-    pickFile({ multiple: true }).then((files) => {
-      if (!files.length) return;
-      closeSheet();
-      openFiles(files);
-    }),
-  );
+  add.addEventListener("click", addFiles);
   shelf.append(add);
+  if (!roms.length) {
+    shelf.classList.add("is-empty");
+    const hint = make("div", "lib__empty");
+    hint.append(make("span", "lib__emptyText", failed ? t("web.noStore") : stored ? t("web.lib.groupEmpty") : t("web.lib.empty")));
+    shelf.append(hint);
+  }
   shelf.style.setProperty("--side-over", `${over}px`);
   const shelfBox = make("div", "lib__shelf");
   // 책장은 테두리 상자 안에서만 굴림, 저장소 한 줄은 그 아래 늘 보이게. 게임이 적으면 상자에 들어가는 만큼 빈 선반(fitShelf).
   const scroller = make("div", "lib__scroll");
-  if (!roms.length) scroller.append(shelf, make("p", "lib__empty", failed ? t("web.noStore") : stored ? t("web.lib.groupEmpty") : t("web.lib.empty")));
-  else scroller.append(shelf);
+  scroller.append(shelf);
   const storage = line ? make("p", "note lib__storage", line) : null;
   if (storage) storage.title = line;
   shelfBox.append(head, groups, scroller, ...(storage ? [storage] : []));
   const fly = make("div", "lib__fly");
   fly.setAttribute("aria-hidden", "true");
-  lib.refs = { card, shelf, spines, byKey, saves, fly, runs: [], seq: 0, dim: 0, ms: 0, ease: "ease-out" };
+  lib.refs = { card, shelf, spines, byKey, saves, fly, headAdd, add, runs: [], seq: 0, dim: 0, ms: 0, ease: "ease-out" };
   for (const [key, slot] of spines) slot.classList.toggle("is-out", key === lib.sel);
   for (const [key, slot] of spines) slot.setAttribute("aria-pressed", String(key === lib.sel));
   fillCard(lib.sel);
@@ -3254,7 +3317,7 @@ function fillCard(key) {
   nameRow.append(make("span", "lib__name", displayName(rom)), button({ kind: "tool", icon: "info", title: t("web.lib.info"), action: "info", onClick: () => showGameInfo(rom) }));
   const update = updater.pending(rom.key);
   if (update) nameRow.append(button({ label: t("update.btn.one"), kind: "small btn--primary", action: "update", onClick: () => openUpdate(rom) }));
-  const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? ".wgba" : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : "", update ? t("update.lib.new", { version: update.to }) : ""));
+  const meta = make("span", "lib__meta", join(kindText(rom), rom.gameId ? fileType(rom, ".wgba") : "", fmtSize(rom.size), saves.has(saveIdOf(rom)) ? t("web.lib.hasSave") : "", update ? t("update.lib.new", { version: update.to }) : ""));
   const btns = make("div", "lib__btns");
   const act = (label, icon, action, onClick, kind = "") => button({ label, icon, action, kind, onClick });
   const list = running
@@ -3262,7 +3325,7 @@ function fillCard(key) {
         act(t("web.lib.resume"), "play", "resume", () => openFromLibrary(rom), "primary"),
         act(t("web.saves"), "floppy", "saves", () => openGameSaves(rom)),
         act(t("menu.reset"), "refresh", "reset", () => (closeSheet(), resetGame())),
-        act(t("web.lib.close"), "x", "close-game", () => closeGame().then(() => renderSheet()), "warn"),
+        act(t("web.lib.close"), "exit", "close-game", () => askCloseGame().then((done) => done && renderSheet()), "danger"),
         act(t("web.lib.rename"), "pencil", "rename", () => renameRom(rom)),
         act(t("web.lib.delete"), "trash", "delete", () => deleteRom(rom), "danger"),
       ]
@@ -3289,10 +3352,20 @@ function fitShelf() {
   if (!scroller?.isConnected) return;
   const slot = parseFloat(refs.shelf.style.getPropertyValue("--slot-h")) || 120;
   const style = getComputedStyle(scroller);
+  refs.shelf.style.minHeight = "";
   const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
   const rows = refs.spines.size ? Math.max(1, Math.floor(room / slot)) : 1;
-  const min = `${rows * slot}px`;
-  if (refs.shelf.style.minHeight !== min) refs.shelf.style.minHeight = min;
+  refs.shelf.style.minHeight = `${rows * slot}px`;
+  const list = [...refs.spines.values()];
+  list.forEach((node, i) => {
+    const next = list[i + 1];
+    const end = !next || next.offsetTop !== node.offsetTop;
+    const over = end ? Number(node.querySelector(".spine__art")?.dataset.over || 0) : 0;
+    const pad = over ? `${over}px` : "";
+    if (node.style.paddingRight !== pad) node.style.paddingRight = pad;
+  });
+  const hidden = !refs.add || refs.add.offsetTop + refs.add.offsetHeight <= scroller.clientHeight;
+  if (refs.headAdd && refs.headAdd.hidden !== hidden) refs.headAdd.hidden = hidden;
 }
 
 function lockCard() {
@@ -3493,7 +3566,7 @@ function showGameInfo(rom) {
     updater.pending(rom.key) ? t("update.info.new", { version: updater.pending(rom.key).to }) : "",
     rom.gameId && rom.author ? t("web.lib.infoAuthor", { author: rom.author }) : "",
     rom.gameId ? t("web.lib.infoId", { id: rom.gameId }) : "",
-    t("web.lib.infoFile", { file: rom.name, type: `.${rom.type}`, size: fmtSize(rom.size) }),
+    t("web.lib.infoFile", { file: rom.name, type: fileType(rom, `.${rom.type}`), size: fmtSize(rom.size) }),
     rom.build ? t("web.lib.infoBuild", { build: rom.build.slice(0, 8) }) : "",
     t("web.lib.added", { date: fmtTime(rom.added) }),
     rom.opened ? t("web.start.lastPlayed", { time: fmtTime(rom.opened) }) : "",
@@ -3515,6 +3588,7 @@ async function renameRom(rom) {
     await store.patch(store.saveKey(saveIdOf(rom)), { game: chosen.name });
     if (state.game?.id === rom.id) {
       state.game.name = chosen.name;
+      state.game.named = true;
       context.game = chosen.name;
     }
     toast(t("web.renamed", { name: chosen.name }));
@@ -3527,7 +3601,7 @@ async function renameRom(rom) {
 
 async function deleteRom(rom) {
   const current = state.game?.id === rom.id;
-  if (!(await confirmDialog(t("web.lib.deleteTitle"), t("web.lib.deleteText", { name: rom.name }), t("web.delete"), true))) return;
+  if (!(await confirmDialog(t("web.lib.deleteTitle"), t("web.lib.deleteText", { name: objectName(displayName(rom)) }), t("web.delete"), true))) return;
   if (current) await closeGame({ quiet: true });
   await leaveRow(rom.key);
   try {
@@ -3535,7 +3609,7 @@ async function deleteRom(rom) {
     await store.removeCarts(rom.id);
     await store.removeStates(saveIdOf(rom));
     cartArt.forgetImages(rom.id);
-    toast(t("web.deleted", { name: displayName(rom) }));
+    toast(t("web.deleted", { name: objectName(displayName(rom)) }));
   } catch (error) {
     toast(reason(error), "error");
   }
@@ -3614,7 +3688,7 @@ async function deleteSave(save, name) {
   await leaveRow(save.key);
   try {
     await store.remove(save.key);
-    toast(t("web.deleted", { name: saveFile(name) }));
+    toast(t("web.deleted", { name: objectName(saveFile(name)) }));
   } catch (error) {
     toast(reason(error), "error");
   }
@@ -3845,7 +3919,7 @@ function slotCard(slot, info, latest) {
 
 async function renderQuick() {
   const game = state.game;
-  el.sheetTitle.textContent = game ? join(t("web.quick"), game.name) : t("web.quick");
+  el.sheetTitle.textContent = game ? join(t("web.quick"), gameTitle(game)) : t("web.quick");
   if (!game || !player.canState) {
     el.sheetBody.replaceChildren(group("", make("p", "empty", t(game ? "web.quick.noState" : "web.quick.noGame"))));
     return;
@@ -4286,8 +4360,8 @@ function renderSettings() {
       ),
       switchField(t("web.padCombo"), t("web.padCombo.note"), p.padCombo !== false, (on) => savePrefs({ padCombo: on })),
       rsSetting(),
-      switchField(t("web.vibrate"), t(HAPTIC ? "web.vibrate.note" : "web.vibrate.unsupported"), p.vibrate, (on) => savePrefs({ vibrate: on }), { disabled: !HAPTIC }),
-      switchField(t("web.vibrateDir"), t(HAPTIC ? "web.vibrateDir.note" : "web.vibrate.unsupported"), p.vibrateDir, (on) => savePrefs({ vibrateDir: on }), { disabled: !HAPTIC }),
+      HAPTIC ? switchField(t("web.vibrate"), t("web.vibrate.note"), p.vibrate, (on) => savePrefs({ vibrate: on })) : null,
+      HAPTIC ? switchField(t("web.vibrateDir"), t("web.vibrateDir.note"), p.vibrateDir, (on) => savePrefs({ vibrateDir: on })) : null,
       "wakeLock" in navigator
         ? switchField(t("web.wakeLock"), t("web.wakeLock.note"), p.wakeLock, (on) => {
             savePrefs({ wakeLock: on });
@@ -4510,7 +4584,7 @@ function renderRs() {
   const parts = [group("", make("p", "note", t("macro.lead"))), group(t("macro.presets"), presetBar(book, choose))];
   const draft = book.active >= 0 ? book.slots[book.active].steps : null;
   if (!draft) {
-    parts.push(group("", make("p", "note rs-off", t("macro.offNote"))));
+    parts.push(group("", make("p", "note rs-off", t("macro.offNote")), make("p", "note rs-off", t("web.rs.emptyHint"))));
     el.sheetBody.replaceChildren(...parts);
     el.sheetFoot.replaceChildren();
     el.sheetFoot.hidden = true;
@@ -4666,7 +4740,7 @@ function renderHelp() {
     for (const b of state.input.buttons) list.append(make("dt", "", buttonLabel(b)), make("dd", "", (keys[b.id] ?? []).map(keyName).join(" · ") || "—"));
     list.append(make("dt", "", t("key.FAST")), make("dd", "", keys.FAST.map(keyName).join(" · ")));
   }
-  list.append(make("dt", "", t("web.speed")), make("dd", "", t("keyCode.Tab")), make("dt", "", t("help.pause")), make("dd", "", "P · Pause"));
+  list.append(make("dt", "", t("web.speed")), make("dd", "", t("keyCode.Tab")), make("dt", "", t("help.pause")), make("dd", "", "P · Pause"), make("dt", "", t("web.help.mute")), make("dd", "", keyName(MUTE_KEY)));
   el.sheetBody.replaceChildren(group(t("web.help.keyboard"), list), group(t("web.help.touchTitle"), make("p", "note", t("web.help.touch")), make("p", "note", t("web.help.gamepad"))));
 }
 
@@ -4732,8 +4806,9 @@ function renderInfo() {
   // 소리 확인 한 줄(iOS 무음 원인 찾기용): 상태 · 표본률 · 오디오 세션. 시트가 열려 있는 동안 0.5초마다 고침.
   // 글이 같으면 다시 쓰지 않는다(같은 값 쓰기도 MutationObserver 를 깨워 문서 전체 centerInk 가 돎).
   // 게임 줄·버전 줄·소리 줄은 상태 줄이라 잉크 세로 가운데(`.info__line`, INK_SINGLE) — 설명 글(.note)은 그대로.
-  const audioLine = make("p", "note info__line", "");
+  const audioLine = devBypass() ? make("p", "note info__line", "") : null;
   const paintAudio = () => {
+    if (!audioLine) return;
     const audio = player.audio;
     const text = audio
       ? t("web.info.audio", { state: audio.stuck ? "stuck" : audio.ac.state, rate: audio.ac.sampleRate, session: audioSessionType() || "-" })
@@ -4803,6 +4878,10 @@ function onKeyDown(event) {
     return;
   }
   if (player.keyDown(code, event)) event.preventDefault();
+  else if (code === MUTE_KEY && !event.repeat) {
+    event.preventDefault();
+    toggleSound();
+  }
 }
 
 function onKeyUp(event) {
@@ -4871,7 +4950,8 @@ function wire() {
   el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
-  el.btnQuit.addEventListener("click", () => closeGame());
+  el.btnQuit.addEventListener("click", () => askCloseGame());
+  el.btnPause.addEventListener("click", () => userPause(true));
   el.startAll.addEventListener("click", () => openSheet("library"));
   el.btnQuick.addEventListener("click", openQuick);
   el.btnNet.addEventListener("click", onNetButton);
@@ -4901,7 +4981,7 @@ function wire() {
   el.btnFull.hidden = !(document.fullscreenEnabled || document.webkitFullscreenEnabled);
   el.veilResume.addEventListener("click", () => hold("user", false));
   el.veilReset.addEventListener("click", resetGame);
-  el.veilClose.addEventListener("click", () => closeGame());
+  el.veilClose.addEventListener("click", () => askCloseGame());
   el.sheetClose.addEventListener("click", () => closeSheet());
   el.sheet.addEventListener("click", (event) => event.target === el.sheet && closeSheet());
   el.dialog.addEventListener("click", (event) => event.target === el.dialog && state.dialogDone?.(null));

@@ -62,7 +62,7 @@ export async function runnerDocument({ lang = "en", background = "#000", stretch
   const style =
     `html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${cssColor(background)}}` +
     `canvas{display:block;width:100%;height:100%;object-fit:${stretch ? "fill" : "contain"};image-rendering:pixelated;image-rendering:crisp-edges;outline:none;touch-action:none}` +
-    "#tap{position:fixed;inset:0;display:grid;place-items:center;margin:0;padding:0;border:0;background:rgba(0,0,0,.45);cursor:pointer}" +
+    "#tap{position:fixed;inset:0;display:grid;place-items:center;align-content:center;gap:10px;margin:0;padding:0;border:0;background:rgba(0,0,0,.45);color:#fff;font:14px/20px system-ui,sans-serif;text-shadow:0 1px 2px #000;cursor:pointer}" +
     "#tap[hidden]{display:none}" +
     "#tap::before,#tap::after{content:'';grid-area:1/1}" +
     "#tap::before{width:48px;height:48px;border-radius:50%;background:rgba(0,0,0,.6);box-shadow:inset 0 0 0 2px #fff}" +
