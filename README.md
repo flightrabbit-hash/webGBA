@@ -1530,7 +1530,9 @@ webGBA는 `.wmba`를 열면 화면을 모바일 배치(좌측 방향 패드, 우
 
 | chunk | 내용 |
 | --- | --- |
-| `code` | 모바일 코어(① Web API, 4.1). 현재 webGBA용 코어 = **wmba-core**(KTF WIPI — wie 기반 ARM 에뮬레이터 + WIPI-C·Java API, 소리 합성 포함, 13.6) |
+| `code` | 모바일 코어 wasm. 실행 방식(① Web API 4.1 · ② 자체 JS 4.2)은 코어가 정합니다. 현재 webGBA용 코어 = **wmba-core**(KTF WIPI — wie 기반 ARM 에뮬레이터 + WIPI-C·Java API, 소리 합성 포함, ② 자체 JS, 13.6) |
+| `js` | ② 코어의 시작 JS(4.2). wmba-core = 프레임 진행·화면·소리·세이브·퀵슬롯 + ARM→wasm JIT(코어가 생성한 wasm 모듈을 컴파일·실행) |
+| `data.jit` | (선택) wmba-core가 앱의 처음 코드로 미리 생성한 JIT 모듈(wie 캐시 레코드, 13.6). 없으면 실행할 때 생성 |
 | `manifest` | `mobile`·`group`·`category`·키 목록(13.3·13.4) |
 | `rom` | **앱 파일 묶음 WMFS**(13.2) — jar·리소스·앱 설명(`__adf__` 등)이 파일마다 한 항목 |
 | `cart.*` | 롬팩 그림(6장) |
@@ -1555,19 +1557,19 @@ little endian입니다.
 
 | 필드 | 설명 |
 | --- | --- |
-| `mobile` | **`.wmba` 필수**. `platform`: `WIPI-KTF`·`WIPI-SKT`·`WIPI-LGT`·`SKVM`·`J2ME` 중 하나. `aid`·`pid`·`mclass`·`vendor`·`appVersion`(앱 설명 파일의 값, 각 64자 이하, 선택) |
+| `mobile` | **`.wmba` 필수**. `platform`: `WIPI-KTF`·`WIPI-SKT`·`WIPI-LGT`·`SKVM`·`J2ME` 중 하나. `aid`·`pid`·`mclass`·`vendor`·`appVersion`(앱 설명 파일의 값, 각 64자 이하, 선택). `keys`: **사용 키** — 게임이 쓰는 폰 키 role 배열(13.4, 선택) |
 | `group` | 라이브러리 그룹: `emu`·`arcade`·`mobile`(모든 `.wgba`에서 선택 사항). 모바일 게임은 `mobile` |
 | `category` | 그룹 안의 분류(인쇄 가능한 ASCII 1~24자). 예 `WIPI-KTF`·`CPS1`·`GBA` |
-| `runtime` | `webapi`만 지원 |
+| `runtime` | 코어가 정합니다: `webapi`(①) 또는 `script`(②, `entry.style` `"module"`). wmba-core = `script` |
 | `screen` | 폰 화면 크기(예 240×320) |
-| `save` | `{"kind": "flash"}` — 코어가 앱 기록(데이터베이스·파일)을 세이브 버퍼에 저장 |
+| `save` | 코어가 앱 기록(데이터베이스·파일)을 세이브로 저장. ① `{"kind": "flash"}` · ② `{"kind": "storage", "maxSize": …}`(wmba-core = 262144) |
 
 - 표시 이름: 호스트가 언어마다 `[M] ` + `name`으로 표시합니다. `name`에는 `[M]`을 작성하지 않습니다.
 - 확장자 규칙: `mobile`이 있으면 `.wmba`, 없으면 `.wgba`(`pack`·`check`가 확인).
 
 #### 13.4 키 (모바일 role)
 
-5장의 role에 폰 키를 추가합니다. `"preset": "none"`으로 게임이 사용하는 키만 `input.buttons`에 작성합니다.
+5장의 role에 폰 키를 추가합니다. `"preset": "none"`으로 코어가 받는 폰 키를 `input.buttons`에 작성하고, 게임이 실제로 쓰는 키는 `mobile.keys`(사용 키)에 작성합니다.
 
 | role | 폰 키 | 기본 키보드 | 기본 게임패드 | 터치 위치(웹 버전) |
 | --- | --- | --- | --- | --- |
@@ -1579,32 +1581,36 @@ little endian입니다.
 | `star` · `num0` · `hash` | `*` · `0` · `#` | `NumpadMultiply` `Minus` · `Digit0` `Numpad0` · `NumpadDivide` `Equal` | 없음 | 키패드 마지막 줄 |
 | `call` · `end` | 통화·종료 | 없음(사용자 설정) | 없음 | 없음 |
 
-- 키패드에서 게임이 사용하지 않는 키는 칸만 남기고 숨깁니다(3×4 모양 유지).
-- wmba-core의 비트(`Web_RunFrame(keys)`): `ok` 0 · `clear` 1 · `soft1` 2 · `soft2` 3 · → 4 · ← 5 · ↑ 6 · ↓ 7 · `num0` 8 · `num1`~`num9` 9~17 · `star` 18 · `hash` 19 · `call` 20 · `end` 21. 다른 코어는 자신의 비트를 manifest에 작성합니다.
-- 연사는 적용하지 않습니다(wmba-core `Web_AutoFireOff` = 1).
+- 터치 화면은 `mobile.keys`에 없는 키를 표시하지 않습니다. 키 자리는 표준 배치(1 2 3 / 4 5 6 / 7 8 9 / * 0 #)에 고정이고 숨긴 키 자리는 비워 둡니다(다른 키 위치 그대로). 방향키·OK·CLR·소프트키도 같은 규칙(방향키를 모두 쓰지 않으면 방향 패드 자리를 비움). 키보드·게임패드는 `input.buttons` 전체가 동작합니다. `mobile.keys`가 없는 `.wmba`는 `input.buttons`의 키를 모두 표시합니다.
+- 사용 키는 도구로 확인합니다(13.7): 장면을 자동으로 찾아가며 키를 하나씩 눌러 ① 코어 안에서 게임 코드가 누른 키 번호와 비교한 키 번호(CMP·CMN 기록)와 ② 화면 변화를 모아 합칩니다.
+- ① 코어는 버튼마다 `bit`, ② 코어는 `code`(게임이 받는 `KeyboardEvent.code`)를 작성합니다. wmba-core(②)는 시작 JS가 `webgba.input.held`의 버튼 role을 코어 비트(`Web_RunFrame(keys)`)로 바꿉니다: `ok` 0 · `clear` 1 · `soft1` 2 · `soft2` 3 · → 4 · ← 5 · ↑ 6 · ↓ 7 · `num0` 8 · `num1`~`num9` 9~17 · `star` 18 · `hash` 19 · `call` 20 · `end` 21.
+- 연사는 적용하지 않습니다(① `Web_AutoFireOff` = 1, ② 모바일 게임이면 호스트가 연사를 끔).
 
 #### 13.5 화면 (웹 버전)
 
 - 세로: 폰 화면 비율 그대로, 좌우 여백(최소 16px)을 두고 하단 키패드가 들어갈 만큼만 크게 표시합니다. 다른 게임보다 아래쪽에 배치합니다 — 상단 여백 = 화면 높이 × `--mobile-drop`(기본 0.05, `web/src/css/web.css`의 `:root`).
-- 가로: 화면은 높이에 맞추고, 좌측에 방향 패드·소프트키·CLR, 우측에 키패드·액션키를 배치합니다.
+- 가로: 화면은 높이에 맞추고, 좌측에 방향 패드·소프트키·CLR, 우측에 키패드·액션키를 배치합니다. 키패드·액션키는 가운데보다 화면 높이 × `--mobile-keypad-drop-landscape`(기본 0.06, `web/src/css/web.css`의 `:root`)만큼 아래에 배치합니다(아래 여백 8px까지).
 - PC(터치 패드 끔): 화면만 비율을 유지해 표시합니다.
 
 #### 13.6 wmba-core (현재 webGBA용 모바일 코어)
 
-- 플랫폼: KTF WIPI(Clet·Jlet). [wie](https://github.com/dlunch/wie)(Inseok Lee, MIT) 기반 + webGBA ① 규약. 소리는 SMAF(MMF) → MIDI → rustysynth(MIT) + 1mgm.sf2(E-mu Systems, CC BY 3.0), 글꼴 Neo둥근모(OFL).
-- 세이브: 앱 데이터베이스(RMS)·앱이 기록한 파일을 `WMSV` 형식으로 세이브 버퍼(256KB)에 저장합니다.
-- 퀵슬롯: 코어 메모리(스택 위 정적 영역 + 힙)에서 값이 모두 0인 4KB 칸을 제외하고 저장합니다. 빌드 지문이 다른 퀵슬롯은 불러오지 않습니다.
+- 플랫폼: KTF WIPI(Clet·Jlet). [wie](https://github.com/dlunch/wie)(Inseok Lee, MIT) 기반 + webGBA ② 규약(`runtime: "script"`). 소리는 SMAF(MMF) → MIDI → rustysynth(MIT) + 1mgm.sf2(E-mu Systems, CC BY 3.0), 글꼴 Neo둥근모(OFL).
+- 실행: 앱의 ARM 코드를 wie 컴파일러가 wasm 모듈로 바꾸고(ARM→wasm JIT), 시작 JS가 `WebAssembly.compile`로 컴파일해 코어 메모리에 연결합니다. 실행 중 코드가 바뀐 구역은 다시 컴파일하고, 컴파일 전·실패한 구역은 인터프리터가 실행합니다(틀 CSP `'wasm-unsafe-eval'` 필요 — 4.2·8장, 컴파일할 수 없는 환경은 인터프리터만 사용).
+- `data.jit`: 앱의 처음 코드로 미리 생성한 모듈(wie 캐시 레코드 — `WIEAOT`·버전·키(SHA-256)·코드·구역 목록). 키가 맞으면 시작할 때 생성 단계를 건너뛰고, 맞지 않으면 실행하면서 생성합니다.
+- 세이브: 앱 데이터베이스(RMS)·앱이 기록한 파일을 `WMSV` 형식으로 세이브(256KB까지, `webgba.save`)에 저장합니다.
+- 퀵슬롯: 코어 메모리(스택 위 정적 영역 + 힙)에서 값이 모두 0인 4KB 칸을 제외하고 deflate로 압축해 저장합니다. 빌드 지문이 다른 퀵슬롯은 불러오지 않습니다. 다른 실행(새로고침 등)에서 저장한 퀵슬롯을 불러오면 JIT 모듈을 다시 연결합니다(그동안 인터프리터).
 - 시간: 프레임마다 1/59.7275초씩 진행하고(빨리 감기·일시정지와 일치), 프레임마다 실제 시간 11ms까지 앱을 실행합니다. 앱이 모두 대기 중이면 같은 프레임 안의 다음 타이머 시각으로 이동합니다.
-- 가져오기: `webgba.v1`, `env.emscripten_get_now`·`emscripten_date_now`, `wasi_snapshot_preview1.fd_write`.
+- 코어 wasm 가져오기: `webgba.v1`, `env.emscripten_get_now`·`emscripten_date_now`, `wasi_snapshot_preview1.fd_write`, `wmba.jit_*`(시작 JS가 제공).
 
 #### 13.7 도구
 
 ```bash
-node tools/wgba.mjs pack -o game.wmba --wasm wmba-core.wasm --manifest manifest.json --app <앱 폴더|앱.zip> --cart-dir cart
+node tools/wgba.mjs pack -o game.wmba --wasm wmba-core.wasm --js game.js --data jit=jit.bin --manifest manifest.json --app <앱 폴더|앱.zip> --cart-dir cart
 node tools/wgba.mjs info game.wmba    # 모바일·키·표시 이름 행 추가
 node tools/wgba.mjs check game.wmba   # mobile·WMFS·__adf__·<AID>.jar 확인
 ```
 
+- 사용 키 확인(wmba-core 프로젝트 도구): `node tools/keys-usage.mjs <wmba-core.wasm> <앱.wmfs> --manifest manifest.json --write` — 장면별 결과 표(② 화면 변화 · ① 비교 기록)를 출력하고 합친 결과를 `mobile.keys`에 저장합니다. 그 후 `pack`합니다.
 - 앱 데이터가 포함된 `.wmba`는 롬이 포함된 `.wgba`와 같이 배포하지 마세요(1장 "롬·게임 데이터").
 
 ---

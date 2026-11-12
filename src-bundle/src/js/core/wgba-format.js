@@ -272,6 +272,8 @@ export function resolveInput(manifest) {
   }
   const used = new Set();
   const buttons = [];
+  // 모바일 사용 키(mobile.keys, 13.4): 목록에 없는 role 은 터치 화면에서 숨김(키보드·게임패드는 그대로). 없으면 전부 표시.
+  const shown = isMobile(manifest) && Array.isArray(manifest.mobile?.keys) ? new Set(manifest.mobile.keys) : null;
   for (const raw of list.slice(0, script ? 24 : 32)) {
     if (script ? typeof raw.code !== "string" || !raw.code : !Number.isInteger(raw.bit) || raw.bit < 0 || raw.bit > 31) continue;
     let role = ROLES.includes(raw.role) ? raw.role : null;
@@ -280,7 +282,7 @@ export function resolveInput(manifest) {
     if (role === "extra") role = null;
     const keys = Array.isArray(raw.keys) ? raw.keys.filter((code) => typeof code === "string" && code).slice(0, 4) : null;
     const pad = Array.isArray(raw.pad) ? raw.pad.filter((p) => (Number.isInteger(p) && p >= 0 && p < 32) || (typeof p === "string" && PAD_AXIS_RE.test(p))) : null;
-    buttons.push({ id: raw.id, role, label: raw.label ?? null, bit: script ? null : raw.bit, code: script ? raw.code : null, keys, pad, touch: raw.touch === "hide" ? "hide" : "auto" });
+    buttons.push({ id: raw.id, role, label: raw.label ?? null, bit: script ? null : raw.bit, code: script ? raw.code : null, keys, pad, touch: raw.touch === "hide" || (shown && role && !shown.has(role)) ? "hide" : "auto" });
   }
   const shoulders2 = used.has("l2") || used.has("r2");
   for (const b of buttons) {
@@ -819,8 +821,17 @@ function checkMobile(m, errors, warnings) {
   if (!mo || typeof mo !== "object" || Array.isArray(mo)) return errors.push("mobile 은 객체");
   if (!MOBILE_PLATFORMS.includes(mo.platform)) errors.push(`mobile.platform 이 ${MOBILE_PLATFORMS.join("·")} 가 아닙니다: ${mo.platform}`);
   for (const key of ["aid", "pid", "mclass", "vendor", "appVersion"]) if (mo[key] !== undefined && (typeof mo[key] !== "string" || mo[key].length > 64)) errors.push(`mobile.${key} 는 64자 이하 문자열`);
-  if (m.runtime !== "webapi") errors.push("모바일 게임은 runtime webapi 만 됩니다(코어가 앱 파일 묶음을 롬 자리로 받음)");
   if (m.group !== "mobile") warnings.push(`모바일 게임은 group "mobile" 을 권장합니다: ${m.group}`);
+  if (mo.keys !== undefined) {
+    const keyRoles = ["up", "down", "left", "right", ...MOBILE_ROLES];
+    if (!Array.isArray(mo.keys) || mo.keys.some((r) => !keyRoles.includes(r)) || new Set(mo.keys).size !== mo.keys.length) {
+      errors.push(`mobile.keys 는 겹치지 않는 폰 키 role 배열(${keyRoles.join("·")})`);
+    } else {
+      const roles = new Set((m.input?.buttons ?? []).map((b) => b?.role));
+      const missing = mo.keys.filter((r) => !roles.has(r));
+      if (missing.length) warnings.push(`mobile.keys 에 있지만 input.buttons 에 없는 키: ${missing.join(" ")}`);
+    }
+  }
   if (m.rom?.required === false) errors.push("모바일 게임은 앱 파일 묶음(롬 조각)이 필요합니다 — rom.required 를 false 로 두지 마세요");
   return undefined;
 }

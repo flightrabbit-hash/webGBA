@@ -191,6 +191,7 @@ async function info(file) {
         const keys = (m.input?.buttons ?? []).map((b) => b.role ?? b.id).join(" ");
         console.log(`모바일  ${mo.platform ?? "?"} · AID ${mo.aid ?? "-"} · PID ${mo.pid ?? "-"} · MClass ${mo.mclass ?? "-"}${mo.appVersion ? ` · 앱 ${mo.appVersion}` : ""}`);
         console.log(`키      ${keys}`);
+        console.log(`사용 키  ${Array.isArray(mo.keys) ? mo.keys.join(" ") : "정보 없음(전부 표시)"}`);
         const shown = Object.fromEntries(TEXT_LANGS.map((lang) => [lang, shownName(typeof m.name === "string" ? m.name : m.name?.[pickTextKey(m.name, lang)], m)]));
         console.log(`표시 이름 ${langLine(shown)}`);
       }

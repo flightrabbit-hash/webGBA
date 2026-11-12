@@ -620,6 +620,7 @@ const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "STA
 const MOBILE_SIDE = 16;
 const MOBILE_SCREEN_MIN = 0.5;
 const mobileDrop = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mobile-drop")) || 0;
+const mobileKeypadDrop = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mobile-keypad-drop-landscape")) || 0;
 
 function keyTable() {
   const keys = layoutKeys(state.input, DEFAULT_KEYS);
@@ -1047,6 +1048,7 @@ function layout() {
   root.setProperty("--tool-edge", `${TOOL_PAD}px`);
   root.setProperty("--pill-bottom", `${PAD_SPACE.landscape.nice.bottom}px`);
   let drop = 0;
+  let keypadDrop = 0;
   if (padOn && !landscape) {
     if (mobile) drop = Math.round(innerH * mobileDrop());
     const total = innerH - el.bar.offsetHeight - edge * 2 - drop;
@@ -1112,6 +1114,11 @@ function layout() {
     const base = landscapeBase(p.s);
     dirArt = pickDir(base, sideW - 16, innerH - top - bottom - p.space.gap * 2);
     nudge(base, p.s.u, dirArt);
+    // 가로 모바일: 키패드·액션키를 화면 높이 × --mobile-keypad-drop-landscape 만큼 아래로, 아래 여백(8px)을 넘지 않게.
+    if (mobile) {
+      const keypadBottom = innerH / 2 + (top - bottom) / 2 + base + p.s.u + p.s.faceH / 2;
+      keypadDrop = Math.max(0, Math.min(Math.round(innerH * mobileKeypadDrop()), Math.floor(innerH - 8 - keypadBottom)));
+    }
     root.setProperty("--side", `${sideW}px`);
     placeTools(block.slots);
     toolSize = block.size;
@@ -1167,6 +1174,7 @@ function layout() {
   root.setProperty("--sh", `${sh}px`);
   root.setProperty("--stage-h", `${sh + edge * 2 + drop}px`);
   root.setProperty("--mobile-drop-px", `${drop}px`);
+  root.setProperty("--mobile-keypad-drop-px", `${keypadDrop}px`);
   root.setProperty("--keypad-gap", `${KEYPAD_GAP * unit}px`);
   const frameW = Math.round(sw * dpr) + (landscape ? ring * FRAME_ROWS * 2 : 0);
   const frameH = Math.round(sh * dpr) + ring * FRAME_ROWS * 2;

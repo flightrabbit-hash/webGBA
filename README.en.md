@@ -1533,7 +1533,9 @@ When webGBA opens a `.wmba` it switches to the mobile layout (d-pad on the left,
 
 | chunk | Content |
 | --- | --- |
-| `code` | The mobile core (① Web API, 4.1). The core webGBA uses now is **wmba-core** (KTF WIPI — an ARM emulator plus WIPI-C/Java APIs based on wie, with sound synthesis, 13.6) |
+| `code` | The mobile core wasm. The core decides how it runs (① Web API 4.1 or ② own JS 4.2). The core webGBA uses now is **wmba-core** (KTF WIPI — an ARM emulator plus WIPI-C/Java APIs based on wie, with sound synthesis, ② own JS, 13.6) |
+| `js` | Start JS of a ② core (4.2). wmba-core: frame loop, screen, sound, save, quick slots and the ARM→wasm JIT (compiles and runs the wasm modules the core generates) |
+| `data.jit` | (optional) The JIT module wmba-core generated in advance from the app's initial code (a wie cache record, 13.6). Without it the module is generated at run time |
 | `manifest` | `mobile`, `group`, `category` and the key list (13.3, 13.4) |
 | `rom` | **App file bundle WMFS** (13.2) — the jar, resources and app descriptor (`__adf__` etc.), one entry per file |
 | `cart.*` | Cartridge pictures (chapter 6) |
@@ -1558,19 +1560,19 @@ Little endian.
 
 | Field | Description |
 | --- | --- |
-| `mobile` | **Required for `.wmba`**. `platform`: one of `WIPI-KTF`, `WIPI-SKT`, `WIPI-LGT`, `SKVM`, `J2ME`. `aid`, `pid`, `mclass`, `vendor`, `appVersion` (values from the app descriptor, up to 64 characters each, optional) |
+| `mobile` | **Required for `.wmba`**. `platform`: one of `WIPI-KTF`, `WIPI-SKT`, `WIPI-LGT`, `SKVM`, `J2ME`. `aid`, `pid`, `mclass`, `vendor`, `appVersion` (values from the app descriptor, up to 64 characters each, optional). `keys`: **used keys** — array of the phone key roles the game uses (13.4, optional) |
 | `group` | Library group: `emu`, `arcade` or `mobile` (optional for any `.wgba`). Mobile games use `mobile` |
 | `category` | Category inside the group (printable ASCII, 1–24 characters), e.g. `WIPI-KTF`, `CPS1`, `GBA` |
-| `runtime` | `webapi` only |
+| `runtime` | Decided by the core: `webapi` (①) or `script` (②, `entry.style` `"module"`). wmba-core uses `script` |
 | `screen` | The phone screen size (e.g. 240×320) |
-| `save` | `{"kind": "flash"}` — the core stores the app's records (database and files) in the save buffer |
+| `save` | The core stores the app's records (database and files) as the save. ① `{"kind": "flash"}` · ② `{"kind": "storage", "maxSize": …}` (wmba-core: 262144) |
 
 - Shown name: the host shows `[M] ` + `name` in every language. Do not write `[M]` in `name`.
 - Extension rule: `.wmba` when `mobile` is present, `.wgba` otherwise (`pack` and `check` verify this).
 
 #### 13.4 Keys (mobile roles)
 
-Phone keys are added to the roles of chapter 5. With `"preset": "none"`, list only the keys the game uses in `input.buttons`.
+Phone keys are added to the roles of chapter 5. With `"preset": "none"`, list the phone keys the core accepts in `input.buttons` and the keys the game actually uses in `mobile.keys` (used keys).
 
 | role | Phone key | Default keyboard | Default gamepad | Touch position (web version) |
 | --- | --- | --- | --- | --- |
@@ -1582,32 +1584,36 @@ Phone keys are added to the roles of chapter 5. With `"preset": "none"`, list on
 | `star` · `num0` · `hash` | `*` · `0` · `#` | `NumpadMultiply` `Minus` · `Digit0` `Numpad0` · `NumpadDivide` `Equal` | none | Last keypad row |
 | `call` · `end` | Call/end | none (set by the user) | none | none |
 
-- Keypad keys the game does not use keep their cell but are hidden (the 3×4 shape stays).
-- wmba-core bits (`Web_RunFrame(keys)`): `ok` 0 · `clear` 1 · `soft1` 2 · `soft2` 3 · → 4 · ← 5 · ↑ 6 · ↓ 7 · `num0` 8 · `num1`–`num9` 9–17 · `star` 18 · `hash` 19 · `call` 20 · `end` 21. Other cores write their own bits in the manifest.
-- Auto-fire is not applied (wmba-core `Web_AutoFireOff` = 1).
+- The touch screen does not show keys missing from `mobile.keys`. Key cells stay in the standard layout (1 2 3 / 4 5 6 / 7 8 9 / * 0 #); a hidden key leaves its cell empty, so other keys do not move. The arrows, OK, CLR and soft keys follow the same rule (when no arrow is used, the d-pad cell is empty). Keyboard and gamepad work for every key in `input.buttons`. A `.wmba` without `mobile.keys` shows every key of `input.buttons`.
+- Used keys come from a tool (13.7): it finds screens on its own and presses each key once, collecting ① inside the core, the key codes the game code compares with the pressed key (CMP/CMN record), and ② screen changes, then joins both.
+- ① cores give each button a `bit`, ② cores a `code` (the `KeyboardEvent.code` the game receives). In wmba-core (②) the start JS turns the roles of the buttons in `webgba.input.held` into core bits (`Web_RunFrame(keys)`): `ok` 0 · `clear` 1 · `soft1` 2 · `soft2` 3 · → 4 · ← 5 · ↑ 6 · ↓ 7 · `num0` 8 · `num1`–`num9` 9–17 · `star` 18 · `hash` 19 · `call` 20 · `end` 21.
+- Auto-fire is not applied (① `Web_AutoFireOff` = 1; ② the host turns auto-fire off for mobile games).
 
 #### 13.5 Screen (web version)
 
 - Portrait: keeps the phone ratio with side margins (at least 16px) and only as large as the keypad below allows. It sits lower than other games — top margin = screen height × `--mobile-drop` (default 0.05, `:root` in `web/src/css/web.css`).
-- Landscape: the screen fills the height; the d-pad, soft keys and CLR go on the left, the keypad and action key on the right.
+- Landscape: the screen fills the height; the d-pad, soft keys and CLR go on the left, the keypad and action key on the right. The keypad and action key sit lower than centre by screen height × `--mobile-keypad-drop-landscape` (default 0.06, `:root` in `web/src/css/web.css`), down to an 8px bottom margin.
 - PC (touch pad off): only the screen, ratio kept.
 
 #### 13.6 wmba-core (the mobile core webGBA uses now)
 
-- Platform: KTF WIPI (Clet and Jlet). Based on [wie](https://github.com/dlunch/wie) (Inseok Lee, MIT) plus the webGBA ① contract. Sound: SMAF (MMF) → MIDI → rustysynth (MIT) with 1mgm.sf2 (E-mu Systems, CC BY 3.0); font NeoDunggeunmo (OFL).
-- Save: the app database (RMS) and files the app writes, stored in the save buffer (256KB) in `WMSV` format.
-- Quick slots: the core memory (statics above the stack plus the heap) without 4KB pages that are all zero. Slots from a build with a different fingerprint are not loaded.
+- Platform: KTF WIPI (Clet and Jlet). Based on [wie](https://github.com/dlunch/wie) (Inseok Lee, MIT) plus the webGBA ② contract (`runtime: "script"`). Sound: SMAF (MMF) → MIDI → rustysynth (MIT) with 1mgm.sf2 (E-mu Systems, CC BY 3.0); font NeoDunggeunmo (OFL).
+- Execution: wie's compiler turns the app's ARM code into a wasm module (ARM→wasm JIT); the start JS compiles it with `WebAssembly.compile` and links it to the core memory. Regions whose code changes at run time are compiled again; regions not compiled yet (or that failed) run in the interpreter (the frame's CSP needs `'wasm-unsafe-eval'` — 4.2 and chapter 8; where compiling is impossible only the interpreter runs).
+- `data.jit`: the module generated in advance from the app's initial code (a wie cache record — `WIEAOT`, version, key (SHA-256), code, region list). When the key matches, startup skips generation; otherwise the module is generated while running.
+- Save: the app database (RMS) and files the app writes, stored in the save (up to 256KB, `webgba.save`) in `WMSV` format.
+- Quick slots: the core memory (statics above the stack plus the heap) without 4KB pages that are all zero, deflate-compressed. Slots from a build with a different fingerprint are not loaded. Loading a slot saved in another run (after a reload, for example) links the JIT modules again (the interpreter runs meanwhile).
 - Time: advances 1/59.7275 s per frame (matches fast-forward and pause) and runs the app for up to 11ms of real time per frame. When every app task is waiting, time jumps to the next timer inside the same frame.
-- Imports: `webgba.v1`, `env.emscripten_get_now` and `emscripten_date_now`, `wasi_snapshot_preview1.fd_write`.
+- Core wasm imports: `webgba.v1`, `env.emscripten_get_now` and `emscripten_date_now`, `wasi_snapshot_preview1.fd_write`, `wmba.jit_*` (given by the start JS).
 
 #### 13.7 Tools
 
 ```bash
-node tools/wgba.mjs pack -o game.wmba --wasm wmba-core.wasm --manifest manifest.json --app <app folder|app.zip> --cart-dir cart
+node tools/wgba.mjs pack -o game.wmba --wasm wmba-core.wasm --js game.js --data jit=jit.bin --manifest manifest.json --app <app folder|app.zip> --cart-dir cart
 node tools/wgba.mjs info game.wmba    # adds mobile, keys and shown-name lines
 node tools/wgba.mjs check game.wmba   # checks mobile, WMFS, __adf__ and <AID>.jar
 ```
 
+- Used keys (tool of the wmba-core project): `node tools/keys-usage.mjs <wmba-core.wasm> <app.wmfs> --manifest manifest.json --write` — prints a per-screen table (② screen change · ① compare record) and stores the union in `mobile.keys`. Pack afterwards.
 - Do not distribute a `.wmba` that contains app data, just like a `.wgba` with a ROM (chapter 1, "ROMs and game data").
 
 ---

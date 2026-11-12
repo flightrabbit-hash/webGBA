@@ -4760,6 +4760,7 @@ body[data-layout="landscape"] .mpb__panel {
 
 :root {
   --mobile-drop: 0.05;
+  --mobile-keypad-drop-landscape: 0.06;
 }
 
 .keypad,
@@ -4847,7 +4848,7 @@ body[data-layout="landscape"][data-mobile] .keypad {
   grid-area: face;
   grid-row: 1 / -1;
   place-self: center;
-  top: calc(var(--band-shift, 0px) + var(--face-nudge, 0px));
+  top: calc(var(--band-shift, 0px) + var(--face-nudge, 0px) + var(--mobile-keypad-drop-px, 0px));
 }
 
 body[data-pad="overlay"][data-mobile] .keypad {

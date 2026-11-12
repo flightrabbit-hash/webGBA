@@ -30,7 +30,13 @@
         "pid": { "type": "string", "maxLength": 64 },
         "mclass": { "type": "string", "maxLength": 64 },
         "vendor": { "type": "string", "maxLength": 64 },
-        "appVersion": { "type": "string", "maxLength": 64 }
+        "appVersion": { "type": "string", "maxLength": 64 },
+        "keys": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["up", "down", "left", "right", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"] },
+          "description": "Keys the game uses (README 13.4). The touch screen hides phone keys not listed; without it every defined key is shown"
+        }
       }
     },
     "screen": {

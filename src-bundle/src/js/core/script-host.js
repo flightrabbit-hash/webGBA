@@ -4,7 +4,7 @@
 //   srcdoc 이라 틀 페이지를 가져올 주소가 없다 — 오프라인(웹 앱 설치)에서도 열리고 exe·웹 서버 설정이 필요 없다.
 //   이야기는 처음 넘긴 MessagePort 하나로만. 틀이 보낸 것은 종류·크기를 확인하고, 코드로 실행하지 않는다.
 // player.js 의 Player 가 이 호스트를 ① 호스트처럼 다룬다(script = true): 입력 비트 → 버튼 키, 세이브·퀵슬롯·일시정지·소리 크기.
-import { codeWasm, parseAspect, ratioOf } from "./wgba-format.js";
+import { codeWasm, isMobile, parseAspect, ratioOf } from "./wgba-format.js";
 import { readRomPayload } from "./web-host.js";
 import { netNewer } from "./net/net-host.js";
 
@@ -434,7 +434,13 @@ export class ScriptHost {
     this.post({ type: "speed", value: speed });
   }
 
+  // 모바일 게임은 연사를 쓰지 않는다(규격 13.4, ① wmba-core 의 Web_AutoFireOff 와 같음)
+  get autoFireOff() {
+    return isMobile(this.manifest);
+  }
+
   setAutoFire(buttons, rate) {
+    if (this.autoFireOff) rate = 0;
     this.fire = { buttons: rate ? [...buttons] : [], rate: rate | 0 };
     this.post({ type: "autoFire", ...this.fire });
   }
