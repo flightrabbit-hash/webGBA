@@ -74,9 +74,9 @@ const el = {
   winMaxIcon: $("win-max-icon"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wasm", "wgbp"]);
-const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wasm", "wgbp"]);
-const WASM_EXT = new Set(["wgba", "wasm"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wasm", "wgbp"]);
+const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wmba", "wasm", "wgbp"]);
+const WASM_EXT = new Set(["wgba", "wmba", "wasm"]);
 const PATCH_EXT = "wgbp";
 const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
 const RECENT_MAX = 10;
@@ -1314,7 +1314,7 @@ async function closeGame({ quiet = false, why = "닫기" } = {}) {
 
 async function openDialogFile() {
   const start = state.game ? dirOf(state.game.path) : state.prefs.lastDir;
-  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "gb", "gbc", "wgba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
+  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "gb", "gbc", "wgba", "wmba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
   if (path) await openPath(path);
 }
 

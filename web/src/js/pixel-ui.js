@@ -269,6 +269,20 @@ const BIG = { // 5x7
   D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
   L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
   R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+  0: ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+  1: ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+  2: ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+  3: ['#####', '...#.', '..#..', '...#.', '....#', '#...#', '.###.'],
+  4: ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+  5: ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+  6: ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+  7: ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+  8: ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+  9: ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+  '*': ['.....', '#.#.#', '.###.', '#####', '.###.', '#.#.#', '.....'],
+  '#': ['.#.#.', '.#.#.', '#####', '.#.#.', '#####', '.#.#.', '.#.#.'],
 };
 const SMALL = { // 높이 5, 폭은 글자마다
   S: ['###', '#..', '###', '..#', '###'],
@@ -283,6 +297,7 @@ const SMALL = { // 높이 5, 폭은 글자마다
   w: ['.....', '#...#', '#...#', '#.#.#', '.#.#.'],
   e: ['...', '.##', '#.#', '##.', '.##'],
   b: ['#..', '##.', '#.#', '#.#', '##.'],
+  '-': ['.....', '.....', '#####', '.....', '.....'],
 };
 
 /** 글자열 → 비트맵 줄 배열('#' = 잉크). */
@@ -403,13 +418,15 @@ function finish(kind, art, scale, pal, extra) {
 export const SIZES = {
   dpad: { w: 33, h: 33 }, ab: { w: 23, h: 23 }, shoulder: { w: 37, h: 13 }, pill: { w: 31, h: 11 },
   iconButton: { w: 22, h: 22 }, icon: { w: 16, h: 16 }, stick: { w: 37, h: 37 }, knob: { w: 21, h: 21 },
+  num: { w: 21, h: 15 }, action: { w: 67, h: 21 },
 };
+export const KEYPAD_GAP = 2;
 const GAME_DEPTH = 2, GAME_SHADOW = 2, ICON_DEPTH = 2, ICON_SHADOW = 1;
 
 /** 부품의 캔버스 크기(픽셀). 배치 계산용. */
 export function partSize(kind, scale = 1) {
   const s = intScale(scale);
-  const z = SIZES[kind === 'a' || kind === 'b' || kind === 'c' || kind === 'd' ? 'ab' : kind === 'l' || kind === 'r' ? 'shoulder' : kind === 'start' || kind === 'select' ? 'pill' : kind];
+  const z = SIZES[kind === 'a' || kind === 'b' || kind === 'c' || kind === 'd' ? 'ab' : kind === 'l' || kind === 'r' ? 'shoulder' : kind === 'start' || kind === 'select' || kind === 'soft' || kind === 'clear' ? 'pill' : kind];
   if (!z) throw new Error(`pixel-ui: 모르는 부품: ${kind}`);
   if (kind === 'icon' || kind === 'stick' || kind === 'knob') return { w: z.w * s, h: z.h * s };
   const extra = kind === 'iconButton' ? ICON_DEPTH + ICON_SHADOW : GAME_DEPTH + GAME_SHADOW;
@@ -562,6 +579,46 @@ export function renderPill({ label = 'START', state = 'normal', scale = 1, palet
   });
 }
 
+export function renderKeypadKey({ label = '1', state = 'normal', scale = 1, palette } = {}) {
+  palette = resolvePalette(palette);
+  const s = intScale(scale);
+  const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
+  return cached(palette, `num|${label}|${st}|${s}`, () => {
+    const { w: W, h: H } = SIZES.num;
+    const inside = roundRectInside(W, H, 4, 4, 4, 4);
+    const roles = buttonRoles('sh', st);
+    const { art, faceBox } = extrude({
+      W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
+    });
+    const ink = stampCentered(art, faceBox, BIG[label], roles.ink);
+    return finish('num', art, s, palette, {
+      label, state: st, faceBox, inkBox: ink,
+      hit: { x: 0, y: 0, w: W * s, h: (H + GAME_DEPTH) * s }, inside, depth: GAME_DEPTH,
+    });
+  });
+}
+
+export function renderActionKey({ state = 'normal', scale = 1, palette } = {}) {
+  palette = resolvePalette(palette);
+  const s = intScale(scale);
+  const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
+  return cached(palette, `action|${st}|${s}`, () => {
+    const { w: W, h: H } = SIZES.action;
+    const inside = roundRectInside(W, H, 8, 8, 8, 8);
+    const roles = buttonRoles('ab', st);
+    const gloss = new Set([2 * W + 6, 2 * W + 7, 3 * W + 5]);
+    const { art, faceBox } = extrude({
+      W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
+      decor: (x, y) => (st !== 'disabled' && gloss.has(y * W + x) ? roles.hi : null),
+    });
+    const ink = stampCentered(art, faceBox, textBitmap('OK', BIG), roles.ink);
+    return finish('action', art, s, palette, {
+      label: 'OK', state: st, faceBox, inkBox: ink,
+      hit: { x: 0, y: 0, w: W * s, h: (H + GAME_DEPTH) * s }, inside, depth: GAME_DEPTH,
+    });
+  });
+}
+
 /**
  * 게임 버튼 하나를 이름으로.
  * name: 'dpad'|'a'|'b'|'c'|'d'|'l'|'r'|'start'|'select'(c·d 는 게임이 정의했을 때만 쓰는 둥근 버튼, A·B 와 같은 모양)
@@ -573,6 +630,10 @@ export function renderGameButton(name, opts = {}) {
     case 'l': case 'r': return renderShoulder({ ...opts, side: name.toUpperCase() });
     case 'start': case 'select': return renderPill({ ...opts, label: name.toUpperCase() });
     case 'rs': return renderPill({ ...opts, label: 'RS', tone: 'rs' });
+    case 'num': return renderKeypadKey(opts);
+    case 'action': return renderActionKey(opts);
+    case 'soft': return renderPill({ ...opts, label: '-' });
+    case 'clear': return renderPill({ ...opts, label: 'CLR' });
     case 'stick': return renderStickBase(opts);
     case 'knob': return renderStickKnob(opts);
     default: throw new Error(`pixel-ui: 모르는 버튼: ${name}`);

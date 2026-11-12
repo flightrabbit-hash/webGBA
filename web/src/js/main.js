@@ -2,7 +2,8 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
 import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
 import { bootScript } from "./core/script-host.js";
-import { resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
+import { MOBILE_ROLES, resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
+import { KEYPAD_GAP, SIZES as PX_SIZES } from "./pixel-ui.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "./app/net-window.js";
 import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
@@ -94,9 +95,9 @@ const el = {
   gate: $("gate"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wasm", "wgbp"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wasm", "wgbp"]);
 const ROM_EXT = new Set(["gba", "agb", "bin", "zip"]);
-const WASM_EXT = new Set(["wgba", "wasm"]);
+const WASM_EXT = new Set(["wgba", "wmba", "wasm"]);
 const KEY_ORDER = ["A", "B", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT", "FAST"];
 const NAMED_CODES = ["ShiftRight", "ShiftLeft", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "Space", "Enter", "Backspace", "Tab", "NumpadEnter"];
 const SPEEDS = [1, 1.5, 2, 3, 4];
@@ -615,7 +616,10 @@ const padCode = (name) => `Pad:${name}`;
 // 터치 버튼 자리 ← role(규격 5.2). 게임이 그 role 버튼을 정의했을 때만 그 자리가 보이고, 누르면 그 버튼(① bit)을 보낸다.
 // C·D 는 c·d role 을 정의한 게임에서만 A·B 위에(키보드 기본 C·I / V·U — ROLE_KEYS). l2·r2·extra 는 터치 자리가 아직 없음(키보드·게임패드만).
 const EXTRA_PAD = ["C", "D"];
-const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT" };
+const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT", ok: "OK", soft1: "SOFT1", soft2: "SOFT2", clear: "CLEAR", num1: "N1", num2: "N2", num3: "N3", num4: "N4", num5: "N5", num6: "N6", num7: "N7", num8: "N8", num9: "N9", star: "STAR", num0: "N0", hash: "HASH" };
+const MOBILE_SIDE = 16;
+const MOBILE_SCREEN_MIN = 0.5;
+const mobileDrop = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mobile-drop")) || 0;
 
 function keyTable() {
   const keys = layoutKeys(state.input, DEFAULT_KEYS);
@@ -730,6 +734,12 @@ function setInput(input) {
   const dirOff = !DIRS.some((name) => slots.has(name));
   if (dirOff !== el.dpad.hasAttribute("data-off")) {
     el.dpad.toggleAttribute("data-off", dirOff);
+    changed = true;
+  }
+  const mobile = next.buttons.some((b) => MOBILE_ROLES.includes(b.role));
+  if (mobile !== Boolean(state.mobile)) {
+    state.mobile = mobile;
+    document.body.toggleAttribute("data-mobile", mobile);
     changed = true;
   }
   player.setLayout(next, keyTable());
@@ -847,6 +857,11 @@ const FACE = { portrait: { w: 23 * 2, h: 27 * 1.6 }, landscape: { w: 23 * 2.05, 
 // 좁힌다 — C 아래 ↔ A 위 빈 줄(그림자 뺀 잉크: 면 23 + 옆면 2 = 25 아래)을 6칸으로. A·B 사이 가장 가까운 잉크 거리는
 // 원으로 약 7.3칸이지만 픽셀 계단 때문에 실제 약 6.4칸이라, 그보다 넓지 않은 가장 큰 정수 줄 수(시험 web-ui C·D 가 잼).
 const FACE_UP_LANDSCAPE = 25 + 6;
+const BUTTON_DROP = 4;
+const keypadArt = () => {
+  const { num, action } = PX_SIZES;
+  return { w: Math.max(num.w * 3 + KEYPAD_GAP * 2, action.w), h: (num.h + BUTTON_DROP) * 4 + action.h + BUTTON_DROP + KEYPAD_GAP * 5 };
+};
 const faceUp = (face, landscape) => (landscape ? FACE_UP_LANDSCAPE : 2 * (face.h - ART.roundH));
 const RS_GAP = 2;
 const rsBand = (unit) => Math.round((ART.pillH + RS_GAP) * unit);
@@ -927,7 +942,11 @@ function placeTools(slots) {
 
 function padParts() {
   const slots = touchSlots();
-  return { lr: slots.has("L") || slots.has("R"), pills: slots.has("START") || slots.has("SELECT"), dir: DIRS.some((name) => slots.has(name)) };
+  return {
+    lr: slots.has("L") || slots.has("R") || slots.has("SOFT1") || slots.has("SOFT2"),
+    pills: slots.has("START") || slots.has("SELECT") || slots.has("CLEAR"),
+    dir: DIRS.some((name) => slots.has(name)),
+  };
 }
 
 // need 는 간격 값마다 늘어나는 1차식이라, min·nice 사이를 같은 비율로 좁힌 값 중 avail 에 들어가는 가장 넓은 것.
@@ -964,9 +983,11 @@ function layout() {
   const root = document.documentElement.style;
   const icon = 2;
   const face = landscape ? FACE.landscape : FACE.portrait;
-  const four = Boolean(state.extra);
-  const rs = el.pad.hasAttribute("data-rs");
-  const faceH = face.h + (four ? faceUp(face, landscape) : 0) + (rs ? ART.pillH + RS_GAP : 0);
+  const mobile = Boolean(state.mobile);
+  const keypad = keypadArt();
+  const four = !mobile && Boolean(state.extra);
+  const rs = !mobile && el.pad.hasAttribute("data-rs");
+  const faceH = mobile ? keypad.h : face.h + (four ? faceUp(face, landscape) : 0) + (rs ? ART.pillH + RS_GAP : 0);
   let art = state.art ?? 3;
   skin.resize({ art, icon, dpr });
   syncTools();
@@ -978,12 +999,12 @@ function layout() {
   const sizes = (u) => ({
     u,
     dir: parts.dir ? ART.stick * u : 0,
-    lrH: parts.lr ? ART.shoulderH * u : 0,
-    lrW: parts.lr ? ART.stick * u : 0,
+    lrH: parts.lr ? (mobile ? ART.pillH : ART.shoulderH) * u : 0,
+    lrW: parts.lr ? (mobile ? ART.pillW : ART.stick) * u : 0,
     pillH: parts.pills ? ART.pillH * u : 0,
     pillW: parts.pills ? ART.pillW * u : 0,
-    faceW: faceWidth(face, u),
-    faceH: Math.round(face.h * u) + (four ? Math.round(faceUp(face, landscape) * u) : 0) + (rs ? rsBand(u) : 0),
+    faceW: mobile ? Math.round(keypad.w * u) : faceWidth(face, u),
+    faceH: mobile ? Math.round(keypad.h * u) : Math.round(face.h * u) + (four ? Math.round(faceUp(face, landscape) * u) : 0) + (rs ? rsBand(u) : 0),
   });
   // 배율 = 기기 픽셀 칸 수 / dpr — 기준 배율의 칸 수부터 1칸씩 내려 accept 를 만족하는 첫 값(그림은 늘 정수 기기 픽셀).
   const pickScale = (start, plan, accept) => {
@@ -1025,18 +1046,31 @@ function layout() {
   root.setProperty("--lr-top", `${PAD_SPACE.landscape.nice.top}px`);
   root.setProperty("--tool-edge", `${TOOL_PAD}px`);
   root.setProperty("--pill-bottom", `${PAD_SPACE.landscape.nice.bottom}px`);
+  let drop = 0;
   if (padOn && !landscape) {
-    sw = innerW;
-    sh = Math.floor((innerW * ah) / aw);
-    const padH = innerH - el.bar.offsetHeight - edge * 2 - sh;
+    if (mobile) drop = Math.round(innerH * mobileDrop());
+    const total = innerH - el.bar.offsetHeight - edge * 2 - drop;
+    const fullW = mobile ? innerW - MOBILE_SIDE * 2 : innerW;
+    const fullH = Math.floor((fullW * ah) / aw);
+    sw = fullW;
+    sh = fullH;
+    let padH = total - sh;
     const plan = (a) => {
       const s = sizes(skin.px(a) / dpr);
       const rowW = Math.max(s.dir + s.faceW, s.lrW * 2, s.pillW * 2 + 20);
       const need = (sp) => sp.top + s.lrH + sp.gap * 2 + mainNeed(s, portraitBase(s, sp)) + s.pillH + sp.bottom;
-      return { s, need, rowW, fits: rowW + PAD_SIDE.min * 2 + PAD_GAP_X <= innerW && need(PAD_SPACE.portrait.min) <= padH };
+      const wide = rowW + PAD_SIDE.min * 2 + PAD_GAP_X <= innerW;
+      if (!mobile) return { s, need, rowW, fits: wide && need(PAD_SPACE.portrait.min) <= padH };
+      const screenH = Math.min(fullH, total - need(PAD_SPACE.portrait.nice));
+      return { s, need, rowW, screenH, fits: wide && screenH >= Math.min(fullH, total * MOBILE_SCREEN_MIN) };
     };
     let p;
     [art, p] = pickScale(FACE_CAP_PORTRAIT, plan, (q) => q.fits);
+    if (mobile) {
+      sw = Math.floor((Math.max(120, p.screenH) * aw) / ah);
+      sh = Math.floor((sw * ah) / aw);
+      padH = total - sh;
+    }
     const fitted = fitSpace(PAD_SPACE.portrait, p.need, padH);
     const space = fitted && p.need(fitted) <= padH ? fitted : PAD_SPACE.portrait.min;
     const base = portraitBase(p.s, space);
@@ -1131,7 +1165,9 @@ function layout() {
   root.setProperty("--face-shift", `${((ART.shoulderH - ART.pillH) * unit + 8 - 10) / 2}px`);
   root.setProperty("--sw", `${sw}px`);
   root.setProperty("--sh", `${sh}px`);
-  root.setProperty("--stage-h", `${sh + edge * 2}px`);
+  root.setProperty("--stage-h", `${sh + edge * 2 + drop}px`);
+  root.setProperty("--mobile-drop-px", `${drop}px`);
+  root.setProperty("--keypad-gap", `${KEYPAD_GAP * unit}px`);
   const frameW = Math.round(sw * dpr) + (landscape ? ring * FRAME_ROWS * 2 : 0);
   const frameH = Math.round(sh * dpr) + ring * FRAME_ROWS * 2;
   skin.frame(el.frame, { width: frameW, height: frameH, ring, full: landscape });
@@ -1770,7 +1806,7 @@ function logLine(level, text) {
 
 const typeOf = (name) => {
   const ext = extOf(name);
-  return ext === "agb" || ext === "bin" ? "gba" : ext;
+  return ext === "agb" || ext === "bin" ? "gba" : ext === "wmba" ? "wgba" : ext;
 };
 
 function storedType(file, bytes) {
@@ -1806,7 +1842,7 @@ const saveIdOf = (meta) => meta?.gameId || meta?.id || "";
 const titleOf = (meta) => (meta?.gameId ? pickText(meta.title, i18n.lang()) || meta.name : meta?.name ?? "");
 const byOpened = (a, b) => (b.opened ?? 0) - (a.opened ?? 0);
 // 라이브러리에 보일 이름: 설명서 게임은 설명서 이름(사람이 이름을 바꿨으면 그 이름), 그 밖은 보관 이름(확장자 뺌).
-const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wasm)$/i;
+const GAME_EXT = /\.(gba|agb|bin|gb|gbc|zip|wgba|wmba|wasm)$/i;
 const bareName = (name) => String(name ?? "").replace(GAME_EXT, "") || String(name ?? "");
 const displayName = (rom) => (rom?.gameId && !rom.named ? titleOf(rom) || bareName(rom.name) : bareName(rom?.name));
 // 옆면 세로 글: shortName → 이름
@@ -2045,7 +2081,7 @@ async function readSave(id) {
   }
 }
 
-const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|wasm)$/i, "")}.sav`;
+const saveFile = (name) => `${String(name).replace(/\.(gba|agb|bin|gb|gbc|wgba|wmba|wasm)$/i, "")}.sav`;
 
 // input = 설명서의 버튼 목록(resolveInput). 없으면(.gba·설명서 없는 .wgba·.wasm) GBA 10버튼 — 화면·키 지금 그대로.
 async function startHosted(host, meta, input = null, net = null, kind = null) {

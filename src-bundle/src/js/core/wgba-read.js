@@ -3,7 +3,7 @@
 // code 조각만 컴파일하므로 롬·그림이 wasm 엔진 메모리에 올라가지 않는다. 조각마다 목차의 SHA-256 을 확인한다
 // (롬팩 그림은 망가져도 그 그림만 빼고 연다 — 규격 6장). 문장은 t() 키를 코드에 그대로 적는다(i18n-keys 검사).
 import { t } from "../shell/i18n.js";
-import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, KIND, KIND_NAME, LIMITS, NEEDS, parseAspect, ratioOf, readTocFrom, romHeader, sha256Hex, unpackChunk, WgbaError } from "./wgba-format.js";
+import { buildId, CART_PARTS, cartScale, checkManifest, codeWasm, FLAG_REQUIRED, imageHead, isMobile, KIND, KIND_NAME, LIMITS, NEEDS, parseAspect, ratioOf, readTocFrom, romHeader, sha256Hex, shownTitle, unpackChunk, WgbaError } from "./wgba-format.js";
 import { pickText } from "./lang-text.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
@@ -133,8 +133,9 @@ export function gameInfo(wgba) {
     gameId: m.id,
     version: m.version,
     build: wgba.build,
-    title: m.name,
-    shortName: m.shortName ?? "",
+    title: shownTitle(m.name, m),
+    shortName: m.shortName ? shownTitle(m.shortName, m) : "",
+    mobile: isMobile(m),
     author: typeof m.author === "string" ? m.author : "",
     romSha1: wgba.romSha1,
     cart,

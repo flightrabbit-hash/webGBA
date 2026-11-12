@@ -262,7 +262,8 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 10. [검증](#10-검증)
 11. [형식 번호와 버전](#11-형식-번호와-버전)
 12. [온라인 업데이트](#12-온라인-업데이트-update-규격-1-확장) — 버전 파일·차이 패치·배포 도구
-13. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
+13. [모바일 .wmba](#13-모바일-wmba-규격-1-확장) — 피처폰 게임·앱 파일 묶음·폰 키·모바일 화면
+14. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
 
 ---
 
@@ -1519,6 +1520,92 @@ webGBA 운영자용입니다(게임 제작자는 쓰지 않음). 대상 = webGBA
 - 교체: exe 폴더의 `.webgba-update\`에 받은 파일 → 새 exe를 `--webgba-version`으로 실행해 출력 `webGBA <버전>`이 `version`과 같은지 확인 → 파일마다 현재 파일을 `<이름>.old`로, 받은 파일을 원래 이름으로(하나라도 실패하면 모두 되돌림) → 새 exe 실행(실패하면 되돌림) → 기존 앱 정상 종료. 새 exe는 기존 프로세스가 끝나기를 기다린 뒤 시작하고, 화면이 뜬 뒤 `.old`·`.webgba-update\`를 삭제합니다.
 - 유지: `bin/`(설정·로그·퀵슬롯·WebView 데이터)·게임 옆 `.sav`는 교체 대상이 아닙니다. exe 폴더에 기록할 수 없으면 업데이트하지 못합니다(안내만).
 - 발행: `wgba.mjs app` — exe를 `--webgba-version`으로 실행해 버전을 조회(이 기능이 없는 exe 거부), 시험 식별자로 빌드한 exe 거부(`--test-id`로만 허용), `--file`이 없으면 저장소 `LICENSE`·`THIRD_PARTY_NOTICES` 포함, 파일마다 `files/<압축 SHA-256>.z`, 이전 발행보다 낮은 버전·같은 버전인데 파일이 다른 경우 거부, 묶음에 `index.json`이 있으면 목록 재생성(`--no-index`로 끔). 올리기 순서 = 압축 파일 → `latest.json` → `index.json`.
+
+### 13. 모바일 `.wmba` (규격 1 확장)
+
+`.wmba`는 피처폰(휴대폰) 게임 파일입니다. 파일 형식은 `.wgba`와 같고(TOC·chunk·manifest, 2~3장), 확장자와 manifest의 `mobile`만 다릅니다.
+webGBA는 `.wmba`를 열면 화면을 모바일 배치(좌측 방향 패드, 우측 키패드·액션키)로 바꾸고, 라이브러리 등 이름이 보이는 곳에는 이름 앞에 `[M] `을 붙여 표시합니다.
+
+#### 13.1 구성
+
+| chunk | 내용 |
+| --- | --- |
+| `code` | 모바일 코어(① Web API, 4.1). 현재 webGBA용 코어 = **wmba-core**(KTF WIPI — wie 기반 ARM 에뮬레이터 + WIPI-C·Java API, 소리 합성 포함, 13.6) |
+| `manifest` | `mobile`·`group`·`category`·키 목록(13.3·13.4) |
+| `rom` | **앱 파일 묶음 WMFS**(13.2) — jar·리소스·앱 설명(`__adf__` 등)이 파일마다 한 항목 |
+| `cart.*` | 롬팩 그림(6장) |
+
+- 앱 파일을 `rom` chunk에 저장하는 이유: 앱 데이터는 롬과 같은 저작물이라 롬과 같은 흐름을 그대로 사용합니다 — `strip`(롬 chunk 제거)·업데이트 차이 패치의 원본 확인(`--orig`, 12장)·비공개 보관. 따라서 `rom.required`를 `false`로 설정할 수 없습니다.
+
+#### 13.2 앱 파일 묶음 WMFS 1
+
+little endian입니다.
+
+| 위치 | 크기 | 내용 |
+| --- | --- | --- |
+| 0 | 4 | `WMFS` |
+| 4 | 4 | 형식 `1` |
+| 8 | 4 | 파일 수 |
+| 12 | … | 파일마다: u16 이름 길이 · 이름(UTF-8, 폴더 구분 `/`) · u32 크기 · 내용 |
+
+- 이름은 앱의 원래 경로 그대로입니다(예 `__adf__`, `010100D2.jar`, `P/BabyBaby.pak`). 패키징 도구는 이름 순으로 저장하므로 같은 입력이면 같은 바이트입니다.
+- 코어는 `Web_RomBuffer(크기)` 위치에서 묶음을 받습니다(4.1.3의 2번).
+
+#### 13.3 manifest
+
+| 필드 | 설명 |
+| --- | --- |
+| `mobile` | **`.wmba` 필수**. `platform`: `WIPI-KTF`·`WIPI-SKT`·`WIPI-LGT`·`SKVM`·`J2ME` 중 하나. `aid`·`pid`·`mclass`·`vendor`·`appVersion`(앱 설명 파일의 값, 각 64자 이하, 선택) |
+| `group` | 라이브러리 그룹: `emu`·`arcade`·`mobile`(모든 `.wgba`에서 선택 사항). 모바일 게임은 `mobile` |
+| `category` | 그룹 안의 분류(인쇄 가능한 ASCII 1~24자). 예 `WIPI-KTF`·`CPS1`·`GBA` |
+| `runtime` | `webapi`만 지원 |
+| `screen` | 폰 화면 크기(예 240×320) |
+| `save` | `{"kind": "flash"}` — 코어가 앱 기록(데이터베이스·파일)을 세이브 버퍼에 저장 |
+
+- 표시 이름: 호스트가 언어마다 `[M] ` + `name`으로 표시합니다. `name`에는 `[M]`을 작성하지 않습니다.
+- 확장자 규칙: `mobile`이 있으면 `.wmba`, 없으면 `.wgba`(`pack`·`check`가 확인).
+
+#### 13.4 키 (모바일 role)
+
+5장의 role에 폰 키를 추가합니다. `"preset": "none"`으로 게임이 사용하는 키만 `input.buttons`에 작성합니다.
+
+| role | 폰 키 | 기본 키보드 | 기본 게임패드 | 터치 위치(웹 버전) |
+| --- | --- | --- | --- | --- |
+| `up` `down` `left` `right` | 방향 | 방향키 | 십자·좌측 스틱 | 좌측 방향 패드 |
+| `ok` | 확인(액션) | `Enter` `NumpadEnter` `KeyK` | 0 | 우측 키패드 하단의 가장 큰 버튼 |
+| `clear` | 취소(CLR) | `Backspace` `Delete` | 1 | 하단 좌측 |
+| `soft1` · `soft2` | 좌·우 소프트키 | `BracketLeft` `PageUp` · `BracketRight` `PageDown` | 4 · 5 | 상단 좌측·우측 |
+| `num1`~`num9` | 1~9 | `Digit1`~`9` · `Numpad1`~`9` · `KeyQ` `KeyW` `KeyE` / `KeyA` `KeyS` `KeyD` / `KeyZ` `KeyX` `KeyC` | 없음 | 우측 키패드 3×3 |
+| `star` · `num0` · `hash` | `*` · `0` · `#` | `NumpadMultiply` `Minus` · `Digit0` `Numpad0` · `NumpadDivide` `Equal` | 없음 | 키패드 마지막 줄 |
+| `call` · `end` | 통화·종료 | 없음(사용자 설정) | 없음 | 없음 |
+
+- 키패드에서 게임이 사용하지 않는 키는 칸만 남기고 숨깁니다(3×4 모양 유지).
+- wmba-core의 비트(`Web_RunFrame(keys)`): `ok` 0 · `clear` 1 · `soft1` 2 · `soft2` 3 · → 4 · ← 5 · ↑ 6 · ↓ 7 · `num0` 8 · `num1`~`num9` 9~17 · `star` 18 · `hash` 19 · `call` 20 · `end` 21. 다른 코어는 자신의 비트를 manifest에 작성합니다.
+- 연사는 적용하지 않습니다(wmba-core `Web_AutoFireOff` = 1).
+
+#### 13.5 화면 (웹 버전)
+
+- 세로: 폰 화면 비율 그대로, 좌우 여백(최소 16px)을 두고 하단 키패드가 들어갈 만큼만 크게 표시합니다. 다른 게임보다 아래쪽에 배치합니다 — 상단 여백 = 화면 높이 × `--mobile-drop`(기본 0.05, `web/src/css/web.css`의 `:root`).
+- 가로: 화면은 높이에 맞추고, 좌측에 방향 패드·소프트키·CLR, 우측에 키패드·액션키를 배치합니다.
+- PC(터치 패드 끔): 화면만 비율을 유지해 표시합니다.
+
+#### 13.6 wmba-core (현재 webGBA용 모바일 코어)
+
+- 플랫폼: KTF WIPI(Clet·Jlet). [wie](https://github.com/dlunch/wie)(Inseok Lee, MIT) 기반 + webGBA ① 규약. 소리는 SMAF(MMF) → MIDI → rustysynth(MIT) + 1mgm.sf2(E-mu Systems, CC BY 3.0), 글꼴 Neo둥근모(OFL).
+- 세이브: 앱 데이터베이스(RMS)·앱이 기록한 파일을 `WMSV` 형식으로 세이브 버퍼(256KB)에 저장합니다.
+- 퀵슬롯: 코어 메모리(스택 위 정적 영역 + 힙)에서 값이 모두 0인 4KB 칸을 제외하고 저장합니다. 빌드 지문이 다른 퀵슬롯은 불러오지 않습니다.
+- 시간: 프레임마다 1/59.7275초씩 진행하고(빨리 감기·일시정지와 일치), 프레임마다 실제 시간 11ms까지 앱을 실행합니다. 앱이 모두 대기 중이면 같은 프레임 안의 다음 타이머 시각으로 이동합니다.
+- 가져오기: `webgba.v1`, `env.emscripten_get_now`·`emscripten_date_now`, `wasi_snapshot_preview1.fd_write`.
+
+#### 13.7 도구
+
+```bash
+node tools/wgba.mjs pack -o game.wmba --wasm wmba-core.wasm --manifest manifest.json --app <앱 폴더|앱.zip> --cart-dir cart
+node tools/wgba.mjs info game.wmba    # 모바일·키·표시 이름 행 추가
+node tools/wgba.mjs check game.wmba   # mobile·WMFS·__adf__·<AID>.jar 확인
+```
+
+- 앱 데이터가 포함된 `.wmba`는 롬이 포함된 `.wgba`와 같이 배포하지 마세요(1장 "롬·게임 데이터").
 
 ---
 

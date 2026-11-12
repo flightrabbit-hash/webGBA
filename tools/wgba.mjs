@@ -2,7 +2,8 @@
 //
 //   node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm|.wgba> --manifest <manifest.json>
 //                       [--cart-dir <폴더>] [--label <그림>] [--front <그림>] [--spine <그림>]
-//                       [--js <게임.js>] [--js-store] [--data <이름>=<파일> …] [--data-store] [--rom <롬>]
+//                       [--js <게임.js>] [--js-store] [--data <이름>=<파일> …] [--data-store] [--rom <롬>] [--app <앱 폴더|.zip>]
+//   (.wmba = 같은 형식의 모바일 게임, 규격 13장: --app 이 앱 파일(jar·리소스·앱 설명)을 WMFS 묶음으로 롬 조각에 넣고, 설명서에 mobile 이 있어야 함)
 //   node tools/wgba.mjs info <파일>                   목차·설명서 요약(파일 앞부분만 읽음). 목차가 없으면 옛 롬 구획 정보
 //   node tools/wgba.mjs check <파일> [--quick]        규격 10장 검사. 오류가 있으면 끝 상태 1(--quick: 롬을 풀지 않음)
 //   node tools/wgba.mjs extract <파일> <조각> <출력>  조각 내용을 씀. code → 실행 가능한 wasm(머리 붙임), rom → 풀린 롬
@@ -33,7 +34,11 @@ import {
   unpackRom,
   wasmSections,
   buildId,
+  isMobile,
+  packAppBundle,
+  shownName,
 } from "../src-bundle/src/js/core/wgba-format.js";
+import { zipEntries, zipRead } from "../src-bundle/src/js/core/zip.js";
 import { pickTextKey, TEXT_LANGS } from "../src-bundle/src/js/core/lang-text.js";
 
 const n = (v) => v.toLocaleString("en-US");
@@ -53,7 +58,7 @@ function fileReader(file) {
 
 function parse(argv) {
   const opts = { data: [], positional: [] };
-  const takes = new Set(["-o", "--out", "--wasm", "--manifest", "--cart-dir", "--label", "--front", "--spine", "--js", "--rom"]);
+  const takes = new Set(["-o", "--out", "--wasm", "--manifest", "--cart-dir", "--label", "--front", "--spine", "--js", "--rom", "--app"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--data") {
@@ -86,8 +91,29 @@ export function collectImages({ cartDir = null, label = null, front = null, spin
   return { images, used };
 }
 
+/** --app: 앱 폴더(하위 폴더 포함) 또는 .zip → WMFS 앱 파일 묶음(이름 순, 같은 입력이면 같은 바이트). */
+export function appBundleFrom(source) {
+  const files = [];
+  if (fs.statSync(source).isDirectory()) {
+    const walk = (rel) => {
+      for (const name of fs.readdirSync(path.join(source, rel)).sort()) {
+        const r = rel ? `${rel}/${name}` : name;
+        if (fs.statSync(path.join(source, r)).isDirectory()) walk(r);
+        else files.push([r, new Uint8Array(fs.readFileSync(path.join(source, r)))]);
+      }
+    };
+    walk("");
+  } else {
+    const zip = new Uint8Array(fs.readFileSync(source));
+    for (const entry of zipEntries(zip)) if (!entry.name.endsWith("/")) files.push([entry.name, zipRead(zip, entry)]);
+    files.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  }
+  if (!files.length) throw new Error(`앱 파일이 없습니다: ${source}`);
+  return packAppBundle(files);
+}
+
 /** pack 명령 본체(다른 도구도 부름). 결과 { bytes, check, notes, entries, used }. */
-export async function packFiles({ wasm, manifest, cartDir, label, front, spine, js, jsStore = false, data = [], dataStore = false, rom }) {
+export async function packFiles({ wasm, manifest, cartDir, label, front, spine, js, jsStore = false, data = [], dataStore = false, rom, app }) {
   const { images, used } = collectImages({ cartDir, label, front, spine });
   const result = await packWgba({
     wasm: new Uint8Array(fs.readFileSync(wasm)),
@@ -96,7 +122,7 @@ export async function packFiles({ wasm, manifest, cartDir, label, front, spine, 
     js: js ? new Uint8Array(fs.readFileSync(js)) : null,
     jsMethod: jsStore ? METHOD.store : METHOD.zlib,
     data: data.map((d) => ({ name: d.name, bytes: new Uint8Array(fs.readFileSync(d.file)), method: dataStore ? METHOD.store : METHOD.zlib })),
-    rom: rom ? new Uint8Array(fs.readFileSync(rom)) : null,
+    rom: app ? appBundleFrom(app) : rom ? new Uint8Array(fs.readFileSync(rom)) : null,
   });
   return { ...result, used };
 }
@@ -159,6 +185,15 @@ async function info(file) {
       const cart = m.cart ?? {};
       const parts = Object.keys(CART_PARTS).map((p) => (cart[p] ? `${p} ${cart[p].width}x${cart[p].height}` : `${p} 없음`));
       console.log(`롬팩    색 ${cart.color ?? "없음"} · ${parts.join(" · ")}`);
+      if (m.group || m.category) console.log(`그룹    ${m.group ?? "없음"} · 카테고리 ${m.category ?? "없음"}`);
+      if (isMobile(m)) {
+        const mo = m.mobile ?? {};
+        const keys = (m.input?.buttons ?? []).map((b) => b.role ?? b.id).join(" ");
+        console.log(`모바일  ${mo.platform ?? "?"} · AID ${mo.aid ?? "-"} · PID ${mo.pid ?? "-"} · MClass ${mo.mclass ?? "-"}${mo.appVersion ? ` · 앱 ${mo.appVersion}` : ""}`);
+        console.log(`키      ${keys}`);
+        const shown = Object.fromEntries(TEXT_LANGS.map((lang) => [lang, shownName(typeof m.name === "string" ? m.name : m.name?.[pickTextKey(m.name, lang)], m)]));
+        console.log(`표시 이름 ${langLine(shown)}`);
+      }
     }
     const rom = toc.entries.find((e) => e.kind === KIND.rom);
     if (rom) {
@@ -191,6 +226,9 @@ async function legacyInfo(file) {
 
 async function check(file, quick) {
   const res = await checkWgba(new Uint8Array(fs.readFileSync(file)), { deep: !quick });
+  const wmba = /\.wmba$/i.test(file);
+  if (res.manifest && wmba !== Boolean(res.manifest.mobile)) res.errors.push(wmba ?".wmba 인데 설명서에 mobile 이 없습니다(규격 13장)" : "설명서에 mobile 이 있는 파일은 확장자가 .wmba 여야 합니다(규격 13장)");
+  if (res.appFiles) console.log(`앱 파일 ${res.appFiles.length}개 · ${res.appFiles.slice(0, 6).map((f) => f.name).join(" · ")}${res.appFiles.length > 6 ? " …" : ""}`);
   for (const w of res.warnings) console.log(`경고  ${w}`);
   for (const e of res.errors) console.log(`오류  ${e}`);
   if (res.manifest) console.log(`설명서 ${res.manifest.id} ${res.manifest.version} · 빌드 ${res.buildId?.slice(0, 16)}`);
@@ -250,6 +288,10 @@ export async function main(argv) {
   if (cmd === "pack") {
     const o = parse(rest);
     if (!o["-o"] || !o["--wasm"] || !o["--manifest"] || o.positional.length) return usage();
+    if (o["--app"] && o["--rom"]) throw new Error("--app 과 --rom 은 함께 쓰지 않습니다(둘 다 롬 조각)");
+    const wmba = /\.wmba$/i.test(o["-o"]);
+    const plan = JSON.parse(fs.readFileSync(o["--manifest"], "utf8").replace(/^﻿/, ""));
+    if (wmba !== Boolean(plan.mobile)) throw new Error(wmba ? ".wmba 는 설명서에 mobile 이 있어야 합니다(규격 13장)" : "설명서에 mobile 이 있으면 출력 확장자를 .wmba 로 하세요(규격 13장)");
     const t0 = Date.now();
     const res = await packFiles({
       wasm: o["--wasm"],
@@ -263,6 +305,7 @@ export async function main(argv) {
       data: o.data,
       dataStore: Boolean(o["--data-store"]),
       rom: o["--rom"],
+      app: o["--app"],
     });
     for (const note of res.notes) console.log(`알림  ${note}`);
     const checked = await writeChecked(path.resolve(o["-o"]), res.bytes);
@@ -305,7 +348,7 @@ const UPDATE_USAGE = [
 ];
 
 function usage() {
-  console.error("사용법: node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm> --manifest <manifest.json> [--cart-dir <폴더>] [--label|--front|--spine <그림>] [--js <게임.js>] [--data <이름>=<파일>] [--rom <롬>]");
+  console.error("사용법: node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm> --manifest <manifest.json> [--cart-dir <폴더>] [--label|--front|--spine <그림>] [--js <게임.js>] [--data <이름>=<파일>] [--rom <롬>] [--app <앱 폴더|.zip>]   (.wmba 모바일 = --app, 규격 13장)");
   console.error("        node tools/wgba.mjs info <파일> | check <파일> [--quick] | extract <파일> <조각> <출력> | strip <파일> <출력>");
   for (const line of UPDATE_USAGE) console.error(line);
   return 2;

@@ -92,7 +92,70 @@ export function parseAspect(text) {
   if (w > ASPECT_MAX || h > ASPECT_MAX || w > h * ASPECT_RATIO_MAX || h > w * ASPECT_RATIO_MAX) return null;
   return ratioOf(w, h);
 }
-export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra"]);
+export const MOBILE_ROLES = Object.freeze(["ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"]);
+export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", ...MOBILE_ROLES]);
+export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
+export const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;
+export const MOBILE_PLATFORMS = Object.freeze(["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME"]);
+export const MOBILE_PREFIX = "[M] ";
+export const APP_MAGIC = "WMFS";
+
+/** 설명서가 모바일(.wmba) 게임인가: mobile 객체 또는 group "mobile". */
+export const isMobile = (m) => Boolean(m && ((m.mobile && typeof m.mobile === "object" && !Array.isArray(m.mobile)) || m.group === "mobile"));
+
+/** 라이브러리 등에 보일 이름: 모바일 게임은 설명서 이름 앞에 "[M] "(설명서 이름 자체에는 붙이지 않음). */
+export const shownName = (text, m) => (isMobile(m) && text && !String(text).startsWith(MOBILE_PREFIX) ? `${MOBILE_PREFIX}${text}` : text);
+
+/** 언어별 이름(문자열 또는 { en, ko, ja … })의 칸마다 shownName. 빈 칸은 그대로(표시 순서 규칙 유지). */
+export function shownTitle(name, m) {
+  if (!isMobile(m)) return name;
+  if (typeof name === "string") return shownName(name, m);
+  if (!name || typeof name !== "object" || Array.isArray(name)) return name;
+  return Object.fromEntries(Object.entries(name).map(([lang, text]) => [lang, typeof text === "string" && text.trim() ? shownName(text, m) : text]));
+}
+
+/** 앱 파일 묶음(.wmba 롬 조각 내용) WMFS 1: "WMFS", u32 형식 1, u32 파일 수, 파일마다 u16 이름 길이 · UTF-8 이름 · u32 크기 · 내용. */
+export function packAppBundle(files) {
+  const enc = new TextEncoder();
+  const list = files.map(([name, bytes]) => [enc.encode(name), bytes]);
+  const total = 12 + list.reduce((sum, [name, bytes]) => sum + 6 + name.length + bytes.length, 0);
+  const out = new Uint8Array(total);
+  const dv = new DataView(out.buffer);
+  out.set(enc.encode(APP_MAGIC), 0);
+  dv.setUint32(4, 1, true);
+  dv.setUint32(8, list.length, true);
+  let at = 12;
+  for (const [name, bytes] of list) {
+    dv.setUint16(at, name.length, true);
+    out.set(name, at + 2);
+    dv.setUint32(at + 2 + name.length, bytes.length, true);
+    out.set(bytes, at + 6 + name.length);
+    at += 6 + name.length + bytes.length;
+  }
+  return out;
+}
+
+/** WMFS 1 → [{ name, size, start }]. 틀린 묶음이면 던진다. */
+export function readAppBundle(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length < 12 || new TextDecoder().decode(bytes.subarray(0, 4)) !== APP_MAGIC) throw new Error("롬 조각이 앱 파일 묶음(WMFS)이 아닙니다");
+  if (dv.getUint32(4, true) !== 1) throw new Error(`모르는 앱 파일 묶음 형식: ${dv.getUint32(4, true)}`);
+  const count = dv.getUint32(8, true);
+  const files = [];
+  let at = 12;
+  for (let i = 0; i < count; i++) {
+    if (at + 6 > bytes.length) throw new Error("앱 파일 묶음이 잘렸습니다");
+    const len = dv.getUint16(at, true);
+    const name = new TextDecoder().decode(bytes.subarray(at + 2, at + 2 + len));
+    if (at + 6 + len > bytes.length) throw new Error("앱 파일 묶음이 잘렸습니다");
+    const size = dv.getUint32(at + 2 + len, true);
+    const start = at + 6 + len;
+    if (start + size > bytes.length) throw new Error(`앱 파일 묶음이 잘렸습니다: ${name}`);
+    files.push({ name, size, start });
+    at = start + size;
+  }
+  return files;
+}
 export const GBA_PRESET = Object.freeze([
   { id: "A", role: "a", bit: 0 },
   { id: "B", role: "b", bit: 1 },
@@ -122,6 +185,22 @@ export const ROLE_KEYS = Object.freeze({
   r2: ["KeyW"],
   start: ["Enter", "NumpadEnter"],
   select: ["Backspace", "ShiftRight"],
+  ok: ["Enter", "NumpadEnter", "KeyK"],
+  soft1: ["BracketLeft", "PageUp"],
+  soft2: ["BracketRight", "PageDown"],
+  clear: ["Backspace", "Delete"],
+  num1: ["Digit1", "Numpad1", "KeyQ"],
+  num2: ["Digit2", "Numpad2", "KeyW"],
+  num3: ["Digit3", "Numpad3", "KeyE"],
+  num4: ["Digit4", "Numpad4", "KeyA"],
+  num5: ["Digit5", "Numpad5", "KeyS"],
+  num6: ["Digit6", "Numpad6", "KeyD"],
+  num7: ["Digit7", "Numpad7", "KeyZ"],
+  num8: ["Digit8", "Numpad8", "KeyX"],
+  num9: ["Digit9", "Numpad9", "KeyC"],
+  star: ["NumpadMultiply", "Minus"],
+  num0: ["Digit0", "Numpad0"],
+  hash: ["NumpadDivide", "Equal"],
 });
 /** role 의 기본 게임패드(표준 매핑 버튼 번호, 축은 "-axis0"·"+axis1"). l2·r2 가 있으면 l·r 은 4·5 만(resolveInput). */
 export const ROLE_PAD = Object.freeze({
@@ -139,6 +218,10 @@ export const ROLE_PAD = Object.freeze({
   r2: [7],
   start: [9],
   select: [8],
+  ok: [0],
+  clear: [1],
+  soft1: [4],
+  soft2: [5],
 });
 const PAD_AXIS_RE = /^[+-]?axis\d$/;
 
@@ -706,12 +789,39 @@ export function checkManifest(m, errors, warnings) {
     }
   }
   if (m.update !== undefined) checkUpdateField(m.update, errors);
+  if (m.group !== undefined && !GAME_GROUPS.includes(m.group)) errors.push(`group 이 ${GAME_GROUPS.join("·")} 가 아닙니다: ${m.group}`);
+  if (m.category !== undefined && (typeof m.category !== "string" || !CATEGORY_RE.test(m.category))) errors.push(`category 는 영문·숫자·기호(인쇄 가능한 ASCII) 1~24자: ${JSON.stringify(m.category)}`);
+  if (m.mobile !== undefined) checkMobile(m, errors, warnings);
   if (m.runtime === "script" && !["module", "emscripten"].includes(m.entry?.style)) errors.push(`entry.style 이 module·emscripten 이 아닙니다: ${m.entry?.style}`);
   // 규격 1 의 JS 조각 이름은 늘 "js"(묶기 도구·읽기 모두) — 다른 값은 무시된다
   if (m.entry?.js !== undefined && m.entry.js !== "js") warnings.push(`entry.js 는 "js" 만 됩니다(규격 1) — 무시하고 조각 js 를 씁니다: ${m.entry.js}`);
   if (m.cart !== undefined) {
     if (m.cart.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(m.cart.color)) errors.push(`cart.color 는 #RRGGBB: ${m.cart.color}`);
   }
+  return undefined;
+}
+
+/** 모바일 롬 조각 = WMFS 앱 파일 묶음. WIPI-KTF 는 __adf__ 와 <AID>.jar 가 있어야 한다. */
+function checkAppBundle(m, rom, errors, result) {
+  const files = readAppBundle(rom);
+  result.appFiles = files.map((f) => ({ name: f.name, size: f.size }));
+  const names = new Set(files.map((f) => f.name));
+  if (m.mobile.platform === "WIPI-KTF") {
+    if (!names.has("__adf__")) errors.push("WIPI-KTF 앱 파일 묶음에 __adf__ 가 없습니다");
+    const jar = m.mobile.aid ? `${m.mobile.aid}.jar` : null;
+    if (jar && !files.some((f) => f.name.replace(/^P\//, "") === jar)) errors.push(`WIPI-KTF 앱 파일 묶음에 ${jar} 가 없습니다`);
+  }
+}
+
+/** 규격 13장 모바일(.wmba): mobile 객체·플랫폼·앱 정보. */
+function checkMobile(m, errors, warnings) {
+  const mo = m.mobile;
+  if (!mo || typeof mo !== "object" || Array.isArray(mo)) return errors.push("mobile 은 객체");
+  if (!MOBILE_PLATFORMS.includes(mo.platform)) errors.push(`mobile.platform 이 ${MOBILE_PLATFORMS.join("·")} 가 아닙니다: ${mo.platform}`);
+  for (const key of ["aid", "pid", "mclass", "vendor", "appVersion"]) if (mo[key] !== undefined && (typeof mo[key] !== "string" || mo[key].length > 64)) errors.push(`mobile.${key} 는 64자 이하 문자열`);
+  if (m.runtime !== "webapi") errors.push("모바일 게임은 runtime webapi 만 됩니다(코어가 앱 파일 묶음을 롬 자리로 받음)");
+  if (m.group !== "mobile") warnings.push(`모바일 게임은 group "mobile" 을 권장합니다: ${m.group}`);
+  if (m.rom?.required === false) errors.push("모바일 게임은 앱 파일 묶음(롬 조각)이 필요합니다 — rom.required 를 false 로 두지 마세요");
   return undefined;
 }
 
@@ -915,11 +1025,14 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
     try {
       const header = romHeader(bytes.subarray(romEntry.start, romEntry.end));
       result.rom = header;
-      if (deep) await unpackRom(bytes.subarray(romEntry.start, romEntry.end));
+      if (deep) {
+        const { rom } = await unpackRom(bytes.subarray(romEntry.start, romEntry.end));
+        if (m.mobile) checkAppBundle(m, rom, errors, result);
+      }
     } catch (error) {
       errors.push(error.message);
     }
-  }
+  } else if (m.mobile) errors.push("모바일 게임인데 앱 파일 묶음(롬 조각)이 없습니다");
   if (m.rom?.sha1 && result.rom && m.rom.sha1 !== result.rom.sha1) warnings.push("설명서 rom.sha1 이 롬 조각의 SHA-1 과 다릅니다");
 
   if (compile && codeEntry) {

@@ -18,6 +18,21 @@
     "contact": { "type": "string", "maxLength": 100 },
     "build": { "type": "string", "maxLength": 64 },
     "needs": { "type": "array", "uniqueItems": true, "items": { "enum": ["pointer", "net", "keyboard", "state"] } },
+    "group": { "enum": ["emu", "arcade", "mobile"], "description": "Library group (README 13.3). Mobile games (.wmba) use \"mobile\"" },
+    "category": { "type": "string", "pattern": "^[\\x20-\\x7e]{1,24}$", "description": "Category inside the group, e.g. \"WIPI-KTF\", \"CPS1\", \"GBA\"" },
+    "mobile": {
+      "type": "object",
+      "description": "Feature-phone game (.wmba, README chapter 13). Required for .wmba; the rom chunk holds the WMFS app file bundle",
+      "required": ["platform"],
+      "properties": {
+        "platform": { "enum": ["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME"] },
+        "aid": { "type": "string", "maxLength": 64 },
+        "pid": { "type": "string", "maxLength": 64 },
+        "mclass": { "type": "string", "maxLength": 64 },
+        "vendor": { "type": "string", "maxLength": 64 },
+        "appVersion": { "type": "string", "maxLength": 64 }
+      }
+    },
     "screen": {
       "type": "object",
       "properties": {
@@ -244,7 +259,7 @@
       "required": ["id"],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,16}$" },
-        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra"] },
+        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"] },
         "label": { "oneOf": [{ "type": "string", "maxLength": 8 }, { "type": "object", "additionalProperties": { "type": "string", "maxLength": 8 } }] },
         "bit": { "type": "integer", "minimum": 0, "maximum": 31 },
         "code": { "type": "string", "pattern": "^[A-Za-z0-9]{1,24}$" },
