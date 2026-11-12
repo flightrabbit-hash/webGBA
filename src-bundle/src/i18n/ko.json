@@ -3,6 +3,7 @@
   "zip.pick.title": "ZIP 안의 게임 {count}개",
   "zip.pick.all": "모두 선택",
   "zip.pick.count": "{n} / {total}",
+  "zip.pick.countOther": "{n} / {total} · 다른 그룹 {other}개",
   "zip.pick.textExe": "{name} 안에서 선택한 게임을 {folder} 폴더에 풀고 즐겨찾기에 추가합니다. 게임은 바로 실행하지 않습니다.",
   "zip.why.encrypted": "암호로 잠겨 있음",
   "zip.why.method": "풀 수 없는 압축({method})",

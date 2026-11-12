@@ -3,6 +3,7 @@
   "zip.pick.title": "ZIP 内のゲーム {count} 個",
   "zip.pick.all": "すべて選択",
   "zip.pick.count": "{n} / {total}",
+  "zip.pick.countOther": "{n} / {total} · 他のグループ {other}",
   "zip.pick.textExe": "{name} の中から選んだゲームを {folder} フォルダーに展開して、お気に入りに追加します。ゲームはすぐには起動しません。",
   "zip.why.encrypted": "パスワード付き",
   "zip.why.method": "展開できない圧縮({method})",

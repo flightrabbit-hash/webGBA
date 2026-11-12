@@ -470,6 +470,7 @@ async function inputChecks() {
   for (const [label, width, height, touch] of [["세로", 390, 844, true], ["가로", 844, 390, true], ["PC", 1280, 800, false]]) {
     const rsPresets = { "com.example.fight": { active: 0, slots: [{ name: "", steps: [{ keys: ["A"], hold: 6, gap: 3 }, { keys: ["B"], hold: 3, gap: 3 }] }, null, null, null, null] } };
     const { context, page } = await newPage({ width, height, touch, prefs: { lang: "ko", pad: "on", padSet: true, rsPresets } });
+    await page.addStyleTag({ content: "#toast{visibility:hidden !important}" });
     try {
       await openGame(page, "fight");
       const dpr = await page.evaluate(() => devicePixelRatio);
@@ -526,6 +527,7 @@ async function uiChecks() {
       const steps = [{ keys: ["A", "B", "C", "D", "SELECT", "START", "UP", "RIGHT"], hold: 6, gap: 3 }, { keys: ["UP", "RIGHT"], hold: 3, gap: 2 }, { keys: ["C"], hold: 4, gap: 3 }];
       const rsPresets = { "com.example.fight": { active: 1, slots: [{ name: "", steps: steps.slice(1) }, { name: "가나다라마바사아자차카타", steps }, { name: "WWWWWWWWWWWW", steps: [] }, null, null] } };
       const { context, page } = await newPage({ width, height, touch, prefs: { lang, pad: "on", padSet: true, rsPresets } });
+      await page.addStyleTag({ content: "#toast{visibility:hidden !important}" });
       try {
         await openGame(page, "fight");
         await page.evaluate(() => window.webgba.openSheet("rs"));

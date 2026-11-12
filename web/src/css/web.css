@@ -810,7 +810,7 @@ body:not([data-view="start"]) .start {
 .toast[data-over] {
   left: max(var(--gap-4), env(safe-area-inset-left));
   right: max(var(--gap-4), env(safe-area-inset-right));
-  bottom: calc(var(--gap-4) + env(safe-area-inset-bottom));
+  bottom: max(calc(var(--gap-4) + env(safe-area-inset-bottom)), var(--toast-foot, 0px));
   max-width: calc(100% - var(--gap-4) * 2);
 }
 
@@ -818,7 +818,6 @@ body:not([data-view="start"]) .start {
   --ol: var(--px-ol);
   background: var(--px-dng);
   color: var(--px-dng-ink);
-  pointer-events: auto;
 }
 
 .toast.is-warn {

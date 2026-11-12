@@ -3,6 +3,7 @@
   "zip.pick.title": "{count} games in this ZIP",
   "zip.pick.all": "Select all",
   "zip.pick.count": "{n} / {total}",
+  "zip.pick.countOther": "{n} / {total} · {other} in other groups",
   "zip.pick.textExe": "The games you select in {name} are extracted to the {folder} folder and added to favorites. They don't start right away.",
   "zip.why.encrypted": "Password-protected",
   "zip.why.method": "Unsupported compression ({method})",

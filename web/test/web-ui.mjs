@@ -584,7 +584,10 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 320, height: 568 }, { width: 3
 
 for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 800, height: 1000 }, { width: 600, height: 400 }]) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport });
-  await context.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    if (window === window.top && !localStorage.getItem("webgba.prefs")) localStorage.setItem("webgba.prefs", JSON.stringify({ pad: "on", padSet: true }));
+  });
   const page = await context.newPage();
   await page.goto(URL_BASE);
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1");
@@ -613,7 +616,7 @@ for (const viewport of SKIP_MAIN ? [] : [{ width: 1280, height: 800 }, { width: 
   const selected = await page.evaluate(() => window.getSelection().toString().length);
   ok(`PC 창 ${viewport.width}x${viewport.height}: 끌어도 글자 선택 0`, selected === 0, String(selected));
   await page.click("#sheetClose");
-  ok(`PC 창 ${viewport.width}x${viewport.height}: 기능 버튼·가상 버튼 보임·겹침 0·마우스로 A`, info.tools === want && info.keys === 7 && !info.overlap && held === 1, JSON.stringify({ ...info, held }));
+  ok(`PC 창 ${viewport.width}x${viewport.height}: 기능 버튼·가상 버튼(설정에서 표시를 고른 PC — 기본은 숨김, 결정 300) 보임·겹침 0·마우스로 A`, info.tools === want && info.keys === 7 && !info.overlap && held === 1, JSON.stringify({ ...info, held }));
   await context.close();
 }
 

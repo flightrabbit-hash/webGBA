@@ -516,7 +516,8 @@ function boardLayout() {
   const landscape = document.body.dataset.layout === "landscape";
   const root = document.documentElement.style;
   const stage = el.stage.getBoundingClientRect();
-  root.setProperty("--mpb-top", `${Math.round(stage.bottom)}px`);
+  const below = document.body.dataset.pad === "off" ? el.frame.getBoundingClientRect().bottom : stage.bottom;
+  root.setProperty("--mpb-top", `${Math.round(below)}px`);
   if (document.body.dataset.board === "inline") {
     root.setProperty("--mpb-left", `${Math.round(stage.right)}px`);
     root.setProperty("--mpb-y", `${Math.round(stage.top)}px`);
@@ -803,14 +804,18 @@ function toast(text, level = "info", ms = TOAST_MS) {
 function placeToast() {
   const over = Boolean(state.sheet) || holds.has("dialog") || holds.has("choice");
   if (over !== el.toast.hasAttribute("data-over")) el.toast.toggleAttribute("data-over", over);
-  if (over) return;
-  const box = el.screen.getBoundingClientRect();
-  if (!box.width) return;
   const style = el.toast.style;
   const set = (name, value) => {
     const text = `${Math.round(value)}px`;
     if (style.getPropertyValue(name) !== text) style.setProperty(name, text);
   };
+  if (over) {
+    const foot = state.sheet && !holds.has("dialog") && !holds.has("choice") && !el.sheetFoot.hidden ? el.sheetFoot.getBoundingClientRect() : null;
+    set("--toast-foot", foot?.height ? window.innerHeight - foot.top + 8 : 0);
+    return;
+  }
+  const box = el.screen.getBoundingClientRect();
+  if (!box.width) return;
   set("--toast-l", box.left + 8);
   set("--toast-r", window.innerWidth - box.right + 8);
   set("--toast-b", window.innerHeight - box.bottom + 8);
@@ -3070,6 +3075,7 @@ function openSheet(name) {
   }
   hold("sheet", name !== "net");
   renderSheet();
+  if (!el.toast.hidden) placeToast();
   el.sheetClose.focus({ preventScroll: true });
 }
 
@@ -4997,6 +5003,7 @@ function wire() {
   el.sheet.addEventListener("click", (event) => event.target === el.sheet && closeSheet());
   el.dialog.addEventListener("click", (event) => event.target === el.dialog && state.dialogDone?.(null));
   el.toast.addEventListener("click", () => hideLater(el.toast));
+  document.addEventListener("pointerdown", () => !el.toast.hidden && el.toast.classList.contains("is-error") && hideLater(el.toast), { capture: true, passive: true });
   el.bar.addEventListener("click", (event) => event.target.closest?.("button")?.blur());
   el.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 

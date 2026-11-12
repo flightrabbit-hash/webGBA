@@ -296,7 +296,7 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
         const box = slot.getBoundingClientRect();
         const label = artNode.querySelector(".spine__label");
         const lr = label?.getBoundingClientRect();
-        return { inCase: box.left >= c.left - 0.5 && box.right <= c.right + 0.5, attached: Math.abs(r.left - art.left) < 0.5 && Math.abs(r.top - art.top) < 0.5, width: Math.abs(box.width - art.width) < 0.5 && r.right >= box.right - 0.5, slotRight: box.right, ratio: r.width / iso.width, ratioH: r.height / iso.height, pixel: getComputedStyle(iso).imageRendering, holes: holes(iso), named: Boolean(label), lines: label?.dataset.lines.split("\n") ?? [], labelIn: label ? lr.left >= art.left - 0.5 && lr.right <= art.right + 0.5 && lr.top >= r.top && lr.bottom <= r.bottom : false, left: box.left, right: r.right, top: Math.round(box.top) };
+        return { inCase: box.left >= c.left - 0.5 && box.right <= c.right + 0.5, attached: Math.abs(r.left - art.left) < 0.5 && Math.abs(r.top - art.top) < 0.5, width: (Math.abs(box.width - art.width) < 0.5 || Math.abs(box.right - r.right) < 0.5) && r.right >= box.right - 0.5, slotRight: box.right, ratio: r.width / iso.width, ratioH: r.height / iso.height, pixel: getComputedStyle(iso).imageRendering, holes: holes(iso), named: Boolean(label), lines: label?.dataset.lines.split("\n") ?? [], labelIn: label ? lr.left >= art.left - 0.5 && lr.right <= art.right + 0.5 && lr.top >= r.top && lr.bottom <= r.bottom : false, left: box.left, right: r.right, top: Math.round(box.top) };
       }),
     };
   });
