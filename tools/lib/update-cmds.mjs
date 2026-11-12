@@ -26,7 +26,7 @@ import { spawnSync } from "child_process";
 import { loadOrig, makeDelta, manifestOf } from "./wgbd-make.mjs";
 import { r2Config, r2Head, r2List, r2Put } from "./r2.mjs";
 import { r2Stats } from "./r2-stats.mjs";
-import { adminKey, privatePrune, privateUpload } from "./admin-cmds.mjs";
+import { adminKey, privatePrune, privateUpload, readGroupsFile } from "./admin-cmds.mjs";
 import { appDirs, appIndexPart, appPlan, appPublish, isAppDir, verifyAppDir, APP_BASE } from "./app-cmds.mjs";
 import { indexedApp } from "../../src-bundle/src/js/core/app-update.js";
 import { applyDelta, FEED_FORMAT, fromBase64, groupEntry, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
@@ -272,6 +272,13 @@ export async function feed({ dir, key, wgba, patches = [], olds = [], origs = []
   const root = path.dirname(path.resolve(dir));
   if (index && fs.existsSync(path.join(root, "index.json"))) await buildIndex(root, secret);
   return 0;
+}
+
+/** upload 의 발행 폴더(묶음 또는 게임 폴더) 옆 groups.json — roms.json 에 그룹을 넣을 때. */
+function groupsBeside(dir) {
+  if (!dir) return null;
+  for (const at of [dir, path.dirname(path.resolve(dir))]) if (fs.existsSync(path.join(at, "groups.json"))) return path.join(at, "groups.json");
+  return null;
 }
 
 function readIndexFile(root) {
@@ -639,17 +646,17 @@ export async function updateCommand(cmd, rest) {
     return verify(o.positional[0], { pub: o["--pub"] ?? null, key: o["--key"] ?? null, olds: o["--wgba"] });
   }
   if (cmd === "upload") {
-    const o = parseList(rest, [], ["--wgba"]);
+    const o = parseList(rest, ["--groups"], ["--wgba"]);
     if (o.positional.length > 1 || (!o.positional.length && !o["--wgba"].length)) return -1;
     if (o["--remote"] && !o["--dry-run"]) return -1;
     const flags = { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) };
-    if (o["--wgba"].length) await privateUpload(o["--wgba"], flags);
+    if (o["--wgba"].length) await privateUpload(o["--wgba"], { ...flags, groups: readGroupsFile(o["--groups"] ?? groupsBeside(o.positional[0])) });
     return o.positional.length ? upload(o.positional[0], flags) : 0;
   }
   if (cmd === "private-prune") {
-    const o = parseList(rest, []);
+    const o = parseList(rest, ["--groups"]);
     if (o.positional.length) return -1;
-    return privatePrune({ dryRun: Boolean(o["--dry-run"]) });
+    return privatePrune({ dryRun: Boolean(o["--dry-run"]), groups: readGroupsFile(o["--groups"] ?? null) });
   }
   if (cmd === "admin-key") {
     const o = parseList(rest, []);

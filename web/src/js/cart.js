@@ -293,89 +293,195 @@ export function drawFront(model, images, body) {
   return { canvas, textBox, paper: images.front ? "" : PAPER };
 }
 
-export const ISO = Object.freeze({ spine: 14, front: 40, back: 4, face: 44, band: 5, show: 20, ridge: 2, ridgeW: 8, strip: [2, 10] });
-export const SLOT = ISO.spine + ISO.show;
+const ISO_URL = "/art/rompack.png";
+const ISO_STRETCH = 5;
+const ISO_SHOW = 17;
+let isoTpl = null;
+let isoWork = null;
 
-export function isoBox() {
-  const { spine: S, front: F, back: B, face: Hf, band: tb, ridge: R, ridgeW } = ISO;
-  const W = S + F + B;
-  const ys = R + Math.floor((S - 1) / 4) + Math.floor(F / 2);
-  const sil = (x) => {
-    if (x < S) return ys - Math.floor(x / 4);
-    const edge = ys - Math.floor((S - 1) / 4);
-    if (x < S + F) return edge - Math.floor((x - S + 1) / 2);
-    return edge - Math.floor(F / 2) + (x - S - F + 1);
+const hslOf = ([r, g, b]) => {
+  const [R, G, B] = [r / 255, g / 255, b / 255];
+  const max = Math.max(R, G, B);
+  const min = Math.min(R, G, B);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === R ? (G - B) / d + (G < B ? 6 : 0) : max === G ? (B - R) / d + 2 : (R - G) / d + 4;
+  return [h * 60, s, l];
+};
+
+const rgbOfHsl = ([h, s, l]) => {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r, g, b].map((v) => Math.round((v + m) * 255));
+};
+
+/**
+ * 롬팩 시안(16색 그림) → 칸 정보. 몸체 색(붉은 계열)만 롬팩 색으로 바꾸고, 앞면은 라벨 가운데 두 열을 stretch 번 반복해
+ * 늘린다(반복마다 오른쪽이 1칸 올라감 = 2:1 사선 그대로). image = { width, height, data(RGBA) }.
+ */
+export function isoTemplate({ width, height, data }, stretch = ISO_STRETCH) {
+  let [x0, x1, y0, y1] = [width, 0, height, 0];
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (data[(y * width + x) * 4 + 3] >= 128) {
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x + 1);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y + 1);
+      }
+  const w0 = x1 - x0;
+  const h0 = y1 - y0;
+  const colors = [];
+  const counts = [];
+  const indexOf = new Map();
+  const src = new Uint8Array(w0 * h0).fill(255);
+  for (let y = 0; y < h0; y++)
+    for (let x = 0; x < w0; x++) {
+      const o = ((y + y0) * width + x + x0) * 4;
+      if (data[o + 3] < 128) continue;
+      const key = (data[o] << 16) | (data[o + 1] << 8) | data[o + 2];
+      if (!indexOf.has(key)) {
+        indexOf.set(key, colors.length);
+        colors.push([data[o], data[o + 1], data[o + 2]]);
+        counts.push(0);
+      }
+      const i = indexOf.get(key);
+      src[y * w0 + x] = i;
+      counts[i] += 1;
+    }
+  const hsl = colors.map(hslOf);
+  const kind = hsl.map(([h, s, l], i) => {
+    if (l < 0.08) return "line";
+    if (l > 0.55 && h > 15 && h < 50 && s > 0.15) return "strip";
+    if ((h < 30 || h > 330) && s > 0.08) return "body";
+    return "keep";
+  });
+  const paper = counts.reduce((best, n, i) => (kind[i] === "keep" && hsl[i][2] > 0.6 && n > (counts[best] ?? -1) ? i : best), -1);
+  const body = counts.reduce((best, n, i) => (kind[i] === "body" && n > (counts[best] ?? -1) ? i : best), -1);
+  const column = (grid, w, h, x, test) => {
+    let top = -1;
+    let bottom = -1;
+    let n = 0;
+    for (let y = 0; y < h; y++)
+      if (test(grid[y * w + x])) {
+        if (top < 0) top = y;
+        bottom = y + 1;
+        n += 1;
+      }
+    return { top, bottom, n };
   };
-  const top = (x) => sil(x) + tb;
-  const H = sil(S - 1) + tb + Hf;
-  const bottom = (x) => (x < S ? H - Math.floor((S - 1 - x) / 2) : H - Math.floor((x - S + 1) / 2));
-  const ridge = (x) => x >= S + F - ridgeW && x < S + F;
-  const [s0, s1] = ISO.strip;
-  const strip = (x) => [top(s0) + 4 + Math.floor((x - s0) / 2), bottom(x) - 4];
-  return { S, F, B, R, W, H, sil, top, bottom, ridge, strip };
+  const isPaper = (i) => i === paper;
+  const labelCols = [];
+  for (let x = 0; x < w0; x++) if (column(src, w0, h0, x, isPaper).n > 8) labelCols.push(x);
+  const mid = labelCols[0] + Math.floor((labelCols[labelCols.length - 1] - labelCols[0]) / 2);
+  const w = w0 + stretch * 2;
+  const h = h0 + stretch;
+  const idx = new Uint8Array(w * h).fill(255);
+  for (let x = 0; x < w; x++) {
+    let sx;
+    let dy;
+    if (x < mid) [sx, dy] = [x, stretch];
+    else if (x < mid + stretch * 2) [sx, dy] = [mid + ((x - mid) % 2), stretch - Math.floor((x - mid) / 2)];
+    else [sx, dy] = [x - stretch * 2, 0];
+    for (let y = 0; y < h0; y++) idx[(y + dy) * w + x] = src[y * w0 + sx];
+  }
+  const runs = (test) => {
+    const out = [];
+    for (let x = 0; x < w; x++) {
+      const r = column(idx, w, h, x, test);
+      if (r.n) out.push({ x, top: r.top, bottom: r.bottom });
+    }
+    return out;
+  };
+  const label = runs(isPaper).filter((r) => r.bottom - r.top > 8);
+  const strip = runs((i) => kind[i] === "strip");
+  const stripRight = strip[strip.length - 1].x;
+  let seam = stripRight + 1;
+  while (seam < w && column(idx, w, h, seam, (i) => kind[i] === "line").n < 30) seam++;
+  const stripRef = counts.reduce((best, n, i) => (kind[i] === "strip" && n > (counts[best] ?? -1) ? i : best), -1);
+  return { w, h, idx, colors, hsl, kind, body, paper, stripRef, seam, label, strip };
 }
 
-/** 롬팩 한 장(위에서 본 평행 투영, 2:1 사선): 옆면(라벨 띠) · 윗면 띠 · 앞면 틀 + 라벨 칸(롬팩 그림) · 뒷판 · 돌기. 1칸 = k 그림 픽셀. */
+export function loadIso() {
+  if (isoTpl) return Promise.resolve(isoTpl);
+  if (!isoWork) {
+    isoWork = (async () => {
+      const bitmap = await createImageBitmap(await (await fetch(ISO_URL)).blob());
+      const canvas = canvasOf(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0);
+      isoTpl = isoTemplate(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      return isoTpl;
+    })().catch((error) => {
+      isoWork = null;
+      throw error;
+    });
+  }
+  return isoWork;
+}
+
+export const isoInfo = () => isoTpl;
+export const isoSlot = () => (isoTpl ? isoTpl.seam + 1 + ISO_SHOW : 0);
+
+const ISO_PAPER = { sat: 0.45, light: [0.62, 0.84], lift: 0.32 };
+const ISO_STRIP = { sat: 0.35, light: [0.84, 0.94], lift: 0.5 };
+
+/** 시안 팔레트 → 이 롬팩 색: 몸체 색은 색상·채도를 바꾸고 밝기는 시안의 단계 비율 그대로, 그림 칸 종이·옆면 띠는 롬팩 색의 밝은 단계(글자가 읽히게 밝기 하한), 외곽선은 그대로. */
+function isoPalette(tpl, color) {
+  const [ht, st, lt] = hslOf(rgbOf(color) ?? [96, 104, 128]);
+  const [, sr, lr] = tpl.hsl[tpl.body];
+  const tint = ({ sat, light, lift }, offset = 0) => rgbOfHsl([ht, st * sat, Math.min(light[1], Math.max(light[0], lt + lift) + offset)]);
+  return tpl.colors.map((rgb, i) => {
+    if (i === tpl.paper) return tint(ISO_PAPER);
+    if (tpl.kind[i] === "strip") return tint(ISO_STRIP, tpl.hsl[i][2] - tpl.hsl[tpl.stripRef][2]);
+    if (tpl.kind[i] !== "body") return rgb;
+    const [, s, l] = tpl.hsl[i];
+    const w = Math.min(1, s / sr);
+    const light = Math.min(0.95, l * (1 - w) + ((l * lt) / lr) * w);
+    return rgbOfHsl([ht, Math.min(1, (s * st) / sr), light]);
+  });
+}
+
+/** 책장 롬팩(시안 그림 + 롬팩 색 + 라벨 칸 안 롬팩 그림). 시안 1화소 = k 그림 픽셀. */
 export function drawIso(model, art) {
+  const tpl = isoTpl;
   const { k } = model;
-  const { S, F, R, W, H, sil, top, bottom, ridge, strip } = isoBox();
-  const canvas = canvasOf(W * k, H * k);
+  const pal = isoPalette(tpl, model.color);
+  const small = canvasOf(tpl.w, tpl.h);
+  const sctx = small.getContext("2d");
+  const image = sctx.createImageData(tpl.w, tpl.h);
+  for (let i = 0; i < tpl.idx.length; i++) {
+    const c = tpl.idx[i];
+    if (c === 255) continue;
+    image.data.set([...pal[c], 255], i * 4);
+  }
+  sctx.putImageData(image, 0, 0);
+  const canvas = canvasOf(tpl.w * k, tpl.h * k);
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  const tone = tones(model.color);
-  const fill = (color, x, from, to) => {
-    if (to <= from) return;
-    ctx.fillStyle = color;
-    ctx.fillRect(x * k, from * k, k, (to - from) * k);
-  };
-  const [s0, s1] = ISO.strip;
-  const label = [S + 3, S + F - 3];
-  for (let x = 0; x < W; x++) {
-    const peak = sil(x) - (ridge(x) ? R : 0);
-    const t = top(x);
-    const b = bottom(x);
-    fill(tone.base, x, peak, t);
-    fill(tone.hi, x, sil(x) + 1, sil(x) + 3);
-    fill(tone.sh, x, t - 1, t);
-    if (x < S) {
-      fill(tone.lo, x, t, b);
-      if (x >= s0 && x < s1) {
-        const [a, c] = strip(x);
-        fill(PAPER, x, a + (x === s0 ? 1 : 0), c - (x === s1 - 1 ? 1 : 0));
-      }
-      if (x === s1 + 1) fill(tone.base, x, t + 1, b - 1);
-      if (x === S - 1) fill(tone.sh, x, t, b);
-    } else if (x < S + F) {
-      fill(tone.base, x, t, b);
-      if (x === S) fill(tone.hi, x, t, b - 1);
-      if (x >= label[0] && x < label[1]) {
-        fill(PAPER_LO, x, t + 5, b - 4);
-        if (x > label[0] && x < label[1] - 1) fill(PAPER, x, t + 6, b - 5);
-      }
-    } else {
-      fill(x === S + F ? tone.sh : tone.lo, x, Math.max(t, sil(x) + 1), b);
-    }
-    fill(OUTLINE, x, peak, peak + 1);
-    fill(OUTLINE, x, b - 1, b);
-    if (x === 0 || x === W - 1) fill(OUTLINE, x, peak, b);
-    if (ridge(x) && (!ridge(x - 1) || !ridge(x + 1))) fill(OUTLINE, x, peak, sil(x) + 1);
-  }
-  if (art) {
-    const inner = [label[0] + 1, label[1] - 1];
-    const cols = inner[1] - inner[0];
-    const rows = ISO.face - 11;
-    const scale = Math.min((cols * k) / art.w, (rows * k) / art.h);
+  ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
+  if (art && tpl.label.length > 2) {
+    const cols = tpl.label.slice(1, -1);
+    const rows = Math.min(...cols.map((r) => r.bottom - r.top - 2));
+    const scale = Math.min((cols.length * k) / art.w, (rows * k) / art.h);
     const dw = Math.max(1, Math.floor(art.w * scale));
     const dh = Math.max(1, Math.floor(art.h * scale));
-    const left = inner[0] * k + Math.floor((cols * k - dw) / 2);
+    const left = cols[0].x * k + Math.floor((cols.length * k - dw) / 2);
     const lift = Math.floor((rows * k - dh) / 2);
+    const byX = new Map(cols.map((r) => [r.x, r]));
     for (let dx = 0; dx < dw; dx++) {
-      const x = Math.floor((left + dx) / k);
+      const run = byX.get(Math.floor((left + dx) / k));
+      if (!run) continue;
       const sx = art.x + Math.floor(((dx + 0.5) * art.w) / dw);
-      ctx.drawImage(art.image, sx, art.y, 1, art.h, left + dx, (top(x) + 6) * k + lift, 1, dh);
+      const top = (run.top + 1) * k + lift;
+      ctx.drawImage(art.image, sx, art.y, 1, art.h, left + dx, top, 1, Math.min(dh, (run.bottom - 1) * k - top));
     }
   }
-  return { canvas, visible: SLOT * k };
+  return { canvas, visible: isoSlot() * k };
 }
 
 export function labelArt(model, images) {

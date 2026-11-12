@@ -15,6 +15,8 @@ const ID_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?$/;
 const LABEL_RE = /^data:image\/(png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const NAME_MAX = 120;
+const GROUPS = ["emu", "arcade", "mobile"];
+const CATEGORY_RE = /^[ -~]{1,24}$/;
 
 const textOk = (value) => typeof value === "string" && value.length > 0 && value.length <= NAME_MAX;
 
@@ -26,9 +28,14 @@ export function cleanNames(value) {
   return Object.keys(out).length ? out : null;
 }
 
-/** 게임 하나(머리 읽은 값 + 버킷 객체 정보) → roms.json 항목. */
-export function romItem({ id, version, key, size, etag = "", names = null, short = null, label = null }) {
-  return { id, version, key, size, etag, file: saveFileName({ id, version, names }), names: cleanNames(names), short: cleanNames(short), label: typeof label === "string" && LABEL_RE.test(label) && label.length <= ROMS.LABEL_MAX ? label : null };
+/** 게임 하나(머리 읽은 값 + 버킷 객체 정보) → roms.json 항목. group·category = 라이브러리 그룹(발행 묶음 groups.json, 없으면 넣지 않음). */
+export function romItem({ id, version, key, size, etag = "", names = null, short = null, label = null, group = null, category = null }) {
+  const item = { id, version, key, size, etag, file: saveFileName({ id, version, names }), names: cleanNames(names), short: cleanNames(short), label: typeof label === "string" && LABEL_RE.test(label) && label.length <= ROMS.LABEL_MAX ? label : null };
+  if (GROUPS.includes(group)) {
+    item.group = group;
+    if (typeof category === "string" && CATEGORY_RE.test(category)) item.category = category;
+  }
+  return item;
 }
 
 export function romsText(items, time) {
@@ -49,8 +56,8 @@ export function readRoms(text) {
   for (const item of data.items.slice(0, ROMS.ITEMS_MAX)) {
     if (!item || typeof item !== "object" || !ID_RE.test(item.id ?? "") || !VERSION_RE.test(item.version ?? "")) continue;
     if (item.key !== `wgba/${item.id}/${item.version}.wgba` || !Number.isSafeInteger(item.size) || item.size <= 0) continue;
-    const { file, names, short, label } = romItem(item);
-    out.push({ key: item.key, id: item.id, version: item.version, names, short, size: item.size, file, label });
+    const { file, names, short, label, group, category } = romItem(item);
+    out.push({ key: item.key, id: item.id, version: item.version, names, short, size: item.size, file, label, ...(group ? { group, ...(category ? { category } : {}) } : {}) });
   }
   return out;
 }

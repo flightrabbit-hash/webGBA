@@ -2733,7 +2733,7 @@ function spineArt(rom, look) {
   return art;
 }
 
-const SPINE_TEXT = { size: 14, line: 15, lines: 2, slope: 0.5 };
+const SPINE_TEXT = { size: 12, line: 14, lines: 1 };
 
 function nameLines(ctx, raw, room) {
   const fits = (text) => ctx.measureText(text).width <= room;
@@ -2768,42 +2768,63 @@ function nameLines(ctx, raw, room) {
   return lines;
 }
 
-/** 옆면 라벨 띠의 이름: 원래 글꼴 크기로 그린 뒤 옆면 기울기(2:1)대로 열마다 내려 그래픽으로 줄임(두 줄이 띠 폭에 맞게). */
+/** 옆면 라벨 띠의 이름(한 줄, 넘치면 말줄임): 굵은 글꼴 원래 크기로 그린 뒤 잉크 상자를 띠 가운데로 맞추고, 띠 폭에 맞게 줄이며 띠 기울기대로 열마다 내림. */
 function spineLabel(name, unit) {
-  const { ISO, isoBox } = cartArt;
-  const box = isoBox();
-  const [s0, s1] = ISO.strip;
-  const width = (s1 - s0) * unit;
-  const [top0, bottom0] = box.strip(s0);
-  const height = (bottom0 - top0 - 2) * unit;
+  const tpl = cartArt.isoInfo();
+  if (!tpl?.strip.length) return null;
+  const first = tpl.strip[0];
+  const last = tpl.strip[tpl.strip.length - 1];
+  const slope = (last.top - first.top) / Math.max(1, last.x - first.x);
+  const rows = Math.floor(Math.min(...tpl.strip.map((r) => r.bottom - (first.top + slope * (r.x - first.x)))));
+  const width = (last.x + 1 - first.x) * unit;
+  const height = rows * unit;
   const across = SPINE_TEXT.line * SPINE_TEXT.lines + 2;
   const scale = width / across;
   const along = height / scale;
   const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
-  const texture = document.createElement("canvas");
-  texture.width = Math.ceil(across * dpr);
-  texture.height = Math.ceil(along * dpr);
-  const tc = texture.getContext("2d");
-  tc.scale(dpr, dpr);
-  tc.font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-ui").trim()}`;
-  const lines = nameLines(tc, name, along - 6);
+  const tw = Math.ceil(across * dpr);
+  const th = Math.ceil(along * dpr);
+  const raw = document.createElement("canvas");
+  raw.width = tw;
+  raw.height = th;
+  const rc = raw.getContext("2d", { willReadFrequently: true });
+  rc.scale(dpr, dpr);
+  rc.font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim()}`;
+  const lines = nameLines(rc, name, along - 4);
   if (!lines.length) return null;
-  tc.fillStyle = cartArt.LABEL_INK;
-  tc.textBaseline = "middle";
-  tc.translate(across, 0);
-  tc.rotate(Math.PI / 2);
+  rc.fillStyle = cartArt.LABEL_INK;
+  rc.textBaseline = "middle";
+  rc.translate(across, 0);
+  rc.rotate(Math.PI / 2);
   const start = (across - lines.length * SPINE_TEXT.line) / 2;
-  lines.forEach((line, i) => tc.fillText(line, Math.round((along - tc.measureText(line).width) / 2), start + SPINE_TEXT.line * (i + 0.5)));
+  lines.forEach((line, i) => rc.fillText(line, (along - rc.measureText(line).width) / 2, start + SPINE_TEXT.line * (i + 0.5)));
+  const ink = rc.getImageData(0, 0, tw, th).data;
+  let [ix0, ix1, iy0, iy1] = [tw, -1, th, -1];
+  for (let y = 0; y < th; y++)
+    for (let x = 0; x < tw; x++)
+      if (ink[(y * tw + x) * 4 + 3] > 24) {
+        ix0 = Math.min(ix0, x);
+        ix1 = Math.max(ix1, x);
+        iy0 = Math.min(iy0, y);
+        iy1 = Math.max(iy1, y);
+      }
+  if (ix1 < 0) return null;
+  const texture = document.createElement("canvas");
+  texture.width = tw;
+  texture.height = th;
+  texture.getContext("2d").drawImage(raw, Math.floor((tw - (ix1 - ix0 + 1)) / 2) - ix0, Math.floor((th - (iy1 - iy0 + 1)) / 2) - iy0);
   const out = document.createElement("canvas");
   out.className = "spine__label";
   out.width = Math.round(width * dpr);
-  out.height = Math.round((height + width * SPINE_TEXT.slope) * dpr);
-  Object.assign(out.style, { left: `${s0 * unit}px`, top: `${(top0 + 1) * unit}px`, width: `${width}px`, height: `${height + width * SPINE_TEXT.slope}px` });
+  out.height = Math.round((height + width * slope) * dpr);
+  Object.assign(out.style, { left: `${first.x * unit}px`, top: `${first.top * unit}px`, width: `${width}px`, height: `${out.height / dpr}px` });
   out.dataset.lines = lines.join("\n");
+  out.dataset.slope = String(slope);
+  out.dataset.rows = String(height * dpr);
   const oc = out.getContext("2d");
   oc.imageSmoothingEnabled = true;
   oc.imageSmoothingQuality = "high";
-  for (let dc = 0; dc < out.width; dc++) oc.drawImage(texture, dc / scale, 0, 1 / scale, texture.height, dc, dc * SPINE_TEXT.slope, 1, height * dpr);
+  for (let dc = 0; dc < out.width; dc++) oc.drawImage(texture, dc / scale, 0, 1 / scale, th, dc, dc * slope, 1, height * dpr);
   return out;
 }
 
@@ -3021,24 +3042,27 @@ const libSort = () => (state.prefs.libSort === "name" ? "name" : "recent");
 
 const libGroup = () => (GAME_GROUPS.includes(state.prefs.libGroup) ? state.prefs.libGroup : "all");
 
-function groupBar() {
+const adminGroup = () => (GAME_GROUPS.includes(state.prefs.adminGroup) ? state.prefs.adminGroup : "all");
+
+/** 초록 그룹 버튼 4개(라디오). 누르면 그 자리에서 선택 표시를 바꾸고 onPick(id). */
+function groupButtons(value, onPick) {
   const bar = make("div", "lib__groups");
   bar.setAttribute("role", "radiogroup");
   bar.setAttribute("aria-label", t("web.lib.group"));
-  const now = libGroup();
-  for (const id of ["all", ...GAME_GROUPS]) {
+  const nodes = ["all", ...GAME_GROUPS].map((id) => {
     const label = t(`web.lib.group.${id}`);
     const node = button({ label, title: t("web.lib.groupShow", { group: label }), kind: "small", action: "group", onClick: () => {
-      if (libGroup() === id) return;
-      savePrefs({ libGroup: id });
-      renderSheet();
+      if (node.getAttribute("aria-checked") === "true") return;
+      for (const other of nodes) other.setAttribute("aria-checked", String(other === node));
+      onPick(id);
     } });
     node.classList.add("lib__group");
     node.dataset.group = id;
     node.setAttribute("role", "radio");
-    node.setAttribute("aria-checked", String(id === now));
-    bar.append(node);
-  }
+    node.setAttribute("aria-checked", String(id === value));
+    return node;
+  });
+  bar.append(...nodes);
   return bar;
 }
 
@@ -3061,6 +3085,7 @@ async function renderLibrary() {
   } catch {
     failed = true;
   }
+  await cartArt.loadIso().catch((error) => logLine("WARN", `롬팩 그림을 읽지 못했습니다: ${reason(error)}`));
   const stored = roms.length;
   const group = libGroup();
   if (group !== "all") roms = roms.filter((rom) => groupOf(rom) === group);
@@ -3074,7 +3099,7 @@ async function renderLibrary() {
   if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
   const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
   // 책장 한 칸 높이 = 위 표시 자리 14 + 롬팩 그림 + 선반 14(그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 보이는 앞면(크면 여러 칸)
-  const isoH = cartArt.isoBox().H;
+  const isoH = cartArt.isoInfo()?.h ?? 0;
   const spineH = Math.max(isoH * cartArt.UNIT, ...looks.map((look) => isoH * look.model.unit));
 
   const card = make("section", "lib__card");
@@ -3087,10 +3112,13 @@ async function renderLibrary() {
   head.append(make("span", "lib__count", t("web.lib.count", { count: roms.length })));
   if (admin.isOn()) head.append(button({ label: t("admin.import"), icon: "download", title: t("admin.import"), kind: "small", action: "admin-import", onClick: () => admin.importRoms() }));
   head.append(sortBtn);
-  const groups = groupBar();
+  const groups = groupButtons(libGroup(), (id) => {
+    savePrefs({ libGroup: id });
+    renderSheet();
+  });
   const shelf = make("div", "lib__case");
   shelf.style.setProperty("--slot-h", `${spineH + 28}px`);
-  const slotW = cartArt.SLOT * cartArt.UNIT;
+  const slotW = cartArt.isoSlot() * cartArt.UNIT;
   shelf.style.setProperty("--slot-w", `${slotW}px`);
   shelf.setAttribute("role", "group");
   shelf.setAttribute("aria-label", t("web.library"));
@@ -5175,6 +5203,12 @@ const admin = createAdminFlow({
     return t("admin.list.text");
   },
   allText: (count) => t("admin.emptyAll", { count }),
+  groupsReady: () => updater.groups().then((table) => table && applyGroups(table)).catch(() => {}),
+  groupOf: (id) => groupTable.get(id)?.group ?? "",
+  groupBar: (onPick) => ({ node: groupButtons(adminGroup(), (id) => {
+    savePrefs({ adminGroup: id });
+    onPick(id);
+  }), value: adminGroup(), emptyText: t("web.lib.groupEmpty") }),
   icon: (name) => iconNode(name),
   notify: (text, level = "info") => toast(text, level),
   changed: () => {

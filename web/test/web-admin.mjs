@@ -1,6 +1,7 @@
 // 웹 관리자 모드 "롬 가져오기" 시험(로컬 전용 — 흉내 비공개 R2·가짜 Upstash, 실제 R2·Vercel 안 씀).
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-admin.mjs --dist <웹 빌드> --shots <캡처 폴더> [--out <결과 json>]
 // /api/v1/admin/* 요청은 브라우저 안에서 가로채 서버 함수(api/_admin/server.js)로 바로 넘긴다(Origin 등 머리는 브라우저가 붙인 그대로).
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -11,6 +12,7 @@ import { ADMIN, createAdmin } from "../../api/_admin/server.js";
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { startFakeUpstash } from "../../tools/test/fake-upstash.mjs";
 import { keyFile, startFakeR2 } from "../../tools/test/fake-r2-private.mjs";
+import { publicOf, signText } from "../../tools/lib/update-cmds.mjs";
 
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
 const { chromium } = require("playwright-core");
@@ -198,14 +200,21 @@ async function adminButton(page) {
   });
 }
 
+// 롬 가져오기 그룹 버튼: 업데이트 목록(흉내, 브라우저 안에서 가로챔)의 groups — alpha = 아케이드, beta = 모바일, gamma = 없음(에뮬)
+const INDEX_URL = "http://127.0.0.1:9598/index.json";
+const { privateKey: indexKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+const indexSigned = JSON.stringify({ time: "2026-11-12T00:00:00Z", feeds: {}, groups: { "io.example.alpha": { group: "arcade", category: "CPS1" }, "io.example.beta": { group: "mobile", category: "Android" } } });
+const INDEX_TEXT = JSON.stringify({ wgbaIndex: 1, signed: indexSigned, signature: signText(indexSigned, indexKey), feeds: {} });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
-await context.addInitScript(() => {
+await context.route(INDEX_URL, (route) => route.fulfill({ status: 200, contentType: "application/json", body: INDEX_TEXT }));
+await context.addInitScript(([url, key]) => {
   Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
   if (window !== window.top) return;
+  localStorage.setItem("webgba.updateTest", JSON.stringify({ index: { url, key } }));
   localStorage.setItem("webgba.installHint", "1");
   const prefs = JSON.parse(localStorage.getItem("webgba.prefs") ?? "{}");
   if (prefs.lang !== "ko") localStorage.setItem("webgba.prefs", JSON.stringify({ ...prefs, lang: "ko" }));
-});
+}, [INDEX_URL, publicOf(indexKey)]);
 const calls = [];
 await context.route("**/api/v1/admin/**", async (route) => {
   const req = route.request();
@@ -311,6 +320,30 @@ try {
   const first = await page.evaluate(() => [...document.querySelectorAll("#dialog .upick__item")].map((n) => `${n.querySelector(".upick__name").textContent}|${n.querySelector(".upick__meta").textContent}|${n.querySelector(".upick__art img") ? "그림" : ""}`));
   ok("목록 = 게임별 최신 버전 · 이름(현재 언어) · 버전·크기 · 라벨", first.length === 3 && first.some((r) => r.startsWith("알파|버전 1.2.0") && r.endsWith("그림")) && first.some((r) => r.startsWith("ガンマ|")), first.join(" / "));
   await page.screenshot({ path: path.join(opt.shots, "05_목록.png") });
+  {
+    const shown = () => page.$$eval("#dialog .upick__item", (n) => n.filter((x) => !x.hidden).map((x) => x.dataset.key.split("/")[1]).sort().join());
+    const pick = async (id) => {
+      await page.click(`#dialog .lib__groups [data-group="${id}"]`);
+      await page.waitForTimeout(200);
+    };
+    const bar = await page.evaluate(() => [...document.querySelectorAll("#dialog .lib__groups .btn")].map((n) => ({ id: n.dataset.group, label: n.textContent.trim(), checked: n.getAttribute("aria-checked"), top: n.getBoundingClientRect().top, bottom: n.getBoundingClientRect().bottom, height: n.getBoundingClientRect().height })));
+    const spreadOf = (k) => Math.max(...bar.map((b) => b[k])) - Math.min(...bar.map((b) => b[k]));
+    ok("롬 가져오기: 초록 그룹 버튼 4개(전체·에뮬·아케이드·모바일) · 기본 전체 · 상단·하단·높이 일치", bar.map((b) => b.label).join() === "전체,에뮬,아케이드,모바일" && bar[0].checked === "true" && spreadOf("top") === 0 && spreadOf("bottom") === 0 && spreadOf("height") === 0, JSON.stringify(bar.map((b) => `${b.label}:${b.checked}`)));
+    await inkCenter(page, "롬 가져오기 그룹 버튼", "#dialog .lib__groups .btn");
+    await pick("arcade");
+    const arcade = await shown();
+    await page.click('#dialog .upick__item[data-key="wgba/io.example.alpha/1.2.0.wgba"] .upick__check');
+    await page.screenshot({ path: path.join(opt.shots, "05c_목록_그룹_아케이드.png") });
+    await pick("mobile");
+    const mobile = await shown();
+    await pick("emu");
+    const emu = await shown();
+    await pick("all");
+    const keep = await page.evaluate(() => ({ alpha: document.querySelector('#dialog .upick__item[data-key="wgba/io.example.alpha/1.2.0.wgba"] .upick__check').getAttribute("aria-checked"), pref: JSON.parse(localStorage.getItem("webgba.prefs")).adminGroup, lib: JSON.parse(localStorage.getItem("webgba.prefs")).libGroup ?? "" }));
+    ok("롬 가져오기 그룹: 아케이드 = alpha · 모바일 = beta · 에뮬 = gamma(목록 groups 에 없음) · 전체로 돌아와도 체크 유지 · 고른 값 기억(라이브러리와 따로)", arcade === "io.example.alpha" && mobile === "io.example.beta" && emu === "Gamma Land.wgba" && (await shown()) === "Gamma Land.wgba,io.example.alpha,io.example.beta" && keep.alpha === "true" && keep.pref === "all" && keep.lib === "", JSON.stringify({ arcade, mobile, emu, keep }));
+    await page.click('#dialog .upick__item[data-key="wgba/io.example.alpha/1.2.0.wgba"] .upick__check');
+    await page.waitForTimeout(150);
+  }
   await rowAlign(page, "목록");
   await inkCenter(page, "목록 글", "#dialog .upick__name, #dialog .upick__meta, #dialog .zpick__allLabel");
   const start = await page.evaluate(() => ({ checked: [...document.querySelectorAll("#dialog .upick__check")].filter((n) => n.getAttribute("aria-checked") === "true").length, all: document.querySelector("#dialog .zpick__all").getAttribute("aria-checked"), rowButtons: document.querySelectorAll("#dialog .upick__btn").length, go: document.querySelector('#dialog [data-action="admin-1"]').disabled, label: document.querySelector('#dialog [data-action="admin-1"]').textContent.trim() }));

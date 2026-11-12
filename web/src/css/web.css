@@ -3015,6 +3015,10 @@ body[data-layout="landscape"] .lib__shelf {
   border-bottom: var(--px) solid var(--line);
 }
 
+.upick__item[hidden] {
+  display: none;
+}
+
 .upick__item.is-off {
   cursor: default;
 }

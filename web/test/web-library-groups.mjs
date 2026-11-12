@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { decodePng } from "./png.mjs";
+const { encode: encodePng } = createRequire(import.meta.url)("../../tools/test/png.cjs");
 import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { publicOf, signText } from "../../tools/lib/update-cmds.mjs";
 
@@ -136,7 +137,7 @@ async function seed(page, extra = 0) {
       ["arc", "dev.example.arc", "Three Wonders", "#c0392b", ["#3a1046", "#e0b040", "#f2f4fa"]],
       ["neo", "dev.example.neo", "Metal Slug", "#2c3e50", ["#5d4a2e", "#8c6b3f", "#d94b2b"]],
       ["mob", "dev.example.mob", "Pocket Run", "#7a3bb0", ["#1e5aa8", "#f2f4fa", "#ffd23f"]],
-      ["unk", "dev.example.unk", "Local Test", "#d9a02b", null],
+      ["unk", "dev.example.unk", "Local Test Game With A Very Long Title", "#f2e6a0", null],
     ];
     for (const [id, gameId, title, color, art] of games) {
       const carts = art ? [{ part: "label", bytes: await label(...art), format: "png", width: 96, height: 64 }] : [];
@@ -302,7 +303,46 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
   const rows = [...new Set(shelf.slots.map((s) => s.top))].map((top) => shelf.slots.filter((s) => s.top === top).length);
   ok("롬팩 3D(위에서 본 평행 투영): 그림 한 장 · 실루엣 안 빈 화소 0(옆면·앞면·윗면·뒷판 한 덩어리) · 칸 폭 = 옆면 + 보이는 앞면(앞면은 칸 끝 이상) · 정수 배율 · 가장 가까운 점", shelf.slots.every((s) => s.attached && s.width && s.holes === 0 && Number.isInteger(+s.ratio.toFixed(3)) && Math.abs(s.ratio - s.ratioH) < 0.001 && s.pixel === "pixelated"), JSON.stringify([...new Set(shelf.slots.map((s) => `${s.ratio}/${s.pixel}/빈 ${s.holes}`))]));
   const named = shelf.slots.filter((s) => s.named);
-  ok("옆면 이름: 라벨 띠 안 그래픽(canvas) · 긴 이름 2줄·짧은 이름 1줄 · 옆면 칸 안", named.length === shelf.slots.length && named.every((s) => s.labelIn && s.lines.length >= 1 && s.lines.length <= 2) && named.some((s) => s.lines.length === 2) && named.some((s) => s.lines.length === 1), JSON.stringify(named.slice(0, 6).map((s) => s.lines.join("/"))));
+  ok("옆면 이름: 라벨 띠 안 그래픽(canvas) · 한 줄(긴 이름은 끝을 …) · 옆면 칸 안", named.length === shelf.slots.length && named.every((s) => s.labelIn && s.lines.length === 1) && named.some((s) => s.lines[0].endsWith("…")) && named.some((s) => !s.lines[0].endsWith("…")), JSON.stringify(named.slice(0, 6).map((s) => s.lines.join("/"))));
+  const inkMargins = await page.evaluate(() =>
+    [...document.querySelectorAll(".lib__case .spine__label")].map((c) => {
+      const data = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const slope = Number(c.dataset.slope);
+      const rows = Number(c.dataset.rows);
+      let left = -1;
+      let right = -1;
+      let top = Infinity;
+      let bottom = Infinity;
+      for (let x = 0; x < c.width; x++) {
+        let first = -1;
+        let last = -1;
+        for (let y = 0; y < c.height; y++)
+          if (data[(y * c.width + x) * 4 + 3] > 24) {
+            if (first < 0) first = y;
+            last = y;
+          }
+        if (first < 0) continue;
+        if (left < 0) left = x;
+        right = x;
+        top = Math.min(top, first - x * slope);
+        bottom = Math.min(bottom, x * slope + rows - 1 - last);
+      }
+      return { name: c.dataset.lines, across: [left, c.width - 1 - right], along: [+top.toFixed(1), +bottom.toFixed(1)] };
+    }),
+  );
+  const worst = Math.max(...inkMargins.map((m) => Math.max(Math.abs(m.across[0] - m.across[1]), Math.abs(m.along[0] - m.along[1]))));
+  ok(`옆면 이름 잉크 상자 = 띠 가운데(띠 폭 방향·이름 방향 모두, 차이 ${worst} 기기 px · 홀수 1화소 허용)`, inkMargins.length > 0 && worst <= 1.5, JSON.stringify(inkMargins.slice(0, 4)));
+  for (const [id, file] of [["arc", "옆면이름_짧은이름_4배.png"], ["unk", "옆면이름_긴이름_4배.png"]]) {
+    const box = await page.$eval(`.spine[data-key="rom:${id}"] .spine__art`, (n) => { const r = n.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; });
+    const shot = decodePng(await page.screenshot({ clip: box }));
+    const big = Buffer.alloc(shot.width * 2 * shot.height * 2 * 4);
+    for (let y = 0; y < shot.height * 2; y++)
+      for (let x = 0; x < shot.width * 2; x++) {
+        const o = ((y >> 1) * shot.width + (x >> 1)) * 4;
+        big.set(shot.data.subarray(o, o + 4), (y * shot.width * 2 + x) * 4);
+      }
+    fs.writeFileSync(path.join(opt.shots, file), encodePng(big, shot.width * 2, shot.height * 2));
+  }
   const firstRow = shelf.slots.filter((s) => s.top === shelf.slots[0].top);
   const margins = [firstRow[0].left - shelf.inner.l, shelf.inner.r - firstRow[firstRow.length - 1].right];
   const gaps = firstRow.slice(1).map((s, i) => +(s.left - firstRow[i].slotRight).toFixed(2));
