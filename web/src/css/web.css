@@ -4800,3 +4800,106 @@ body[data-layout="landscape"] .mpb__panel {
   height: 36px;
   margin: 0;
 }
+
+:root {
+  --mobile-drop: 0.05;
+  --mobile-keypad-drop-landscape: 0.06;
+}
+
+.keypad,
+.key--soft1,
+.key--soft2,
+.key--clear {
+  display: none;
+}
+
+body[data-mobile] .face,
+body[data-mobile] .key--l,
+body[data-mobile] .key--r,
+body[data-mobile] .key--select,
+body[data-mobile] .key--start {
+  display: none;
+}
+
+body[data-mobile] .key--soft1:not([data-off]),
+body[data-mobile] .key--soft2:not([data-off]),
+body[data-mobile] .key--clear:not([data-off]) {
+  display: flex;
+}
+
+body[data-mobile] .keypad {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: var(--keypad-gap, 4px);
+  justify-content: center;
+  align-content: center;
+}
+
+body[data-mobile] .keypad .key--ok {
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin-top: var(--keypad-gap, 4px);
+}
+
+body[data-layout="portrait"][data-mobile] .stage {
+  padding-top: var(--mobile-drop-px, 0px);
+}
+
+body[data-layout="portrait"][data-mobile] .key--soft1 {
+  grid-area: l;
+  justify-self: start;
+}
+
+body[data-layout="portrait"][data-mobile] .key--soft2 {
+  grid-area: r;
+  justify-self: end;
+}
+
+body[data-layout="portrait"][data-mobile] .key--clear {
+  grid-area: sel;
+  justify-self: start;
+}
+
+body[data-layout="portrait"][data-mobile] .keypad {
+  grid-area: face;
+  justify-self: end;
+  top: var(--face-nudge, 0px);
+}
+
+body[data-layout="landscape"][data-mobile] .key--soft1 {
+  grid-area: l;
+  justify-self: start;
+  align-self: start;
+  margin: var(--lr-top, 8px) 0 0 10px;
+}
+
+body[data-layout="landscape"][data-mobile] .key--soft2 {
+  grid-area: r;
+  justify-self: end;
+  align-self: start;
+  margin: var(--lr-top, 8px) 10px 0 0;
+}
+
+body[data-layout="landscape"][data-mobile] .key--clear {
+  grid-area: sel;
+  place-self: center;
+  margin-bottom: var(--pill-bottom, 10px);
+}
+
+body[data-layout="landscape"][data-mobile] .keypad {
+  grid-area: face;
+  grid-row: 1 / -1;
+  place-self: center;
+  top: calc(var(--band-shift, 0px) + var(--face-nudge, 0px) + var(--mobile-keypad-drop-px, 0px));
+}
+
+body[data-pad="overlay"][data-mobile] .keypad {
+  grid-row: auto;
+  top: 0;
+}
+
+body[data-mobile] .keypad .key[data-off] {
+  display: flex;
+  visibility: hidden;
+}

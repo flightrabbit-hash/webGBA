@@ -1,6 +1,6 @@
 import { deflate, inflate } from "../vendor/pako.js";
 import { bpsApply, concat, romPayloadFrom, sha1Bytes, sha1Hex } from "./wgbp.js";
-import { compareVersions, FEED_LOOPBACK_RE, feedUrlOk, ID_RE, keyOk, KIND, readTocFrom, unpackRom, VERSION_RE } from "./wgba-format.js";
+import { CATEGORY_RE, compareVersions, FEED_LOOPBACK_RE, feedUrlOk, GAME_GROUPS, ID_RE, keyOk, KIND, readTocFrom, unpackRom, VERSION_RE } from "./wgba-format.js";
 
 export { feedUrlOk, keyOk };
 
@@ -229,8 +229,7 @@ export async function verifyIndex(text, key, { url = "", memory = null } = {}) {
   return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps), groups: readGroups(signed.groups) };
 }
 
-export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
-const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;
+export { GAME_GROUPS };
 
 export function groupEntry(value) {
   if (!value || typeof value !== "object" || !GAME_GROUPS.includes(value.group)) return null;
