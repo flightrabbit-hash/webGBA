@@ -2,8 +2,9 @@
 //
 //   node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm|.wgba> --manifest <manifest.json>
 //                       [--cart-dir <폴더>] [--label <그림>] [--front <그림>] [--spine <그림>]
-//                       [--js <게임.js>] [--js-store] [--data <이름>=<파일> …] [--data-store] [--rom <롬>] [--app <앱 폴더|.zip>]
+//                       [--js <게임.js>] [--js-store] [--data <이름>=<파일> …] [--data-store] [--rom <롬>] [--app <앱 폴더|.zip|.apk>]
 //   (.wmba = 같은 형식의 모바일 게임, 규격 13장: --app 이 앱 파일(jar·리소스·앱 설명)을 WMFS 묶음으로 롬 조각에 넣고, 설명서에 mobile 이 있어야 함)
+//   (.wapk = 처음부터 Android 로 만든 게임, 규격 14장: 설명서 mobile.platform "Android", --app 에 .apk 를 그대로 줘도 됨)
 //   node tools/wgba.mjs info <파일>                   목차·설명서 요약(파일 앞부분만 읽음). 목차가 없으면 옛 롬 구획 정보
 //   node tools/wgba.mjs check <파일> [--quick]        규격 10장 검사. 오류가 있으면 끝 상태 1(--quick: 롬을 풀지 않음)
 //   node tools/wgba.mjs extract <파일> <조각> <출력>  조각 내용을 씀. code → 실행 가능한 wasm(머리 붙임), rom → 풀린 롬
@@ -34,6 +35,9 @@ import {
   unpackRom,
   wasmSections,
   buildId,
+  androidOf,
+  gameExt,
+  isAndroid,
   isMobile,
   packAppBundle,
   shownName,
@@ -189,7 +193,11 @@ async function info(file) {
       if (isMobile(m)) {
         const mo = m.mobile ?? {};
         const keys = (m.input?.buttons ?? []).map((b) => b.role ?? b.id).join(" ");
-        console.log(`모바일  ${mo.platform ?? "?"} · AID ${mo.aid ?? "-"} · PID ${mo.pid ?? "-"} · MClass ${mo.mclass ?? "-"}${mo.appVersion ? ` · 앱 ${mo.appVersion}` : ""}`);
+        if (isAndroid(m)) {
+          const a = androidOf(m);
+          console.log(`Android ${mo.package ?? "패키지 없음"}${mo.appVersion ? ` · 앱 ${mo.appVersion}` : ""}${mo.versionCode !== undefined ? ` (${mo.versionCode})` : ""}${mo.minSdk ? ` · minSdk ${mo.minSdk}` : ""}`);
+          console.log(`방향    ${a.orientation}${mo.orientation ? "" : "(기본)"} · 입력 ${a.input}${mo.input ? "" : "(기본)"}`);
+        } else console.log(`모바일  ${mo.platform ?? "?"} · AID ${mo.aid ?? "-"} · PID ${mo.pid ?? "-"} · MClass ${mo.mclass ?? "-"}${mo.appVersion ? ` · 앱 ${mo.appVersion}` : ""}`);
         console.log(`키      ${keys}`);
         console.log(`사용 키  ${Array.isArray(mo.keys) ? mo.keys.join(" ") : "정보 없음(전부 표시)"}`);
         const shown = Object.fromEntries(TEXT_LANGS.map((lang) => [lang, shownName(typeof m.name === "string" ? m.name : m.name?.[pickTextKey(m.name, lang)], m)]));
@@ -225,10 +233,21 @@ async function legacyInfo(file) {
   return 0;
 }
 
+/** 확장자 ↔ 설명서(.wapk = mobile.platform Android, .wmba = 그 밖 mobile, .wgba = 나머지). 맞으면 "". */
+export function extProblem(file, manifest) {
+  const ext = (/\.(wgba|wmba|wapk)$/i.exec(file)?.[1] ?? "").toLowerCase();
+  const want = gameExt(manifest);
+  if (!ext || ext === want) return "";
+  const name = path.basename(file);
+  if (want === "wapk") return `설명서 mobile.platform 이 Android 이면 확장자는 .wapk 입니다(규격 14장): ${name}`;
+  if (want === "wmba") return `설명서에 mobile 이 있으면 확장자는 .wmba 입니다(규격 13장): ${name}`;
+  return ext === "wapk" ? `.wapk 는 설명서 mobile.platform 이 Android 여야 합니다(규격 14장): ${name}` : `.wmba 는 설명서에 mobile 이 있어야 합니다(규격 13장): ${name}`;
+}
+
 async function check(file, quick) {
   const res = await checkWgba(new Uint8Array(fs.readFileSync(file)), { deep: !quick });
-  const wmba = /\.wmba$/i.test(file);
-  if (res.manifest && wmba !== Boolean(res.manifest.mobile)) res.errors.push(wmba ?".wmba 인데 설명서에 mobile 이 없습니다(규격 13장)" : "설명서에 mobile 이 있는 파일은 확장자가 .wmba 여야 합니다(규격 13장)");
+  const extError = res.manifest ? extProblem(file, res.manifest) : "";
+  if (extError) res.errors.push(extError);
   if (res.appFiles) console.log(`앱 파일 ${res.appFiles.length}개 · ${res.appFiles.slice(0, 6).map((f) => f.name).join(" · ")}${res.appFiles.length > 6 ? " …" : ""}`);
   for (const w of res.warnings) console.log(`경고  ${w}`);
   for (const e of res.errors) console.log(`오류  ${e}`);
@@ -290,9 +309,9 @@ export async function main(argv) {
     const o = parse(rest);
     if (!o["-o"] || !o["--wasm"] || !o["--manifest"] || o.positional.length) return usage();
     if (o["--app"] && o["--rom"]) throw new Error("--app 과 --rom 은 함께 쓰지 않습니다(둘 다 롬 조각)");
-    const wmba = /\.wmba$/i.test(o["-o"]);
     const plan = JSON.parse(fs.readFileSync(o["--manifest"], "utf8").replace(/^﻿/, ""));
-    if (wmba !== Boolean(plan.mobile)) throw new Error(wmba ? ".wmba 는 설명서에 mobile 이 있어야 합니다(규격 13장)" : "설명서에 mobile 이 있으면 출력 확장자를 .wmba 로 하세요(규격 13장)");
+    const extError = extProblem(o["-o"], plan);
+    if (extError) throw new Error(extError);
     const t0 = Date.now();
     const res = await packFiles({
       wasm: o["--wasm"],
@@ -349,7 +368,7 @@ const UPDATE_USAGE = [
 ];
 
 function usage() {
-  console.error("사용법: node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm> --manifest <manifest.json> [--cart-dir <폴더>] [--label|--front|--spine <그림>] [--js <게임.js>] [--data <이름>=<파일>] [--rom <롬>] [--app <앱 폴더|.zip>]   (.wmba 모바일 = --app, 규격 13장)");
+  console.error("사용법: node tools/wgba.mjs pack -o <출력.wgba> --wasm <게임.wasm> --manifest <manifest.json> [--cart-dir <폴더>] [--label|--front|--spine <그림>] [--js <게임.js>] [--data <이름>=<파일>] [--rom <롬>] [--app <앱 폴더|.zip|.apk>]   (.wmba 모바일·.wapk Android = --app, 규격 13·14장)");
   console.error("        node tools/wgba.mjs info <파일> | check <파일> [--quick] | extract <파일> <조각> <출력> | strip <파일> <출력>");
   for (const line of UPDATE_USAGE) console.error(line);
   return 2;

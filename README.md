@@ -263,7 +263,8 @@ custom section에 manifest·롬팩 그림·JS·데이터를 저장하며, 맨 �
 11. [형식 번호와 버전](#11-형식-번호와-버전)
 12. [온라인 업데이트](#12-온라인-업데이트-update-규격-1-확장) — 버전 파일·차이 패치·배포 도구
 13. [모바일 .wmba](#13-모바일-wmba-규격-1-확장) — 피처폰 게임·앱 파일 묶음·폰 키·모바일 화면
-14. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
+14. [Android .wapk](#14-android-wapk-규격-1-확장) — Android 앱·터치·화면 크기 변경·방향 고정·전체 화면
+15. [AI 전용 프롬프트](#ai-전용-프롬프트) — README 맨 아래
 
 ---
 
@@ -1612,6 +1613,106 @@ node tools/wgba.mjs check game.wmba   # mobile·WMFS·__adf__·<AID>.jar 확인
 
 - 사용 키 확인(wmba-core 프로젝트 도구): `node tools/keys-usage.mjs <wmba-core.wasm> <앱.wmfs> --manifest manifest.json --write` — 장면별 결과 표(② 화면 변화 · ① 비교 기록)를 출력하고 합친 결과를 `mobile.keys`에 저장합니다. 그 후 `pack`합니다.
 - 앱 데이터가 포함된 `.wmba`는 롬이 포함된 `.wgba`와 같이 배포하지 마세요(1장 "롬·게임 데이터").
+
+### 14. Android `.wapk` (규격 1 확장)
+
+`.wapk`는 처음부터 Android로 만든 게임 파일입니다(피처폰 게임을 Android로 다시 빌드한 앱은 `.wmba`). 파일 형식은 `.wgba`·`.wmba`와 같고, manifest의 `mobile.platform`이 `"Android"`입니다.
+webGBA는 `.wapk`를 열면 가상 방향키·키패드를 표시하지 않고 게임 화면을 화면 전체에 표시하며, 화면 터치·마우스를 게임 터치로 전달합니다. 라이브러리 등 이름이 보이는 곳에는 이름 앞에 `[A] `을 붙여 표시합니다.
+
+#### 14.1 구성
+
+| chunk | 내용 |
+| --- | --- |
+| `code` · `js` | Android 코어 wasm · 시작 JS. **② 자체 JS(`runtime: "script"`, `entry.style: "module"`)만** 지원합니다(① `.wapk`는 `check` 오류) |
+| `data.*` | (선택) Pack 때 생성한 변환물(예: dex 변환 결과·미리 생성한 JIT 모듈). 코어가 `webgba.chunk("data.<이름>")`으로 조회 |
+| `rom` | **앱 파일 묶음 WMFS**(13.2와 같은 형식) — APK 안 파일을 경로 그대로(`AndroidManifest.xml`·`classes.dex`·`lib/<abi>/*.so`·`assets/…`·`res/…`·`resources.arsc`) |
+| `cart.*` | 롬팩 그림(6장, `.wmba`와 같은 규칙) |
+
+- 확장자 규칙: `mobile.platform`이 `"Android"`이면 `.wapk`, 그 외 `mobile`이 있으면 `.wmba`, 없으면 `.wgba`(`pack`·`check`가 확인).
+- `check`: 앱 파일 묶음에 `AndroidManifest.xml`이 없으면 오류, `classes.dex`·`lib/`가 모두 없으면 경고.
+
+#### 14.2 manifest
+
+| 필드 | 설명 |
+| --- | --- |
+| `group` · `category` | `"mobile"` · `"Android"`(모바일 그룹 안의 분류 Android) |
+| `screen` | **화면 기준 해상도** — 게임이 시작할 때 받는 화면 크기(캔버스 처음 크기). `orientation`이 `landscape`면 가로가 긴 크기 |
+| `mobile.platform` | **`"Android"` 필수** |
+| `mobile.package` | Android 패키지 이름(128자 이하, 선택) |
+| `mobile.appVersion` · `versionCode` · `minSdk` · `vendor` | 앱 버전 이름 · 버전 번호(0 이상 정수) · 최소 SDK(1~99) · 개발사(선택, 표시용) |
+| `mobile.orientation` | `landscape` · `portrait` · `any`(기본 `any`). AndroidManifest `screenOrientation`의 landscape·sensorLandscape·reverseLandscape·userLandscape → `landscape`, portrait 계열 → `portrait`, 나머지 → `any` |
+| `mobile.input` | `touch`(터치만, 기본) · `keys`(물리 키만) · `both`(터치 + 물리 키) |
+| `mobile.keys` | 게임이 쓰는 키 role 목록(최소). `back`·`menu`는 모든 게임에 권장 |
+| `input.buttons` | `preset: "none"`, 버튼마다 `id`·`role`·`code`(14.4) |
+| `save` | `{"kind": "storage", "maxSize": …}` — 앱 데이터를 코어가 한 덩어리로 저장 |
+
+- 표시 이름: 호스트가 `[A] ` + `name`으로 표시합니다. `name`에는 `[A]`를 작성하지 않습니다. 연사는 적용하지 않습니다(13.4와 같음).
+
+#### 14.3 터치 (틀 API 추가)
+
+```js
+webgba.on("touch", (e) => { /* e.action · e.id · e.index · e.x · e.y · e.time · e.touches */ });
+webgba.input.touches; // [{ id, x, y }] — 읽을 때마다 새 배열
+```
+
+| 값 | 설명 |
+| --- | --- |
+| `action` | `"down"` · `"move"` · `"up"` · `"cancel"` |
+| `id` | 포인터 번호. 누를 때 비어 있는 가장 작은 번호(0부터, Android pointer id 규칙과 같음), 최대 10개 |
+| `x` · `y` | 게임 화면 좌표(캔버스 픽셀, 실수, 좌상단 0·0). 틀이 캔버스 표시 영역(비율 유지)을 기준으로 변환 |
+| `index` · `touches` | 이 이벤트 시점에 눌린 모든 포인터(바뀐 포인터 포함, `up`·`cancel`도 포함) · 그 안의 바뀐 포인터 위치(Android `getActionIndex()`) |
+| `time` | 이벤트 시각(ms, `performance.now()` 기준) |
+
+- Android 대응: `down` + `touches` 1개 → `ACTION_DOWN`, 그 외 `down` → `ACTION_POINTER_DOWN` · `up` + 1개 → `ACTION_UP`, 그 외 → `ACTION_POINTER_UP` · `move` → `ACTION_MOVE` · `cancel` → `ACTION_CANCEL`(전체 취소).
+- 캔버스 표시 영역 밖(검정 여백)에서 시작한 터치는 보내지 않고, 이동·뗌은 밖으로 나가도 보냅니다(좌표가 범위를 벗어날 수 있음).
+- 마우스 좌측 버튼 = 포인터 하나, 펜 = 터치와 같습니다. 일시정지·틀 초점 잃음·틀 크기 변경 때 틀이 모든 터치를 `cancel`하고, 일시정지 중에는 터치를 보내지 않습니다.
+- `webgba.input.touches`가 `undefined`이면 터치 API가 없는 이전 webGBA입니다.
+
+#### 14.4 키
+
+기존 ② 입력(`webgba.on("button")`·`webgba.input.held`) 그대로입니다. role → Android KEYCODE:
+
+| role | KEYCODE | 기본 키보드 | 기본 게임패드 |
+| --- | --- | --- | --- |
+| `back` | 4 `BACK` | `Escape` `Backspace` | 8 |
+| `menu` | 82 `MENU` | `ContextMenu` `KeyM` | 9 |
+| `up` `down` `left` `right` · `ok` | 19~22 `DPAD_*` · 23 `DPAD_CENTER` | 방향키 · `Enter` `NumpadEnter` `KeyK` | 십자·좌측 스틱 · 0 |
+| `num0`~`num9` · `star` · `hash` | 7~16 · 17 · 18 | 13.4와 같음 | 없음 |
+| `call` · `end` · `soft1` · `soft2` · `clear` | 5 · 6 · 1 · 2 · 28 | 13.4와 같음 | 13.4와 같음 |
+| `a` `b` `c` `d` · `l` `r` `l2` `r2` · `start` `select` | 96 97 99 100 · 102~105 · 108 109 | 5장 기본 | 5장 기본 |
+
+- 웹 버전 화면 메뉴의 "뒤로"·"메뉴 키" 항목은 해당 role 버튼을 누르고 약 0.1초 후 뗍니다(게임을 재개한 후).
+- role이 없는 버튼은 코어가 `id`로 정합니다. 게임이 `back`을 처리하지 않아 앱이 끝나면 코어가 `webgba.exit()`을 호출합니다.
+
+#### 14.5 화면 크기 변경 · 일시정지 (틀 API 추가)
+
+```js
+webgba.view;                       // { width, height, dpr, orientation } — 게임 화면 칸(틀) CSS px · devicePixelRatio · "landscape"(width ≥ height)·"portrait"
+webgba.on("resize", (view) => {}); // 등록할 때 한 번 + 칸 크기가 바뀔 때마다(회전·창 크기·전체 화면)
+```
+
+- 호스트는 캔버스를 비율 유지로 칸 가득 표시하고 남는 곳은 검정으로 둡니다. 코어가 칸 비율에 맞춰 캔버스 `width`·`height`를 바꾸면(게임에 surfaceChanged·DisplayMetrics 전달) 여백이 없어집니다 — 화면 기준 해상도의 짧은 변을 유지하고 긴 변만 늘리는 방식을 권장합니다(한 변 4096 이하).
+- 일시정지·재개는 기존 `webgba.on("pause")`·`on("resume")`(Activity `onPause`·`onResume`)입니다. 호스트는 화면 메뉴·설정 창·방향 안내 화면·탭 숨김·사용자 일시정지 때 일시정지합니다.
+
+#### 14.6 화면 (웹 버전·Windows 앱)
+
+- 가상 방향키·키패드·OK·CLR이 없습니다. 게임 화면이 화면 전체(안전 영역 안)를 차지하고, 캔버스는 비율 유지·남는 곳 검정입니다(늘이기 없음).
+- 메뉴: 좌측 상단의 작은 반투명 메뉴 버튼(불투명도 `--wapk-edge-dim`, 기본 0.45 — `web/src/css/web.css`의 `:root`) → 메뉴 창(뒤로 · 메뉴 키 · 퀵슬롯 · 빨리 감기 · 소리 · 설정 · 전체 화면 · 열기 · 라이브러리 · 세이브 · 닫기). 메뉴 창이 열린 동안 게임은 일시정지합니다.
+- 방향 고정(`landscape`·`portrait`) 게임을 휴대폰·태블릿에서 열면 전체 화면 + Screen Orientation API 잠금을 시도합니다. 다른 방향이면 "가로(세로)로 돌려 주세요" 안내 화면을 표시하고 게임을 일시정지합니다(잠금을 지원하는 브라우저는 "전체 화면으로 고정" 버튼). iPhone처럼 잠금을 지원하지 않는 기기는 기기를 돌리면 안내가 사라집니다. PC는 안내 없이 비율 유지로 표시합니다.
+- `input: "keys"` 게임을 터치 기기에서 열면 "키보드 또는 게임패드가 필요합니다" 알림을 표시합니다.
+- Windows 앱은 게임 틀을 화면 영역 전체 크기로 표시합니다(메뉴는 기존 메뉴 막대·도구 막대).
+
+#### 14.7 도구·예제
+
+```bash
+node tools/wgba.mjs pack -o game.wapk --wasm android-core.wasm --js core.js --manifest manifest.json --app <game.apk|앱 폴더|.zip> --cart-dir cart
+node tools/wgba.mjs info game.wapk    # Android·방향·입력·표시 이름 행
+node tools/wgba.mjs check game.wapk   # 확장자·② 전용·AndroidManifest.xml 확인
+```
+
+- `--app`에 `.apk`를 그대로 지정할 수 있습니다(apk = zip, 항목을 이름 순으로 저장 — 같은 입력이면 같은 바이트).
+- 예제 [`docs/wgba/examples/hello-wapk`](docs/wgba/examples/hello-wapk) — 터치·화면 크기·뒤로·메뉴 키를 그리는 가짜 Android 코어(앱 파일은 자리 표시용). 웹 시험 `node web/test/web-wapk.mjs`.
+- 앱 데이터가 포함된 `.wapk`는 배포하지 마세요(1장 "롬·게임 데이터").
 
 ---
 

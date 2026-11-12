@@ -12,7 +12,7 @@ import { ADMIN_APP_API, adminClient, readRecord } from "../core/admin.js";
 import { createAdminFlow } from "../app/admin-ui.js";
 import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
 import { GB_SCREEN, kindKey, romType, systemKind } from "../core/rom-kind.js";
-import { resolveInput, sha256Hex } from "../core/wgba-format.js";
+import { androidOf, resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
 import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
 import { errorText, Journal } from "../app/journal.js";
@@ -74,9 +74,9 @@ const el = {
   winMaxIcon: $("win-max-icon"),
 };
 
-const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wasm", "wgbp"]);
-const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wmba", "wasm", "wgbp"]);
-const WASM_EXT = new Set(["wgba", "wmba", "wasm"]);
+const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wapk", "wasm", "wgbp"]);
+const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wmba", "wapk", "wasm", "wgbp"]);
+const WASM_EXT = new Set(["wgba", "wmba", "wapk", "wasm"]);
 const PATCH_EXT = "wgbp";
 const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
 const RECENT_MAX = 10;
@@ -667,7 +667,12 @@ const screenSize = () => state.screen ?? { width: SCREEN_W, height: SCREEN_H, in
 function layoutScreen() {
   const box = el.stage.getBoundingClientRect();
   if (box.width < 1 || box.height < 1) return;
-  const { width: w, height: h, aspect, stretch } = screenSize();
+  const { width: w, height: h, aspect, stretch, fill } = screenSize();
+  if (fill && state.scriptFrame) {
+    state.scriptFrame.style.width = `${Math.floor(box.width)}px`;
+    state.scriptFrame.style.height = `${Math.floor(box.height)}px`;
+    return;
+  }
   const shown = stretch ? (h * aspect[0]) / aspect[1] : w;
   const fit = Math.min(box.width / shown, box.height / h);
   const scale = integerScale() && fit >= 1 ? Math.floor(fit) : fit;
@@ -1014,7 +1019,7 @@ async function openScript(path, wgba, info, label, sha) {
   const build = await core.webInspect(path, state.prefs.webRom || null, allowsNet(wgba));
   const { save, name } = await openSave(path);
   const input = resolveInput(wgba.manifest);
-  state.screen = screenOf(wgba.manifest);
+  state.screen = { ...screenOf(wgba.manifest), fill: Boolean(androidOf(wgba.manifest)) };
   showView("script");
   const { host, hadSave } = await bootScript({
     wgba,
@@ -1314,7 +1319,7 @@ async function closeGame({ quiet = false, why = "닫기" } = {}) {
 
 async function openDialogFile() {
   const start = state.game ? dirOf(state.game.path) : state.prefs.lastDir;
-  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "gb", "gbc", "wgba", "wmba", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
+  const path = await core.pickFile({ title: t("pick.open"), filters: ["gba", "gb", "gbc", "wgba", "wmba", "wapk", "wgbp", "wasm", "zip", "agb"], filterName: t("pick.gameFilter"), start });
   if (path) await openPath(path);
 }
 

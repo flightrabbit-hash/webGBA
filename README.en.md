@@ -277,7 +277,8 @@ Terms used in this specification:
 11. [Format numbers and versions](#11-format-numbers-and-versions)
 12. [Online updates](#12-online-updates-update-spec-1-extension) — version file, delta patches, release tools
 13. [Mobile .wmba](#13-mobile-wmba-spec-1-extension) — feature-phone games, app file bundle, phone keys, mobile screen
-14. [Prompt for AI assistants](#prompt-for-ai-assistants) — at the end of this README
+14. [Android .wapk](#14-android-wapk-spec-1-extension) — Android apps, touch, view size changes, fixed orientation, full screen
+15. [Prompt for AI assistants](#prompt-for-ai-assistants) — at the end of this README
 
 ---
 
@@ -1615,6 +1616,106 @@ node tools/wgba.mjs check game.wmba   # checks mobile, WMFS, __adf__ and <AID>.j
 
 - Used keys (tool of the wmba-core project): `node tools/keys-usage.mjs <wmba-core.wasm> <app.wmfs> --manifest manifest.json --write` — prints a per-screen table (② screen change · ① compare record) and stores the union in `mobile.keys`. Pack afterwards.
 - Do not distribute a `.wmba` that contains app data, just like a `.wgba` with a ROM (chapter 1, "ROMs and game data").
+
+### 14. Android `.wapk` (spec 1 extension)
+
+`.wapk` is a game made for Android from the start (a feature-phone game rebuilt as an Android app stays `.wmba`). The file format is the same as `.wgba`·`.wmba`; the manifest has `mobile.platform` `"Android"`.
+When webGBA opens a `.wapk` it shows no virtual d-pad or keypad, draws the game over the whole screen and sends screen touches and the mouse to the game as touches. Wherever names are shown (library etc.) the name gets the prefix `[A] `.
+
+#### 14.1 Contents
+
+| chunk | Content |
+| --- | --- |
+| `code` · `js` | Android core wasm · start JS. **② own JS only (`runtime: "script"`, `entry.style: "module"`)** (a ① `.wapk` is a `check` error) |
+| `data.*` | (optional) products made at pack time (e.g. converted dex, prebuilt JIT modules). The core reads them with `webgba.chunk("data.<name>")` |
+| `rom` | **WMFS app file bundle** (same format as 13.2) — the files inside the APK under their own paths (`AndroidManifest.xml`·`classes.dex`·`lib/<abi>/*.so`·`assets/…`·`res/…`·`resources.arsc`) |
+| `cart.*` | Cartridge art (chapter 6, same rules as `.wmba`) |
+
+- Extension rule: `mobile.platform` `"Android"` → `.wapk`, other `mobile` → `.wmba`, none → `.wgba` (checked by `pack`·`check`).
+- `check`: missing `AndroidManifest.xml` in the bundle is an error; neither `classes.dex` nor `lib/` is a warning.
+
+#### 14.2 manifest
+
+| Field | Description |
+| --- | --- |
+| `group` · `category` | `"mobile"` · `"Android"` |
+| `screen` | **Reference resolution** — the screen size the game gets at start (initial canvas size). Wide when `orientation` is `landscape` |
+| `mobile.platform` | **`"Android"`, required** |
+| `mobile.package` | Android package name (up to 128 characters, optional) |
+| `mobile.appVersion` · `versionCode` · `minSdk` · `vendor` | version name · version code (integer ≥ 0) · min SDK (1–99) · vendor (optional, display only) |
+| `mobile.orientation` | `landscape` · `portrait` · `any` (default `any`). AndroidManifest `screenOrientation` landscape·sensorLandscape·reverseLandscape·userLandscape → `landscape`, the portrait ones → `portrait`, others → `any` |
+| `mobile.input` | `touch` (touch only, default) · `keys` (physical keys only) · `both` |
+| `mobile.keys` | Key roles the game uses (minimal). `back`·`menu` are recommended for every game |
+| `input.buttons` | `preset: "none"`, each button `id`·`role`·`code` (14.4) |
+| `save` | `{"kind": "storage", "maxSize": …}` — the core stores the app data as one blob |
+
+- Display name: hosts show `[A] ` + `name`; do not put `[A]` in `name`. Auto-fire is not applied (as in 13.4).
+
+#### 14.3 Touch (frame API addition)
+
+```js
+webgba.on("touch", (e) => { /* e.action · e.id · e.index · e.x · e.y · e.time · e.touches */ });
+webgba.input.touches; // [{ id, x, y }] — a new array on every read
+```
+
+| Value | Description |
+| --- | --- |
+| `action` | `"down"` · `"move"` · `"up"` · `"cancel"` |
+| `id` | Pointer id: the lowest free number on press (from 0, same rule as Android pointer ids), up to 10 |
+| `x` · `y` | Game screen coordinates (canvas pixels, float, top left 0·0), converted by the frame from the shown canvas area (aspect kept) |
+| `index` · `touches` | Every pointer down at this event (including the changed one, also for `up`·`cancel`) · the changed pointer's place in it (Android `getActionIndex()`) |
+| `time` | Event time (ms, `performance.now()` base) |
+
+- Android mapping: `down` with 1 touch → `ACTION_DOWN`, other `down` → `ACTION_POINTER_DOWN` · `up` with 1 → `ACTION_UP`, other → `ACTION_POINTER_UP` · `move` → `ACTION_MOVE` · `cancel` → `ACTION_CANCEL` (all).
+- A touch that starts outside the shown canvas (black bars) is not sent; moves and releases are sent even outside (coordinates may leave the range).
+- Left mouse button = one pointer, pen = touch. The frame cancels all touches on pause, focus loss and frame resize, and sends none while paused.
+- `webgba.input.touches` is `undefined` on older webGBA without the touch API.
+
+#### 14.4 Keys
+
+The existing ② input (`webgba.on("button")`·`webgba.input.held`). Role → Android KEYCODE:
+
+| role | KEYCODE | Default keyboard | Default gamepad |
+| --- | --- | --- | --- |
+| `back` | 4 `BACK` | `Escape` `Backspace` | 8 |
+| `menu` | 82 `MENU` | `ContextMenu` `KeyM` | 9 |
+| `up` `down` `left` `right` · `ok` | 19–22 `DPAD_*` · 23 `DPAD_CENTER` | arrows · `Enter` `NumpadEnter` `KeyK` | d-pad·left stick · 0 |
+| `num0`–`num9` · `star` · `hash` | 7–16 · 17 · 18 | as in 13.4 | none |
+| `call` · `end` · `soft1` · `soft2` · `clear` | 5 · 6 · 1 · 2 · 28 | as in 13.4 | as in 13.4 |
+| `a` `b` `c` `d` · `l` `r` `l2` `r2` · `start` `select` | 96 97 99 100 · 102–105 · 108 109 | chapter 5 defaults | chapter 5 defaults |
+
+- "Back"·"Menu key" in the web version's screen menu press that role's button and release it after about 0.1 s (after resuming the game).
+- Buttons without a role are up to the core (by `id`). When the game does not handle `back` and the app finishes, the core calls `webgba.exit()`.
+
+#### 14.5 View size · pause (frame API addition)
+
+```js
+webgba.view;                       // { width, height, dpr, orientation } — game area (frame) in CSS px · devicePixelRatio · "landscape" (width ≥ height)·"portrait"
+webgba.on("resize", (view) => {}); // once on registration + whenever the area changes (rotation, window size, full screen)
+```
+
+- The host shows the canvas over the area with its aspect kept and black elsewhere. When the core resizes the canvas `width`·`height` to the area's aspect (passing surfaceChanged·DisplayMetrics to the game), no bars remain — keeping the short side of the reference resolution and growing the long side is recommended (each side ≤ 4096).
+- Pause and resume are the existing `webgba.on("pause")`·`on("resume")` (Activity `onPause`·`onResume`). The host pauses for the screen menu, settings, the rotate notice, a hidden tab and user pause.
+
+#### 14.6 Screen (web version · Windows app)
+
+- No virtual d-pad·keypad·OK·CLR. The game takes the whole screen (inside the safe area); the canvas keeps its aspect with black bars (no stretching).
+- Menu: a small translucent menu button at the top left (opacity `--wapk-edge-dim`, default 0.45 — `:root` of `web/src/css/web.css`) → menu (Back · Menu key · quick slots · fast forward · sound · settings · full screen · open · library · saves · close). The game is paused while the menu is open.
+- A fixed-orientation (`landscape`·`portrait`) game on a phone or tablet tries full screen + Screen Orientation API lock. In the other orientation a "Rotate to landscape (portrait)" notice pauses the game (browsers with lock support also get a "Lock in full screen" button). On devices without lock (iPhone) the notice goes away when the device is rotated. PCs show the game with its aspect kept and no notice.
+- An `input: "keys"` game opened on a touch device shows a "needs a keyboard or a gamepad" notice.
+- The Windows app sizes the game frame to the whole screen area (menus stay in the menu bar and tool bar).
+
+#### 14.7 Tools · example
+
+```bash
+node tools/wgba.mjs pack -o game.wapk --wasm android-core.wasm --js core.js --manifest manifest.json --app <game.apk|app folder|.zip> --cart-dir cart
+node tools/wgba.mjs info game.wapk    # Android·orientation·input·display name lines
+node tools/wgba.mjs check game.wapk   # extension, ② only, AndroidManifest.xml
+```
+
+- `--app` takes an `.apk` as it is (apk = zip; entries stored by name, same input → same bytes).
+- Example [`docs/wgba/examples/hello-wapk`](docs/wgba/examples/hello-wapk) — a stand-in Android core that draws touches, the view size and the Back·Menu keys (the app files are placeholders). Web test: `node web/test/web-wapk.mjs`.
+- Do not distribute a `.wapk` that contains app data (chapter 1, "ROMs and game data").
 
 ---
 

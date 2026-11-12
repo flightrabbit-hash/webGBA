@@ -4860,3 +4860,99 @@ body[data-mobile] .keypad .key[data-off] {
   display: flex;
   visibility: hidden;
 }
+
+:root {
+  --wapk-edge-dim: 0.45;
+  --wapk-edge-gap: 8px;
+}
+
+body[data-wapk][data-layout][data-pad] .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "stage";
+  background: var(--screen-ink);
+}
+
+body[data-wapk] .frame,
+body[data-wapk] .pad,
+body[data-wapk] .bar__group--quick,
+body[data-wapk] .bar__group--right {
+  display: none;
+}
+
+body[data-wapk][data-layout] .bar {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--wapk-edge-gap));
+  left: calc(env(safe-area-inset-left) + var(--wapk-edge-gap));
+  z-index: 20;
+  display: block;
+  padding: 0;
+}
+
+body[data-wapk][data-layout] .bar__side {
+  position: relative;
+  display: block;
+  padding: 0;
+}
+
+body[data-wapk][data-layout][data-tools] .tool--menu {
+  display: inline-flex;
+  opacity: var(--wapk-edge-dim);
+  transition: opacity var(--pop-ms) var(--pop-ease);
+}
+
+body[data-wapk][data-menu="open"] .tool--menu,
+body[data-wapk] .tool--menu:focus-visible {
+  opacity: 1;
+}
+
+body[data-wapk][data-layout][data-tools] .bar__group--files {
+  top: calc(100% + var(--gap-1));
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(6, auto);
+  align-items: center;
+  justify-items: center;
+}
+
+body[data-wapk][data-layout="portrait"][data-tools] .bar__group--files {
+  grid-template-columns: repeat(4, auto);
+}
+
+body[data-wapk] #btnQuick,
+body[data-wapk] #btnFast,
+body[data-wapk] #btnSound,
+body[data-wapk] #btnSettings,
+body[data-wapk] #btnFull {
+  order: 1;
+}
+
+body[data-wapk] #btnOpen,
+body[data-wapk] #btnLibrary,
+body[data-wapk] #btnSaves,
+body[data-wapk] #btnNet {
+  order: 2;
+}
+
+body[data-wapk] #btnQuit {
+  order: 3;
+}
+
+body[data-wapk][data-menu="open"] .script-frame {
+  pointer-events: none;
+}
+
+.turn {
+  z-index: 4;
+  text-align: center;
+}
+
+.turn__icon {
+  color: var(--text);
+}
+
+.turn__text {
+  max-width: 320px;
+  margin: 0;
+  color: var(--text-dim);
+}

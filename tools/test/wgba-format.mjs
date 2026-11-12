@@ -469,6 +469,39 @@ fs.writeFileSync(badFile, badBytes);
 ok(node([path.join(tools, "wgba.mjs"), "check", badFile]).status === 1, "wgba.mjs check 오류면 끝 상태 1");
 ok(wasmSections(a)[0].name === "webgba.toc", "첫 구획 = webgba.toc");
 
+// .wapk(규격 14장): 예제 hello-wapk 를 묶고 확장자·② 전용·앱 묶음·표시 이름·Android 키 기본값을 본다.
+{
+  const ex = path.join(tools, "..", "docs", "wgba", "examples", "hello-wapk");
+  const args = (out, app = path.join(ex, "app")) => [path.join(tools, "wgba.mjs"), "pack", "-o", out, "--wasm", path.join(ex, "game.wasm"), "--js", path.join(ex, "game.js"), "--manifest", path.join(ex, "manifest.json"), "--app", app];
+  const wapk = path.join(work, "hello.wapk");
+  const packed = node(args(wapk));
+  const checked = node([path.join(tools, "wgba.mjs"), "check", wapk]);
+  ok(packed.status === 0 && checked.status === 0 && /통과\(경고 0\)/.test(checked.stdout) && /AndroidManifest\.xml/.test(checked.stdout), "wapk: 예제 묶기·검사 경고 0·앱 파일", (packed.stderr + checked.stdout).trim().slice(-300));
+  ok(node(args(path.join(work, "hello.wmba"))).status !== 0 && node(args(path.join(work, "hello.wgba"))).status !== 0, "wapk: Android 설명서를 .wmba·.wgba 로 묶으면 실패");
+  const info = node([path.join(tools, "wgba.mjs"), "info", wapk]).stdout;
+  ok(/방향\s+landscape · 입력 touch/.test(info) && /\[A\] Hello wapk/.test(info), "wapk: info 방향·입력·표시 이름 [A]");
+  const { androidOf, gameExt, resolveInput, shownName } = await import("../../src-bundle/src/js/core/wgba-format.js");
+  const plan = JSON.parse(fs.readFileSync(path.join(ex, "manifest.json"), "utf8"));
+  const errs = [];
+  checkManifest({ ...plan, runtime: "webapi", entry: undefined, input: { preset: "none", buttons: [{ id: "BACK", role: "back", bit: 0 }] } }, errs, []);
+  ok(errs.some((e) => /runtime "script"/.test(e)), "wapk: ① webapi 는 오류", errs.join(" | "));
+  const bad = [];
+  checkManifest({ ...plan, mobile: { ...plan.mobile, orientation: "sideways", input: "mouse", versionCode: -1 } }, bad, []);
+  ok(bad.length === 3, "wapk: orientation·input·versionCode 틀리면 오류", bad.join(" | "));
+  const def = androidOf({ mobile: { platform: "Android" } });
+  ok(def.orientation === "any" && def.input === "touch" && androidOf({ mobile: { platform: "WIPI-KTF" } }) === null, "wapk: 기본 방향 any·입력 touch, WIPI 는 null");
+  ok(gameExt(plan) === "wapk" && gameExt({ mobile: { platform: "WIPI-KTF" } }) === "wmba" && gameExt({}) === "wgba", "gameExt: wapk·wmba·wgba");
+  ok(shownName("Game", plan) === "[A] Game" && shownName("Game", { mobile: { platform: "SKVM" } }) === "[M] Game", "표시 이름: Android [A] · 피처폰 [M]");
+  const input = resolveInput(plan);
+  ok(input.buttons.find((b) => b.role === "back")?.pad.join() === "8" && input.buttons.find((b) => b.role === "menu")?.pad.join() === "9", "Android 키 기본 게임패드: back 8 · menu 9");
+  const { makeZip } = await import("./zip-make.mjs");
+  const apk = path.join(work, "app.apk");
+  fs.writeFileSync(apk, makeZip(["classes.dex", "AndroidManifest.xml"].map((name) => ({ name, data: fs.readFileSync(path.join(ex, "app", name)) }))));
+  const fromApk = path.join(work, "from-apk.wapk");
+  const r = node(args(fromApk, apk));
+  ok(r.status === 0 && same(fs.readFileSync(fromApk), fs.readFileSync(wapk)), "wapk: --app 에 .apk(zip)를 줘도 폴더와 같은 바이트", r.stderr.trim());
+}
+
 if (!process.argv[2]) fs.rmSync(work, { recursive: true, force: true });
 console.log(failed ? `실패 ${failed}` : "모두 통과");
 process.exitCode = failed ? 1 : 0;

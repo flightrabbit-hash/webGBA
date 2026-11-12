@@ -202,5 +202,13 @@
   "web.update.later": "後で",
   "web.update.all": "すべてアップデート",
   "web.update.chosen": "選択をアップデート {n}",
-  "web.update.close": "閉じる"
+  "web.update.close": "閉じる",
+  "web.wapk.back": "戻る (Android 戻るキー)",
+  "web.wapk.appMenu": "メニューキー (Android メニューキー)",
+  "web.wapk.turnLandscape": "横向きにしてください",
+  "web.wapk.turnPortrait": "縦向きにしてください",
+  "web.wapk.turnLandscapeText": "このゲームは横画面でのみ動作します。画面の回転ロックを使用中の場合は解除してください。",
+  "web.wapk.turnPortraitText": "このゲームは縦画面でのみ動作します。画面の回転ロックを使用中の場合は解除してください。",
+  "web.wapk.lock": "全画面で固定",
+  "web.wapk.keysNeeded": "このゲームにはキーボードまたはゲームパッドが必要です"
 }

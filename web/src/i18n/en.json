@@ -202,5 +202,13 @@
   "web.update.later": "Later",
   "web.update.all": "Update all",
   "web.update.chosen": "Update {n}",
-  "web.update.close": "Close"
+  "web.update.close": "Close",
+  "web.wapk.back": "Back (Android Back key)",
+  "web.wapk.appMenu": "Menu key (Android Menu key)",
+  "web.wapk.turnLandscape": "Rotate to landscape",
+  "web.wapk.turnPortrait": "Rotate to portrait",
+  "web.wapk.turnLandscapeText": "This game runs only in landscape. If rotation lock is on, turn it off.",
+  "web.wapk.turnPortraitText": "This game runs only in portrait. If rotation lock is on, turn it off.",
+  "web.wapk.lock": "Lock in full screen",
+  "web.wapk.keysNeeded": "This game needs a keyboard or a gamepad"
 }

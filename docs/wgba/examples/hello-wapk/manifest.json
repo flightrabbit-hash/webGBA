@@ -1,0 +1,33 @@
+{
+  "wgba": 1,
+  "id": "com.example.hellowapk",
+  "version": "1.0.0",
+  "name": { "en": "Hello wapk", "ko": "Android 예제", "ja": "Androidサンプル" },
+  "shortName": "Hello APK",
+  "group": "mobile",
+  "category": "Android",
+  "runtime": "script",
+  "entry": { "style": "module" },
+  "author": "example",
+  "license": "MIT",
+  "screen": { "width": 800, "height": 480 },
+  "mobile": {
+    "platform": "Android",
+    "package": "com.example.hellowapk",
+    "appVersion": "1.0",
+    "versionCode": 1,
+    "minSdk": 7,
+    "orientation": "landscape",
+    "input": "touch",
+    "keys": ["back", "menu"]
+  },
+  "save": { "kind": "storage", "maxSize": 64 },
+  "input": {
+    "preset": "none",
+    "buttons": [
+      { "id": "BACK", "role": "back", "code": "Escape" },
+      { "id": "MENU", "role": "menu", "code": "ContextMenu" }
+    ]
+  },
+  "cart": { "color": "#3d8f5d" }
+}

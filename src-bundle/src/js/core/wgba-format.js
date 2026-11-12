@@ -93,18 +93,38 @@ export function parseAspect(text) {
   return ratioOf(w, h);
 }
 export const MOBILE_ROLES = Object.freeze(["ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"]);
-export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", ...MOBILE_ROLES]);
+export const ANDROID_ROLES = Object.freeze(["back", "menu"]);
+export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", ...MOBILE_ROLES, ...ANDROID_ROLES]);
 export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
 export const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;
-export const MOBILE_PLATFORMS = Object.freeze(["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME"]);
+export const ANDROID = "Android";
+export const MOBILE_PLATFORMS = Object.freeze(["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME", ANDROID]);
 export const MOBILE_PREFIX = "[M] ";
+export const ANDROID_PREFIX = "[A] ";
+export const ORIENTATIONS = Object.freeze(["landscape", "portrait", "any"]);
+export const ANDROID_INPUTS = Object.freeze(["touch", "keys", "both"]);
 export const APP_MAGIC = "WMFS";
 
-/** 설명서가 모바일(.wmba) 게임인가: mobile 객체 또는 group "mobile". */
+/** 설명서가 모바일(.wmba·.wapk) 게임인가: mobile 객체 또는 group "mobile". */
 export const isMobile = (m) => Boolean(m && ((m.mobile && typeof m.mobile === "object" && !Array.isArray(m.mobile)) || m.group === "mobile"));
 
-/** 라이브러리 등에 보일 이름: 모바일 게임은 설명서 이름 앞에 "[M] "(설명서 이름 자체에는 붙이지 않음). */
-export const shownName = (text, m) => (isMobile(m) && text && !String(text).startsWith(MOBILE_PREFIX) ? `${MOBILE_PREFIX}${text}` : text);
+/** 처음부터 Android 로 만든 게임(.wapk, 규격 14장): mobile.platform "Android". */
+export const isAndroid = (m) => Boolean(m?.mobile && typeof m.mobile === "object" && m.mobile.platform === ANDROID);
+
+/** 설명서에 맞는 확장자: Android → wapk, 그 밖 모바일(mobile 객체) → wmba, 나머지 → wgba. */
+export const gameExt = (m) => (isAndroid(m) ? "wapk" : m?.mobile ? "wmba" : "wgba");
+
+/** .wapk 화면·입력: 방향(landscape·portrait·any, 기본 any)·입력(touch·keys·both, 기본 touch). Android 가 아니면 null. */
+export function androidOf(m) {
+  if (!isAndroid(m)) return null;
+  const mo = m.mobile;
+  return { orientation: ORIENTATIONS.includes(mo.orientation) ? mo.orientation : "any", input: ANDROID_INPUTS.includes(mo.input) ? mo.input : "touch" };
+}
+
+const prefixOf = (m) => (isAndroid(m) ? ANDROID_PREFIX : MOBILE_PREFIX);
+
+/** 라이브러리 등에 보일 이름: 모바일 게임은 설명서 이름 앞에 "[M] ", Android 게임은 "[A] "(설명서 이름 자체에는 붙이지 않음). */
+export const shownName = (text, m) => (isMobile(m) && text && !String(text).startsWith(prefixOf(m)) ? `${prefixOf(m)}${text}` : text);
 
 /** 언어별 이름(문자열 또는 { en, ko, ja … })의 칸마다 shownName. 빈 칸은 그대로(표시 순서 규칙 유지). */
 export function shownTitle(name, m) {
@@ -201,6 +221,8 @@ export const ROLE_KEYS = Object.freeze({
   star: ["NumpadMultiply", "Minus"],
   num0: ["Digit0", "Numpad0"],
   hash: ["NumpadDivide", "Equal"],
+  back: ["Escape", "Backspace"],
+  menu: ["ContextMenu", "KeyM"],
 });
 /** role 의 기본 게임패드(표준 매핑 버튼 번호, 축은 "-axis0"·"+axis1"). l2·r2 가 있으면 l·r 은 4·5 만(resolveInput). */
 export const ROLE_PAD = Object.freeze({
@@ -222,6 +244,8 @@ export const ROLE_PAD = Object.freeze({
   clear: [1],
   soft1: [4],
   soft2: [5],
+  back: [8],
+  menu: [9],
 });
 const PAD_AXIS_RE = /^[+-]?axis\d$/;
 
@@ -803,8 +827,8 @@ export function checkManifest(m, errors, warnings) {
   return undefined;
 }
 
-/** 모바일 롬 조각 = WMFS 앱 파일 묶음. WIPI-KTF 는 __adf__ 와 <AID>.jar 가 있어야 한다. */
-function checkAppBundle(m, rom, errors, result) {
+/** 모바일 롬 조각 = WMFS 앱 파일 묶음. WIPI-KTF 는 __adf__ 와 <AID>.jar, Android 는 AndroidManifest.xml 이 있어야 한다. */
+function checkAppBundle(m, rom, errors, warnings, result) {
   const files = readAppBundle(rom);
   result.appFiles = files.map((f) => ({ name: f.name, size: f.size }));
   const names = new Set(files.map((f) => f.name));
@@ -813,6 +837,28 @@ function checkAppBundle(m, rom, errors, result) {
     const jar = m.mobile.aid ? `${m.mobile.aid}.jar` : null;
     if (jar && !files.some((f) => f.name.replace(/^P\//, "") === jar)) errors.push(`WIPI-KTF 앱 파일 묶음에 ${jar} 가 없습니다`);
   }
+  if (isAndroid(m)) {
+    if (!names.has("AndroidManifest.xml")) errors.push("Android 앱 파일 묶음에 AndroidManifest.xml 이 없습니다(apk 안 경로 그대로, 규격 14.1)");
+    if (!names.has("classes.dex") && !files.some((f) => f.name.startsWith("lib/"))) warnings.push("Android 앱 파일 묶음에 classes.dex·lib/ 가 모두 없습니다");
+  }
+}
+
+/** 규격 14장 Android(.wapk): ② 자체 JS 만, 방향·입력·앱 정보·뒤로 버튼. */
+function checkAndroid(m, errors, warnings) {
+  const mo = m.mobile;
+  if (m.runtime !== "script") errors.push(`Android 게임은 runtime "script"(② 자체 JS)만 됩니다: ${m.runtime ?? "webapi"}`);
+  if (mo.package !== undefined && (typeof mo.package !== "string" || !/^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/.test(mo.package) || mo.package.length > 128)) errors.push(`mobile.package 는 Android 패키지 이름(128자 이하): ${mo.package}`);
+  if (mo.versionCode !== undefined && !(Number.isInteger(mo.versionCode) && mo.versionCode >= 0)) errors.push(`mobile.versionCode 는 0 이상 정수: ${mo.versionCode}`);
+  if (mo.minSdk !== undefined && !(Number.isInteger(mo.minSdk) && mo.minSdk >= 1 && mo.minSdk <= 99)) errors.push(`mobile.minSdk 는 1~99 정수: ${mo.minSdk}`);
+  if (mo.orientation !== undefined && !ORIENTATIONS.includes(mo.orientation)) errors.push(`mobile.orientation 이 ${ORIENTATIONS.join("·")} 가 아닙니다: ${mo.orientation}`);
+  if (mo.input !== undefined && !ANDROID_INPUTS.includes(mo.input)) errors.push(`mobile.input 이 ${ANDROID_INPUTS.join("·")} 가 아닙니다: ${mo.input}`);
+  if (m.category !== ANDROID) warnings.push(`Android 게임은 category "${ANDROID}" 를 권장합니다: ${m.category}`);
+  const roles = new Set((m.input?.buttons ?? []).map((b) => b?.role));
+  if (!roles.has("back")) warnings.push("Android 게임은 role back 버튼을 권장합니다(화면 메뉴 \"뒤로\"·Escape 가 이 버튼을 누름)");
+  const w = m.screen?.width;
+  const h = m.screen?.height;
+  if (mo.orientation === "landscape" && w < h) warnings.push(`mobile.orientation landscape 인데 screen 이 세로입니다: ${w}x${h}`);
+  if (mo.orientation === "portrait" && w > h) warnings.push(`mobile.orientation portrait 인데 screen 이 가로입니다: ${w}x${h}`);
 }
 
 /** 규격 13장 모바일(.wmba): mobile 객체·플랫폼·앱 정보. */
@@ -822,8 +868,10 @@ function checkMobile(m, errors, warnings) {
   if (!MOBILE_PLATFORMS.includes(mo.platform)) errors.push(`mobile.platform 이 ${MOBILE_PLATFORMS.join("·")} 가 아닙니다: ${mo.platform}`);
   for (const key of ["aid", "pid", "mclass", "vendor", "appVersion"]) if (mo[key] !== undefined && (typeof mo[key] !== "string" || mo[key].length > 64)) errors.push(`mobile.${key} 는 64자 이하 문자열`);
   if (m.group !== "mobile") warnings.push(`모바일 게임은 group "mobile" 을 권장합니다: ${m.group}`);
+  if (isAndroid(m)) checkAndroid(m, errors, warnings);
+  else if (["orientation", "input", "package", "versionCode", "minSdk"].some((key) => mo[key] !== undefined)) warnings.push("mobile.orientation·input·package·versionCode·minSdk 는 Android(.wapk) 항목입니다 — 무시합니다");
   if (mo.keys !== undefined) {
-    const keyRoles = ["up", "down", "left", "right", ...MOBILE_ROLES];
+    const keyRoles = isAndroid(m) ? ROLES.filter((r) => r !== "extra") : ["up", "down", "left", "right", ...MOBILE_ROLES];
     if (!Array.isArray(mo.keys) || mo.keys.some((r) => !keyRoles.includes(r)) || new Set(mo.keys).size !== mo.keys.length) {
       errors.push(`mobile.keys 는 겹치지 않는 폰 키 role 배열(${keyRoles.join("·")})`);
     } else {
@@ -1038,7 +1086,7 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
       result.rom = header;
       if (deep) {
         const { rom } = await unpackRom(bytes.subarray(romEntry.start, romEntry.end));
-        if (m.mobile) checkAppBundle(m, rom, errors, result);
+        if (m.mobile) checkAppBundle(m, rom, errors, warnings, result);
       }
     } catch (error) {
       errors.push(error.message);

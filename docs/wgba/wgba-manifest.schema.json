@@ -18,24 +18,29 @@
     "contact": { "type": "string", "maxLength": 100 },
     "build": { "type": "string", "maxLength": 64 },
     "needs": { "type": "array", "uniqueItems": true, "items": { "enum": ["pointer", "net", "keyboard", "state"] } },
-    "group": { "enum": ["emu", "arcade", "mobile"], "description": "Library group (README 13.3). Mobile games (.wmba) use \"mobile\"" },
-    "category": { "type": "string", "pattern": "^[\\x20-\\x7e]{1,24}$", "description": "Category inside the group, e.g. \"WIPI-KTF\", \"CPS1\", \"GBA\"" },
+    "group": { "enum": ["emu", "arcade", "mobile"], "description": "Library group (README 13.3). Mobile games (.wmba, .wapk) use \"mobile\"" },
+    "category": { "type": "string", "pattern": "^[\\x20-\\x7e]{1,24}$", "description": "Category inside the group, e.g. \"WIPI-KTF\", \"Android\", \"CPS1\", \"GBA\"" },
     "mobile": {
       "type": "object",
-      "description": "Feature-phone game (.wmba, README chapter 13). Required for .wmba; the rom chunk holds the WMFS app file bundle",
+      "description": "Feature-phone game (.wmba, README chapter 13) or Android app (.wapk, platform \"Android\", README chapter 14). Required for both; the rom chunk holds the WMFS app file bundle",
       "required": ["platform"],
       "properties": {
-        "platform": { "enum": ["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME"] },
+        "platform": { "enum": ["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME", "Android"] },
         "aid": { "type": "string", "maxLength": 64 },
         "pid": { "type": "string", "maxLength": 64 },
         "mclass": { "type": "string", "maxLength": 64 },
         "vendor": { "type": "string", "maxLength": 64 },
         "appVersion": { "type": "string", "maxLength": 64 },
+        "package": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z][\\w]*(\\.[A-Za-z_][\\w]*)+$", "description": "Android package name (.wapk)" },
+        "versionCode": { "type": "integer", "minimum": 0, "description": "Android versionCode (.wapk)" },
+        "minSdk": { "type": "integer", "minimum": 1, "maximum": 99, "description": "Android minSdkVersion (.wapk)" },
+        "orientation": { "enum": ["landscape", "portrait", "any"], "description": "Screen orientation of an Android app (.wapk, README 14.2). Default any" },
+        "input": { "enum": ["touch", "keys", "both"], "description": "Input of an Android app (.wapk, README 14.2). Default touch" },
         "keys": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["up", "down", "left", "right", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"] },
-          "description": "Keys the game uses (README 13.4). The touch screen hides phone keys not listed; without it every defined key is shown"
+          "items": { "enum": ["up", "down", "left", "right", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select"] },
+          "description": "Keys the game uses (README 13.4, 14.2). On .wmba the touch screen hides phone keys not listed; without it every defined key is shown. back, menu and the gamepad roles are for .wapk only"
         }
       }
     },
@@ -265,7 +270,7 @@
       "required": ["id"],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,16}$" },
-        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"] },
+        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu"] },
         "label": { "oneOf": [{ "type": "string", "maxLength": 8 }, { "type": "object", "additionalProperties": { "type": "string", "maxLength": 8 } }] },
         "bit": { "type": "integer", "minimum": 0, "maximum": 31 },
         "code": { "type": "string", "pattern": "^[A-Za-z0-9]{1,24}$" },
