@@ -1559,9 +1559,9 @@ little endian입니다.
 
 | 필드 | 설명 |
 | --- | --- |
-| `mobile` | **`.wmba` 필수**. `platform`: `WIPI-KTF`·`WIPI-SKT`·`WIPI-LGT`·`SKVM`·`J2ME` 중 하나. `aid`·`pid`·`mclass`·`vendor`·`appVersion`(앱 설명 파일의 값, 각 64자 이하, 선택). `keys`: **사용 키** — 게임이 쓰는 폰 키 role 배열(13.4, 선택) |
+| `mobile` | **`.wmba` 필수**. `platform`: `WIPI-KTF`·`WIPI-SKT`·`WIPI-LGT`·`SKVM`·`GVM`·`BREW`·`J2ME` 중 하나(`GVM` = SKT GVM, `BREW` = Qualcomm BREW. Android 앱은 14장 `Android`). `aid`·`pid`·`mclass`·`vendor`·`appVersion`(앱 설명 파일의 값, 각 64자 이하, 선택). `keys`: **사용 키** — 게임이 쓰는 폰 키 role 배열(13.4, 선택) |
 | `group` | 라이브러리 그룹: `emu`·`arcade`·`mobile`(모든 `.wgba`에서 선택 사항, 업데이트 목록 `signed.groups`(12.2.1)가 우선). 모바일 게임은 `mobile`(없으면 모바일로 표시) |
-| `category` | 그룹 안의 분류(인쇄 가능한 ASCII 1~24자). 예 `WIPI-KTF`·`CPS1`·`GBA` |
+| `category` | 그룹 안의 분류(인쇄 가능한 ASCII 1~24자). 예 `WIPI-KTF`·`GVM`·`BREW`·`CPS1`·`GBA` |
 | `runtime` | 코어가 정합니다: `webapi`(①) 또는 `script`(②, `entry.style` `"module"`). wmba-core = `script` |
 | `screen` | 폰 화면 크기(예 240×320) |
 | `save` | 코어가 앱 기록(데이터베이스·파일)을 세이브로 저장. ① `{"kind": "flash"}` · ② `{"kind": "storage", "maxSize": …}`(wmba-core = 262144) |

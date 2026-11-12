@@ -1562,9 +1562,9 @@ Little endian.
 
 | Field | Description |
 | --- | --- |
-| `mobile` | **Required for `.wmba`**. `platform`: one of `WIPI-KTF`, `WIPI-SKT`, `WIPI-LGT`, `SKVM`, `J2ME`. `aid`, `pid`, `mclass`, `vendor`, `appVersion` (values from the app descriptor, up to 64 characters each, optional). `keys`: **used keys** — array of the phone key roles the game uses (13.4, optional) |
+| `mobile` | **Required for `.wmba`**. `platform`: one of `WIPI-KTF`, `WIPI-SKT`, `WIPI-LGT`, `SKVM`, `GVM`, `BREW`, `J2ME` (`GVM` = SKT GVM, `BREW` = Qualcomm BREW; Android apps use `Android`, chapter 14). `aid`, `pid`, `mclass`, `vendor`, `appVersion` (values from the app descriptor, up to 64 characters each, optional). `keys`: **used keys** — array of the phone key roles the game uses (13.4, optional) |
 | `group` | Library group: `emu`, `arcade` or `mobile` (optional for any `.wgba`; the update index `signed.groups` (12.2.1) takes precedence). Mobile games use `mobile` (shown as Mobile when missing) |
-| `category` | Category inside the group (printable ASCII, 1–24 characters), e.g. `WIPI-KTF`, `CPS1`, `GBA` |
+| `category` | Category inside the group (printable ASCII, 1–24 characters), e.g. `WIPI-KTF`, `GVM`, `BREW`, `CPS1`, `GBA` |
 | `runtime` | Decided by the core: `webapi` (①) or `script` (②, `entry.style` `"module"`). wmba-core uses `script` |
 | `screen` | The phone screen size (e.g. 240×320) |
 | `save` | The core stores the app's records (database and files) as the save. ① `{"kind": "flash"}` · ② `{"kind": "storage", "maxSize": …}` (wmba-core: 262144) |

@@ -492,6 +492,12 @@ ok(wasmSections(a)[0].name === "webgba.toc", "첫 구획 = webgba.toc");
   ok(def.orientation === "any" && def.input === "touch" && androidOf({ mobile: { platform: "WIPI-KTF" } }) === null, "wapk: 기본 방향 any·입력 touch, WIPI 는 null");
   ok(gameExt(plan) === "wapk" && gameExt({ mobile: { platform: "WIPI-KTF" } }) === "wmba" && gameExt({}) === "wgba", "gameExt: wapk·wmba·wgba");
   ok(shownName("Game", plan) === "[A] Game" && shownName("Game", { mobile: { platform: "SKVM" } }) === "[M] Game", "표시 이름: Android [A] · 피처폰 [M]");
+  const phone = (platform) => {
+    const errors = [];
+    checkManifest({ format: 1, id: "local.phone", name: "Phone", version: "1.0.0", runtime: "script", entry: { style: "module" }, group: "mobile", mobile: { platform }, input: { preset: "none", buttons: [{ id: "OK", role: "ok", code: "Enter" }] } }, errors, []);
+    return errors.filter((e) => /mobile\.platform/.test(e));
+  };
+  ok(["GVM", "BREW"].every((p) => phone(p).length === 0 && gameExt({ mobile: { platform: p } }) === "wmba" && shownName("Game", { mobile: { platform: p } }) === "[M] Game") && phone("KTF").length === 1, "모바일 플랫폼 GVM·BREW = .wmba·[M], 모르는 플랫폼은 오류", `${phone("GVM")} ${phone("BREW")}`);
   const input = resolveInput(plan);
   ok(input.buttons.find((b) => b.role === "back")?.pad.join() === "8" && input.buttons.find((b) => b.role === "menu")?.pad.join() === "9", "Android 키 기본 게임패드: back 8 · menu 9");
   const { makeZip } = await import("./zip-make.mjs");

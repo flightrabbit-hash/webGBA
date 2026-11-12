@@ -25,7 +25,7 @@
       "description": "Feature-phone game (.wmba, README chapter 13) or Android app (.wapk, platform \"Android\", README chapter 14). Required for both; the rom chunk holds the WMFS app file bundle",
       "required": ["platform"],
       "properties": {
-        "platform": { "enum": ["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "J2ME", "Android"] },
+        "platform": { "enum": ["WIPI-KTF", "WIPI-SKT", "WIPI-LGT", "SKVM", "GVM", "BREW", "J2ME", "Android"] },
         "aid": { "type": "string", "maxLength": 64 },
         "pid": { "type": "string", "maxLength": 64 },
         "mclass": { "type": "string", "maxLength": 64 },
