@@ -562,7 +562,7 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | `AudioContext`·AudioWorklet. 게임이 생성한 `AudioContext`도 호스트가 음량·일시정지를 제어. 오디오가 잠겨 있으면 틀 위에 "눌러서 시작" Overlay | 게임패드 API(호스트가 조회해 키로 전달), 전체 화면(호스트 버튼), 팝업·`alert`·다른 주소로 이동(이동하면 호스트가 틀을 삭제하고 게임을 정지) |
 | `blob:` 주소의 Worker·스크립트·그림 | 스레드(SharedArrayBuffer·pthreads) — 규격 1에서 지원하지 않음 |
 
-Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화면 갱신을 30Hz로 제한합니다. 틀은 2초 넘게 40fps 미만이면 같은 "눌러서 시작" Overlay를 출력합니다.
+Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화면 갱신을 30Hz로 제한합니다. 틀은 2초 넘게 40fps 미만이면 같은 "눌러서 시작" Overlay를 출력합니다. 모바일 게임(.wmba·.wapk)은 이 검사에서 제외합니다 — 게임 자체 화면 갱신이 초당 30회 미만이라 30Hz 제한으로 줄지 않습니다. 소리가 잠겨 Overlay가 출력된 동안 키 입력(호스트 경유)이 들어오면 소리 시작을 다시 시도하고, 브라우저가 허용하면 Overlay를 닫습니다.
 
 ##### 4.2.2 `webgba` 객체 (틀 API 1)
 

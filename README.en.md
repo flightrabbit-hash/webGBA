@@ -573,7 +573,7 @@ The frame contains one canvas (`#canvas`, `screen.width × height`) and the `web
 | `AudioContext`·AudioWorklet. The host also controls volume and pause of any `AudioContext` the game creates. When sound is locked, a "tap to start" cover appears over the frame | Gamepad API (the host reads it and sends keys), fullscreen (host button), popups·`alert`·navigating away (the host removes the frame and stops the game) |
 | `blob:` Workers, scripts and images | Threads (SharedArrayBuffer·pthreads) — not accepted in spec 1 |
 
-Safari (WebKit) limits screen updates of a frame the user has not tapped yet to 30Hz. When the frame runs below 40 fps for more than 2 seconds it shows the same "tap to start" cover.
+Safari (WebKit) limits screen updates of a frame the user has not tapped yet to 30Hz. When the frame runs below 40 fps for more than 2 seconds it shows the same "tap to start" cover. Mobile games (.wmba·.wapk) skip this check — the game itself redraws fewer than 30 times per second, so the 30Hz limit does not slow it. While the cover is up because sound is locked, a key press (through the host) retries starting the sound, and the cover closes if the browser allows it.
 
 ##### 4.2.2 The `webgba` object (frame API 1)
 

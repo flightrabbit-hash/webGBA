@@ -258,6 +258,7 @@ export class ScriptHost {
         speed: this.speed,
         autoFire: this.fire,
         text: { tap: this.text.tap ?? "" },
+        throttleTap: !isMobile(this.manifest),
         net: this.manifest.multiplayer && !netNewer(this.manifest) ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
       },
       transfer,

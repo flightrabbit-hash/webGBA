@@ -141,12 +141,13 @@
   let statAt = now();
   let slowWindows = 0;
   let throttled = false;
+  let throttleTap = true;
   nativeSetInterval(() => {
     const at = now();
     if (at - statAt < 500) return;
     const fps = Math.round(((frames * 1000) / (at - statAt)) * 10) / 10;
     if (started) send({ type: "stats", fps, queued: rafLive.size + rafHeld.size });
-    slowWindows = started && !paused && frames > 0 && fps < 40 ? slowWindows + 1 : 0;
+    slowWindows = throttleTap && started && !paused && frames > 0 && fps < 40 ? slowWindows + 1 : 0;
     if (slowWindows >= 2 && !throttled) {
       throttled = true;
       checkTap();
@@ -218,6 +219,10 @@
     unlocked = true;
     tap.hidden = true;
     if (paused) return;
+    for (const ac of contexts) if (ac.state === "suspended") NativeAC.prototype.resume.call(ac).catch(() => {});
+  }
+  function retryAudio() {
+    if (unlocked || paused || tap.hidden || !NativeAC) return;
     for (const ac of contexts) if (ac.state === "suspended") NativeAC.prototype.resume.call(ac).catch(() => {});
   }
   for (const type of ["pointerdown", "touchend", "keydown"]) W.addEventListener(type, (event) => event.isTrusted && unlock(), true);
@@ -811,6 +816,7 @@
     canvas.height = data.manifest.screen?.height ?? 160;
     tap.setAttribute("aria-label", String(data.text?.tap ?? "▶"));
     tap.textContent = String(data.text?.tap ?? "");
+    throttleTap = data.throttleTap !== false;
     setVolume(data.volume ?? 1);
     if (data.paused) setPaused(true);
     speed = Number(data.speed) || 1;
@@ -848,12 +854,14 @@
       case "buttons":
         for (const i of data.up ?? []) hostButton(i, false);
         for (const i of data.down ?? []) hostButton(i, true);
+        if (data.down?.length) retryAudio();
         break;
       case "autoFire":
         setFire(data);
         break;
       case "rawKey":
         dispatchKey(String(data.code), Boolean(data.down), { key: data.key, keyCode: data.keyCode, repeat: data.repeat, shift: data.shift });
+        if (data.down) retryAudio();
         break;
       case "pause":
         setPaused(Boolean(data.paused));
