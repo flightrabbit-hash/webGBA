@@ -2733,7 +2733,7 @@ function spineArt(rom, look) {
   return art;
 }
 
-const SPINE_TEXT = { size: 12, line: 14, lines: 1 };
+const SPINE_TEXT = { size: 12, line: 14, lines: 1, room: "가나다라마 바사아" };
 
 function nameLines(ctx, raw, room) {
   const fits = (text) => ctx.measureText(text).width <= room;
@@ -2768,7 +2768,7 @@ function nameLines(ctx, raw, room) {
   return lines;
 }
 
-/** 옆면 라벨 띠의 이름(한 줄, 넘치면 말줄임): 굵은 글꼴 원래 크기로 그린 뒤 잉크 상자를 띠 가운데로 맞추고, 띠 폭에 맞게 줄이며 띠 기울기대로 열마다 내림. */
+/** 옆면 라벨 띠의 이름(한 줄, 넘치면 말줄임): 굵은 글꼴 원래 크기로 그린 뒤 잉크 상자를 띠 가운데로 맞추고, 한글 9자(SPINE_TEXT.room)가 띠 길이에 들어가게 줄이며 띠 기울기대로 열마다 내림. */
 function spineLabel(name, unit) {
   const tpl = cartArt.isoInfo();
   if (!tpl?.strip.length) return null;
@@ -2778,8 +2778,11 @@ function spineLabel(name, unit) {
   const rows = Math.floor(Math.min(...tpl.strip.map((r) => r.bottom - (first.top + slope * (r.x - first.x)))));
   const width = (last.x + 1 - first.x) * unit;
   const height = rows * unit;
-  const across = SPINE_TEXT.line * SPINE_TEXT.lines + 2;
-  const scale = width / across;
+  const font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim()}`;
+  const probe = (state.inkCtx ??= document.createElement("canvas").getContext("2d"));
+  probe.font = font;
+  const scale = Math.min(width / (SPINE_TEXT.line * SPINE_TEXT.lines + 2), height / (probe.measureText(SPINE_TEXT.room).width + 6));
+  const across = width / scale;
   const along = height / scale;
   const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
   const tw = Math.ceil(across * dpr);
@@ -2789,7 +2792,7 @@ function spineLabel(name, unit) {
   raw.height = th;
   const rc = raw.getContext("2d", { willReadFrequently: true });
   rc.scale(dpr, dpr);
-  rc.font = `400 ${SPINE_TEXT.size}px ${getComputedStyle(document.documentElement).getPropertyValue("--font-small").trim()}`;
+  rc.font = font;
   const lines = nameLines(rc, name, along - 4);
   if (!lines.length) return null;
   rc.fillStyle = cartArt.LABEL_INK;
@@ -2820,6 +2823,7 @@ function spineLabel(name, unit) {
   Object.assign(out.style, { left: `${first.x * unit}px`, top: `${first.top * unit}px`, width: `${width}px`, height: `${out.height / dpr}px` });
   out.dataset.lines = lines.join("\n");
   out.dataset.slope = String(slope);
+  out.dataset.scale = scale.toFixed(3);
   out.dataset.rows = String(height * dpr);
   const oc = out.getContext("2d");
   oc.imageSmoothingEnabled = true;

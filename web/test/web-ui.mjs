@@ -2973,33 +2973,6 @@ const NAME_VIEWS = [
   { viewport: { width: 320, height: 568 } },
 ].filter((view) => !VIEW_FILTER || VIEW_FILTER.has(`${view.viewport.width}x${view.viewport.height}`));
 
-// 옆면 이름 칸(.spine__name) 안 잉크 상자: 글이 90° 돌아 있어 글의 세로 = 화면 가로(좌·우 여백), 글 방향 = 화면 세로(위·아래 여백).
-// 기본 옆면은 몸통 그림(밝은 세로 띠 등)이 이름 칸에 겹쳐 바탕색 하나로 잴 수 없다 → 글을 숨긴 화면과 달라진 픽셀만 잉크로 본다.
-function boxInk(image, bare, dpr, box) {
-  const x0 = Math.round(box.l * dpr);
-  const x1 = Math.round(box.r * dpr);
-  const y0 = Math.round(box.t * dpr);
-  const y1 = Math.round(box.b * dpr);
-  if (x1 - x0 < 2 || y1 - y0 < 2) return null;
-  let l = Infinity, r = -1, t = Infinity, b = -1;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const o = (y * image.width + x) * 4;
-      if (Math.max(Math.abs(image.data[o] - bare.data[o]), Math.abs(image.data[o + 1] - bare.data[o + 1]), Math.abs(image.data[o + 2] - bare.data[o + 2])) <= INK_THRESHOLD) continue;
-      l = Math.min(l, x);
-      r = Math.max(r, x);
-      t = Math.min(t, y);
-      b = Math.max(b, y);
-    }
-  }
-  if (r < 0) return null;
-  const left = (l - x0) / dpr;
-  const right = (x1 - 1 - r) / dpr;
-  const top = (t - y0) / dpr;
-  const bottom = (y1 - 1 - b) / dpr;
-  return { left, right, top, bottom, across: Math.abs(left - right), along: Math.abs(top - bottom) };
-}
-
 async function namesChecks() {
   const shots = CAPTURE || SHOTS;
   for (const view of NAME_VIEWS) {
@@ -3040,7 +3013,7 @@ async function namesChecks() {
       ok(`${key} 첫 화면 이름·라벨 글이 칸 안(넘침 0)`, start.every((item) => within([item.nameBox], item.item) && (!item.labelBox || within([item.textBox], item.labelBox))), JSON.stringify(start.map((item) => item.textBox)));
       await measure(page, `${key}|start`, [".recent__name", "#startList .pack__label"]);
 
-      // 라이브러리 옆면: 표시 글(aria-label = 이름, 줄 글 = 짧은 이름 → 이름), 칸 안, 잉크 가운데
+      // 라이브러리 옆면: 표시 글(aria-label = 이름, 띠 글 = 짧은 이름 → 이름, 한 줄·넘치면 …), 띠 canvas 가 옆면 안, 잉크 상자 = 띠 가운데
       await page.evaluate(() => window.webgba.openSheet("library"));
       await page.waitForSelector("#sheet:not([hidden]) .lib__case .spine");
       await page.waitForTimeout(400);
@@ -3048,16 +3021,33 @@ async function namesChecks() {
       const spines = await page.evaluate((ids) =>
         ids.map((id) => {
           const node = document.querySelector(`.lib__case .spine[data-key="rom:${id}"]`);
-          const area = node?.querySelector(".spine__name");
-          if (!area) return null;
-          const a = area.getBoundingClientRect();
+          const label = node?.querySelector(".spine__label");
+          if (!label) return null;
+          const a = label.getBoundingClientRect();
+          const iso = node.querySelector(".spine__iso").getBoundingClientRect();
+          const data = label.getContext("2d").getImageData(0, 0, label.width, label.height).data;
+          const slope = Number(label.dataset.slope);
+          const rows = Number(label.dataset.rows);
+          let left = -1, right = -1, top = Infinity, bottom = Infinity;
+          for (let x = 0; x < label.width; x++) {
+            let first = -1, last = -1;
+            for (let y = 0; y < label.height; y++)
+              if (data[(y * label.width + x) * 4 + 3] > 24) {
+                if (first < 0) first = y;
+                last = y;
+              }
+            if (first < 0) continue;
+            if (left < 0) left = x;
+            right = x;
+            top = Math.min(top, first - x * slope);
+            bottom = Math.min(bottom, x * slope + rows - 1 - last);
+          }
+          const dpr = devicePixelRatio;
           return {
             label: node.getAttribute("aria-label"),
-            lines: [...area.querySelectorAll(".spine__line")].map((n) => n.textContent),
-            outside: [...area.querySelectorAll(".spine__line")].filter((n) => {
-              const r = n.getBoundingClientRect();
-              return r.left < a.left - 0.5 || r.right > a.right + 0.5 || r.top < a.top - 0.5 || r.bottom > a.bottom + 0.5;
-            }).length,
+            lines: label.dataset.lines.split("\n"),
+            outside: a.left < iso.left - 0.5 || a.right > iso.right + 0.5 || a.top < iso.top - 0.5 || a.bottom > iso.bottom + 0.5 ? 1 : 0,
+            ink: left < 0 ? null : { left: left / dpr, right: (label.width - 1 - right) / dpr, top: +(top / dpr).toFixed(2), bottom: +(bottom / dpr).toFixed(2) },
           };
         }),
       NAME_GAMES.map((g) => g.id));
@@ -3069,51 +3059,23 @@ async function namesChecks() {
         if (!s) return `${g.form}: 옆면 없음`;
         const got = flat(s.lines.join(""));
         const cut = got.endsWith("…");
-        const textOk = cut ? flat(wantSpine).startsWith(got.slice(0, -1)) && got.length > 1 : got === flat(wantSpine);
+        const textOk = s.lines.length === 1 && (cut ? flat(wantSpine).startsWith(got.slice(0, -1)) && got.length > 1 : got === flat(wantSpine));
         return s.label === want && textOk ? "" : `${g.form}: ${s.label} · ${s.lines.join("|")} ≠ ${want} · ${wantSpine}`;
       }).filter(Boolean);
-      ok(`${key} 옆면 ${spines.length}개 이름(aria-label)·세로 글(짧은 이름 → 이름) = 규격 순서`, spineWrong.length === 0, spineWrong.join(" / "));
-      ok(`${key} 옆면 세로 글이 이름 칸 안(넘침 0)`, spines.every((s) => s && s.outside === 0), JSON.stringify(spines.map((s) => s?.outside)));
-      const measured = new Set();
-      for (let round = 0; round < NAME_GAMES.length && measured.size < NAME_GAMES.length; round++) {
-        const next = NAME_GAMES.find((g) => !measured.has(g.id));
-        await page.$eval(`.lib__case .spine[data-key="rom:${next.id}"]`, (n) => n.scrollIntoView({ block: "nearest" }));
-        await page.waitForTimeout(80);
-        const image = await shoot(page);
-        const hide = await page.addStyleTag({ content: ".spine__text{visibility:hidden !important}" });
-        const bare = await shoot(page);
-        await hide.evaluate((node) => node.remove());
-        const dpr = await page.evaluate(() => devicePixelRatio);
-        const seen = await page.evaluate((ids) => {
-          const vh = window.visualViewport?.height ?? innerHeight;
-          return ids.map((id) => {
-            const area = document.querySelector(`.lib__case .spine[data-key="rom:${id}"] .spine__name`);
-            const r = area.getBoundingClientRect();
-            let top = 0, bottom = vh;
-            for (let at = area.parentElement; at; at = at.parentElement) {
-              const o = getComputedStyle(at).overflowY;
-              if (o === "auto" || o === "hidden" || o === "scroll") {
-                const c = at.getBoundingClientRect();
-                top = Math.max(top, c.top);
-                bottom = Math.min(bottom, c.bottom);
-              }
-            }
-            return r.top >= top - 0.5 && r.bottom <= bottom + 0.5 && r.left >= 0 && r.right <= innerWidth ? { id, l: r.left, r: r.right, t: r.top, b: r.bottom } : null;
-          });
-        }, NAME_GAMES.map((g) => g.id));
-        for (const box of seen) {
-          if (!box || measured.has(box.id)) continue;
-          measured.add(box.id);
-          const m = boxInk(image, bare, dpr, box);
-          const form = NAME_GAMES.find((g) => g.id === box.id).form;
-          if (!m) {
-            ok(`${key} 옆면 ${form} 잉크 있음`, false);
-            continue;
-          }
-          table.push({ key, target: `spine__name ${form}(글 세로 = 화면 가로)`, top: m.left, bottom: m.right, diff: m.across });
-          table.push({ key, target: `spine__name ${form}(글 방향 = 화면 세로)`, top: m.top, bottom: m.bottom, diff: m.along });
-          ok(`${key} 옆면 ${form} 잉크 가운데(글 세로·글 방향)`, m.across <= 1 && m.along <= 1, `좌 ${m.left} · 우 ${m.right} · 위 ${m.top} · 아래 ${m.bottom}`);
+      ok(`${key} 옆면 ${spines.length}개 이름(aria-label)·띠 글 한 줄(짧은 이름 → 이름, 넘치면 …) = 규격 순서`, spineWrong.length === 0, spineWrong.join(" / "));
+      ok(`${key} 옆면 띠 글 canvas 가 롬팩 그림 안(넘침 0)`, spines.every((s) => s && s.outside === 0), JSON.stringify(spines.map((s) => s?.outside)));
+      for (const [i, sp] of spines.entries()) {
+        const form = NAME_GAMES[i].form;
+        if (!sp?.ink) {
+          ok(`${key} 옆면 ${form} 잉크 있음`, false);
+          continue;
         }
+        const m = sp.ink;
+        const across = Math.abs(m.left - m.right);
+        const along = Math.abs(m.top - m.bottom);
+        table.push({ key, target: `spine__label ${form}(띠 폭 방향)`, top: m.left, bottom: m.right, diff: across });
+        table.push({ key, target: `spine__label ${form}(이름 방향)`, top: m.top, bottom: m.bottom, diff: along });
+        ok(`${key} 옆면 ${form} 잉크 가운데(띠 폭 방향·이름 방향)`, across <= 1 && along <= 1, `좌 ${m.left} · 우 ${m.right} · 위 ${m.top} · 아래 ${m.bottom}`);
       }
 
       // 꺼낸 칸: 이름 줄·앞면 라벨 글, 칸 안, 잉크 가운데
