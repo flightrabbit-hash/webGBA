@@ -1209,6 +1209,14 @@ html.is-rail-collapsed .sidepanel {
   flex: none;
 }
 
+.dialog[data-kind="pick"]:has(.upick--fill) {
+  height: 100vh;
+}
+
+.dialog[data-kind="pick"]:has(.upick--fill) .dialog__body {
+  flex: 1 1 auto;
+}
+
 .zpick {
   display: flex;
   flex: 1 1 auto;

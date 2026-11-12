@@ -345,6 +345,7 @@ export function createAdminFlow(d) {
         d.centerDialog?.();
       },
     });
+    picker.node.classList.add("upick--fill");
     const groupOf = (item) => item.game.group || d.groupOf?.(item.game.id) || "emu";
     const empty = make("p", "anote", "");
     empty.hidden = true;

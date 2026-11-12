@@ -3016,6 +3016,10 @@ body[data-layout="landscape"] .lib__shelf {
   width: min(100%, 460px);
 }
 
+.dialog[data-kind="pick"] .dialog__card:has(.upick--fill) {
+  height: 100%;
+}
+
 .dialog[data-kind="pick"] .dialog__body {
   display: flex;
   flex-direction: column;
