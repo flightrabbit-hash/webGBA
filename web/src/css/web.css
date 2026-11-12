@@ -1016,6 +1016,20 @@ body[data-layout="landscape"] .bar__group--quick {
   display: contents;
 }
 
+body[data-layout="landscape"][data-tool-col] .bar__side,
+body[data-layout="landscape"][data-tool-col] .bar__group--right {
+  grid-auto-flow: row;
+  align-content: start;
+}
+
+body[data-layout="landscape"][data-tool-col] .bar__side {
+  justify-items: start;
+}
+
+body[data-layout="landscape"][data-tool-col] .bar__group--right {
+  justify-items: end;
+}
+
 body[data-layout="landscape"][data-tools="inline"] .tool--menu {
   display: none;
 }

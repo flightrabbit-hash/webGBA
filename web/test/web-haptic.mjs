@@ -287,7 +287,7 @@ const STICK_ROUTE = [
 
 // 2) PC(마우스, pointer fine): navigator.vibrate 가 있어도 진동 줄 두 개 숨김(결정 300), 설정이 켜져 있어도 진동 없음
 {
-  const { context, page } = await open({ mobile: false, prefs: { vibrate: true, vibrateDir: true } });
+  const { context, page } = await open({ mobile: false, prefs: { vibrate: true, vibrateDir: true, pad: "on", padSet: true } });
   const row = await vibrateRow(page);
   const dirRow = await vibrateRow(page, "방향 진동");
   ok("PC: \"버튼 진동\"·\"방향 진동\" 줄 숨김", row === null && dirRow === null, JSON.stringify({ row, dirRow }));

@@ -827,7 +827,8 @@ function safeInsets() {
 }
 
 function padMode() {
-  return PAD_MODES.includes(state.prefs.pad) ? state.prefs.pad : "on";
+  const chosen = state.prefs.padSet === true || state.prefs.pad !== "on";
+  return chosen && PAD_MODES.includes(state.prefs.pad) ? state.prefs.pad : coarse.matches ? "on" : "off";
 }
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -929,6 +930,13 @@ function toolPlan(side, dpr) {
 }
 
 const toolSideMin = () => TOOL_MIN * 2 + TOOL_GAP + TOOL_PAD * 2;
+
+function toolColumnFits(height) {
+  const left = [el.btnOpen, el.btnLibrary, el.btnSaves, el.btnQuit, el.btnQuick].filter((node) => !node.hidden).length;
+  const right = TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length;
+  const rows = Math.max(left, right);
+  return TOOL_TOP + rows * TOOL_ART.h * 2 + (rows - 1) * TOOL_GAP <= height;
+}
 
 // 우측 묶음 우선순위(앞이 먼저 보임). 메뉴(좌측 첫 칸)·설정·소리·멀티플레이(인원 배지)는 늘 보이게 — 우측이 넘치면 좌측 빈칸으로.
 const TOOL_RIGHT_ORDER = ["btnSettings", "btnSound", "btnNet", "btnFast", "btnFull"];
@@ -1054,6 +1062,7 @@ function layout() {
   // 스틱·십자 패드는 버튼과 따로: 칸 폭(room)·스틱 줄 높이(bandH)가 허락하는 가장 큰 배율(상한 ART_REF, 버튼 배율 이상).
   let dirArt = null;
   let toolSize = 2;
+  let toolColumn = false;
   const pickDir = (base, room, bandH, cap = ART_REF) => {
     if (!parts.dir) return art;
     for (let k = skin.px(cap); k > skin.px(art); k--) {
@@ -1149,7 +1158,8 @@ function layout() {
     toolSize = block.size;
     if (inline) root.setProperty("--mpb-w", `${board}px`);
   } else {
-    const toolSide = landscape ? toolSideMin() : 0;
+    toolColumn = landscape && toolColumnFits(innerH);
+    const toolSide = landscape ? (toolColumn ? TOOL_ART.w * 2 + TOOL_PAD * 2 : toolSideMin()) : 0;
     const margin = overlay ? 0 : 16;
     const rim = overlay ? 0 : sideEdge;
     const availW = innerW - margin - rim - toolSide * 2;
@@ -1158,7 +1168,7 @@ function layout() {
     sh = Math.floor((sw * ah) / aw);
     const wide = Math.floor((innerW - sw - rim) / 2);
     if (landscape) root.setProperty("--tool-side", `${wide}px`);
-    const block = landscape ? toolPlan(wide, dpr) : null;
+    const block = landscape && !toolColumn ? toolPlan(wide, dpr) : null;
     placeTools(block?.slots ?? 0);
     if (block) toolSize = block.size;
     let side = 0;
@@ -1179,6 +1189,7 @@ function layout() {
     }
     root.setProperty("--side", `${side}px`);
   }
+  if (body.hasAttribute("data-tool-col") !== toolColumn) body.toggleAttribute("data-tool-col", toolColumn);
   state.art = art;
   state.dirArt = dirArt ?? art;
   if (state.toolSize !== toolSize) {
@@ -4354,7 +4365,7 @@ function renderSettings() {
         PAD_MODES.map((value) => ({ value, label: t(`web.pad.${value}`) })),
         padMode(),
         (value) => {
-          savePrefs({ pad: value });
+          savePrefs({ pad: value, padSet: true });
           layout();
         },
       ),

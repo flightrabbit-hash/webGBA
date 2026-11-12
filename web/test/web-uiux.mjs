@@ -418,7 +418,7 @@ for (const view of [{ width: 390, height: 844, dpr: 3 }, { width: 1366, height: 
   const mobile = { preset: "none", buttons: ["up", "down", "left", "right", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "ok", "clear"].map((role, bit) => ({ id: role, role, bit })) };
   for (const view of [{ width: 390, height: 844, dpr: 3 }, { width: 844, height: 390, dpr: 3 }, { width: 1366, height: 768, dpr: 1, touch: false }]) {
     const name = `${view.width}x${view.height}`;
-    const { context, page } = await open(view);
+    const { context, page } = await open({ ...view, prefs: { lang: "ko", pad: "on", padSet: true } });
     await game(page);
     await page.evaluate((input) => window.webgba.setInput(input), mobile);
     await wait(page, 400);
@@ -434,6 +434,28 @@ for (const view of [{ width: 390, height: 844, dpr: 3 }, { width: 1366, height: 
     await shot(page, `모바일키패드_${name}.png`);
     await context.close();
   }
+}
+
+// 13. PC(터치 없음) 가상 버튼 기본 숨김 + 숨김·오버레이 가로 = 좌우 칸에 도구 세로 1열(결정 1 "추천대로")
+{
+  const pc = await open({ width: 1366, height: 768, dpr: 1, touch: false });
+  await game(pc.page);
+  const st = await pc.page.evaluate(() => {
+    const tools = [...document.querySelectorAll("#bar .tool")].filter((n) => n.getClientRects().length && getComputedStyle(n).visibility !== "hidden" && getComputedStyle(n).display !== "none").map((n) => { const r = n.getBoundingClientRect(); return { id: n.id, l: r.left, r: r.right, t: r.top, b: r.bottom }; });
+    const s = document.getElementById("screen").getBoundingClientRect();
+    return { pad: document.body.dataset.pad, col: document.body.hasAttribute("data-tool-col"), menu: getComputedStyle(document.getElementById("btnMenu")).display, tools, screen: { l: s.left, r: s.right } };
+  });
+  const left = st.tools.filter((x) => x.r <= st.screen.l).sort((a, b) => a.t - b.t);
+  const right = st.tools.filter((x) => x.l >= st.screen.r).sort((a, b) => a.t - b.t);
+  const rowsMatch = left.every((x, i) => !right[i] || (x.t === right[i].t && x.b === right[i].b));
+  const stacked = (list) => list.every((x, i) => i === 0 || (x.t > list[i - 1].t && x.l === list[0].l));
+  ok("PC 기본: 가상 버튼 숨김(data-pad off)", st.pad === "off", st.pad);
+  ok("PC 가로 숨김: 도구 세로 1열·메뉴 없음·좌우 칸·같은 높이 줄 위·아래 차이 0", st.col && st.menu === "none" && left.length >= 4 && right.length >= 3 && left.length + right.length === st.tools.length && stacked(left) && stacked(right) && rowsMatch, JSON.stringify(st));
+  await shot(pc.page, "PC기본_숨김_세로도구_1366x768.png");
+  await pc.context.close();
+  const touch = await open({ width: 390, height: 844, dpr: 3 });
+  ok("터치 기기 기본: 가상 버튼 표시(data-pad on)", (await touch.page.evaluate(() => document.body.dataset.pad)) === "on");
+  await touch.context.close();
 }
 
 // 12. 문구: 조사 붙여 쓰기
