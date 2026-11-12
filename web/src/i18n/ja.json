@@ -31,7 +31,7 @@
   "web.deleted": "{name} を削除しました",
   "web.lib.empty": "ライブラリは空です。ゲームを実行するとカートリッジが記録されます。",
   "web.zipNoGame": "{rom} の中にゲームファイル(.gba · .gb · .gbc · .wgba)がありません",
-  "web.lib.storage": "保存領域 {used}(webGBA {mine}) / {quota}",
+  "web.lib.storage": "保存領域 {used}(ゲームファイル {mine}) / {quota}",
   "web.lib.added": "追加日 {date}",
   "web.lib.current": "実行中",
   "web.lib.missing": "ライブラリにゲームが見つかりません。ファイルをもう一度開いてください",
@@ -207,5 +207,13 @@
   "web.update.later": "後で",
   "web.update.all": "すべてアップデート",
   "web.update.chosen": "選択をアップデート {n}",
-  "web.update.close": "閉じる"
+  "web.update.close": "閉じる",
+  "web.closeAsk.title": "ゲームを終了しますか?",
+  "web.closeAsk.text": "ゲーム内でセーブしていない進行は失われます。",
+  "web.closeAsk.ok": "終了",
+  "web.help.mute": "ミュートの切り替え",
+  "web.rs.emptyHint": "1~5を押すとプリセットを作ります。",
+  "cfg.muted": "ミュート",
+  "key.LEFT": "左 ←",
+  "key.RIGHT": "右 →"
 }

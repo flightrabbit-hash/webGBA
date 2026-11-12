@@ -100,6 +100,7 @@
             <button class="tool" id="btnOpen" type="button" data-i18n-title="web.open" data-i18n-aria="web.open"></button>
             <button class="tool" id="btnLibrary" type="button" data-i18n-title="web.library" data-i18n-aria="web.library"></button>
             <button class="tool" id="btnSaves" type="button" data-i18n-title="web.saves" data-i18n-aria="web.saves"></button>
+            <button class="tool" id="btnPause" type="button" data-i18n-title="help.pause" data-i18n-aria="help.pause" disabled hidden></button>
             <button class="tool" id="btnQuit" type="button" data-i18n-title="web.lib.close" data-i18n-aria="web.lib.close" disabled></button>
           </div>
           <div class="bar__group bar__group--quick">
@@ -133,10 +134,9 @@
             <div class="veil__actions">
               <button class="btn btn--primary" id="veilResume" type="button"><span class="icon" data-icon="play"></span><span data-i18n="menu.resume"></span></button>
               <button class="btn" id="veilReset" type="button"><span class="icon" data-icon="refresh"></span><span data-i18n="menu.reset"></span></button>
-              <button class="btn" id="veilClose" type="button"><span class="icon" data-icon="x"></span><span data-i18n="web.closeGame"></span></button>
+              <button class="btn btn--danger" id="veilClose" type="button"><span class="icon" data-icon="exit"></span><span data-i18n="web.closeGame"></span></button>
             </div>
           </div>
-          <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
 
@@ -157,7 +157,6 @@
         <div class="key key--start" data-key="START"></div>
         <div class="key key--soft1" data-key="SOFT1"></div>
         <div class="key key--soft2" data-key="SOFT2"></div>
-        <div class="key key--clear" data-key="CLEAR"></div>
         <div class="keypad">
           <div class="key key--num" data-key="N1"></div>
           <div class="key key--num" data-key="N2"></div>
@@ -171,6 +170,7 @@
           <div class="key key--num" data-key="STAR"></div>
           <div class="key key--num" data-key="N0"></div>
           <div class="key key--num" data-key="HASH"></div>
+          <div class="key key--clear" data-key="CLEAR"></div>
           <div class="key key--ok" data-key="OK"></div>
         </div>
       </section>
@@ -212,5 +212,6 @@
       <span class="notice__text" id="noticeText"></span>
       <button class="btn btn--primary btn--small" id="noticeGo" type="button"></button>
     </div>
+    <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
   </body>
 </html>

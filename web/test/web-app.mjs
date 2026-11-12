@@ -718,6 +718,8 @@ async function testKeymap() {
     await page.keyboard.press("KeyP");
     await page.waitForSelector("#veilClose", { state: "visible" });
     await page.click("#veilClose");
+    await page.waitForSelector("#dialogActions .btn--danger", { state: "visible" });
+    await page.click("#dialogActions .btn--danger");
     await page.waitForFunction(() => document.body.dataset.view === "start");
     const back = await rects(page);
     const xb = await page.evaluate(() => {

@@ -695,7 +695,7 @@ export class NetWindow {
       r.progress.hidden = !this.progress;
     }
     if (r.cells) r.cells.classList.toggle("is-bad", this.codeBad);
-    if (r.codeGo) r.codeGo.disabled = this.busy;
+    if (r.codeGo) r.codeGo.disabled = this.busy || this.roomText.length < CODE_LEN;
     if (r.makeGo) r.makeGo.disabled = this.busy;
     if (r.rejoinState) r.rejoinState.textContent = this.rejoinText(snap);
     if (r.backLeft && this.back) r.backLeft.textContent = t("net.back.left", { time: clockText(this.backLeft()) });
@@ -1106,6 +1106,8 @@ export class NetWindow {
           this.refreshDynamic();
         }
         paint();
+        const go = this.refs.codeGo;
+        if (go && go.disabled !== (this.busy || digits.length < CODE_LEN)) go.disabled = this.busy || digits.length < CODE_LEN;
       },
       onEnter: () => this.joinRoom(this.roomText),
     });
@@ -1240,7 +1242,7 @@ export class NetWindow {
     near.append(...this.nearNodes());
     const refresh = k.iconButton({ icon: "refresh", title: t("net.nearRefresh"), action: "net-near-refresh", onClick: () => this.startNear() });
     const nearSec = this.section(t("net.near"), { sub: t("net.nearAuto"), tool: refresh, children: [near], kind: "near" });
-    const go = k.button({ label: k.label("enterCode"), icon: "chevron", kind: "primary", action: "net-code-go", onClick: () => this.joinRoom(this.roomText), disabled: this.busy });
+    const go = k.button({ label: k.label("enterCode"), icon: "chevron", kind: "primary", action: "net-code-go", onClick: () => this.joinRoom(this.roomText), disabled: this.busy || this.roomText.length < CODE_LEN });
     this.refs.codeGo = go;
     const row = k.make("div", "net-coderow");
     row.append(this.codeCells(), go);

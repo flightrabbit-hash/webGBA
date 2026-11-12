@@ -4,7 +4,8 @@ const TOOL_ICONS = {
   btnOpen: () => "open",
   btnLibrary: () => "library",
   btnSaves: () => "saves",
-  btnQuit: () => "close",
+  btnQuit: () => "exit",
+  btnPause: () => "pause",
   btnQuick: () => "quickslot",
   btnNet: () => "multiplayer",
   btnFast: (s) => (s.fast ? "fastForwardOn" : "fastForwardOff"),
@@ -15,7 +16,7 @@ const TOOL_ICONS = {
 
 const TOOL_DANGER = new Set(["btnQuit"]);
 
-const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs", OK: "action", SOFT1: "soft", SOFT2: "soft", CLEAR: "clear", N1: "num", N2: "num", N3: "num", N4: "num", N5: "num", N6: "num", N7: "num", N8: "num", N9: "num", STAR: "num", N0: "num", HASH: "num" };
+const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs", OK: "action", SOFT1: "soft", SOFT2: "soft", CLEAR: "clearKey", N1: "num", N2: "num", N3: "num", N4: "num", N5: "num", N6: "num", N7: "num", N8: "num", N9: "num", STAR: "num", N0: "num", HASH: "num" };
 const KEY_LABELS = { STAR: "*", HASH: "#" };
 const keyLabel = (name) => KEY_LABELS[name] ?? (/^N\d$/.test(name) ? name.slice(1) : name);
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };

@@ -161,10 +161,13 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
       bar.setAttribute("aria-valuenow", String(percent(item.fraction)));
     }
     const chosen = items.filter((item) => item.on).length;
-    all.setAttribute("aria-checked", chosen === 0 ? "false" : chosen === choices.length ? "true" : "mixed");
-    all.setAttribute("aria-disabled", String(!choices.length || busy));
-    all.tabIndex = choices.length && !busy ? 0 : -1;
-    count.textContent = t("zip.pick.count", { n: chosen, total: choices.length });
+    const shown = choices.filter((item) => !item.hidden);
+    const shownOn = shown.filter((item) => item.on).length;
+    const other = chosen - shownOn;
+    all.setAttribute("aria-checked", shownOn === 0 ? "false" : shownOn === shown.length ? "true" : "mixed");
+    all.setAttribute("aria-disabled", String(!shown.length || busy));
+    all.tabIndex = shown.length && !busy ? 0 : -1;
+    count.textContent = other ? t("zip.pick.countOther", { n: shownOn, total: shown.length, other }) : t("zip.pick.count", { n: shownOn, total: shown.length });
     onChange({ chosen, total: choices.length, busy, left: items.filter((item) => item.state !== "done" && item.kind !== "none").length });
     centerTexts(root.querySelectorAll(UPDATE_TEXTS));
   };
@@ -236,7 +239,7 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
     paint();
   };
   const toggleAll = () => {
-    const choices = items.filter(usable);
+    const choices = items.filter((item) => usable(item) && !item.hidden);
     if (busy || !choices.length) return;
     const next = choices.some((item) => !item.on);
     for (const item of choices) item.on = next;
