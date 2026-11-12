@@ -401,10 +401,13 @@ export function drawSpine(model, images, body) {
   return { canvas, band: Boolean(band), textArea: band?.textArea ?? model.textArea };
 }
 
-export const SIDE = 14;
+export const SIDE = 12;
 export const SLOT = SPINE[0] - 1 + SIDE;
-const SIDE_NEAR = 1.6;
-const SIDE_VANISH = 72;
+const SIDE_NEAR = 2;
+const SIDE_VANISH = 120;
+const SIDE_BACK = 3;
+const SIDE_LIP = 2;
+const SIDE_LIP_W = 4;
 const SIDE_SHADE = [0.1, 0.18, 0.28, 0.4];
 
 function opaqueBox(canvas, data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data) {
@@ -446,14 +449,14 @@ export function drawSide(model, front, spine) {
   const p = SIDE_NEAR * ox;
   const span = box.x1 - left;
   const w = Math.max(visible, Math.ceil((span * ox) / (p + span)));
-  const canvas = canvasOf(w, h);
+  const canvas = canvasOf(w + SIDE_BACK * k, h);
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   const tops = [];
   ctx.fillStyle = model.color ?? OUTLINE;
   for (let x = 0; x < w; x++) {
     const c = x + 0.5;
-    const sx = Math.min(box.x1 - 1, left + Math.floor((p * c) / (ox - c)));
+    const sx = Math.min(Math.max(left, box.x1 - 1 - k), left + Math.floor((p * c) / (ox - c)));
     const colH = Math.max(k, Math.round(near * (1 - c / ox)));
     const top = edge.bottom - colH;
     tops.push(top);
@@ -466,8 +469,21 @@ export function drawSide(model, front, spine) {
     ctx.fillRect(x, 0, 1, h);
   }
   ctx.globalCompositeOperation = "source-over";
+  const lipFrom = Math.max(0, w - SIDE_LIP_W * k);
+  const right = w + SIDE_BACK * k;
+  const capTop = (x) => Math.max(0, tops[Math.min(x, w - 1)] - SIDE_LIP * k);
+  const capBottom = (x) => (x < w ? tops[x] + k : edge.bottom);
   ctx.fillStyle = OUTLINE;
-  for (let x = 0; x < w; x++) ctx.fillRect(x, tops[x], 1, k);
-  for (let x = w - k; x < w; x++) ctx.fillRect(x, tops[x], 1, edge.bottom - tops[x]);
+  for (let x = 0; x < lipFrom; x++) ctx.fillRect(x, tops[x], 1, k);
+  for (let x = lipFrom; x < right; x++) ctx.fillRect(x, capTop(x), 1, capBottom(x) - capTop(x));
+  const tone = tones(model.color);
+  for (let x = lipFrom + k; x < right - k; x++) {
+    const top = capTop(x) + k;
+    const bottom = x < w ? capBottom(x) : edge.bottom - k;
+    ctx.fillStyle = tone.lo;
+    ctx.fillRect(x, top, 1, bottom - top);
+    ctx.fillStyle = tone.hi;
+    ctx.fillRect(x, top, 1, k);
+  }
   return { canvas, at: Math.max(0, edge.at - k), visible };
 }
