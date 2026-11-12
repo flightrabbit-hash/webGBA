@@ -3,6 +3,7 @@
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-wgba.mjs <주소> <캡처 폴더> --new <새 1.2.0.wgba> --old <옛 .wgba> \
 //     --v130 <1.3.0(다른 빌드)> --v120d <1.2.0 다른 빌드> --v110d <1.1.0(다른 빌드)> --script <script.wgba> --net <net.wgba> --newer <newer.wgba>
 // 롬이 든 시험 파일은 브라우저에서 고르기만 한다(서버로 보내지 않음). 옛·새 파일 이름은 둘 다 firered.wgba(사용자가 파일을 바꿔 넣는 것과 같게).
+// 빌드(code·rom·data SHA-256)는 --new·--v130·--v120d 셋이 모두 달라야 한다. --net = 설명서 needs ["net"], --newer = 모르는 needs.
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -34,6 +35,9 @@ const SHORT_NAME = pickText(NEW_WGBA.manifest.shortName, "ko");
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+// 알려진 게임 id(래피드)는 업데이트 확인이 실제 R2(CORS = 배포 주소만)로 간다. 이 시험은 업데이트 밖이라 빈 응답으로 끊는다(확인 실패 = WARN 로그만).
+const noFeed = (route) => route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: "{}" });
+await context.route("https://*.r2.dev/**", noFeed);
 await context.addInitScript(() => {
   Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
   if (window === window.top) localStorage.setItem("webgba.installHint", "1");
@@ -146,8 +150,11 @@ try {
   await page.click("#btnLibrary");
   await page.waitForSelector('.lib__card[data-state="open"] .lib__name');
   const libLine = `${await page.textContent(".lib__card .lib__name")} ${await page.textContent(".lib__card .lib__meta")}`;
-  const spineText = await page.$$eval(`.spine[data-key="rom:${oldGame.id}"] .spine__line`, (lines) => lines.map((l) => l.textContent).join(" ")).catch(() => "");
-  ok(`라이브러리: 꺼낸 롬팩 = 이름·버전(<이름> v1.2.0), 옆면 = 짧은 이름(${SHORT_NAME}, 줄을 공백으로 이어 비교)`, libLine.includes(`${GAME_NAME} v1.2.0`) && spineText === SHORT_NAME, `${libLine} · ${spineText}`);
+  // 옆면 이름은 띠 canvas(.spine__label)에 그리고 그린 글을 dataset.lines 에 둔다
+  const spineLabel = `.spine[data-key="rom:${oldGame.id}"] .spine__label`;
+  await page.waitForSelector(spineLabel, { state: "attached", timeout: 5000 }).catch(() => {});
+  const spineText = await page.$eval(spineLabel, (n) => n.dataset.lines.split("\n").join(" ")).catch(() => "");
+  ok(`라이브러리: 꺼낸 롬팩 = 이름·버전(<이름> v1.2.0), 옆면 = 짧은 이름(${SHORT_NAME}, 띠 글을 공백으로 이어 비교)`, libLine.includes(`${GAME_NAME} v1.2.0`) && spineText === SHORT_NAME, `${libLine} · ${spineText}`);
   await page.screenshot({ path: path.join(SHOTS, "라이브러리_이름버전.png") });
   await page.click("#sheetClose");
 
@@ -215,16 +222,12 @@ try {
   list = await roms();
   ok("옛 .wgba 로 되돌린 뒤 새 파일: 묻지 않고 업데이트(옛 .wgba → 1.2.0)", list.length === 1 && list[0].version === "1.2.0" && /옛 \.wgba → 1\.2\.0/.test(toast) && (await savesOf(GAME_ID)).states.join() === "1,3", toast);
 
-  // 6. 못 여는 파일
-  for (const [key, pattern, label] of [
-    ["net", /멀티플레이/, "needs net → 기능 없음"],
-    ["newer", /새 규격/, "모르는 needs → 새 webGBA 필요"],
-  ]) {
-    await pick(opt[key], "toast");
-    const text = await toastText();
-    const after = await roms();
-    ok(`${label}`, pattern.test(text) && !(await running()) && after.length === 1, text);
-  }
+  // 6. 못 여는 파일(모르는 needs). needs net 은 웹도 멀티플레이를 하므로(HOST_HAS.net, MP1) 열린다
+  await pick(opt.newer, "toast");
+  const newerText = await toastText();
+  ok("모르는 needs → 새 webGBA 필요", /새 규격/.test(newerText) && !(await running()) && (await roms()).length === 1, newerText);
+  await pick(opt.net);
+  ok("needs net → 열림(웹 멀티플레이 지원) · 라이브러리 항목 추가", (await running()) && (await roms()).length === 2, JSON.stringify(await gameNow()));
   // runtime script 는 S4 부터 격리 틀에서 연다(이 작은 예제는 webgba.ready 를 부르지 않아 기다림이 끝난 뒤 돎) — 자세한 것은 web-script.mjs
   await pick(opt.script);
   const scriptOpen = await page.evaluate(() => ({ script: Boolean(window.webgba.player.host?.script), frame: document.querySelector("#screen .script-frame")?.getAttribute("sandbox") ?? "" }));
@@ -233,6 +236,7 @@ try {
 
   // 7. 이어받기 알림은 옮긴 것에 맞게(결정 102-7): 세이브만 옮기면 "세이브를"(퀵슬롯 말 없음) — 새 프로필에서
   const fresh = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+  await fresh.route("https://*.r2.dev/**", noFeed);
   await fresh.addInitScript(() => {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
     if (window === window.top) localStorage.setItem("webgba.installHint", "1");

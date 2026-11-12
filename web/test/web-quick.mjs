@@ -28,6 +28,8 @@ const romBytes = fs.readFileSync(opt.gba);
 
 async function newPage(viewport) {
   const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  // 게임 id 가 있는 .wgba 를 열면 업데이트 확인이 실제 R2(CORS = 배포 주소만)로 간다. 이 시험은 업데이트 밖이라 빈 응답으로 끊는다(확인 실패 = WARN 로그만).
+  await context.route("https://*.r2.dev/**", (route) => route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*" }, contentType: "application/json", body: "{}" }));
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
     localStorage.setItem("webgba.installHint", "1");
@@ -410,11 +412,14 @@ async function layoutChecks(page, key, width, height) {
   const { context, page } = await newPage({ width: 844, height: 390 });
   await openGame(page, "QuickTest C.gba");
   const id = await gameId(page);
+  // 좌측 칸이 좁으면 파일 버튼(열기·라이브러리·세이브·종료)은 햄버거 메뉴로 접힌다(data-tools="menu") — 그때 퀵슬롯 바로 왼쪽은 메뉴 버튼
   const place = await page.evaluate(() => {
     const r = (id) => document.getElementById(id).getBoundingClientRect();
-    return { saves: r("btnSaves"), quick: r("btnQuick"), fast: r("btnFast") };
+    const mode = document.body.dataset.tools;
+    const left = mode === "menu" ? "btnMenu" : "btnSaves";
+    return { mode, left, before: r(left), quick: r("btnQuick"), fast: r("btnFast") };
   });
-  ok("가로: 퀵슬롯 버튼은 세이브 바로 오른쪽", place.quick.left > place.saves.right && place.quick.left - place.saves.right < 8 && Math.abs(place.quick.top - place.saves.top) < 2, `세이브 오른쪽 ${place.saves.right.toFixed(0)} → 퀵슬롯 왼쪽 ${place.quick.left.toFixed(0)} · 빨리 감기 왼쪽 ${place.fast.left.toFixed(0)}`);
+  ok(`가로: 퀵슬롯 버튼은 ${place.left === "btnMenu" ? "메뉴" : "세이브"} 바로 오른쪽(${place.mode})`, place.quick.left > place.before.right && place.quick.left - place.before.right < 8 && Math.abs(place.quick.top - place.before.top) < 2, `${place.left} 오른쪽 ${place.before.right.toFixed(0)} → 퀵슬롯 왼쪽 ${place.quick.left.toFixed(0)} · 빨리 감기 왼쪽 ${place.fast.left.toFixed(0)}`);
   for (const slot of [1, 2, 5]) {
     await page.waitForTimeout(500);
     await openQuick(page);
@@ -429,7 +434,34 @@ async function layoutChecks(page, key, width, height) {
   const blockers = await page.evaluate(() => [document.getElementById("screen"), ...document.querySelectorAll("[data-key], [data-dpad]")].map((n) => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
   const info = await layoutChecks(page, "가로 844x390", 844, 390);
   const bar = info.tools;
-  ok("가로: 기능 버튼 8개 모두 보임·게임 화면/버튼과 안 겹침", bar.length === 8 && !bar.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b)), bar.map((x) => x.id).join(","));
+  const where = await page.evaluate(() => {
+    const panel = document.querySelector(".bar__group--files");
+    const menu = document.body.dataset.tools === "menu";
+    const all = [...document.querySelectorAll("#bar .tool:not(.tool--menu)")].filter((n) => !n.hidden).map((n) => n.id);
+    return { menu, all, inMenu: menu ? all.filter((id) => panel.contains(document.getElementById(id))) : [] };
+  });
+  const onBar = new Set(bar.map((x) => x.id));
+  const lost = where.all.filter((id) => !onBar.has(id) && !where.inMenu.includes(id));
+  ok(
+    `가로: 기능 버튼 ${where.all.length}개 모두 막대 또는 메뉴에 있음·게임 화면/버튼과 안 겹침`,
+    lost.length === 0 && onBar.has("btnMenu") === where.menu && !bar.some((x) => blockers.some((y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b)),
+    `막대 ${bar.map((x) => x.id).join(",")} · 메뉴 ${where.inMenu.join(",") || "없음"}${lost.length ? ` · 빠짐 ${lost.join(",")}` : ""}`,
+  );
+  if (where.menu) {
+    await closeSheet(page);
+    await page.click("#btnMenu");
+    await page.waitForSelector('.bar__group--files[data-open="open"]', { timeout: 5000 });
+    await page.waitForTimeout(300);
+    const shown = await page.evaluate((ids) => ids.map((id) => {
+      const n = document.getElementById(id);
+      const r = n.getBoundingClientRect();
+      return { id, ok: getComputedStyle(n).visibility !== "hidden" && r.width > 0 && r.left >= -0.5 && r.right <= innerWidth + 0.5 && r.top >= -0.5 && r.bottom <= innerHeight + 0.5 };
+    }), where.inMenu);
+    ok("가로: 메뉴를 열면 접힌 버튼이 모두 화면 안에 보임", shown.length > 0 && shown.every((x) => x.ok), shown.map((x) => `${x.id}:${x.ok ? "보임" : "안 보임"}`).join(" "));
+    await page.click("#btnMenu");
+    await page.waitForFunction(() => !document.querySelector(".bar__group--files").dataset.open, null, { timeout: 5000 });
+    await openQuick(page);
+  }
   const firstRows = await page.evaluate(() => {
     const body = document.querySelector(".sheet__body").getBoundingClientRect();
     return [...document.querySelectorAll(".slots .slot")].every((n) => n.getBoundingClientRect().bottom <= body.bottom + 0.5);
