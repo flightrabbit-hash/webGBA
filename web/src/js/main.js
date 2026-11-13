@@ -150,7 +150,7 @@ const state = {
   // 지금 게임의 버튼 목록(resolveInput — 설명서 input, 없으면 GBA 10버튼)
   input: GBA_LAYOUT,
   // 라이브러리: sel = 꺼낸 롬팩(보관 키), refs = 지금 그린 책장 노드, savesFor = 세이브 창을 한 게임만 걸러 볼 때
-  lib: { sel: "", refs: null, savesFor: null, token: 0 },
+  lib: { sel: "", refs: null, savesFor: null, token: 0, cause: "" },
 };
 
 const holds = new Set();
@@ -3208,6 +3208,7 @@ function toggleFullscreen() {
 
 function openSheet(name) {
   const leaveNet = state.sheet === "net" && name !== "net" && netWin.open;
+  if (name === "library" && !state.sheet) state.lib.cause = "open";
   state.sheet = name;
   if (leaveNet) netWin.close();
   if (name !== "saves") state.lib.savesFor = null;
@@ -3358,17 +3359,24 @@ async function renderLibrary() {
   }
   await cartArt.loadIso().catch((error) => logLine("WARN", `롬팩 그림을 읽지 못했습니다: ${reason(error)}`));
   const stored = roms.length;
+  const all = roms;
   const group = libGroup();
   if (group !== "all") roms = roms.filter((rom) => groupOf(rom) === group);
   sortRoms(roms);
+  const held = roms.some((rom) => rom.key === state.lib.sel) ? null : all.find((rom) => rom.key === state.lib.sel);
   const body = cartArt.themeBody();
-  const looks = await Promise.all(roms.map((rom) => cartLook(rom, body)));
+  const looks = await Promise.all([...roms, ...(held ? [held] : [])].map((rom) => cartLook(rom, body)));
   const line = await libStorageLine(stored > 0);
   if (state.sheet !== "library" || token !== state.lib.token) return;
   const lib = state.lib;
   if (lib.refs) stopFlights(lib.refs);
-  if (!roms.some((rom) => rom.key === lib.sel)) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
   const byKey = new Map(roms.map((rom, index) => [rom.key, { rom, look: looks[index] }]));
+  if (held) byKey.set(held.key, { rom: held, look: looks[roms.length] });
+  const cause = lib.cause;
+  lib.cause = "";
+  const keep = cause === "open" ? roms.some((rom) => rom.key === lib.sel) : byKey.has(lib.sel) || (cause === "filter" && !lib.sel);
+  if (!keep) lib.sel = (state.game && roms.find((rom) => rom.id === state.game.id)?.key) || roms[0]?.key || "";
+  if (held && lib.sel !== held.key) byKey.delete(held.key);
   // 책장 한 칸 높이 = 위 표시 자리 14 + 롬팩 그림 + 선반 14(그림이 k 3·4 로 크면 그만큼), 칸 폭 = 옆면 + 보이는 앞면(크면 여러 칸)
   const isoH = cartArt.isoInfo()?.h ?? 0;
   const spineH = Math.max(isoH * cartArt.UNIT, ...looks.map((look) => isoH * look.model.unit));
@@ -3378,6 +3386,7 @@ async function renderLibrary() {
   const head = make("div", "lib__shelfHead");
   const sortBtn = button({ label: t(libSort() === "name" ? "web.lib.sortName" : "web.lib.sortRecent"), icon: "sort", title: t("web.lib.sort"), kind: "small", action: "sort", onClick: () => {
     savePrefs({ libSort: libSort() === "name" ? "recent" : "name" });
+    state.lib.cause = "filter";
     renderSheet();
   } });
   const addFiles = () =>
@@ -3393,6 +3402,7 @@ async function renderLibrary() {
   head.append(sortBtn);
   const groups = groupButtons(libGroup(), (id) => {
     savePrefs({ libGroup: id });
+    state.lib.cause = "filter";
     renderSheet();
   });
   const shelf = make("div", "lib__case");
@@ -3453,7 +3463,7 @@ async function renderLibrary() {
   for (const [key, slot] of spines) slot.classList.toggle("is-out", key === lib.sel);
   for (const [key, slot] of spines) slot.setAttribute("aria-pressed", String(key === lib.sel));
   fillCard(lib.sel);
-  const children = roms.length ? [card, shelfBox, fly] : [shelfBox];
+  const children = roms.length || byKey.size ? [card, shelfBox, fly] : [shelfBox];
   el.sheetBody.replaceChildren(...children);
   lockCard();
   fitShelf();
