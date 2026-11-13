@@ -295,7 +295,7 @@ export function drawFront(model, images, body) {
 
 const ISO_URL = "/art/rompack.png";
 const ISO_STRETCH = 5;
-const ISO_SHOW = 17;
+const ISO_SHOW = 8;
 let isoTpl = null;
 let isoWork = null;
 
