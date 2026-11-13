@@ -2862,10 +2862,12 @@ async function settextChecks() {
       range.selectNodeContents(n);
       const lines = [...range.getClientRects()].map((c) => Math.round(c.top)).filter((v, i, a) => a.indexOf(v) === i).length;
       const text = range.getBoundingClientRect();
-      const add = document.querySelector(".lib__case .spine--add")?.getBoundingClientRect();
-      return { text: n.textContent, align: getComputedStyle(n).textAlign, lines, left: +(text.left - host.left).toFixed(2), right: +(host.right - text.right).toFixed(2), addRight: add ? add.right : null, textLeft: text.left };
+      const slot = document.querySelector(".lib__case .spine--add");
+      const add = slot?.getBoundingClientRect();
+      const blank = slot?.querySelector(".spine__blank")?.getBoundingClientRect();
+      return { text: n.textContent, align: getComputedStyle(n).textAlign, lines, left: +(text.left - host.left).toFixed(2), right: +(host.right - text.right).toFixed(2), addRight: add ? Math.max(add.right, blank?.right ?? 0) : null, blank: Boolean(blank), textLeft: text.left };
     }, selector);
-    if (sheet === "library") ok(`빈 ${sheet}: 문구 '${words[word]}' · 첫 선반 + 칸 우측(결정 300) · ${info.lines}줄`, info.text === words[word] && info.addRight !== null && info.textLeft > info.addRight, JSON.stringify(info));
+    if (sheet === "library") ok(`빈 ${sheet}: 문구 '${words[word]}' · 첫 선반 + 칸(빈 롬팩 그림 끝) 우측(결정 300) · ${info.lines}줄`, info.text === words[word] && info.blank && info.addRight !== null && info.textLeft > info.addRight, JSON.stringify(info));
     else ok(`빈 ${sheet}: 문구 '${words[word]}' · 가운데 정렬(좌우 여백 차이 ${Math.abs(info.left - info.right).toFixed(2)}px) · ${info.lines}줄`, info.text === words[word] && info.align === "center" && Math.abs(info.left - info.right) <= 1, JSON.stringify(info));
     await measure(page, `390x844|ko|빈 ${sheet}`, [selector]);
     if (shot) await page.screenshot({ path: path.join(shots, shot) });

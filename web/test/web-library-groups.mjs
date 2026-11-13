@@ -348,7 +348,7 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
   const gaps = firstRow.slice(1).map((s, i) => +(s.left - firstRow[i].slotRight).toFixed(2));
   ok("롬팩 사이 여백 0(다음 롬팩 옆면이 앞 롬팩 앞면 위에) · 줄 끝 롬팩은 앞면 전체가 상자 안", gaps.every((g) => g === 0) && firstRow[firstRow.length - 1].right <= shelf.inner.r + 0.5, `사이 ${gaps.join(",")}`);
   ok("롬팩 목록 = 테두리 상자 안에서만 굴림(상하좌우 테두리 · 책장 자체 테두리 없음)", shelf.box.scrolls && shelf.box.border.every((w) => w > 0) && shelf.box.caseShadow === "none", JSON.stringify(shelf.box));
-  ok("롬팩 3D: 책장 밖 넘침 0 · 390 폭 한 줄 4개 · 좌우 여백 같음(마지막 앞면까지 보임)", shelf.overflow <= 0 && shelf.slots.every((s) => s.inCase) && rows[0] === 4 && Math.abs(margins[0] - margins[1]) <= 0.5, `줄마다 ${rows.join(",")} · 넘침 ${shelf.overflow} · 여백 ${margins.map((m) => m.toFixed(1)).join("/")}`);
+  ok("롬팩 3D: 책장 밖 넘침 0 · 390 폭 한 줄 5개(겹침 B, 칸 폭 48px) · 좌우 여백 같음(마지막 앞면까지 보임)", shelf.overflow <= 0 && shelf.slots.every((s) => s.inCase) && rows[0] === 5 && Math.abs(margins[0] - margins[1]) <= 0.5, `줄마다 ${rows.join(",")} · 넘침 ${shelf.overflow} · 여백 ${margins.map((m) => m.toFixed(1)).join("/")}`);
   await page.screenshot({ path: path.join(opt.shots, "라이브러리_롬팩3D_390x844.png") });
   await inkCenter(page, "그룹 버튼", ".lib__groups .btn");
 
@@ -375,10 +375,11 @@ const spread = (list, key) => Math.max(...list.map((b) => b[key])) - Math.min(..
   await pickGroup(page, "emu");
   const emu = (await shelfIds(page)).sort();
   ok("에뮬 → 목록 emu + 목록에 없는 .wgba + .gba·.gb·.gbc·.wasm", emu.join() === ["star", "unk", "gba", "gb", "gbc", "wasm", ...Array.from({ length: 9 }, (_, i) => `x${i}`)].sort().join(), emu.join());
+  const kept = await page.evaluate(() => document.querySelector(".lib__card")?.dataset.key ?? "");
   await page.evaluate(() => window.webgba.store.remove("rom:mob"));
   await pickGroup(page, "mobile");
-  const empty = await page.evaluate(() => ({ text: document.querySelector(".lib__empty")?.textContent ?? "", spines: document.querySelectorAll(".lib__case .spine[data-key]").length, card: Boolean(document.querySelector(".lib__card")) }));
-  ok("빈 그룹 → 안내 글 · 롬팩 0 · 꺼낸 칸 없음", empty.text === "이 그룹에는 게임이 없습니다." && empty.spines === 0 && !empty.card, JSON.stringify(empty));
+  const empty = await page.evaluate(() => ({ text: document.querySelector(".lib__empty")?.textContent ?? "", spines: document.querySelectorAll(".lib__case .spine[data-key]").length, card: document.querySelector(".lib__card")?.dataset.key ?? "", out: document.querySelectorAll(".lib__case .spine.is-out").length }));
+  ok("빈 그룹 → 안내 글 · 롬팩 0 · 꺼낸 칸은 이전 선택 그대로(필터를 바꿔도 상단 선택 유지) · 책장 선택 표시 없음", empty.text === "이 그룹에는 게임이 없습니다." && empty.spines === 0 && kept !== "" && empty.card === kept && empty.out === 0, JSON.stringify({ kept, ...empty }));
   await pickGroup(page, "all");
 
   // 가져오기·업데이트 때 값 저장

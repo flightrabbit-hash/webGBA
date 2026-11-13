@@ -259,8 +259,9 @@ for (const view of [{ width: 390, height: 844, dpr: 3 }, { width: 1366, height: 
   const add = await page.evaluate(() => {
     const n = document.querySelector(".spine--add");
     const r = n.getBoundingClientRect();
-    const shelf = parseFloat(getComputedStyle(n).paddingBottom) || 14;
-    return { l: r.left, r: r.right, top: r.bottom - 14 - 92, bottom: r.bottom - 14, shelf };
+    const blank = n.querySelector(".spine__blank")?.getBoundingClientRect();
+    if (!blank) return { l: r.left, r: r.right, top: r.bottom - 14 - 92, bottom: r.bottom - 14, blank: false };
+    return { l: r.left, r: Math.max(r.right, blank.right), top: blank.top, bottom: blank.bottom, blank: true };
   });
   const hint = await ink(page, ".lib__emptyText");
   const hb = await box(page, ".lib__emptyText");
@@ -268,8 +269,8 @@ for (const view of [{ width: 390, height: 844, dpr: 3 }, { width: 1366, height: 
   const panel = await box(page, ".sheet__panel");
   const up = Math.round((hint.top - add.top) * 100) / 100;
   const down = Math.round((add.bottom - hint.bottom) * 100) / 100;
-  ok("빈 라이브러리: 안내가 + 칸 우측", hb.l > add.r, JSON.stringify({ hb, add }));
-  ok("빈 라이브러리: 안내 잉크가 + 칸 점선 상자 세로 가운데(차이 ≤ 1)", Math.abs(up - down) <= 1, JSON.stringify({ up, down }));
+  ok("빈 라이브러리: 안내가 + 칸(빈 롬팩 그림 끝) 우측", add.blank && hb.l > add.r, JSON.stringify({ hb, add }));
+  ok("빈 라이브러리: 안내 잉크가 + 칸 빈 롬팩 그림 세로 가운데(차이 ≤ 1)", Math.abs(up - down) <= 1, JSON.stringify({ up, down }));
   ok("빈 라이브러리: 저장소 줄에 게임 파일 크기 없음", storage && !/게임 파일|webGBA/.test(storage), storage);
   ok("넓은 화면: 시트 높이 = 내용(빈 라이브러리 < 500)", panel.h < 500, JSON.stringify(panel));
   await shot(page, "빈라이브러리_1366x768.png");
