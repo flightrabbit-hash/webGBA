@@ -1805,25 +1805,24 @@ body[data-layout="landscape"] .lib__shelf {
 }
 
 .spine--add {
-  width: 44px;
-  margin-left: var(--side-over, 0px);
   color: var(--text-faint);
 }
 
-.spine--add::before {
-  content: "";
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: var(--shelf, 14px);
-  height: 92px;
-  border: var(--px) dashed var(--line-strong);
+.spine--add > .icon {
+  margin: 0 12px 36px;
 }
 
-.spine--add .icon {
-  position: absolute;
-  left: 12px;
-  bottom: calc(var(--shelf, 14px) + 36px);
+.spine__blank {
+  display: block;
+  overflow: visible;
+}
+
+.spine__dash {
+  fill: var(--line-strong);
+}
+
+.spine__plus {
+  fill: currentColor;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1844,7 +1843,7 @@ body[data-layout="landscape"] .lib__shelf {
   flex: 1 1 auto;
   align-items: center;
   min-width: 0;
-  height: 92px;
+  height: var(--pack-h, 92px);
   margin: 0 0 var(--shelf, 14px) var(--gap-2);
 }
 
