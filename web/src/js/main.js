@@ -2971,6 +2971,32 @@ function spineArt(rom, look) {
   return art;
 }
 
+function blankArt() {
+  const blank = cartArt.blankIso();
+  if (!blank) return null;
+  const unit = cartArt.UNIT;
+  const slot = cartArt.isoSlot();
+  const art = make("span", "spine__art");
+  art.style.width = `${slot * unit}px`;
+  art.style.height = `${blank.h * unit}px`;
+  art.dataset.over = String((blank.w - slot) * unit);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "spine__iso spine__blank");
+  svg.setAttribute("viewBox", `0 0 ${blank.w} ${blank.h}`);
+  svg.setAttribute("width", String(blank.w * unit));
+  svg.setAttribute("height", String(blank.h * unit));
+  svg.setAttribute("shape-rendering", "crispEdges");
+  svg.setAttribute("aria-hidden", "true");
+  for (const part of ["dash", "plus"]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", `spine__${part}`);
+    path.setAttribute("d", blank[part].map(([x, y, n]) => `M${x} ${y}h${n}v1h-${n}z`).join(""));
+    svg.append(path);
+  }
+  art.append(svg);
+  return art;
+}
+
 const SPINE_TEXT = { size: 12, line: 14, lines: 1, room: "가나다라마 바사아" };
 
 function nameLines(ctx, raw, room) {
@@ -3399,7 +3425,12 @@ async function renderLibrary() {
   add.dataset.action = "add-file";
   add.title = t("web.openShort");
   add.setAttribute("aria-label", t("web.openShort"));
-  add.append(iconNode("plus"));
+  const blank = blankArt();
+  if (blank) {
+    over = Math.max(over, Number(blank.dataset.over));
+    shelf.style.setProperty("--pack-h", blank.style.height);
+    add.append(blank);
+  } else add.append(iconNode("plus"));
   add.addEventListener("click", addFiles);
   shelf.append(add);
   if (!roms.length) {
@@ -3496,7 +3527,7 @@ function fitShelf() {
   const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
   const rows = refs.spines.size ? Math.max(1, Math.floor(room / slot)) : 1;
   refs.shelf.style.minHeight = `${rows * slot}px`;
-  const list = [...refs.spines.values()];
+  const list = [...refs.spines.values(), ...(refs.add ? [refs.add] : [])];
   list.forEach((node, i) => {
     const next = list[i + 1];
     const end = !next || next.offsetTop !== node.offsetTop;

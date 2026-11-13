@@ -295,7 +295,7 @@ export function drawFront(model, images, body) {
 
 const ISO_URL = "/art/rompack.png";
 const ISO_STRETCH = 5;
-const ISO_SHOW = 17;
+const ISO_SHOW = 8;
 let isoTpl = null;
 let isoWork = null;
 
@@ -426,6 +426,187 @@ export function loadIso() {
 
 export const isoInfo = () => isoTpl;
 export const isoSlot = () => (isoTpl ? isoTpl.seam + 1 + ISO_SHOW : 0);
+
+const BLANK_DASH = [3, 2];
+const BLANK_ARM = 5;
+const BLANK_LINE = 8;
+const RING = [[-1, 0], [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1]];
+let blankFor = null;
+let blankWork = null;
+
+function traceEdge(solid, start) {
+  const path = [start];
+  let [x, y] = start;
+  let back = 0;
+  let first = -1;
+  for (let guard = 0; guard < 1 << 16; guard++) {
+    let found = -1;
+    for (let i = 1; i <= 8 && found < 0; i++) if (solid(x + RING[(back + i) % 8][0], y + RING[(back + i) % 8][1])) found = (back + i) % 8;
+    if (found < 0) break;
+    if (first < 0) first = found;
+    else if (x === start[0] && y === start[1] && found === first) break;
+    const out = RING[(found + 7) % 8];
+    x += RING[found][0];
+    y += RING[found][1];
+    back = RING.findIndex(([dx, dy]) => dx === out[0] - RING[found][0] && dy === out[1] - RING[found][1]);
+    path.push([x, y]);
+  }
+  return path;
+}
+
+function rowRuns(keys, w) {
+  const runs = [];
+  for (const key of [...new Set(keys)].sort((a, b) => a - b)) {
+    const [x, y] = [key % w, Math.floor(key / w)];
+    const last = runs[runs.length - 1];
+    if (last && last[1] === y && last[0] + last[2] === x) last[2] += 1;
+    else runs.push([x, y, 1]);
+  }
+  return runs;
+}
+
+const touch = (key, set, w) => RING.some(([dx, dy]) => (key % w) + dx >= 0 && (key % w) + dx < w && set.has(key + dy * w + dx));
+
+function groups(keys, w) {
+  const left = new Set(keys);
+  const out = [];
+  for (const start of keys) {
+    if (!left.delete(start)) continue;
+    const part = [start];
+    for (let i = 0; i < part.length; i++)
+      for (const [dx, dy] of RING) {
+        const next = part[i] + dy * w + dx;
+        if ((part[i] % w) + dx >= 0 && (part[i] % w) + dx < w && left.delete(next)) part.push(next);
+      }
+    out.push(part);
+  }
+  return out;
+}
+
+function dashes(line, anchors, w) {
+  const period = BLANK_DASH[0] + BLANK_DASH[1];
+  const inLine = new Set(line);
+  const depth = new Map();
+  const queue = anchors.length ? [...anchors] : [line[0]];
+  for (const key of queue) depth.set(key, 0);
+  for (let i = 0; i < queue.length; i++)
+    for (const [dx, dy] of RING) {
+      const next = queue[i] + dy * w + dx;
+      if ((queue[i] % w) + dx < 0 || (queue[i] % w) + dx >= w || !inLine.has(next) || depth.has(next)) continue;
+      depth.set(next, depth.get(queue[i]) + 1);
+      queue.push(next);
+    }
+  return line.filter((key) => (depth.get(key) ?? 0) % period < BLANK_DASH[0]);
+}
+
+function innerLines({ w, h, idx, hsl, kind, body, seam }, onRing) {
+  const color = (x, y) => (x >= 0 && y >= 0 && x < w && y < h ? idx[y * w + x] : 255);
+  const [, bodySat, bodyLight] = hsl[body];
+  const dark = (c) => c !== 255 && hsl[c][2] < bodyLight - 0.02;
+  const ink = (c) => c !== 255 && kind[c] === "line";
+  const bright = (c) => c !== 255 && kind[c] === "body" && hsl[c][2] > bodyLight + 0.05 && hsl[c][1] > bodySat * 0.6;
+  const plain = (c) => c !== 255 && kind[c] === "body" && !dark(c) && !bright(c);
+  const lit = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) lit[i] = bright(idx[i]) ? 1 : 0;
+  for (let x = 0; x < w; x++)
+    for (let y = 1; y < h; y++) {
+      if (lit[y * w + x] || !lit[(y - 1) * w + x]) continue;
+      let n = 0;
+      while (n < 3 && y + n < h && plain(color(x, y + n))) n++;
+      if (n && n < 3 && y + n < h && lit[(y + n) * w + x]) for (let k = 0; k < n; k++) lit[(y + k) * w + x] = 2;
+    }
+  const isLit = (x, y) => x >= 0 && y >= 0 && x < w && y < h && lit[y * w + x] > 0;
+  const isPlain = (x, y) => plain(color(x, y)) && !isLit(x, y) && !touch(y * w + x, onRing, w);
+  const bound = (x, y) => isLit(x, y) && lit[y * w + x] === 1 && !onRing.has(y * w + x) && (isPlain(x, y + 1) || isPlain(x - 1, y) || isPlain(x + 1, y));
+  const darkKeys = [];
+  const stripeKeys = [];
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const c = color(x, y);
+      if (onRing.has(y * w + x)) continue;
+      if (dark(c) && (ink(c) || !(ink(color(x - 1, y)) || ink(color(x + 1, y))))) darkKeys.push(y * w + x);
+      else if (x < seam && lit[y * w + x] === 1 && isPlain(x - 1, y) && isPlain(x + 1, y)) stripeKeys.push(y * w + x);
+    }
+  const darkLines = groups(darkKeys, w).filter((part) => part.length >= BLANK_LINE);
+  const stripes = groups(stripeKeys, w).filter((part) => part.length >= BLANK_LINE);
+  const taken = new Set([...darkLines.flat(), ...stripes.flat()]);
+  const follow = (start, steps, stop) => {
+    const path = [start];
+    let [x, y] = [start % w, Math.floor(start / w)];
+    while (!stop(y * w + x) && path.length < w + h) {
+      const next = steps.map(([dx, dy]) => [x + dx, y + dy]).find(([nx, ny]) => bound(nx, ny) && !taken.has(ny * w + nx) && !path.includes(ny * w + nx));
+      if (!next) break;
+      [x, y] = next;
+      path.push(y * w + x);
+    }
+    return path;
+  };
+  const lines = [...darkLines];
+  for (const stripe of stripes) {
+    const top = Math.min(...stripe);
+    lines.push([...new Set([...stripe, ...follow(top, [[-1, 0], [-1, -1], [0, -1]], (key) => touch(key, onRing, w))])]);
+  }
+  const seamLine = darkLines.find((part) => part.some((key) => key % w === seam));
+  if (seamLine) {
+    const others = new Set(darkLines.filter((part) => part !== seamLine).flat());
+    const starts = [];
+    for (const key of seamLine)
+      for (const [dx, dy] of RING) {
+        const [x, y] = [(key % w) + dx, Math.floor(key / w) + dy];
+        if (x > seam && bound(x, y) && !taken.has(y * w + x)) starts.push(y * w + x);
+      }
+    if (starts.length) {
+      const path = follow(Math.min(...starts), [[1, 0], [1, -1], [0, -1]], (key) => touch(key, others, w) || touch(key, onRing, w));
+      if (path.length >= BLANK_LINE) lines.push(path);
+    }
+  }
+  return lines;
+}
+
+export function blankIso() {
+  const tpl = isoTpl;
+  if (!tpl) return null;
+  if (blankFor === tpl) return blankWork;
+  const { w, h, idx, label } = tpl;
+  const solid = (x, y) => x >= 0 && y >= 0 && x < w && y < h && idx[y * w + x] !== 255;
+  const first = idx.findIndex((c) => c !== 255);
+  const ring = [];
+  const onRing = new Set();
+  for (const [x, y] of traceEdge(solid, [first % w, Math.floor(first / w)])) {
+    if (onRing.has(y * w + x)) continue;
+    onRing.add(y * w + x);
+    ring.push(y * w + x);
+  }
+  const period = BLANK_DASH[0] + BLANK_DASH[1];
+  const fit = Math.max(1, Math.round(ring.length / period)) * period;
+  const lit = (shift) => ring.filter((_, i) => (Math.floor((i * fit) / ring.length) + shift) % period < BLANK_DASH[0]);
+  const sides = [(k) => k < w, (k) => k >= (h - 1) * w, (k) => k % w === 0, (k) => k % w === w - 1];
+  const shift = Array.from({ length: period }, (_, i) => i).find((s) => sides.every((side) => lit(s).some(side))) ?? 0;
+  const dash = lit(shift);
+  const lines = innerLines(tpl, onRing);
+  lines.forEach((line, i) => {
+    const others = new Set(lines.filter((_, j) => j !== i).flat());
+    const anchors = line.filter((key) => touch(key, onRing, w) || touch(key, others, w));
+    dash.push(...dashes(line, anchors, w));
+    for (const key of anchors) for (const [dx, dy] of RING) if (onRing.has(key + dy * w + dx) && (key % w) + dx >= 0 && (key % w) + dx < w) dash.push(key + dy * w + dx);
+  });
+  const plus = [];
+  if (label.length > 2) {
+    const center = Math.round((label[0].x + label[label.length - 1].x + 1) / 2 - 0.5);
+    const at = label.find((r) => r.x === center) ?? label[Math.floor(label.length / 2)];
+    const step = Math.max(1, Math.round((label[label.length - 1].x - label[0].x) / Math.max(1, label[0].top - label[label.length - 1].top)));
+    const before = label.find((r) => r.x === center - 1);
+    const pair = before && before.top !== at.top ? center : center - 1;
+    const row = Math.round((at.top + at.bottom) / 2 - 0.5);
+    for (let d = -BLANK_ARM; d <= BLANK_ARM; d++) {
+      plus.push((row + d) * w + center);
+      plus.push((row - Math.floor((center + d - pair) / step) + Math.floor((center - pair) / step)) * w + center + d);
+    }
+  }
+  blankFor = tpl;
+  blankWork = { w, h, dash: rowRuns(dash, w), plus: rowRuns(plus, w) };
+  return blankWork;
+}
 
 const ISO_PAPER = { sat: 0.45, light: [0.62, 0.84], lift: 0.32 };
 const ISO_STRIP = { sat: 0.35, light: [0.84, 0.94], lift: 0.5 };
