@@ -137,6 +137,9 @@ const state = {
   choiceHistory: false,
   choicePad: 0,
   skipPop: 0,
+  guardDrop: false,
+  guardForward: false,
+  guardSeq: 0,
   dialogDone: null,
   wake: null,
   wakeBusy: false,
@@ -2324,6 +2327,7 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   updateWake();
   media.setGame(meta);
   netWin.offerBack();
+  syncGuard();
 }
 
 // 틀 안 게임에 초점이 있을 때 누른 키(script-host 가 넘김) — 이 페이지에서 누른 것과 같은 길로.
@@ -2626,6 +2630,7 @@ async function busy(work) {
     return false;
   } finally {
     state.opening = false;
+    syncGuard();
   }
 }
 
@@ -2878,7 +2883,10 @@ async function closeGame({ quiet = false } = {}) {
   syncControls();
   if (reshape) layout();
   updateWake();
-  if (!quiet) toast(t("status.closed"));
+  if (!quiet) {
+    toast(t("status.closed"));
+    syncGuard();
+  }
 }
 
 // ── 롬팩 그림 노드(라이브러리·첫 화면 같은 모양) ──
@@ -3254,6 +3262,44 @@ function closeSheet({ fromHistory = false, force = false } = {}) {
     state.sheetHistory = false;
     if (!fromHistory) history.go(-1 - extra);
   }
+}
+
+const GUARD_KEY = "webgbaGuard";
+const BELOW_KEY = "webgbaBelow";
+const GUARD_FORWARD_MS = 400;
+const onGuard = () => history.state?.[GUARD_KEY] === true;
+
+function syncGuard() {
+  if (state.guardDrop || state.guardForward || state.sheetHistory || state.choiceHistory) return;
+  if (state.game && !onGuard()) {
+    if (history.state?.[BELOW_KEY]) forwardGuard();
+    else pushGuard();
+  } else if (!state.game && onGuard()) {
+    state.guardDrop = true;
+    state.skipPop++;
+    history.back();
+  }
+}
+
+function pushGuard() {
+  if (!state.game || onGuard() || state.guardDrop || state.sheetHistory || state.choiceHistory) return;
+  history.replaceState({ ...history.state, [BELOW_KEY]: true }, "");
+  history.pushState({ [GUARD_KEY]: true }, "");
+}
+
+function forwardGuard() {
+  const seq = ++state.guardSeq;
+  state.guardForward = true;
+  history.forward();
+  setTimeout(() => {
+    if (!state.guardForward || seq !== state.guardSeq) return;
+    state.guardForward = false;
+    pushGuard();
+  }, GUARD_FORWARD_MS);
+}
+
+function clearStaleGuard() {
+  if (onGuard() || history.state?.[BELOW_KEY]) history.replaceState(null, "");
 }
 
 function renderSheet() {
@@ -5184,22 +5230,27 @@ function wire() {
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", () => netWin.pageHide());
   window.addEventListener("pagehide", () => player.active && player.flushSave({ final: true }));
-  window.addEventListener("pageshow", (event) => event.persisted && player.resumeAudio());
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    player.resumeAudio();
+    syncGuard();
+  });
   // ② 게임 틀을 눌러 초점이 틀로 가도 blur 가 온다 — 그때는 키를 놓지 않는다(틀이 키를 넘겨줌)
   window.addEventListener("blur", () => {
     if (!(state.scriptFrame && document.activeElement === state.scriptFrame)) player.releaseAll();
   });
+  clearStaleGuard();
   window.addEventListener("popstate", () => {
-    if (state.skipPop) {
-      state.skipPop--;
-      return;
-    }
-    if (state.choiceDone) {
+    const forwarded = state.guardForward;
+    state.guardForward = false;
+    state.guardDrop = false;
+    if (forwarded && onGuard()) return;
+    if (state.skipPop) state.skipPop--;
+    else if (state.choiceDone) {
       state.choiceHistory = false;
       state.choiceDone(null);
-      return;
-    }
-    if (state.sheet) closeSheet({ fromHistory: true });
+    } else if (state.sheet) closeSheet({ fromHistory: true });
+    syncGuard();
   });
   el.choiceList.addEventListener("click", (event) => {
     const row = event.target.closest?.(".choice__opt");
