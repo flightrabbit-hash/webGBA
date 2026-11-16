@@ -90,6 +90,33 @@ fn restore_main<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// 파일을 놓은 뒤 본 창을 앞으로(키 입력이 탐색기에 남지 않게). Windows 가 허용할 때만 앞으로 오고, 거절은 기록만 한다.
+/// tao `set_focus` 는 거절되면 가짜 Alt 입력으로 포그라운드 잠금을 넘기므로 쓰지 않는다(설계.md "놓은 뒤 창 앞으로").
+#[cfg(windows)]
+fn front_after_drop<R: Runtime>(window: &tauri::WebviewWindow<R>) -> &'static str {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    let Ok(hwnd) = window.hwnd() else { return "창 핸들 없음" };
+    // SAFETY: 이 앱 본 창의 핸들만 넘긴다.
+    unsafe {
+        if GetForegroundWindow() == hwnd {
+            "이미 앞"
+        } else if SetForegroundWindow(hwnd).as_bool() {
+            "앞으로"
+        } else {
+            "Windows 가 거절"
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn front_after_drop<R: Runtime>(window: &tauri::WebviewWindow<R>) -> &'static str {
+    let _ = window.set_focus();
+    "앞으로"
+}
+
 /// 창 이벤트: 끌어 놓기 → 화면 DOM 이벤트, 닫기 요청 → 화면이 세이브를 마저 쓰게, 최대화 → 버튼 모양.
 fn window_events<R: Runtime>() -> impl Fn(&tauri::Window<R>, &WindowEvent) + Send + Sync + 'static {
     let last_max: Mutex<Option<bool>> = Mutex::new(None);
@@ -102,7 +129,10 @@ fn window_events<R: Runtime>() -> impl Fn(&tauri::Window<R>, &WindowEvent) + Sen
                     bridge::events::os_drag(&webview, Some((position.x, position.y)));
                 }
                 tauri::DragDropEvent::Drop { paths, position } => {
-                    let paths = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                    let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                    if !paths.is_empty() {
+                        logging::write("INFO", &format!("[창] 끌어 놓기 {}개 → 창 {}", paths.len(), front_after_drop(&webview)));
+                    }
                     bridge::events::os_drop(&webview, paths, (position.x, position.y));
                 }
                 tauri::DragDropEvent::Leave => bridge::events::os_drag(&webview, None),
