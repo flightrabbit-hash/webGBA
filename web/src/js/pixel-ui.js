@@ -97,6 +97,30 @@ export function family(face, ink, outline) {
 }
 export { contrast as contrastRatio, mix as mixColor };
 
+const recolorCache = new WeakMap();
+// 조작부별 색: 팔레트를 복제하고 지정한 역할(ab·cd·sh·pill·rs·btn)의 면 색 계열만 새 색으로 다시 만든다.
+// 같은 팔레트 + 같은 색이면 같은 객체(cached 의 열쇠·그림 캐시 재사용). 지정이 없으면 원래 팔레트 그대로.
+export function recolorRoles(palette, map = {}) {
+  palette = resolvePalette(palette);
+  const entries = Object.entries(map).filter(([, hex]) => hex).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (!entries.length) return palette;
+  const key = entries.map(([role, hex]) => `${role}:${String(hex).toLowerCase()}`).join('|');
+  let inner = recolorCache.get(palette);
+  if (!inner) { inner = new Map(); recolorCache.set(palette, inner); }
+  let out = inner.get(key);
+  if (!out) {
+    out = { ...palette };
+    const o = palette.outline, ink = palette.base?.ink ?? '#ffffff';
+    for (const [role, hex] of entries) {
+      parseColor(hex);
+      const f = family(hex.toLowerCase(), ink, o);
+      out[role] = f.f; out[role + 'Hi'] = f.hi; out[role + 'Lo'] = f.lo; out[role + 'Side'] = f.side; out[role + 'Ink'] = f.ink;
+    }
+    inner.set(key, out);
+  }
+  return out;
+}
+
 function buildPalette(b, id) {
   const W = '#ffffff', K = '#000000', o = b.outline;
   const fam = (face, ink) => family(face, ink, o);

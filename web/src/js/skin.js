@@ -206,6 +206,37 @@ export class Skin {
     this.stickState = { x: 0, y: 0, active: false, dirs: [] };
     this.tools = new Map();
     this.canvases = new Map();
+    // 자율배치 편집(custom 배치)에서만 채워진다 — part 이름 → 배율 곱(1 기준)·색(hex). 비어 있으면 기본 동작 그대로.
+    this.scaleMul = {};
+    this.colorHex = {};
+  }
+
+  setOverrides({ scaleMul = {}, colorHex = {} } = {}) {
+    this.scaleMul = scaleMul;
+    this.colorHex = colorHex;
+    this.redraw();
+  }
+
+  // part(렌더 이름) → recolorRoles 역할. A·B = ab, C·D = cd, L·R·키패드 = sh, START·SELECT·소프트 = pill, RS = rs, 방향 = btn.
+  roleOf(part) {
+    if (part === "a" || part === "b" || part === "action") return "ab";
+    if (part === "c" || part === "d") return "cd";
+    if (part === "start" || part === "select" || part === "soft") return "pill";
+    if (part === "rs") return "rs";
+    if (part === "l" || part === "r" || part === "num" || part === "clearKey") return "sh";
+    return "btn";
+  }
+
+  // 배율 곱을 기기 픽셀 정수 배율로(그림이 흐려지지 않게). base = 그 조작부의 기준 배율(css).
+  effScale(name, base) {
+    const mul = this.scaleMul[name];
+    if (!mul || mul === 1) return this.scaleOf(base);
+    return Math.max(1, Math.round(this.px(base) * mul));
+  }
+
+  paletteFor(part, name) {
+    const hex = this.colorHex[name];
+    return hex ? PX.recolorRoles(this.palette, { [this.roleOf(part)]: hex }) : this.palette;
   }
 
   refreshColors() {
@@ -311,18 +342,21 @@ export class Skin {
     if (!host) return;
     const state = this.down.has(name) ? "pressed" : "normal";
     const part = KEY_PARTS[name];
-    this.paint(host, PX.renderGameButton(part, { label: keyLabel(name), side: name, state, scale: this.scaleOf(this.art), palette: this.palette }));
+    const scale = this.effScale(name, this.art);
+    this.paint(host, PX.renderGameButton(part, { label: keyLabel(name), side: name, state, scale, palette: this.paletteFor(part, name) }));
   }
 
   drawDir() {
-    const scale = this.scaleOf(this.dirArt ?? this.art);
+    const dirBase = this.dirArt ?? this.art;
+    const scale = this.effScale("dir", dirBase);
+    const palette = this.colorHex.dir ? PX.recolorRoles(this.palette, { btn: this.colorHex.dir }) : this.palette;
     if (this.mode === "dpad") {
       const pressed = [...this.down].filter((name) => STICK_NAMES[name]).map((name) => STICK_NAMES[name]);
-      this.paint(this.dpad, PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette: this.palette }));
+      this.paint(this.dpad, PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette }));
       return;
     }
-    const base = PX.renderStickBase({ scale, palette: this.palette });
-    const knob = PX.renderStickKnob({ scale, palette: this.palette });
+    const base = PX.renderStickBase({ scale, palette });
+    const knob = PX.renderStickKnob({ scale, palette });
     const size = Math.max(base.width, knob.height);
     const canvas = this.paint(this.dpad, base, { minW: size, minH: size });
     const ctx = canvas.getContext("2d");
@@ -330,8 +364,8 @@ export class Skin {
     const s = this.stickState;
     const direction = s.active && s.dirs.length ? this.direction(s.dirs) : null;
     const state = s.active ? "pressed" : "normal";
-    const ring = PX.renderStickBase({ state, direction, scale, palette: this.palette });
-    const top = PX.renderStickKnob({ state, scale, palette: this.palette });
+    const ring = PX.renderStickBase({ state, direction, scale, palette });
+    const top = PX.renderStickKnob({ state, scale, palette });
     const bx = Math.floor((canvas.width - ring.width) / 2);
     const by = Math.floor((canvas.height - ring.height) / 2);
     let ox = s.x * ring.maxTravel;

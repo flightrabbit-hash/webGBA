@@ -235,6 +235,8 @@ export const DEFAULT_PREFS = {
   theme: "dark",
   pad: "on",
   padCombo: true,
+  padPlacement: "default",
+  padLayout: {},
   dirInput: "stick",
   vibrate: false,
   vibrateDir: false,

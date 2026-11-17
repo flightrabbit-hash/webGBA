@@ -15,6 +15,7 @@ import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
 import * as store from "./store.js";
 import { DIR_MODES, DIRS, VirtualPad, hapticKind } from "./pad.js";
+import { PadEditor, PAD_PLACEMENTS, hasLayout, normalizeLayout } from "./pad-editor.js";
 import { guardBounce, needsBounceGuard } from "./bounce.js";
 import { extractRom, ZIP_MAX, zipEntries, zipFile, zipGames, zipReadAsync, ZipError } from "./core/zip.js";
 import { openCountLoader, shownNames, whyText, zipPicker } from "./app/zip-pick.js";
@@ -82,6 +83,7 @@ const el = {
   toast: $("toast"),
   pad: $("pad"),
   dpad: document.querySelector("[data-dpad]"),
+  face: document.querySelector(".face"),
   sheet: $("sheet"),
   sheetTitle: $("sheetTitle"),
   sheetChip: $("sheetChip"),
@@ -708,6 +710,83 @@ const pad = new VirtualPad({
 });
 
 const padDown = new Set();
+const padEditor = new PadEditor();
+
+// 자율배치: face 묶음 내부 크기(--face-w 등)를 face 배율 곱으로 다시 계산(layout 식 그대로).
+function faceVarsFor(mul) {
+  const dpr = window.devicePixelRatio || 1;
+  const eff = Math.max(1, Math.round(skin.px(state.art) * mul));
+  const unit = eff / dpr;
+  const landscape = window.innerWidth > window.innerHeight;
+  const face = landscape ? FACE.landscape : FACE.portrait;
+  const four = !state.mobile && Boolean(state.extra);
+  const rs = !state.mobile && el.pad.hasAttribute("data-rs");
+  const up = Math.round(faceUp(face, landscape) * unit);
+  const band = rs ? rsBand(unit) : 0;
+  return { "--face-w": faceWidth(face, unit), "--face-h": Math.round(face.h * unit) + (four ? up : 0) + band, "--face-up": up, "--rs-band": band };
+}
+
+// 자율배치에서 게임 화면 크기·위치: layout 이 정한 --sw/--sh 를 기준으로 배율·이동.
+function screenFreeBase() {
+  const cs = getComputedStyle(document.documentElement);
+  return { w: parseFloat(cs.getPropertyValue("--sw")) || 240, h: parseFloat(cs.getPropertyValue("--sh")) || 160 };
+}
+
+function setScreenFreeSize(w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const root = document.documentElement.style;
+  root.setProperty("--sw", `${w}px`);
+  root.setProperty("--sh", `${h}px`);
+  const ring = skin.px(2);
+  const frameW = Math.round(w * dpr) + ring * FRAME_ROWS * 2;
+  const frameH = Math.round(h * dpr) + ring * FRAME_ROWS * 2;
+  skin.frame(el.frame, { width: frameW, height: frameH, ring, full: true });
+  el.frame.style.width = `${frameW / dpr}px`;
+  el.frame.style.height = `${frameH / dpr}px`;
+}
+
+function setScreenFreeCenter(cx, cy) {
+  const r = el.stage.getBoundingClientRect();
+  el.stage.style.left = `${Math.round(cx - r.width / 2)}px`;
+  el.stage.style.top = `${Math.round(cy - r.height / 2)}px`;
+}
+
+function clearScreenFree() {
+  for (const v of ["position", "left", "top"]) el.stage.style.removeProperty(v);
+}
+
+function initPadEditor() {
+  padEditor.init({
+    body: document.body,
+    doc: () => document,
+    win: () => window,
+    el: () => el,
+    prefs: () => state.prefs,
+    persist: (patch) => savePrefs(patch),
+    setPlacement: (value, { silent } = {}) => {
+      state.prefs.padPlacement = value;
+      if (!silent) store.savePrefs(state.prefs);
+    },
+    skin: () => skin,
+    pad: () => el.pad,
+    landscape: () => window.innerWidth > window.innerHeight,
+    padOn: () => padMode() !== "off" && !state.wapk,
+    relayout: () => layout(),
+    hold: (on) => hold("padedit", on),
+    t: (key, vars) => t(key, vars),
+    mount: (node) => el.app.append(node),
+    appRect: () => {
+      const r = el.app.getBoundingClientRect();
+      return { left: r.left, top: r.top, w: r.width, h: r.height };
+    },
+    faceVars: (mul) => faceVarsFor(mul),
+    basePx: (id) => skin.px(id === "dir" ? state.dirArt ?? state.art : state.art),
+    screenBase: () => screenFreeBase(),
+    setScreenSize: (w, h) => setScreenFreeSize(w, h),
+    setScreenCenter: (cx, cy) => setScreenFreeCenter(cx, cy),
+    clearScreenInline: () => clearScreenFree(),
+  });
+}
 
 function padMark(name, down) {
   if (down) padDown.add(name);
@@ -1325,6 +1404,7 @@ function layout() {
   }
   pad.enabled = padOn;
   if (!padOn) pad.releaseAll();
+  padEditor.apply();
   pad.invalidate();
   fitRecent();
   syncTurn();
@@ -4585,6 +4665,7 @@ function renderSettings() {
           layout();
         },
       ),
+      ...padPlacementFields(p),
       switchField(t("web.padCombo"), t("web.padCombo.note"), p.padCombo !== false, (on) => savePrefs({ padCombo: on })),
       rsSetting(),
       HAPTIC ? switchField(t("web.vibrate"), t("web.vibrate.note"), p.vibrate, (on) => savePrefs({ vibrate: on })) : null,
@@ -4667,6 +4748,43 @@ function renderSettings() {
     ),
   ];
   el.sheetBody.replaceChildren(...children.filter(Boolean));
+}
+
+// 버튼 배치: 기본 / 크게 / 직접 배치. 직접 배치면 가로·세로 각각 [편집](지금 방향만 활성화) — 자유배치 에디터로.
+function padPlacementFields(p) {
+  const placement = PAD_PLACEMENTS.includes(p.padPlacement) ? p.padPlacement : "default";
+  const out = [
+    selectField(
+      t("web.pad.place"),
+      t("web.pad.place.note"),
+      PAD_PLACEMENTS.map((value) => ({ value, label: t(`web.pad.place.${value}`) })),
+      placement,
+      (value) => {
+        savePrefs({ padPlacement: value });
+        layout();
+        renderSheet();
+      },
+    ),
+  ];
+  if (placement !== "custom" || padMode() === "off") return out;
+  const saved = normalizeLayout(p.padLayout);
+  const cur = window.innerWidth > window.innerHeight;
+  for (const landscape of [true, false]) {
+    const orient = landscape ? "landscape" : "portrait";
+    const has = hasLayout(saved, landscape);
+    const note = cur === landscape ? (has ? t("web.pad.edit.state.saved") : t("web.pad.edit.state.default")) : t("web.pad.edit.rotate");
+    const edit = button({
+      label: t("web.pad.edit.btn"),
+      icon: "pencil",
+      disabled: cur !== landscape,
+      onClick: () => {
+        closeSheet();
+        padEditor.startEdit(landscape);
+      },
+    });
+    out.push(field(t(`web.pad.edit.${orient}`), note, edit));
+  }
+  return out;
 }
 
 const msOf = (frames) => Math.round(frames * FRAME_MS);
@@ -5642,6 +5760,7 @@ async function boot() {
   player.setKeys(keyTable());
   applyPlayerPrefs();
   applyDirInput();
+  initPadEditor();
   wire();
   layout();
   syncControls();
