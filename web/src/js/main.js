@@ -990,7 +990,7 @@ function applyPlayerPrefs() {
   player.setMuted(Boolean(p.muted));
   player.gameSpeed = SPEEDS.includes(p.gameSpeed) ? p.gameSpeed : 1;
   player.fast = player.gameSpeed !== 1;
-  player.fastMute = Boolean(p.fastMute);
+  player.setFastMute(Boolean(p.fastMute));
   player.setAutoFire({ on: p.autoFire === true, level: p.autoFireLevel ?? AUTO_FIRE_LEVEL });
 }
 
