@@ -5896,7 +5896,7 @@ function startTouchDebug() {
     for (const f of fingers) lines.push(`${f.src}#${f.id} ${Math.round(f.x)},${Math.round(f.y)} r ${size(f.rx)}x${size(f.ry)} ${f.contact ? "size" : "point"} ${f.owner} ${f.keys.join("+") || "-"}`);
     lines.push(`down ${[...pad.down].join("+") || "-"} · contact ${pad.contactSizes.size < 2 ? "waiting" : "on"}`);
     lines.push(`cancel touch ${count.touchcancel} · pointer ${count.pointercancel} · lostcapture ${count.lostpointercapture}`);
-    lines.push(`start touch ${count.touchstart} · pointer ${count.pointerdown}`);
+    lines.push(`start touch ${count.touchstart} · pointer ${count.pointerdown} · late ${pad.lateTouches}`);
     lines.push(`game ${names(keys)} 0x${keys.toString(16)} · frame ${frame} · autofire ${player.fireRate || "off"}`);
     lines.push(`A+B gap ${gap} · same frame ${same}/${tries}`);
     const text = lines.join("\n");

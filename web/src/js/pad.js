@@ -127,8 +127,10 @@ export class VirtualPad {
     this.mode = "stick";
     this.pointers = new Map();
     this.touches = new Map();
+    this.dropped = new Set();
     this.touchSeen = false;
     this.touchCount = 0;
+    this.lateTouches = 0;
     this.contactSizes = new Set();
     this.down = new Set();
     this.dirMask = 0;
@@ -177,6 +179,16 @@ export class VirtualPad {
     return true;
   }
 
+  adopt(touch) {
+    const id = touch.identifier;
+    if (this.touches.has(id) || this.dropped.has(id) || !this.root.contains(touch.target)) return false;
+    const entry = { keys: [], x: NaN, y: NaN };
+    this.sizeOf(entry, touch.radiusX, touch.radiusY, touch.rotationAngle);
+    entry.owner = this.ownerAt(touch.clientX, touch.clientY, entry.contact);
+    this.touches.set(id, entry);
+    return true;
+  }
+
   onTouch(event) {
     if (!this.touchSeen) {
       for (const [id, entry] of this.pointers) if (entry.touch) this.pointers.delete(id);
@@ -187,14 +199,11 @@ export class VirtualPad {
     const live = new Map();
     for (const touch of event.touches) live.set(touch.identifier, touch);
     this.touchCount = live.size;
-    if (event.type === "touchstart" && this.enabled) {
-      for (const touch of event.changedTouches) {
-        if (this.touches.has(touch.identifier) || !live.has(touch.identifier) || !this.root.contains(touch.target)) continue;
-        const entry = { keys: [], x: NaN, y: NaN };
-        this.sizeOf(entry, touch.radiusX, touch.radiusY, touch.rotationAngle);
-        entry.owner = this.ownerAt(touch.clientX, touch.clientY, entry.contact);
-        this.touches.set(touch.identifier, entry);
-      }
+    for (const id of this.dropped) if (!live.has(id)) this.dropped.delete(id);
+    if (this.enabled) {
+      const fresh = event.type === "touchstart" ? [...event.changedTouches].filter((touch) => live.has(touch.identifier)) : [];
+      for (const touch of fresh) this.adopt(touch);
+      for (const touch of live.values()) if (this.adopt(touch)) this.lateTouches++;
     }
     let stickLeft = false;
     for (const [id, entry] of this.touches) {
@@ -374,6 +383,7 @@ export class VirtualPad {
   releaseAll() {
     const hadStick = [...this.pointers.values(), ...this.touches.values()].some((entry) => entry.owner === "stick");
     this.pointers.clear();
+    for (const id of this.touches.keys()) this.dropped.add(id);
     this.touches.clear();
     if (hadStick) this.onStick(0, 0, false);
     this.commit();
