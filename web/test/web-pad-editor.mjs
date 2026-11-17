@@ -75,6 +75,27 @@ test("normalizeLayout keeps valid per signature, drops unknown", () => {
   assert.equal(out[""], undefined); // 빈 signature 키는 버림
 });
 
+test("soft keys are their own controls, outside the layout signature", () => {
+  assert.equal(CONTROL_BY_ID.soft1.sig, false);
+  assert.equal(CONTROL_BY_ID.soft2.sig, false);
+  assert.deepEqual(CONTROL_BY_ID.soft1.keys, ["SOFT1"]);
+  assert.ok(!CONTROL_BY_ID.keypad.keys.includes("SOFT1") && !CONTROL_BY_ID.keypad.keys.includes("SOFT2"), "keypad no longer scales soft keys");
+});
+
+test("normalizeLayout: legacy keypad record lends size·color to soft keys (no position)", () => {
+  const out = normalizeLayout({ "dir,keypad": { portrait: { controls: { keypad: { x: 0.7, y: 0.8, scale: 1.25, color: "accent" } } } } });
+  const c = out["dir,keypad"].portrait.controls;
+  assert.deepEqual(c.soft1, { scale: 1.25, color: "accent" });
+  assert.deepEqual(c.soft2, { scale: 1.25, color: "accent" });
+  // 새 저장(소프트 키 값 있음)은 그대로
+  const kept = normalizeLayout({ "dir,keypad": { portrait: { controls: { keypad: { x: 0.7, y: 0.8, scale: 1.25 }, soft1: { x: 0.1, y: 0.6 } } } } });
+  assert.deepEqual(kept["dir,keypad"].portrait.controls.soft1, { x: 0.1, y: 0.6 });
+  assert.deepEqual(kept["dir,keypad"].portrait.controls.soft2, { scale: 1.25 });
+  // 키패드 크기·색이 없으면 아무것도 붙이지 않음
+  const plain = normalizeLayout({ "dir,keypad": { portrait: { controls: { keypad: { x: 0.7, y: 0.8 } } } } });
+  assert.equal(plain["dir,keypad"].portrait.controls.soft1, undefined);
+});
+
 test("normalizeLayout clamps ranges", () => {
   const out = normalizeLayout({ [SIG]: { portrait: { controls: { L: { x: 2, y: -1, scale: 9 } } } } });
   assert.equal(out[SIG].portrait.controls.L.x, 1);

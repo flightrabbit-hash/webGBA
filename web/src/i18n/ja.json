@@ -103,6 +103,8 @@
   "web.pad.ctl.START": "START",
   "web.pad.ctl.SELECT": "SELECT",
   "web.pad.ctl.keypad": "キーパッド",
+  "web.pad.ctl.soft1": "ソフト L",
+  "web.pad.ctl.soft2": "ソフト R",
   "web.pad.ctl.screen": "ゲーム画面",
   "web.padCombo": "A・B 同時押し",
   "web.padCombo.note": "AボタンとBボタンの間を押すと両方が押されます",

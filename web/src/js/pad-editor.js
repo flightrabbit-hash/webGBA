@@ -10,6 +10,8 @@ export const SNAP_TOL = 6;
 
 // 편집 단위(조작부). 버튼은 각각 독립(A·B·C·D·RS 따로). keys = skin 배율을 거는 part 이름,
 // colorKeys = 색을 거는 part(없으면 keys), colorDefault = 자동 색의 색 고르기 id. screen 은 게임 화면(색 없음).
+// sig: false = 레이아웃 키(signature)에 넣지 않는 조작부 — 소프트 키("-" 알약, .wmba 의 soft1·soft2 = 휴대폰 왼쪽·오른쪽
+// 소프트 키)는 숫자 키패드에 딸린 키라 키패드 집합 키("dir,keypad")를 그대로 두고 따로 옮기기·크기·색만 한다.
 export const CONTROLS = [
   { id: "dir", sel: "[data-dpad]", keys: ["dir"], colorDefault: "button" },
   { id: "a", sel: ".key--a", keys: ["A"], colorDefault: "accent" },
@@ -21,10 +23,13 @@ export const CONTROLS = [
   { id: "R", sel: ".key--r", keys: ["R"], colorDefault: "button" },
   { id: "START", sel: ".key--start", keys: ["START"], colorDefault: "pill" },
   { id: "SELECT", sel: ".key--select", keys: ["SELECT"], colorDefault: "pill" },
-  { id: "keypad", sel: ".keypad", keys: ["N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8", "N9", "STAR", "N0", "HASH", "CLEAR", "OK", "SOFT1", "SOFT2"], colorDefault: "button" },
+  { id: "keypad", sel: ".keypad", keys: ["N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8", "N9", "STAR", "N0", "HASH", "CLEAR", "OK"], colorDefault: "button" },
+  { id: "soft1", sel: ".key--soft1", keys: ["SOFT1"], colorDefault: "pill", sig: false },
+  { id: "soft2", sel: ".key--soft2", keys: ["SOFT2"], colorDefault: "pill", sig: false },
   { id: "screen", sel: ".stage", keys: [], color: false },
 ];
 export const CONTROL_BY_ID = Object.fromEntries(CONTROLS.map((c) => [c.id, c]));
+const SOFT_IDS = ["soft1", "soft2"];
 
 export const orientationKey = (landscape) => (landscape ? "landscape" : "portrait");
 
@@ -50,6 +55,17 @@ function normalizeSide(raw) {
       if (Number.isFinite(rec.scale)) clean.scale = clampScale(rec.scale);
       if (c.color !== false && typeof rec.color === "string") clean.color = rec.color;
       if (Object.keys(clean).length) controls[c.id] = clean;
+    }
+    // 예전 저장(소프트 키가 키패드에 묶여 키패드 크기·색을 함께 받던 때): 소프트 키 값이 없으면 키패드 크기·색을 물려받는다.
+    // 자리는 비워 두어 기본 자리(키패드 위 양옆)에 놓인다 — 저장 당시 보이던 모습 그대로.
+    const pad = controls.keypad;
+    if (pad && (pad.scale || pad.color)) {
+      for (const id of SOFT_IDS) {
+        if (controls[id]) continue;
+        controls[id] = {};
+        if (pad.scale) controls[id].scale = pad.scale;
+        if (pad.color) controls[id].color = pad.color;
+      }
     }
     if (Object.keys(controls).length) out[orient] = { controls };
   }
@@ -307,7 +323,7 @@ export class PadEditor {
   currentSig() {
     const ids = [];
     for (const c of CONTROLS) {
-      if (c.id === "screen") continue;
+      if (c.id === "screen" || c.sig === false) continue;
       const node = this.node(c);
       if (node && !node.hidden && !node.hasAttribute("data-off") && node.offsetParent !== null) ids.push(c.id);
     }

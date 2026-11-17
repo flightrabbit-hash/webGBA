@@ -99,6 +99,8 @@
   "web.pad.ctl.START": "START",
   "web.pad.ctl.SELECT": "SELECT",
   "web.pad.ctl.keypad": "키패드",
+  "web.pad.ctl.soft1": "소프트 L",
+  "web.pad.ctl.soft2": "소프트 R",
   "web.pad.ctl.screen": "게임 화면",
   "web.padCombo": "A·B 함께 누르기",
   "web.padCombo.note": "A와 B 버튼 사이를 누르면 두 버튼이 함께 눌립니다",

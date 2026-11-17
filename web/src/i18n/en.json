@@ -103,6 +103,8 @@
   "web.pad.ctl.START": "START",
   "web.pad.ctl.SELECT": "SELECT",
   "web.pad.ctl.keypad": "Keypad",
+  "web.pad.ctl.soft1": "Soft L",
+  "web.pad.ctl.soft2": "Soft R",
   "web.pad.ctl.screen": "Game screen",
   "web.padCombo": "Press A and B together",
   "web.padCombo.note": "Pressing between A and B presses both",
