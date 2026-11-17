@@ -1204,6 +1204,27 @@ function fitSpace(space, need, avail) {
   return Object.fromEntries(Object.keys(space.nice).map((key) => [key, Math.floor(space.min[key] + share * (space.nice[key] - space.min[key]))]));
 }
 
+// .app 상자 크기(layout 이 계산에 쓴 화면 크기). resize 이벤트 없이 바뀌었는지 알아보는 데 쓴다.
+function appBoxKey() {
+  const box = el.app.getBoundingClientRect();
+  return `${Math.round(box.width)}x${Math.round(box.height)}`;
+}
+
+// 아이폰 홈 화면 앱은 파일 고르기·전체 화면 창을 닫은 직후처럼 resize 이벤트 없이 화면 상자(.app, fixed inset 0) 크기가
+// 바뀔 때가 있다. 그러면 마지막 layout 이 옛 크기로 놓은 직접 배치(px 좌표)가 게임을 다시 열 때까지 어긋난 채 남는다
+// — 상자 크기가 마지막 layout 과 다르면 다음 프레임에 한 번 다시 계산한다(같으면 아무것도 안 함).
+function watchAppBox() {
+  if (typeof ResizeObserver !== "function") return;
+  let frame = 0;
+  new ResizeObserver(() => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (document.documentElement.dataset.ready && state.appBox && appBoxKey() !== state.appBox) layout();
+    });
+  }).observe(el.app);
+}
+
 function layout() {
   const height = window.innerHeight;
   const landscape = window.innerWidth > height;
@@ -1444,6 +1465,7 @@ function layout() {
   if (!padOn) pad.releaseAll();
   padEditor.apply();
   pad.invalidate();
+  state.appBox = appBoxKey();
   fitRecent();
   syncTurn();
   if (state.sheet === "library") {
@@ -5391,6 +5413,7 @@ function wire() {
   window.addEventListener("resize", layout);
   window.addEventListener("orientationchange", () => setTimeout(layout, 120));
   window.visualViewport?.addEventListener("resize", layout);
+  watchAppBox();
   // 방향이 바뀌면 설정 시트의 "가로·세로 배치 [편집]" 활성 조건을 다시 그린다(지금 방향만 편집 가능).
   let padLastLandscape = window.innerWidth > window.innerHeight;
   const onPadOrient = () => {
