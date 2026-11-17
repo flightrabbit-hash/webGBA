@@ -2,7 +2,7 @@ import { context } from "./bridge.js";
 import { bootHost, inspectModule, readEmbeddedRom, readRomPayload } from "./core/web-host.js";
 import { compileCode, gameInfo, pickText, problemText, readWgba, screenOf, supportProblem, wgbaErrorText } from "./core/wgba-read.js";
 import { bootScript } from "./core/script-host.js";
-import { androidOf, MOBILE_ROLES, resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
+import { androidOf, MOBILE_ROLES, nameOrder, resolveInput, romHeader, sha256Hex, updateAction, wasmSections } from "./core/wgba-format.js";
 import { KEYPAD_GAP, SIZES as PX_SIZES } from "./pixel-ui.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "./app/net-window.js";
 import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
@@ -3503,11 +3503,9 @@ function groupButtons(value, onPick) {
 }
 
 function sortRoms(roms) {
-  if (libSort() === "name") {
-    const collator = new Intl.Collator(i18n.locale(), { numeric: true, sensitivity: "base" });
-    return roms.sort((a, b) => collator.compare(displayName(a), displayName(b)) || byOpened(a, b));
-  }
-  return roms.sort(byOpened);
+  if (libSort() !== "name") return roms.sort(byOpened);
+  const order = nameOrder(i18n.locale(), { name: displayName, mobile: (rom) => groupOf(rom) === "mobile" });
+  return roms.sort((a, b) => order(a, b) || byOpened(a, b));
 }
 
 async function renderLibrary() {

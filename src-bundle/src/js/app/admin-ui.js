@@ -1,5 +1,6 @@
 import { OFF_CODES, PIN_KEYS, PIN_LENGTH, readRecord, recordOf } from "../core/admin.js";
 import { pickText } from "../core/lang-text.js";
+import { nameOrder } from "../core/wgba-format.js";
 import { updatePicker } from "./update-pick.js";
 import { centerTexts, sizeText } from "./zip-pick.js";
 import { centerBoardNodes, measureInk } from "./board-panel.js";
@@ -7,6 +8,7 @@ import { t } from "../shell/i18n.js";
 
 const KNOWN = new Set(["wrong", "limit", "locked", "nokey", "key", "off", "store", "r2", "network", "again", "size"]);
 export const PAD_TEXTS = ".apad__label, .apad__state";
+const MOBILE_KEY = /^(wmba|wapk)\//;
 
 const make = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -293,6 +295,9 @@ export function createAdminFlow(d) {
       to: game.version,
       size: game.size,
     }));
+    const groupOf = (item) => item.game.group || d.groupOf?.(item.game.id) || (MOBILE_KEY.test(item.key) ? "mobile" : "emu");
+    const order = nameOrder(d.lang(), { name: (item) => item.name, mobile: (item) => groupOf(item) === "mobile" });
+    items.sort((a, b) => order(a, b) || a.game.id.localeCompare(b.game.id));
     const get = async (item, progress) => {
       let url;
       try {
@@ -346,7 +351,6 @@ export function createAdminFlow(d) {
       },
     });
     picker.node.classList.add("upick--fill");
-    const groupOf = (item) => item.game.group || d.groupOf?.(item.game.id) || "emu";
     const empty = make("p", "anote", "");
     empty.hidden = true;
     const filter = (id) => {

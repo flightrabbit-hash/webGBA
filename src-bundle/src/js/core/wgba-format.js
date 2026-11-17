@@ -134,6 +134,19 @@ export function shownTitle(name, m) {
   return Object.fromEntries(Object.entries(name).map(([lang, text]) => [lang, typeof text === "string" && text.trim() ? shownName(text, m) : text]));
 }
 
+/** 표시 이름에서 모바일 접두어("[M] "·"[A] ")를 뗀 이름(이름 순 비교용). */
+export function plainName(text) {
+  const value = String(text ?? "");
+  const prefix = [MOBILE_PREFIX, ANDROID_PREFIX].find((p) => value.startsWith(p));
+  return prefix ? value.slice(prefix.length) : value;
+}
+
+/** 이름 순 비교 함수: 모바일이 아닌 게임 먼저, 모바일 게임은 그 뒤. 같은 쪽 안에서는 접두어를 뗀 이름을 언어 Collator(숫자 자연 순서)로. */
+export function nameOrder(locale, { name, mobile }) {
+  const collator = new Intl.Collator(locale || undefined, { numeric: true, sensitivity: "base" });
+  return (a, b) => Number(Boolean(mobile(a))) - Number(Boolean(mobile(b))) || collator.compare(plainName(name(a)), plainName(name(b)));
+}
+
 /** 앱 파일 묶음(.wmba 롬 조각 내용) WMFS 1: "WMFS", u32 형식 1, u32 파일 수, 파일마다 u16 이름 길이 · UTF-8 이름 · u32 크기 · 내용. */
 export function packAppBundle(files) {
   const enc = new TextEncoder();
