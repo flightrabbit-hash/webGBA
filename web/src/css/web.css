@@ -5147,11 +5147,16 @@ body[data-pad-free] .bar__group--right {
   z-index: 6;
 }
 
-/* 편집 오버레이 */
+/* 편집 오버레이: 세로 flex — 막대(상단) · 카드(선택했을 때만, 기본 하단 / --top 이면 막대 바로 아래). */
 .padedit {
   position: absolute;
   inset: 0;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: calc(8px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(8px + env(safe-area-inset-left, 0px));
   font: 15px/1.4 var(--font-ui);
   color: var(--text);
   pointer-events: none;
@@ -5178,47 +5183,108 @@ body[data-pad-free][data-pad-edit] .pad {
   z-index: 5;
 }
 
+/* 편집 중에는 시작 안내·일시정지 창을 숨겨 화면 자리를 중립 면으로 두고, 시작 화면의 흐린 조작부도 또렷하게. */
+body[data-pad-edit] .screen > .start,
+body[data-pad-edit] .screen > .veil {
+  display: none;
+}
+
+body[data-pad-edit][data-view="start"] .screen {
+  background: var(--bg);
+}
+
+body[data-pad-edit][data-view="start"] .pad .key,
+body[data-pad-edit][data-view="start"] .pad .dpad {
+  opacity: 1;
+}
+
+/* 세로에서는 편집 막대가 상단 아이콘 막대 자리를 쓴다 — 아이콘이 막대 아래로 비치지 않게. */
+body[data-pad-edit][data-layout="portrait"] .bar {
+  visibility: hidden;
+}
+
 .padedit__bar {
-  position: absolute;
-  left: 50%;
-  top: calc(8px + env(safe-area-inset-top, 0px));
-  translate: -50% 0;
+  position: relative;
+  z-index: 1;
+  flex: none;
   display: flex;
-  align-items: center;
-  gap: var(--gap-1);
-  max-width: calc(100% - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-  padding: 6px 8px;
+  flex-direction: column;
+  gap: var(--gap-2);
+  width: min(480px, 100%);
+  padding: 10px 12px;
   background: var(--bg-raised);
   outline: 2px solid var(--line-strong);
   pointer-events: auto;
 }
 
-.padedit__title {
+.padedit__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px var(--gap-3);
+  min-height: 20px;
+}
+
+.padedit__title,
+.padedit__hint {
   display: flex;
   align-items: center;
-  height: 28px;
-  padding: 0 8px 0 2px;
+  min-height: 20px;
   line-height: 1;
   white-space: nowrap;
 }
 
-.padedit__btn {
+.padedit__hint {
+  color: var(--text-dim);
+}
+
+.padedit__hint.is-off {
+  visibility: hidden;
+}
+
+.padedit__acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-2) var(--gap-3);
+}
+
+.padedit__actgroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+
+.padedit__actgroup--end {
+  margin-left: auto;
+}
+
+.padedit__btn,
+.padedit__seg,
+.padedit__cardbtn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  min-width: 28px;
-  padding: 0 10px;
+  height: 32px;
+  min-width: 32px;
+  margin: 0;
+  padding: 0 10px 2px;
   line-height: 1;
   white-space: nowrap;
   color: var(--text);
   background: var(--bg-hover);
   border: 0;
   outline: 2px solid var(--bg-sunken);
+  outline-offset: -2px;
   font: inherit;
 }
 
-.padedit__btn--toggle.is-on {
+.padedit__btn--toggle.is-on,
+.padedit__seg.is-on,
+.padedit__auto.is-on {
   background: var(--bg-active);
   color: var(--on);
 }
@@ -5228,110 +5294,121 @@ body[data-pad-free][data-pad-edit] .pad {
   color: var(--ink-accent);
 }
 
-.padedit__card {
-  position: absolute;
-  left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  translate: -50% 0;
+.padedit__sets {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-1);
-  width: min(400px, calc(100% - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+}
+
+.padedit__card {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+  width: min(400px, 100%);
+  margin-top: auto;
   padding: 10px 12px;
   background: var(--bg-raised);
   outline: 2px solid var(--line-strong);
   pointer-events: auto;
 }
 
-/* 선택한 조작부가 하단이면 카드를 상단으로(편집 막대 아래) — 손잡이·조작부를 가리지 않게. */
+.padedit__card[hidden] {
+  display: none;
+}
+
+/* 선택한 조작부가 하단이면 카드를 막대 바로 아래로 — 손잡이·조작부를 가리지 않게. */
 .padedit__card--top {
-  top: calc(56px + env(safe-area-inset-top, 0px));
-  bottom: auto;
+  margin-top: 0;
 }
 
 .padedit__help {
   margin: 0;
   color: var(--text-dim);
   line-height: 1.4;
+  word-break: keep-all;
+  text-wrap: balance;
 }
 
 .padedit__row {
   display: flex;
   align-items: center;
-  gap: var(--gap-1);
+  gap: var(--gap-2);
   min-height: 32px;
 }
 
-.padedit__row--color,
+.padedit__row--color {
+  flex-wrap: wrap;
+  gap: var(--gap-1);
+}
+
+.padedit__row--color .padedit__swatch,
+.padedit__row--color .padedit__cardbtn {
+  height: 28px;
+}
+
+.padedit__row--color .padedit__swatch {
+  width: 28px;
+}
+
+.padedit__row--color .padedit__cardbtn {
+  padding: 0 8px 2px;
+}
+
 .padedit__row--seg {
   flex-wrap: wrap;
+  gap: var(--gap-1) var(--gap-3);
+}
+
+.padedit__segs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-1);
 }
 
 .padedit__seg {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  padding: 0 8px;
-  line-height: 1;
-  white-space: nowrap;
-  color: var(--text);
-  background: var(--bg-hover);
-  border: 0;
-  outline: 2px solid var(--bg-sunken);
-  font: inherit;
-}
-
-.padedit__seg.is-on {
-  background: var(--bg-active);
-  color: var(--on);
+  padding: 0 8px 2px;
 }
 
 .padedit__name {
   flex: 1;
   display: flex;
   align-items: center;
+  min-height: 20px;
+  padding-bottom: 2px;
   line-height: 1;
+}
+
+.padedit__row--seg .padedit__name {
+  flex: none;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .padedit__val {
   width: 56px;
+  padding-bottom: 2px;
   text-align: center;
   line-height: 1;
 }
 
-.padedit__cardbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  min-width: 28px;
-  padding: 0 8px;
-  line-height: 1;
-  color: var(--text);
-  background: var(--bg-hover);
-  border: 0;
-  outline: 2px solid var(--bg-sunken);
-  font: inherit;
-}
-
 .padedit__swatch {
-  width: 28px;
-  height: 28px;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0;
   padding: 0;
   background: var(--sw);
   border: 0;
   outline: 2px solid var(--bg-sunken);
+  outline-offset: -2px;
 }
 
 .padedit__swatch.is-on {
   outline: 2px solid var(--text);
-  box-shadow: inset 0 0 0 2px var(--bg-sunken);
-}
-
-.padedit__auto.is-on {
-  background: var(--bg-active);
-  color: var(--on);
+  box-shadow: inset 0 0 0 4px var(--bg-sunken);
 }
 
 .padedit__frames {
@@ -5340,11 +5417,12 @@ body[data-pad-free][data-pad-edit] .pad {
   pointer-events: none;
 }
 
+/* 점선은 상자 안쪽에 그려 맞닿은 조작부(A·B)끼리 선이 엇갈리지 않게. */
 .padedit__sel {
   position: absolute;
   z-index: 1;
-  outline: 2px dashed var(--text-faint);
-  outline-offset: 3px;
+  outline: 2px dashed var(--text-dim);
+  outline-offset: -2px;
   pointer-events: auto;
   touch-action: none;
 }
@@ -5358,6 +5436,23 @@ body[data-pad-free][data-pad-edit] .pad {
   z-index: 2;
   outline: 2px solid var(--accent);
   background: var(--accent-soft);
+}
+
+/* 게임이 없을 때 화면 자리 이름표(중립 면 위). 선택하면 배지가 대신한다. */
+body[data-view="start"] .padedit__sel[data-ctl="screen"]:not(.is-on)::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px 2px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--bg-raised);
 }
 
 .padedit__handle {
@@ -5379,11 +5474,25 @@ body[data-pad-free][data-pad-edit] .pad {
   display: flex;
   align-items: center;
   height: 24px;
-  padding: 0 8px;
+  padding: 0 8px 2px;
   line-height: 1;
   white-space: nowrap;
   background: var(--accent);
   color: var(--ink-accent);
+}
+
+/* 우측 절반의 조작부는 배지를 우측 정렬 — 화면 밖으로 잘리지 않게. */
+.padedit__sel.is-right .padedit__badge {
+  left: auto;
+  right: 0;
+}
+
+/* 화면 배지는 상자 안쪽 하단(상단은 편집 막대에 가려짐). */
+.padedit__sel[data-ctl="screen"] .padedit__badge {
+  left: auto;
+  top: auto;
+  right: 12px;
+  bottom: 16px;
 }
 
 .padedit__guide {

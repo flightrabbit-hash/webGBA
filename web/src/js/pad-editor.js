@@ -318,16 +318,15 @@ export class PadEditor {
     return this.layout()[sig]?.[orientationKey(landscape)];
   }
 
-  // 조작부 node 를 (cx,cy) 가운데(appRect 기준)에 배치. offsetParent 의 containing block 원점(테두리+패딩 포함)을
-  // 빼 어느 컨테이너(.pad·.face·.app)든 맞춘다 — .app 은 safe-area 패딩이 있어 border box 만으로는 어긋난다.
+  // 조작부 node 를 (cx,cy) 가운데(appRect 기준)에 배치. 절대 배치의 기준은 offsetParent 의 padding box 라
+  // 테두리만 빼고 패딩은 빼지 않는다 — 패딩까지 빼면 safe-area(.app)·.pad 패딩만큼 기본 자리에서 밀려 서로 겹친다.
   placeNode(node, cx, cy, w, h, rect) {
     const op = node.offsetParent;
     let ox = rect.left, oy = rect.top;
     if (op) {
       const o = op.getBoundingClientRect();
-      const cs = typeof getComputedStyle === "function" ? getComputedStyle(op) : null;
-      ox = o.left + (op.clientLeft || 0) + (cs ? parseFloat(cs.paddingLeft) || 0 : 0);
-      oy = o.top + (op.clientTop || 0) + (cs ? parseFloat(cs.paddingTop) || 0 : 0);
+      ox = o.left + (op.clientLeft || 0);
+      oy = o.top + (op.clientTop || 0);
     }
     node.style.left = `${Math.round(cx - w / 2 - (ox - rect.left))}px`;
     node.style.top = `${Math.round(cy - h / 2 - (oy - rect.top))}px`;
@@ -531,16 +530,23 @@ export class PadEditor {
     root.setAttribute("aria-label", t(`web.pad.edit.title.${this.orient}`));
     // 점선 테두리·손잡이는 막대·카드 아래 층(막대·카드가 늘 위에서 눌리게).
     this.framesLayer = mk("padedit__frames", root);
+    // 막대 3줄: 제목·안내 / 동작 버튼(좌 = 편집 보조, 우 = 취소·저장) / 조작부 집합. 카드는 조작부를 선택했을 때만.
     const bar = mk("padedit__bar", root);
-    const title = mk("padedit__title", bar);
+    const head = mk("padedit__head", bar);
+    const title = mk("padedit__title", head);
     title.textContent = t(`web.pad.edit.title.${this.orient}`);
-    const btn = (label, cls, on) => {
+    this.hint = mk("padedit__hint", head);
+    this.hint.textContent = t("web.pad.edit.help1");
+    const acts = mk("padedit__acts", bar);
+    const tools = mk("padedit__actgroup", acts);
+    const ends = mk("padedit__actgroup padedit__actgroup--end", acts);
+    const btn = (label, cls, on, group = tools) => {
       const b = doc.createElement("button");
       b.type = "button";
       b.className = `padedit__btn${cls ? " " + cls : ""}`;
       b.textContent = label;
       b.addEventListener("click", on);
-      bar.append(b);
+      group.append(b);
       return b;
     };
     this.snapBtn = btn(t("web.pad.edit.snap"), "padedit__btn--toggle", () => {
@@ -551,8 +557,9 @@ export class PadEditor {
     this.snapBtn.classList.toggle("is-on", this.snapOn);
     this.snapBtn.setAttribute("aria-pressed", String(this.snapOn));
     btn(t("web.pad.edit.reset"), "", () => this.reset());
-    btn(t("web.pad.edit.cancel"), "", () => this.exit(false));
-    btn(t("web.pad.edit.save"), "padedit__btn--primary", () => this.save());
+    btn(t("web.pad.edit.cancel"), "", () => this.exit(false), ends);
+    btn(t("web.pad.edit.save"), "padedit__btn--primary", () => this.save(), ends);
+    this.sets = mk("padedit__sets", bar);
     this.card = mk("padedit__card", root);
     this.overlay = root;
     this.deps.mount(root);
@@ -573,6 +580,9 @@ export class PadEditor {
     this.backdrop?.remove();
     this.backdrop = null;
     this.framesLayer = null;
+    this.hint = null;
+    this.sets = null;
+    this.card = null;
     this.frames.clear();
     this.deps.body.removeAttribute("data-pad-edit");
   }
@@ -595,6 +605,7 @@ export class PadEditor {
         const box = doc.createElement("div");
         box.className = "padedit__sel";
         box.dataset.ctl = c.id;
+        box.dataset.label = this.deps.t(`web.pad.ctl.${c.id}`);
         const handle = doc.createElement("div");
         handle.className = "padedit__handle";
         const badge = doc.createElement("div");
@@ -614,6 +625,7 @@ export class PadEditor {
         height: `${r.height}px`,
       });
       f.box.classList.toggle("is-on", this.selected === c.id);
+      f.box.classList.toggle("is-right", r.left + r.width / 2 - rect.left > rect.w / 2);
       const rec = this.work.controls[c.id];
       f.badge.textContent = `${this.deps.t(`web.pad.ctl.${c.id}`)} ${scalePercent(rec?.scale ?? 1)}%`;
       f.badge.hidden = this.selected !== c.id;
@@ -636,7 +648,9 @@ export class PadEditor {
     const name = doc.createElement("span");
     name.className = "padedit__name";
     name.textContent = t("web.pad.edit.set");
-    row.append(name);
+    const group = doc.createElement("div");
+    group.className = "padedit__segs";
+    row.append(name, group);
     for (const kind of PadEditor.SETS) {
       const b = doc.createElement("button");
       b.type = "button";
@@ -646,23 +660,25 @@ export class PadEditor {
       b.classList.toggle("is-on", on);
       b.setAttribute("aria-pressed", String(on));
       b.addEventListener("click", () => this.pickSet(kind));
-      row.append(b);
+      group.append(b);
     }
     return row;
   }
 
-  // 가운데 미세 조절 카드: 조작부 집합 · 선택한 조작부 이름·크기 − + ·색 고르기.
+  // 막대의 조작부 집합 줄 + 미세 조절 카드(선택한 조작부 이름·크기 − + ·색 고르기). 선택이 없으면 카드를 숨겨 조작부를 가리지 않는다.
   renderCard() {
     if (!this.card) return;
     const doc = this.deps.doc();
     const t = this.deps.t;
+    this.sets?.replaceChildren(this.segmentRow());
+    this.hint?.classList.toggle("is-off", Boolean(this.selected));
     this.card.replaceChildren();
-    this.card.append(this.segmentRow());
+    this.card.hidden = !this.selected;
+    if (!this.selected) { this.card.classList.remove("padedit__card--top"); return; }
     const help = doc.createElement("p");
     help.className = "padedit__help";
-    help.textContent = this.selected ? t("web.pad.edit.help2") : t("web.pad.edit.help1");
+    help.textContent = t("web.pad.edit.help2");
     this.card.append(help);
-    if (!this.selected) { this.card.classList.remove("padedit__card--top"); return; }
     const c = CONTROL_BY_ID[this.selected];
     // 카드가 선택한 조작부·손잡이를 가리지 않게: 조작부가 화면 아래쪽이면 카드를 위로.
     const node = this.node(c);

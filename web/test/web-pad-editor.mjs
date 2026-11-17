@@ -26,6 +26,20 @@ test("placeNode subtracts offsetParent origin (no jump in any container)", () =>
   assert.equal(b.style.top, "55px"); // 80 - 5 - 20
 });
 
+test("placeNode ignores offsetParent padding (absolute origin = padding box, safe-area keeps defaults in place)", () => {
+  const ed = new PadEditor();
+  const had = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({ paddingLeft: "44px", paddingTop: "44px" });
+  try {
+    const node = { offsetParent: { clientLeft: 2, clientTop: 2, getBoundingClientRect: () => ({ left: 0, top: 0 }) }, style: {} };
+    ed.placeNode(node, 100, 80, 20, 10, { left: 0, top: 0, w: 800, h: 400 });
+    assert.equal(node.style.left, "88px"); // 100 - 10 - 테두리 2 (패딩 44 는 빼지 않음)
+    assert.equal(node.style.top, "73px"); // 80 - 5 - 테두리 2
+  } finally {
+    if (had) globalThis.getComputedStyle = had; else delete globalThis.getComputedStyle;
+  }
+});
+
 const PAL = PX.paletteOf({ body: "#101828", button: "#35406a", accent: "#6c93ff", ink: "#eef1f8", outline: "#05070e" });
 const SIG = "a,b,dir";
 
