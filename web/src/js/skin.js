@@ -404,8 +404,12 @@ export class Skin {
   }
 
   stick(x, y, active) {
+    // 상태는 즉시 갱신(입력 저지연 — 방향 입력은 pad.commit 이 따로 즉시 처리). 손잡이 redraw 만 rAF 1프레임 1회로 coalesce.
     this.stickState = { x, y, active, dirs: [...this.down].filter((n) => STICK_NAMES[n]) };
-    if (this.mode === "stick") this.drawDir();
+    if (this.mode !== "stick") return;
+    if (typeof requestAnimationFrame !== "function") { this.drawDir(); return; }
+    if (this._stickRaf) return;
+    this._stickRaf = requestAnimationFrame(() => { this._stickRaf = 0; if (this.mode === "stick") this.drawDir(); });
   }
 
   tool(node, info) {

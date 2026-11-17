@@ -274,16 +274,20 @@ export class PadEditor {
     }
   }
 
+  // 화면(.stage) 은 크기만 deps 로 바꾸고 위치는 다른 조작부와 같은 placeNode(현재 rect·offsetParent 원점 기준)로 —
+  // 진입 직후·끌기 시작·저장/복원이 모두 같은 기준이라 어긋나거나 점프하지 않는다.
   positionScreen(rec, def, rect) {
+    const node = this.node(CONTROL_BY_ID.screen);
     const base = this.deps.screenBase();
     const scale = clampScale(rec?.scale ?? 1);
     const sw = Math.max(80, Math.round(base.w * scale));
     const sh = Math.max(53, Math.round(base.h * scale));
     this.deps.setScreenSize(sw, sh);
+    const size = this.sizeOf(node); // 테두리 포함 실제 stage 상자 크기
     const cx = (Number.isFinite(rec?.x) ? rec.x : (def?.x ?? 0.5)) * rect.w;
     const cy = (Number.isFinite(rec?.y) ? rec.y : (def?.y ?? 0.5)) * rect.h;
-    const c = clampCenter(cx, cy, sw, sh, rect.w, rect.h);
-    this.deps.setScreenCenter(c.cx, c.cy);
+    const c = clampCenter(cx, cy, size.w, size.h, rect.w, rect.h);
+    this.placeNode(node, c.cx, c.cy, size.w, size.h, rect);
   }
 
   node(control) {
@@ -308,12 +312,19 @@ export class PadEditor {
     return this.layout()[sig]?.[orientationKey(landscape)];
   }
 
-  // 조작부 node 를 (cx,cy) 가운데(appRect 기준)에 배치. offsetParent 원점을 빼 어느 컨테이너(.pad·.face·.app)든 맞춘다.
+  // 조작부 node 를 (cx,cy) 가운데(appRect 기준)에 배치. offsetParent 의 containing block 원점(테두리+패딩 포함)을
+  // 빼 어느 컨테이너(.pad·.face·.app)든 맞춘다 — .app 은 safe-area 패딩이 있어 border box 만으로는 어긋난다.
   placeNode(node, cx, cy, w, h, rect) {
     const op = node.offsetParent;
-    const o = op ? op.getBoundingClientRect() : { left: rect.left, top: rect.top };
-    node.style.left = `${Math.round(cx - w / 2 - (o.left - rect.left))}px`;
-    node.style.top = `${Math.round(cy - h / 2 - (o.top - rect.top))}px`;
+    let ox = rect.left, oy = rect.top;
+    if (op) {
+      const o = op.getBoundingClientRect();
+      const cs = typeof getComputedStyle === "function" ? getComputedStyle(op) : null;
+      ox = o.left + (op.clientLeft || 0) + (cs ? parseFloat(cs.paddingLeft) || 0 : 0);
+      oy = o.top + (op.clientTop || 0) + (cs ? parseFloat(cs.paddingTop) || 0 : 0);
+    }
+    node.style.left = `${Math.round(cx - w / 2 - (ox - rect.left))}px`;
+    node.style.top = `${Math.round(cy - h / 2 - (oy - rect.top))}px`;
   }
 
   sizeOf(node) {
@@ -343,11 +354,11 @@ export class PadEditor {
     for (const c of CONTROLS) {
       const node = this.node(c);
       if (!node) continue;
-      saved.push([node, node.style.position, node.style.left, node.style.top, node.style.translate]);
-      node.style.removeProperty("position");
-      node.style.removeProperty("left");
-      node.style.removeProperty("top");
-      node.style.removeProperty("translate");
+      // 화면은 자유 배치에서 폭·높이도 인라인이라 함께 비워야 격자 기준 rect 가 읽힌다(버튼 크기는 skin 값이라 건드리지 않음).
+      const isScreen = c.id === "screen";
+      saved.push([node, node.style.position, node.style.left, node.style.top, node.style.translate, node.style.width, node.style.height, isScreen]);
+      for (const v of ["position", "left", "top", "translate"]) node.style.removeProperty(v);
+      if (isScreen) { node.style.removeProperty("width"); node.style.removeProperty("height"); }
     }
     const controls = {};
     let screen = { x: 0.5, y: 0.5 };
@@ -362,11 +373,12 @@ export class PadEditor {
       if (c.id === "screen") screen = { x: cx, y: cy };
       else controls[c.id] = { x: cx, y: cy };
     }
-    for (const [node, position, left, top, translate] of saved) {
+    for (const [node, position, left, top, translate, width, height, isScreen] of saved) {
       node.style.position = position;
       node.style.left = left;
       node.style.top = top;
       node.style.translate = translate;
+      if (isScreen) { node.style.width = width; node.style.height = height; }
     }
     if (had) body.setAttribute("data-pad-free", "");
     return { controls, screen };
@@ -582,8 +594,14 @@ export class PadEditor {
     help.className = "padedit__help";
     help.textContent = this.selected ? t("web.pad.edit.help2") : t("web.pad.edit.help1");
     this.card.append(help);
-    if (!this.selected) return;
+    if (!this.selected) { this.card.classList.remove("padedit__card--top"); return; }
     const c = CONTROL_BY_ID[this.selected];
+    // 카드가 선택한 조작부·손잡이를 가리지 않게: 조작부가 화면 아래쪽이면 카드를 위로.
+    const node = this.node(c);
+    const rect = this.deps.appRect();
+    const nr = node?.getBoundingClientRect();
+    const lower = nr ? (nr.top + nr.height / 2 - rect.top) > rect.h * 0.5 : false;
+    this.card.classList.toggle("padedit__card--top", lower);
     const rec = this.work.controls[c.id] ?? (this.work.controls[c.id] = { x: 0.5, y: 0.5, scale: 1 });
     const row = doc.createElement("div");
     row.className = "padedit__row";
@@ -690,7 +708,8 @@ export class PadEditor {
       basePx: this.deps.basePx(id),
     };
     const win = this.deps.win();
-    node.setPointerCapture?.(event.pointerId);
+    // 손잡이·테두리 자체가 포인터를 잡아 두어(손가락이 벗어나도) 다른 요소로 새지 않게 — 리사이징이 늘 시작되게.
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
     this.moveFn = (e) => this.onMove(e);
     this.upFn = (e) => this.onUp(e);
     win.addEventListener("pointermove", this.moveFn, { passive: false });
@@ -725,8 +744,7 @@ export class PadEditor {
       const snapped = snapCenter(cx, cy, d.w, d.h, { left: 0, top: 0, w: rect.w, h: rect.h }, others, { snapOn: this.snapOn });
       ({ cx, cy } = clampCenter(snapped.cx, snapped.cy, d.w, d.h, rect.w, rect.h));
       this.live = { cx, cy };
-      if (d.id === "screen") this.deps.setScreenCenter(cx, cy);
-      else this.placeNode(node, cx, cy, d.w, d.h, rect);
+      this.placeNode(node, cx, cy, d.w, d.h, rect); // 화면·버튼 모두 같은 기준(현재 위치·offsetParent 원점)
       this.drawGuides(snapped.guides, rect);
     } else {
       // 크기: 손잡이를 가운데에서 멀리 끌수록 커진다(모서리 무관·가운데 고정). 기기 픽셀 정수 칸은 skin.effScale 이 반올림.

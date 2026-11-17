@@ -746,6 +746,9 @@ function setScreenFreeSize(w, h) {
   skin.frame(el.frame, { width: frameW, height: frameH, ring, full: true });
   el.frame.style.width = `${frameW / dpr}px`;
   el.frame.style.height = `${frameH / dpr}px`;
+  // stage 를 테두리 크기로 고정 — 안 그러면 left 만 바꿀 때 폭이 다시 늘어 가운데가 밀린다(끌기 점프).
+  el.stage.style.width = `${frameW / dpr}px`;
+  el.stage.style.height = `${frameH / dpr}px`;
 }
 
 function setScreenFreeCenter(cx, cy) {
@@ -755,7 +758,7 @@ function setScreenFreeCenter(cx, cy) {
 }
 
 function clearScreenFree() {
-  for (const v of ["position", "left", "top"]) el.stage.style.removeProperty(v);
+  for (const v of ["position", "left", "top", "width", "height"]) el.stage.style.removeProperty(v);
 }
 
 function initPadEditor() {
@@ -5864,7 +5867,7 @@ function startTouchDebug() {
   requestAnimationFrame(draw);
 }
 
-window.webgba = { player, pad, skin, store, state, layout, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
+window.webgba = { player, pad, skin, store, state, layout, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, padEditor, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);

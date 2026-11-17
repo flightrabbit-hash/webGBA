@@ -224,3 +224,26 @@ test("skin per-control scale and color (no DOM draw)", async () => {
   assert.equal(pal.ab, "#00ff00");
   assert.equal(skin.paletteFor("b", "B"), skin.palette); // 지정 없는 part 는 원본
 });
+
+// 터치 스틱: 입력 상태는 즉시, 손잡이 redraw 만 rAF 1프레임 1회로 coalesce(입력 지연 없이 시각 비용만 줄임).
+test("skin.stick coalesces redraw to one per frame, state immediate", async () => {
+  const cbs = [];
+  globalThis.requestAnimationFrame = (fn) => { cbs.push(fn); return cbs.length; };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+  globalThis.document = { documentElement: { dataset: {}, style: { getPropertyValue: () => "", setProperty() {} } } };
+  const { Skin } = await import("../src/js/skin.js");
+  const skin = new Skin({ pad: {}, dpad: {} });
+  skin.mode = "stick";
+  let draws = 0;
+  skin.drawDir = () => { draws += 1; };
+  for (let i = 0; i < 100; i++) skin.stick(i / 100, 0, true); // 입력 100회(빠른 이동)
+  assert.equal(draws, 0, "redraw 는 rAF 전에는 0회(move 마다 그리지 않음)");
+  assert.equal(skin.stickState.x, 0.99, "상태는 즉시 최신(입력 저지연)");
+  assert.equal(cbs.length, 1, "중복 rAF 예약 금지 — 한 프레임 1건만");
+  cbs[0](); // 프레임 flush
+  assert.equal(draws, 1, "한 프레임에 redraw 1회(100 입력 → 1 그리기)");
+  skin.stick(0, 0, false); // 다음 프레임 예약
+  assert.equal(cbs.length, 2);
+  cbs[1]();
+  assert.equal(draws, 2);
+});
