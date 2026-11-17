@@ -180,6 +180,8 @@ export class PadEditor {
     this.raf = 0;
     this.pending = null;
     this.setKind = "game"; // 편집 중인 조작부 집합(game·cd·rs·cdrs·keypad)
+    this.workBySig = {}; // 세션 동안 signature 별 작업본(집합 전환해도 배치 유지)
+    this.defaultsBySig = {}; // signature 별 기본 배치(기본 배치로 되돌리기용)
   }
 
   // 편집에서 고를 수 있는 조작부 집합(강제 표시). 현재 게임 + 추가 버튼.
@@ -427,9 +429,9 @@ export class PadEditor {
     this.setKind = "game";
     this.sig = this.currentSig();
     this.before = { placement: this.placement(), layout: this.deps.prefs().padLayout };
-    const seed = this.buildSeed(landscape);
-    this.defaultsSeed = JSON.parse(JSON.stringify(seed));
-    this.work = seed;
+    this.workBySig = {};
+    this.defaultsBySig = {};
+    this.loadWork(landscape);
     this.selected = null;
     this.editing = true;
     this.deps.setPlacement("custom", { silent: true });
@@ -438,23 +440,31 @@ export class PadEditor {
     this.buildOverlay();
   }
 
-  // 조작부 집합 전환: 해당 버튼을 편집용으로 강제 표시 → 그 집합의 signature·배치로 다시 구성.
+  // 조작부 집합 전환: 현재 작업본 보관 → 해당 버튼 강제 표시 → 그 집합의 작업본(없으면 저장값·기본)으로 구성.
   pickSet(kind) {
     if (!this.editing || !PadEditor.SETS.includes(kind) || kind === this.setKind) return;
+    this.stashWork();
     this.setKind = kind;
     this.deps.forceSet(kind);
     this.sig = this.currentSig();
     this.selected = null;
-    this.reseed();
+    this.loadWork(this.orient === "landscape");
     this.applyModel(this.work);
     this.syncFrames();
     this.renderCard();
   }
 
-  reseed() {
-    const seed = this.buildSeed(this.orient === "landscape");
-    this.defaultsSeed = JSON.parse(JSON.stringify(seed));
-    this.work = seed;
+  // 현재 작업본을 signature 별 보관함에 넣는다(집합을 바꿔도 아까 만지던 배치 유지).
+  stashWork() {
+    if (this.sig && this.work) this.workBySig[this.sig] = this.work;
+  }
+
+  // 지금 signature 의 작업본을 불러온다: ① 세션 중 만지던 것 → ② 저장값·기본 격자. 기본 배치(reset 용)도 보관.
+  loadWork(landscape) {
+    if (!this.defaultsBySig[this.sig]) this.defaultsBySig[this.sig] = JSON.parse(JSON.stringify(this.buildSeed(landscape)));
+    this.defaultsSeed = this.defaultsBySig[this.sig];
+    this.work = this.workBySig[this.sig] ?? JSON.parse(JSON.stringify(this.defaultsSeed));
+    this.workBySig[this.sig] = this.work;
   }
 
   exit(apply) {
@@ -476,10 +486,11 @@ export class PadEditor {
 
   save() {
     if (!this.editing) return;
-    const sig = this.sig || this.currentSig();
+    this.stashWork();
     const all = normalizeLayout(this.deps.prefs().padLayout);
-    const side = { ...(all[sig] ?? {}), [this.orient]: this.work };
-    const layout = normalizeLayout({ ...all, [sig]: side });
+    // 이 세션에서 만진 모든 집합(signature)을 현재 방향에 저장.
+    for (const [sig, work] of Object.entries(this.workBySig)) all[sig] = { ...(all[sig] ?? {}), [this.orient]: work };
+    const layout = normalizeLayout(all);
     this.deps.prefs().padLayout = layout;
     this.deps.setPlacement("custom", { silent: true });
     this.deps.persist({ padPlacement: "custom", padLayout: layout });
@@ -489,6 +500,7 @@ export class PadEditor {
   reset() {
     if (!this.editing || !this.defaultsSeed) return;
     this.work = JSON.parse(JSON.stringify(this.defaultsSeed));
+    this.workBySig[this.sig] = this.work;
     this.defaultsCache = null;
     this.applyModel(this.work);
     this.syncFrames();
@@ -511,7 +523,8 @@ export class PadEditor {
       event.preventDefault();
       if (this.selected) this.select(null);
     });
-    this.deps.mount(backdrop);
+    // 맨 앞(.app 첫 자식)에 둔다 — z-index 뿐 아니라 DOM 순서로도 조작부·막대보다 뒤에 깔리게(스타일 누락 대비).
+    (this.deps.mountBack ?? this.deps.mount)(backdrop);
     this.backdrop = backdrop;
     const root = mk("padedit");
     root.setAttribute("role", "dialog");

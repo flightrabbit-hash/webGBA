@@ -810,6 +810,7 @@ function initPadEditor() {
     hold: (on) => hold("padedit", on),
     t: (key, vars) => t(key, vars),
     mount: (node) => el.app.append(node),
+    mountBack: (node) => el.app.prepend(node),
     appRect: () => {
       const r = el.app.getBoundingClientRect();
       return { left: r.left, top: r.top, w: r.width, h: r.height };
