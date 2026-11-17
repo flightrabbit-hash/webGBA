@@ -6,6 +6,8 @@ import { readTocFrom, unpackChunk } from "../core/wgba-format.js";
 import { sha1Hex } from "../core/wgbp.js";
 
 const INDEX_MAX = 64;
+// 업데이트 확인·롬 가져오기 등록 확인 대상 = 같은 Pack 형식의 게임 파일(.wgba · .wmba 모바일 · .wapk Android)
+const PACK_FILE_RE = /\.(wgba|wmba|wapk)$/i;
 
 export function createExeUpdater(d) {
   const { t } = d;
@@ -68,7 +70,7 @@ export function createExeUpdater(d) {
     const seen = new Set();
     const games = [];
     for (const path of paths) {
-      if (!/\.wgba$/i.test(path) || seen.has(keyOf(path))) continue;
+      if (!PACK_FILE_RE.test(path) || seen.has(keyOf(path))) continue;
       seen.add(keyOf(path));
       if (old[keyOf(path)]) cache[keyOf(path)] = old[keyOf(path)];
       const info = await describe(path, cache);
@@ -229,14 +231,14 @@ export function createExeUpdater(d) {
     return picker;
   }
 
-  /** 경로들의 .wgba 게임 id(설명서 조회 캐시 updateIndex 재사용 — 바뀐 파일만 읽음). */
+  /** 경로들의 게임 파일(.wgba · .wmba · .wapk) 게임 id(설명서 조회 캐시 updateIndex 재사용 — 바뀐 파일만 읽음). */
   async function ids(paths) {
     const cache = { ...(d.prefs().updateIndex ?? {}) };
     const before = JSON.stringify(cache);
     const found = new Set();
     const seen = new Set();
     for (const path of paths) {
-      if (!/\.wgba$/i.test(path) || seen.has(keyOf(path))) continue;
+      if (!PACK_FILE_RE.test(path) || seen.has(keyOf(path))) continue;
       seen.add(keyOf(path));
       const info = await describe(path, cache);
       if (info?.gameId) found.add(info.gameId);

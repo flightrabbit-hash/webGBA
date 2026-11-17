@@ -287,7 +287,7 @@ export function createAdminFlow(d) {
     const items = games.map((game) => ({
       key: game.key,
       game,
-      name: pickText(game.names, d.lang()) || pickText(game.short, d.lang()) || String(game.file ?? game.id).replace(/\.wgba$/i, ""),
+      name: pickText(game.names, d.lang()) || pickText(game.short, d.lang()) || String(game.file ?? game.id).replace(/\.(wgba|wmba|wapk)$/i, ""),
       kind: "patch",
       state: "ready",
       to: game.version,

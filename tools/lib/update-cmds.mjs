@@ -13,6 +13,7 @@
 //        묶음의 groups.json(게임 id → { group: emu|arcade|mobile, category })이 있으면 목록 signed.groups 에 넣는다(웹 라이브러리 그룹·카테고리, 옛 webGBA 는 조회하지 않음).
 //   verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…   서명·파일 크기·SHA-256, 옛 파일마다 끝까지 적용.
 //        묶음이면 목록 서명·게임마다 latest.json 과 같은지, 게임 폴더면 목록이 있을 때 그 게임 줄이 latest.json 과 같은지도 본다.
+//   upload [<발행 폴더|묶음>] [--wgba|--wmba <게임 파일>]… [--groups <groups.json>] [--dry-run [--remote]]   (--wgba·--wmba = 비공개 버킷 <확장자>/<id>/<버전>.<확장자>, admin-cmds.mjs)
 //   upload <발행 폴더|묶음> [--dry-run [--remote]]   R2 에 올리기(patches·full 먼저, latest.json 다음, index.json 마지막). 환경 변수 R2_ACCOUNT_ID ·
 //                                            R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_BUCKET (값은 출력하지 않음)
 //        버킷에 같은 내용이 있는 파일은 건너뜀 — 버킷 확인은 목록 조회 1번(ListObjectsV2, Class A). 목록이 실패하면 파일마다 HEAD(Class B).
@@ -106,12 +107,12 @@ const relOf = (file) => file.split(path.sep).join("/");
 const nowIso = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
 const versionOk = (v) => typeof v === "string" && VERSION_RE.test(v);
 
-/** --old 로 받은 파일·폴더 → .wgba 경로(폴더는 바로 아래 *.wgba, 이름순). */
+/** --old 로 받은 파일·폴더 → 게임 파일 경로(폴더는 바로 아래 *.wgba · *.wmba · *.wapk, 이름순 — 다른 게임 파일은 directPatches 가 id 로 거름). */
 function oldFiles(list) {
   const out = [];
   for (const entry of list) {
     if (fs.statSync(entry).isDirectory()) {
-      for (const name of fs.readdirSync(entry).sort()) if (/\.wgba$/i.test(name)) out.push(path.join(entry, name));
+      for (const name of fs.readdirSync(entry).sort()) if (/\.(wgba|wmba|wapk)$/i.test(name)) out.push(path.join(entry, name));
     } else out.push(entry);
   }
   return out;
@@ -646,11 +647,13 @@ export async function updateCommand(cmd, rest) {
     return verify(o.positional[0], { pub: o["--pub"] ?? null, key: o["--key"] ?? null, olds: o["--wgba"] });
   }
   if (cmd === "upload") {
-    const o = parseList(rest, ["--groups"], ["--wgba"]);
-    if (o.positional.length > 1 || (!o.positional.length && !o["--wgba"].length)) return -1;
+    // --wmba 는 --wgba 와 같음(비공개 키 폴더·확장자는 설명서로 정함 — .wmba = wmba/<id>/<버전>.wmba)
+    const o = parseList(rest, ["--groups"], ["--wgba", "--wmba"]);
+    const games = [...o["--wgba"], ...o["--wmba"]];
+    if (o.positional.length > 1 || (!o.positional.length && !games.length)) return -1;
     if (o["--remote"] && !o["--dry-run"]) return -1;
     const flags = { dryRun: Boolean(o["--dry-run"]), remote: Boolean(o["--remote"]) };
-    if (o["--wgba"].length) await privateUpload(o["--wgba"], { ...flags, groups: readGroupsFile(o["--groups"] ?? groupsBeside(o.positional[0])) });
+    if (games.length) await privateUpload(games, { ...flags, groups: readGroupsFile(o["--groups"] ?? groupsBeside(o.positional[0])) });
     return o.positional.length ? upload(o.positional[0], flags) : 0;
   }
   if (cmd === "private-prune") {

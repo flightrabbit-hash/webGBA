@@ -77,6 +77,7 @@ const el = {
 const OPEN_EXT = new Set(["gba", "agb", "gb", "gbc", "zip", "wgba", "wmba", "wapk", "wasm", "wgbp"]);
 const LIST_EXT = new Set(["gba", "gb", "gbc", "wgba", "wmba", "wapk", "wasm", "wgbp"]);
 const WASM_EXT = new Set(["wgba", "wmba", "wapk", "wasm"]);
+const PACK_FILE_EXT = new Set(["wgba", "wmba", "wapk"]);
 const PATCH_EXT = "wgbp";
 const PATCH_ROM_EXT = ["gba", "agb", "bin", "zip"];
 const RECENT_MAX = 10;
@@ -2559,7 +2560,7 @@ const admin = createAdminFlow({
   registeredIds: async () => {
     let inApp = [];
     try {
-      inApp = (await core.fileList(state.info.appDir)).filter((item) => !item.isDir && item.extension === "wgba").map((item) => item.path);
+      inApp = (await core.fileList(state.info.appDir)).filter((item) => !item.isDir && PACK_FILE_EXT.has(String(item.extension).toLowerCase())).map((item) => item.path);
     } catch {}
     return updater.ids([...updatePaths(), ...inApp]);
   },

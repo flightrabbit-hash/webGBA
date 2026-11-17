@@ -320,6 +320,40 @@ try {
   ok("private-prune --dry-run = 삭제 없음 · 실행 = 게임마다 최신 하나만(wgba/ 밖·형식 다른 키 그대로)", dryDeletes === 0 && prunedLeft.join() === "false,false,true,false,true,true,true,true,true", prunedLeft.join());
   ok("올리기 실패 시 삭제하지 않음", /PUT/.test(failMsg) && failKept, failMsg);
 
+  // .wmba(모바일, 같은 Pack 형식) = 비공개 wmba/<id>/<버전>.wmba · roms.json 항목(저장 이름 .wmba · 그룹) · 서버 목록·내려받기 주소
+  const mobile = async (id, version, name) => (await packWgba({ wasm: tinyWasm(), manifest: { wgba: 1, id, version, name, runtime: "webapi", group: "mobile", category: "WIPI-KTF", mobile: { platform: "WIPI-KTF" }, input: { preset: "gba" } }, images: { label } })).bytes;
+  const nine = await mobile("local.minigame9", "1.0.0", { en: "Mini Game Nine", ko: "미니게임 9" });
+  console.log = () => {};
+  try {
+    r2.put("wmba/local.minigame9/0.9.0.wmba", "old");
+    r2.clear();
+    pub.clear();
+    await privateUpload([await writeTemp("minigame9.wmba", nine)], { config: tool, publicConfig: pubTool, groups: { "local.minigame9": { group: "mobile", category: "WIPI-KTF" } } });
+    var wmbaPuts = r2.log.filter((l) => l.kind === "put" && l.status === 200).map((l) => l.path.replace(`/${r2.bucket}/`, ""));
+    var wmbaDeletes = r2.log.filter((l) => l.kind === "delete").map((l) => l.path.replace(`/${r2.bucket}/`, ""));
+    var wmbaLists = r2.log.filter((l) => l.kind === "list").length;
+    var romsWmba = JSON.parse(new TextDecoder().decode(pub.read("roms.json")));
+    var wgbaLeft = ["wgba/io.example.delta/1.3.0.wgba", "wgba/com.flightrabbit.rapid/1.3.5.wgba"].every((k) => r2.has(k));
+    var extMismatch = await privateUpload([await writeTemp("wrong.wgba", await mobile("local.wrong", "1.0.0", "Wrong"))], { config: tool, publicConfig: pubTool }).then(() => "올림", (e) => e.message);
+  } finally {
+    console.log = quiet;
+  }
+  const romNine = romsWmba.items.find((i) => i.id === "local.minigame9");
+  ok("upload --wmba = 비공개 wmba/<id>/<버전>.wmba · 같은 id 이전 버전 삭제 · wgba/ 그대로 · 버킷 목록 1번", wmbaPuts.join() === "wmba/local.minigame9/1.0.0.wmba" && wmbaDeletes.join() === "wmba/local.minigame9/0.9.0.wmba" && wgbaLeft && wmbaLists === 1, `${wmbaPuts.join(" ")} · 삭제 ${wmbaDeletes.join(" ")} · 목록 ${wmbaLists}`);
+  ok("roms.json .wmba 항목 = 키 wmba/… · 저장 이름 <id 의 local. 뒤>.wmba · 이름 · 라벨 · 그룹 mobile", romNine?.key === "wmba/local.minigame9/1.0.0.wmba" && romNine.file === "minigame9.wmba" && romNine.names.ko === "미니게임 9" && /^data:image\/png;base64,/.test(romNine.label) && romNine.group === "mobile" && romNine.category === "WIPI-KTF", JSON.stringify(romNine && { ...romNine, label: romNine.label?.slice(0, 20) }));
+  ok("설명서는 .wmba 인데 파일 이름이 .wgba → 올리지 않음", /\.wgba 가 설명서\(\.wmba\)와 다릅니다/.test(extMismatch) && !r2.has("wmba/local.wrong/1.0.0.wmba"), extMismatch);
+  clock += ADMIN.ROMS_MS + 1;
+  const withWmba = await call("GET", "list", { token: viaToken });
+  const listedNine = withWmba.body?.items?.find((i) => i.id === "local.minigame9");
+  ok("서버 목록 = roms.json 의 .wmba 항목(키·저장 이름·그룹)", withWmba.status === 200 && listedNine?.key === "wmba/local.minigame9/1.0.0.wmba" && listedNine.file === "minigame9.wmba" && listedNine.group === "mobile", JSON.stringify(listedNine && { ...listedNine, label: "" }));
+  const nineUrl = await call("POST", "url", { token: viaToken, body: { keys: [listedNine?.key ?? ""] } });
+  const nineGot = nineUrl.status === 200 ? new Uint8Array(await (await fetch(nineUrl.body.urls[0].url)).arrayBuffer()) : new Uint8Array();
+  ok("wmba/ 키 = 내려받기 주소 발급 · 같은 바이트", nineUrl.status === 200 && Buffer.compare(Buffer.from(nineGot), Buffer.from(nine)) === 0, String(nineUrl.status));
+  const crossed = await call("POST", "url", { token: viaToken, body: { keys: ["wmba/local.minigame9/1.0.0.wgba"] } });
+  const outside = await call("POST", "url", { token: viaToken, body: { keys: ["wmbx/a.wmba"] } });
+  ok("폴더와 확장자가 다른 키·다른 폴더 → 400", crossed.status === 400 && outside.status === 400);
+  ok("저장 이름 = .wmba 는 id 의 local. 뒤 · 표에 있으면 표(maple 2개) · .wgba 는 그대로", saveFileName({ id: "local.grandchase", names: { en: "Grand Chase" }, ext: "wmba" }) === "grandchase.wmba" && saveFileName({ id: "local.0102589e", names: { en: "메이플-마법사편" }, ext: "wmba" }) === "maple-magician.wmba" && saveFileName({ id: "io.example.m", names: { en: "Mobile M" }, ext: "wmba" }) === "mobile-m.wmba" && saveFileName({ id: "local.grandchase", names: { en: "Grand Chase" } }) === "grand-chase.wgba");
+
   ok("저장 이름 = 영어 이름 소문자·하이픈(악센트 제거) · 영어 이름 없으면 id 끝", saveFileName({ id: "local.x", names: { en: "Ninja Baseball Bat Man", ko: "닌자" } }) === "ninja-baseball-bat-man.wgba" && saveFileName({ id: "local.tetris", names: { ja: "テトリス" } }) === "tetris.wgba" && saveFileName({ id: "com.flightrabbit.rapid" }) === "pokemon-rapid.wgba");
   ok("저장 이름 = Windows 금지 글자·예약어 처리", safeFileName('a<b>:"c"/\\|?*') === "a_b___c______.wgba" && safeFileName("con") === "_con.wgba" && safeFileName("  ..  ") === "game.wgba");
 } finally {

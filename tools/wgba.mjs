@@ -190,6 +190,7 @@ async function info(file) {
       const parts = Object.keys(CART_PARTS).map((p) => (cart[p] ? `${p} ${cart[p].width}x${cart[p].height}` : `${p} 없음`));
       console.log(`롬팩    색 ${cart.color ?? "없음"} · ${parts.join(" · ")}`);
       if (m.group || m.category) console.log(`그룹    ${m.group ?? "없음"} · 카테고리 ${m.category ?? "없음"}`);
+      console.log(`업데이트 ${m.update ? `${m.update.feed ?? "feed 없음"} · 키 ${m.update.key ?? "없음"}` : "없음(설명서 update 항목 없음)"}`);
       if (isMobile(m)) {
         const mo = m.mobile ?? {};
         const keys = (m.input?.buttons ?? []).map((b) => b.role ?? b.id).join(" ");
@@ -361,9 +362,9 @@ const UPDATE_USAGE = [
   "        node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]",
   "        node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>",
   "        node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…",
-  "        node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]   (--wgba = 비공개 버킷 wgba/<id>/<버전>.wgba, 올린 뒤 같은 id 의 낮은 버전 삭제)",
+  "        node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba|--wmba <새 게임 파일>]… [--groups <groups.json>] [--dry-run [--remote]]   (비공개 버킷 <확장자>/<id>/<버전>.<확장자> — .wgba = wgba/, .wmba = wmba/, 올린 뒤 같은 id 의 낮은 버전 삭제)",
   "        node tools/wgba.mjs admin-key [--dry-run]   (관리자 6자리 → 비공개 버킷 authentication.key, PowerShell 에서)",
-  "        node tools/wgba.mjs private-prune [--dry-run]   (비공개 버킷 wgba/<id>/ 에 게임마다 최신 버전 하나만 남김)",
+  "        node tools/wgba.mjs private-prune [--dry-run] [--groups <groups.json>]   (비공개 버킷 wgba/·wmba/·wapk/ 에 게임마다 최신 버전 하나만 남김)",
   "        node tools/wgba.mjs r2-stats [--days <일 수> | --since <ISO 시각> [--until <ISO 시각>]] [--top <줄 수>] [--bucket public|private|all] [--hourly]",
 ];
 

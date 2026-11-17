@@ -11,17 +11,17 @@ import { makeBps } from "./bps-make.mjs";
 import { findRomRanges, indexRom } from "./rom-ranges.mjs";
 import { concat, romPayloadFrom } from "../../src-bundle/src/js/core/wgbp.js";
 import { applyDelta, DELTA_EXPANDED, DELTA_REBUILT, expandedSource, romPlace, writeDelta } from "../../src-bundle/src/js/core/wgba-update.js";
-import { readTocFrom, unpackChunk, unpackRom } from "../../src-bundle/src/js/core/wgba-format.js";
+import { gameExt, readTocFrom, unpackChunk, unpackRom } from "../../src-bundle/src/js/core/wgba-format.js";
 
 const sha1 = (bytes) => crypto.createHash("sha1").update(bytes).digest();
 
-/** 설명서 id·version(없으면 빈 값). */
+/** 설명서 id·version(없으면 빈 값) · ext = 설명서로 정한 확장자(wgba · wmba 모바일 · wapk Android). */
 export async function manifestOf(bytes) {
   const toc = await readTocFrom(bytes);
   const entry = toc?.entries.find((e) => e.name === "manifest");
-  if (!entry) return { id: "", version: "" };
+  if (!entry) return { id: "", version: "", ext: "wgba" };
   const m = JSON.parse(new TextDecoder().decode(unpackChunk(bytes.subarray(entry.start, entry.end), entry)));
-  return { id: m.id ?? "", version: m.version ?? "", names: m.name ?? null };
+  return { id: m.id ?? "", version: m.version ?? "", names: m.name ?? null, ext: gameExt(m) };
 }
 
 /** BPS 안 TargetRead(새로 넣는 바이트) 구간 [시작, 끝) — 패치 바이트 기준. */

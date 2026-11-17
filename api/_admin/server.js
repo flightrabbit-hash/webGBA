@@ -32,7 +32,8 @@ export const ADMIN = Object.freeze({
 const PIN_RE = /^[0-9!#]{6}$/;
 const TOKEN_RE = /^Bearer\s+a1\.([0-9a-z]{1,12})\.([0-9a-z]{1,12})\.([A-Za-z0-9_-]{32})$/;
 const SEMVER_RE = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?$/;
-const KEY_RE = /^wgba\/[^\x00-\x1f\\]{1,900}\.wgba$/i;
+// 내려받기 주소를 줄 키 = wgba/…/*.wgba · wmba/…/*.wmba · wapk/…/*.wapk(폴더 = 확장자, roms.json 의 key). 목록 대체 경로(roms.json 404)는 wgba/ 만 본다.
+const KEY_RE = /^(wgba|wmba|wapk)\/[^\x00-\x1f\\]{1,900}\.\1$/i;
 const ENV = Object.freeze([
   ["account", "CF_ACCOUNT_ID", /^[A-Za-z0-9]{1,64}$/, true],
   ["bucket", "R2_PRIVATE_BUCKET", /^[a-z0-9][a-z0-9-]{1,62}$/, false],

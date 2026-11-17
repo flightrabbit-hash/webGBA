@@ -1,4 +1,5 @@
 // 관리자 모드 "롬 가져오기" 발행 도구 — 비공개 R2 버킷(공개 주소 꺼짐)에 키 파일·전체 .wgba 를 올린다(설계.md 34절).
+// 게임 파일 키 = <확장자>/<게임 id>/<버전>.<확장자> — .wgba = wgba/…, .wmba(모바일, 같은 Pack 형식) = wmba/…, .wapk = wapk/…(확장자는 설명서로 정함).
 // 계정·키는 환경 변수 R2_ACCOUNT_ID · R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_PRIVATE_BUCKET 에서만 읽고, 값을 출력·기록하지 않는다.
 // 6자리 값과 그 SHA-256 은 어디에도 출력·저장하지 않는다(12글자 6칸 = 약 300만 가지라 해시만으로 바로 역산된다).
 import crypto from "crypto";
@@ -6,7 +7,7 @@ import fs from "fs";
 import path from "path";
 import { manifestOf } from "./wgbd-make.mjs";
 import { r2Delete, r2Get, r2Head, r2List, r2Put } from "./r2.mjs";
-import { saveFileName } from "../../api/_admin/save-name.js";
+import { PACK_EXTS, saveFileName } from "../../api/_admin/save-name.js";
 import { readHead } from "../../api/_admin/wgba-head.js";
 import { ROMS, romItem, romsText } from "../../api/_admin/roms.js";
 
@@ -99,7 +100,13 @@ export async function adminKey({ dryRun = false, config = null, ask = askHidden,
   return 0;
 }
 
-const GAME_KEY_RE = /^wgba\/([a-z0-9][a-z0-9.-]{0,63})\/(\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?)\.wgba$/;
+// [1] = 확장자 폴더, [2] = 게임 id, [3] = 버전. 게임 id 는 확장자와 관계없이 하나(최신 하나만 남길 때 함께 비교).
+const GAME_KEY_RE = /^(wgba|wmba|wapk)\/([a-z0-9][a-z0-9.-]{0,63})\/(\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?)\.\1$/;
+const PACK_FILE_RE = /\.(wgba|wmba|wapk)$/i;
+const gameKey = (key) => {
+  const hit = GAME_KEY_RE.exec(key);
+  return hit ? { ext: hit[1], id: hit[2], version: hit[3] } : null;
+};
 
 /** semver 비교(x.y.z 숫자, 같으면 접미사 없는 쪽이 높음). */
 export function compareVersions(a, b) {
@@ -113,14 +120,14 @@ export function compareVersions(a, b) {
   return pa < pb ? -1 : 1;
 }
 
-/** 게임 id 마다 keep(id → 남길 버전)보다 낮은 wgba/<id>/<버전>.wgba 삭제. wgba/ 밖·형식이 다른 키·keep 에 없는 id 는 건드리지 않음. */
+/** 게임 id 마다 keep(id → 남길 버전)보다 낮은 <확장자>/<id>/<버전>.<확장자> 삭제. 게임 폴더 밖·형식이 다른 키·keep 에 없는 id 는 건드리지 않음. */
 async function pruneOld(r2, keys, keep, { dryRun }) {
   let count = 0;
   let bytes = 0;
   const removed = [];
   for (const [key, size] of keys) {
-    const hit = GAME_KEY_RE.exec(key);
-    if (!hit || !keep.has(hit[1]) || compareVersions(hit[2], keep.get(hit[1])) >= 0) continue;
+    const hit = gameKey(key);
+    if (!hit || !keep.has(hit.id) || compareVersions(hit.version, keep.get(hit.id)) >= 0) continue;
     if (!dryRun) await r2Delete(r2, key);
     console.log(`${dryRun ? "삭제할 것" : "삭제함"}  비공개 ${key} ${n(size)}바이트`);
     count++;
@@ -158,13 +165,13 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
   const latest = new Map();
   let loose = 0;
   for (const [key, info] of objects) {
-    const hit = GAME_KEY_RE.exec(key);
+    const hit = gameKey(key);
     if (!hit) {
-      if (/\.wgba$/i.test(key)) loose++;
+      if (PACK_FILE_RE.test(key)) loose++;
       continue;
     }
-    const was = latest.get(hit[1]);
-    if (!was || compareVersions(hit[2], was.version) > 0) latest.set(hit[1], { key, id: hit[1], version: hit[2], size: info.size, etag: info.etag ?? "" });
+    const was = latest.get(hit.id);
+    if (!was || compareVersions(hit.version, was.version) > 0) latest.set(hit.id, { key, id: hit.id, version: hit.version, size: info.size, etag: info.etag ?? "" });
   }
   const oldBytes = await r2Get(pub, ROMS.FILE);
   let oldText = "";
@@ -180,7 +187,7 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
   for (const want of latest.values()) {
     const prev = before.get(want.key);
     let head = null;
-    if (local.has(want.key)) head = readHead(local.get(want.key));
+    if (local.has(want.key)) head = local.get(want.key);
     else if (prev && prev.size === want.size && prev.etag === want.etag) {
       items.push(romItem({ ...prev, ...want, group: null, category: null, ...groupOf(want.id) }));
       continue;
@@ -210,11 +217,11 @@ export async function writeRoms(priv, pub, objects, { local = new Map(), dryRun 
 export async function privatePrune({ dryRun = false, config = null, publicConfig = null, groups = {} } = {}) {
   const r2 = config ?? privateConfig();
   const pub = publicConfig ?? romsConfig(r2);
-  const listed = await r2List(r2, { prefix: "wgba/" });
+  const listed = await listGames(r2);
   const keep = new Map();
   for (const key of listed.objects.keys()) {
-    const hit = GAME_KEY_RE.exec(key);
-    if (hit && (!keep.has(hit[1]) || compareVersions(hit[2], keep.get(hit[1])) > 0)) keep.set(hit[1], hit[2]);
+    const hit = gameKey(key);
+    if (hit && (!keep.has(hit.id) || compareVersions(hit.version, keep.get(hit.id)) > 0)) keep.set(hit.id, hit.version);
   }
   const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
   console.log(`${dryRun ? "--dry-run: 삭제하지 않았습니다 — 삭제할 것" : "비공개 버킷 정리 완료 — 삭제"} ${done.count}개 ${n(done.bytes)}바이트 · 남김 ${[...keep].map(([id, v]) => `${id} ${v}`).join(", ")}`);
@@ -223,46 +230,66 @@ export async function privatePrune({ dryRun = false, config = null, publicConfig
   return 0;
 }
 
-/** 전체 .wgba → 비공개 버킷 wgba/<게임 id>/<버전>.wgba(원본 파일 이름과 무관, 받을 때 저장 이름 = saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번) → 이전 버전 삭제 → 공개 버킷 roms.json 갱신. */
+/** 비공개 버킷 게임 파일 목록 — 버킷 전체 1번(ListObjectsV2, 1,000개당 1번): wgba/ · wmba/ · wapk/ 를 한 번에. 게임 키가 아닌 것은 쓰는 쪽이 거름. */
+const listGames = (r2) => r2List(r2);
+
+const md5Of = (bytes) => crypto.createHash("md5").update(bytes).digest("hex");
+
+/**
+ * 전체 게임 파일(.wgba · .wmba · .wapk) → 비공개 버킷 <확장자>/<게임 id>/<버전>.<확장자>(확장자 = 설명서, 원본 파일 이름과 무관, 받을 때 저장 이름 =
+ * saveFileName, 같은 크기·내용이면 건너뜀, 버킷 확인 = 목록 1번) → 이전 버전 삭제 → 공개 버킷 roms.json 갱신.
+ * 파일은 계획 때 한 번(md5·머리), 올릴 때 한 번 읽는다 — 수십 개(.wmba 65개 ≈ 1.5GB)를 한꺼번에 메모리에 두지 않게.
+ */
 export async function privateUpload(files, { dryRun = false, remote = false, config = null, publicConfig = null, groups = {} } = {}) {
   const plan = [];
   for (const file of files) {
     const bytes = new Uint8Array(fs.readFileSync(file));
-    const { id, version, names } = await manifestOf(bytes);
+    const { id, version, names, ext } = await manifestOf(bytes);
     if (!/^[a-z0-9][a-z0-9.-]{0,63}$/.test(id) || !id.includes(".")) throw new Error(`게임 id 가 없거나 형식이 다릅니다: ${path.basename(file)}`);
     if (!SEMVER_RE.test(version)) throw new Error(`버전이 x.y.z 형식이 아닙니다: ${path.basename(file)} (${version})`);
-    plan.push({ key: `wgba/${id}/${version}.wgba`, bytes, file, save: saveFileName({ id, version, names }) });
+    if (!PACK_EXTS.includes(ext)) throw new Error(`확장자를 정하지 못했습니다: ${path.basename(file)}`);
+    const fileExt = (PACK_FILE_RE.exec(file)?.[1] ?? "").toLowerCase();
+    if (fileExt && fileExt !== ext) throw new Error(`파일 확장자 .${fileExt} 가 설명서(.${ext})와 다릅니다: ${path.basename(file)}`);
+    const head = readHead(bytes);
+    plan.push({ key: `${ext}/${id}/${version}.${ext}`, file, size: bytes.length, md5: md5Of(bytes), head, save: saveFileName({ id, version, names, ext }) });
   }
+  const keys = plan.map((item) => item.key);
+  const twice = keys.filter((key, i) => keys.indexOf(key) !== i);
+  if (twice.length) throw new Error(`같은 키로 올릴 파일이 둘 이상입니다: ${[...new Set(twice)].join(", ")}`);
   if (dryRun && !remote) {
-    for (const item of plan) console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save} (원본 ${path.basename(item.file)})`);
-    console.log(`--dry-run: 비공개 버킷에 올리지 않았습니다(${plan.length}개)`);
+    for (const item of plan) console.log(`비공개 올릴 것 ${item.key} ${n(item.size)}바이트 · 저장 이름 ${item.save} (원본 ${path.basename(item.file)})`);
+    console.log(`--dry-run: 비공개 버킷에 올리지 않았습니다(${plan.length}개 · ${n(plan.reduce((sum, item) => sum + item.size, 0))}바이트)`);
     return 0;
   }
   const r2 = config ?? privateConfig();
-  const listed = await r2List(r2, { prefix: "wgba/" });
+  const listed = await listGames(r2);
   let put = 0;
+  let sent = 0;
   for (const item of plan) {
     const head = listed.objects.get(item.key);
-    const md5 = crypto.createHash("md5").update(item.bytes).digest("hex");
-    if (head && head.size === item.bytes.length && (head.etag === md5 || head.etag.includes("-"))) {
+    if (head && head.size === item.size && (head.etag === item.md5 || head.etag.includes("-"))) {
       console.log(`같음  비공개 ${item.key}`);
       continue;
     }
     if (dryRun) {
-      console.log(`비공개 올릴 것 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save} · ${head ? "버킷과 다름" : "버킷에 없음"}`);
+      console.log(`비공개 올릴 것 ${item.key} ${n(item.size)}바이트 · 저장 이름 ${item.save} · ${head ? "버킷과 다름" : "버킷에 없음"}`);
       put++;
+      sent += item.size;
       continue;
     }
-    await r2Put(r2, item.key, item.bytes, { contentType: "application/octet-stream", cacheControl: "no-store" });
-    listed.objects.set(item.key, { size: item.bytes.length, etag: md5 });
-    console.log(`올림  비공개 ${item.key} ${n(item.bytes.length)}바이트 · 저장 이름 ${item.save}`);
+    const bytes = new Uint8Array(fs.readFileSync(item.file));
+    if (bytes.length !== item.size || md5Of(bytes) !== item.md5) throw new Error(`계획 뒤 파일이 바뀌었습니다: ${path.basename(item.file)} — 다시 실행하세요`);
+    await r2Put(r2, item.key, bytes, { contentType: "application/octet-stream", cacheControl: "no-store" });
+    listed.objects.set(item.key, { size: item.size, etag: item.md5 });
+    console.log(`올림  비공개 ${item.key} ${n(item.size)}바이트 · 저장 이름 ${item.save}`);
     put++;
+    sent += item.size;
   }
-  console.log(`${dryRun ? "--dry-run --remote: 비공개 버킷에 올리지 않았습니다 — 올릴 것" : "비공개 버킷 완료 — 올림"} ${put}개 · 같음 ${plan.length - put}개 · 버킷 확인 목록 ${listed.requests}번`);
+  console.log(`${dryRun ? "--dry-run --remote: 비공개 버킷에 올리지 않았습니다 — 올릴 것" : "비공개 버킷 완료 — 올림"} ${put}개 ${n(sent)}바이트 · 같음 ${plan.length - put}개 · 버킷 확인 목록 ${listed.requests}번`);
   // 올리기가 모두 끝난 뒤에만: 같은 게임 id 의 이번에 올린 최고 버전보다 낮은 것 삭제
   const keep = new Map();
   for (const item of plan) {
-    const [, id, version] = GAME_KEY_RE.exec(item.key);
+    const { id, version } = gameKey(item.key);
     if (!keep.has(id) || compareVersions(version, keep.get(id)) > 0) keep.set(id, version);
   }
   const done = await pruneOld(r2, [...listed.objects].map(([k, v]) => [k, v.size]), keep, { dryRun });
@@ -270,8 +297,8 @@ export async function privateUpload(files, { dryRun = false, remote = false, con
   for (const key of done.removed) listed.objects.delete(key);
   const local = new Map();
   for (const item of plan) {
-    local.set(item.key, item.bytes);
-    if (dryRun && !listed.objects.has(item.key)) listed.objects.set(item.key, { size: item.bytes.length, etag: crypto.createHash("md5").update(item.bytes).digest("hex") });
+    local.set(item.key, item.head);
+    if (dryRun && !listed.objects.has(item.key)) listed.objects.set(item.key, { size: item.size, etag: item.md5 });
   }
   await writeRoms(r2, publicConfig ?? romsConfig(r2), listed.objects, { local, dryRun, groups });
   return 0;

@@ -5759,7 +5759,7 @@ const admin = createAdminFlow({
   registeredIds: async () => new Set((await store.list(store.KIND_ROM).catch(() => [])).map((rom) => rom.gameId).filter(Boolean)),
   download: async (game, url, onFraction) => {
     const bytes = await downloadBytes(url, { size: game.size, onProgress: onFraction });
-    const { meta } = await importGame(String(game.file).replace(/\.wgba$/i, ""), bytes, { file: game.file });
+    const { meta } = await importGame(String(game.file).replace(/\.(wgba|wmba|wapk)$/i, ""), bytes, { file: game.file });
     if (meta.transient) throw new Error(state.storeText || t("web.storeFailed", { reason: "?" }));
   },
   refresh: () => {

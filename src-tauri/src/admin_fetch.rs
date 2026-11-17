@@ -1,4 +1,4 @@
-//! 관리자 모드 "롬 가져오기" — 서버가 발급한 몇 분짜리 주소(비공개 R2 presigned GET)에서 `.wgba` 를 받아 exe 폴더에 둔다.
+//! 관리자 모드 "롬 가져오기" — 서버가 발급한 몇 분짜리 주소(비공개 R2 presigned GET)에서 `.wgba`(`.wmba`·`.wapk` 도 같은 형식)를 받아 exe 폴더에 둔다.
 //!
 //! 비공개 버킷의 CORS 는 웹 버전 출처만 허용하므로 웹뷰 `fetch` 대신 WinHTTP(Windows 내장, 새 크레이트 없음)로 받는다.
 //! 주소는 `https://<계정>.r2.cloudflarestorage.com/…` 만 받는다(개발 키트일 때만 루프백 http — 시험 서버).
@@ -48,9 +48,25 @@ pub fn parse_url(url: &str, loopback_ok: bool) -> Result<Target> {
     Ok(Target { secure, host, port, path: path.to_string() })
 }
 
-/// Windows 에서 쓸 수 있는 `<이름>.wgba`(경로 글자·예약어 막음).
+/// 받는 게임 파일 확장자(같은 Pack 형식 — `.wgba` · `.wmba` 모바일 · `.wapk` Android). 저장 이름이 이 셋으로 끝나지 않으면 `.wgba` 를 붙인다.
+const PACK_EXTS: [&str; 3] = ["wgba", "wmba", "wapk"];
+
+/// 이름 → (확장자 뺀 이름, 소문자 확장자). 게임 확장자로 끝나지 않으면 (이름 그대로, "wgba").
+fn split_ext(name: &str) -> (&str, &'static str) {
+    for ext in PACK_EXTS {
+        if name.len() > ext.len() {
+            let cut = name.len() - ext.len() - 1;
+            if name.is_char_boundary(cut) && name[cut..].starts_with('.') && name[cut + 1..].eq_ignore_ascii_case(ext) {
+                return (&name[..cut], ext);
+            }
+        }
+    }
+    (name, "wgba")
+}
+
+/// Windows 에서 쓸 수 있는 `<이름>.<wgba|wmba|wapk>`(경로 글자·예약어 막음, 확장자는 서버가 준 저장 이름을 따름).
 pub fn safe_name(name: &str) -> Result<String> {
-    let stem = name.strip_suffix(".wgba").or_else(|| name.strip_suffix(".WGBA")).unwrap_or(name);
+    let (stem, ext) = split_ext(name);
     let clean: String = stem.chars().map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { '_' } else { c }).take(80).collect();
     let clean = clean.trim().trim_matches(|c| c == '.' || c == ' ').to_string();
     if clean.is_empty() {
@@ -58,17 +74,17 @@ pub fn safe_name(name: &str) -> Result<String> {
     }
     let upper = clean.to_ascii_uppercase();
     let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str()) || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit());
-    Ok(if reserved { format!("_{clean}.wgba") } else { format!("{clean}.wgba") })
+    Ok(if reserved { format!("_{clean}.{ext}") } else { format!("{clean}.{ext}") })
 }
 
-/// 같은 이름이 있으면 `<이름> (2).wgba` … — 사용자 파일을 덮어쓰지 않는다.
+/// 같은 이름이 있으면 `<이름> (2).<확장자>` … — 사용자 파일을 덮어쓰지 않는다.
 pub fn free_path(dir: &Path, name: &str) -> PathBuf {
-    let stem = name.strip_suffix(".wgba").unwrap_or(name);
+    let (stem, ext) = split_ext(name);
     let first = dir.join(name);
     if !first.exists() {
         return first;
     }
-    (2..1000).map(|n| dir.join(format!("{stem} ({n}).wgba"))).find(|p| !p.exists()).unwrap_or(first)
+    (2..1000).map(|n| dir.join(format!("{stem} ({n}).{ext}"))).find(|p| !p.exists()).unwrap_or(first)
 }
 
 #[cfg(windows)]
@@ -225,11 +241,21 @@ mod tests {
         assert_eq!(safe_name("CON").unwrap(), "_CON.wgba");
         assert_eq!(safe_name("com1.wgba").unwrap(), "_com1.wgba");
         assert!(safe_name(" .. ").is_err());
+        assert!(safe_name(".wmba").is_err());
+        assert_eq!(safe_name("grandchase.wmba").unwrap(), "grandchase.wmba");
+        assert_eq!(safe_name("Game.WMBA").unwrap(), "Game.wmba");
+        assert_eq!(safe_name("con.wmba").unwrap(), "_con.wmba");
+        assert_eq!(safe_name("app.wapk").unwrap(), "app.wapk");
+        assert_eq!(safe_name("x.zip").unwrap(), "x.zip.wgba");
+        assert_eq!(safe_name("메이플.wmba").unwrap(), "메이플.wmba");
         let dir = std::env::temp_dir().join(format!("webgba-admin-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         fs::write(dir.join("x.wgba"), b"1").unwrap();
         assert_eq!(free_path(&dir, "x.wgba"), dir.join("x (2).wgba"));
         assert_eq!(free_path(&dir, "y.wgba"), dir.join("y.wgba"));
+        fs::write(dir.join("m.wmba"), b"1").unwrap();
+        assert_eq!(free_path(&dir, "m.wmba"), dir.join("m (2).wmba"));
+        assert_eq!(free_path(&dir, "x.wmba"), dir.join("x.wmba"));
         let _ = fs::remove_dir_all(&dir);
     }
 }
