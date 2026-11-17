@@ -86,9 +86,20 @@ export function comboZone(pair) {
 
 export function comboHit(zone, x, y) {
   const { a, b } = zone;
-  if (Math.hypot(x - a.x, y - a.y) - a.r > zone.reach || Math.hypot(x - b.x, y - b.y) - b.r > zone.reach) return false;
+  const da = Math.hypot(x - a.x, y - a.y) - a.r;
+  const db = Math.hypot(x - b.x, y - b.y) - b.r;
+  if (da > zone.reach || db > zone.reach) return false;
+  // 두 면이 겹쳐 놓였으면(크게·직접 배치) 한 버튼 안쪽으로 반지름 × COMBO_INTO 보다 깊은 곳은 그 버튼 하나(가까운 버튼 규칙)
+  // — 안 그러면 B 가운데를 눌러도 A+B. 떨어져 놓인 기본 배치는 위 조건이 이미 이 깊이 안으로 묶어 바뀌지 않는다.
+  const deep = zone.side * COMBO_INTO;
+  if (da < -deep || db < -deep) return false;
   return Math.abs((y - a.y) * zone.ux - (x - a.x) * zone.uy) <= zone.side;
 }
+
+// 버튼 바깥 여백(누른 점이 상자 밖이어도 이만큼 안이면 가장 가까운 버튼) — measure·자유 배치 누르는 자리(pad-editor)가 같은 식.
+export const keyMargin = (w, h) => Math.min(KEY_MARGIN_MAX, Math.min(w, h) * KEY_MARGIN);
+// 방향 조작부가 손가락을 받는 반지름 배(상자 반지름 기준) — 스틱·십자.
+export const dirReach = (mode) => (mode === "stick" ? STICK_REACH : DPAD_REACH);
 
 export function contactOf(rx, ry, deg = 0) {
   if (!(rx >= CONTACT_MIN && ry >= CONTACT_MIN)) return null;
@@ -236,7 +247,7 @@ export class VirtualPad {
     for (const node of this.root.querySelectorAll("[data-key]")) {
       const box = node.getBoundingClientRect();
       if (box.width < 1 || box.height < 1) continue;
-      const margin = Math.min(KEY_MARGIN_MAX, Math.min(box.width, box.height) * KEY_MARGIN);
+      const margin = keyMargin(box.width, box.height);
       rects.keys.push({ name: node.dataset.key, box, margin, cx: box.left + box.width / 2, cy: box.top + box.height / 2 });
     }
     const dir = this.root.querySelector("[data-dpad]");
@@ -263,7 +274,7 @@ export class VirtualPad {
   inDir(x, y) {
     const d = (this.rects ?? this.measure()).dir;
     if (!d) return false;
-    return Math.hypot(x - d.cx, y - d.cy) <= d.r * (this.mode === "stick" ? STICK_REACH : DPAD_REACH);
+    return Math.hypot(x - d.cx, y - d.cy) <= d.r * dirReach(this.mode);
   }
 
   dpadDirs(x, y) {

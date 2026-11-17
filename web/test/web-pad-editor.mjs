@@ -6,9 +6,42 @@ import assert from "node:assert/strict";
 import {
   normalizeLayout, hasLayout, orientationKey, clampScale, scalePercent, scaleStep,
   clampCenter, snapCenter, colorChoices, colorHexOf, activeColorId, CONTROL_BY_ID,
-  layoutSignature, CONTROLS, PadEditor, boxScale, stretchOf, setBox, sizeText, isStretched, STRETCH_MAX,
+  layoutSignature, CONTROLS, PadEditor, boxScale, stretchOf, setBox, sizeText, isStretched, STRETCH_MAX, separate,
 } from "../src/js/pad-editor.js";
 import * as PX from "../src/js/pixel-ui.js";
+import { comboZone, comboHit, keyMargin } from "../src/js/pad.js";
+
+test("comboHit: overlapping A·B faces — deep inside one button is that button only; band between stays A+B", () => {
+  const key = (name, left, top, w) => ({ name, box: { left, top, width: w, height: w + 8 } });
+  // 떨어진 기본 배치(빈 틈 10px): 예전과 같음
+  const apart = comboZone([key("A", 110, 0, 80), key("B", 0, 0, 80)]);
+  assert.equal(comboHit(apart, 95, 40), true); // 사이
+  assert.equal(comboHit(apart, 150, 40), false); // A 가운데
+  // 겹친 배치(반지름 50, 가운데 사이 60): B 가운데·A 가운데는 하나(예전에는 B 가운데도 A+B), 두 가장자리 가까운 곳은 A+B
+  const over = comboZone([key("A", 60, 0, 100), key("B", 0, 0, 100)]);
+  assert.equal(comboHit(over, 50, 50), false, "B 가운데");
+  assert.equal(comboHit(over, 110, 50), false, "A 가운데");
+  assert.equal(comboHit(over, 80, 85), true, "두 면 가장자리가 만나는 곳");
+  assert.equal(keyMargin(84, 99), Math.min(40, 84 * 0.4));
+});
+
+test("separate pushes overlapping controls apart, keeps rigid groups, stays inside, reports leftovers", () => {
+  const items = [
+    { id: "a", x: 120, y: 100, w: 60, h: 66, shape: "round", group: 0 },
+    { id: "b", x: 80, y: 130, w: 60, h: 66, shape: "round", group: 0 },
+    { id: "dir", x: 70, y: 120, w: 80, h: 80, shape: "disc" },
+  ];
+  const left = separate(items, [], 400, 300);
+  assert.deepEqual(left, []);
+  const dir = items[2];
+  const b = items[1];
+  assert.ok(Math.hypot(dir.x - b.x, dir.y - (b.y - 33 + 30)) >= 70 - 0.5, "방향과 B 원이 떨어짐");
+  assert.ok(Math.abs(items[0].x - items[1].x - 40) < 1e-6 && Math.abs(items[1].y - items[0].y - 30) < 1e-6, "A·B 서로 자리 그대로(한 덩어리)");
+  for (const it of items) assert.ok(it.x - it.w / 2 >= 0 && it.x + it.w / 2 <= 400);
+  // 자리가 모자라면 남은 짝을 알린다
+  const tight = [{ id: "p", x: 50, y: 50, w: 100, h: 100, shape: "box" }, { id: "q", x: 50, y: 50, w: 100, h: 100, shape: "box" }];
+  assert.ok(separate(tight, [], 110, 110).length > 0);
+});
 
 test("free ratio: old {scale} reads as same ratio, box multipliers sx·sy", () => {
   assert.deepEqual(boxScale({ scale: 1.3 }), { x: 1.3, y: 1.3 }); // 예전 저장 = 같은 비율

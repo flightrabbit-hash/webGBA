@@ -2,6 +2,7 @@
 // 모서리로 크기(같은 비율)·변으로 가로만·세로만 바꾸고, 테마 색 안에서 색을 고른다. 가로·세로 배치를 따로 저장한다.
 // 순수 함수(데이터 모델·좌표·색 계산)는 node 로 바로 시험한다 — 아래 export. 편집 UI(PadEditor)는 브라우저에서만 생성.
 import { SIZES, KEYPAD_GAP, partSize } from "./pixel-ui.js";
+import { keyMargin, dirReach } from "./pad.js";
 
 export const PAD_PLACEMENTS = ["default", "big", "custom"];
 export const SCALE_MIN = 0.75;
@@ -151,6 +152,112 @@ export function keypadGaps({ unit, keyUnit, box, stretch }) {
   const baseH = (4 * (SIZES.num.h + extra) + lastBase + extra + 5 * KEYPAD_GAP) * unit;
   // key = 칸 폭 — 칸을 이 폭으로 고정해 두 칸에 걸친 OK 가 반올림으로 1px 넓어도 칸이 벌어지지 않게(간격 쪽으로 넘침).
   return { key: keyW, col: Math.max(0, (baseW * box.x - 3 * keyW) / 2), row: Math.max(0, (baseH * box.y - 4 * numH - lastH) / 5) };
+}
+
+// 겹친 조작부 떼어 놓기("크게" 배치). items = [{ x, y, w, h, shape }] 가운데·크기(px, 움직임), fixed = 움직이지 않는 것(게임 화면).
+// 모양: round = 상자 위쪽에 붙은 원(지름 = 폭, 아래는 옆면·그림자 — A·B·C·D), disc = 상자 가운데 원(방향), box = 상자.
+// 겹친 짝마다 겹친 만큼 서로 반씩(장애물이면 혼자 다) 밀고 화면 안에 둔다 — 겹침이 없어지거나 정한 횟수까지 되풀이.
+const ROUND_IDS = new Set(["a", "b", "c", "d"]);
+// 반환 = 끝내 겹친 채 남은 짝의 id 목록([[id, id], …]) — 자리가 모자라면 부른 쪽이 크기를 줄여 다시 한다.
+export function separate(items, fixed, W, H, { rounds = 120, edge = 4, gap = 2 } = {}) {
+  // 간격 gap 만큼 모양을 반씩 부풀려 잰다(맞닿은 둘 사이 gap px).
+  const g = gap / 2;
+  const shapeOf = (it) => {
+    if (it.shape === "round") return { circle: true, cx: it.x, cy: it.y - it.h / 2 + it.w / 2, r: it.w / 2 + g };
+    if (it.shape === "disc") return { circle: true, cx: it.x, cy: it.y, r: Math.min(it.w, it.h) / 2 + g };
+    return { circle: false, cx: it.x, cy: it.y, hw: it.w / 2 + g, hh: it.h / 2 + g };
+  };
+  const sign = (v) => (v < 0 ? -1 : 1);
+  // p 를 밀 방향(단위)·거리. 안 겹치면 null.
+  const overlap = (p, q) => {
+    if (p.circle && q.circle) {
+      const dx = p.cx - q.cx;
+      const dy = p.cy - q.cy;
+      const dist = Math.hypot(dx, dy);
+      const need = p.r + q.r - dist;
+      if (need <= 0.5) return null;
+      return dist < 1e-6 ? { ux: 1, uy: 0, d: need } : { ux: dx / dist, uy: dy / dist, d: need };
+    }
+    if (!p.circle && !q.circle) {
+      const dx = p.cx - q.cx;
+      const dy = p.cy - q.cy;
+      const ox = p.hw + q.hw - Math.abs(dx);
+      const oy = p.hh + q.hh - Math.abs(dy);
+      if (ox <= 0.5 || oy <= 0.5) return null;
+      return ox < oy ? { ux: sign(dx), uy: 0, d: ox } : { ux: 0, uy: sign(dy), d: oy };
+    }
+    const flip = !p.circle;
+    const c = flip ? q : p;
+    const b = flip ? p : q;
+    const nx = Math.max(b.cx - b.hw, Math.min(c.cx, b.cx + b.hw));
+    const ny = Math.max(b.cy - b.hh, Math.min(c.cy, b.cy + b.hh));
+    const vx = c.cx - nx;
+    const vy = c.cy - ny;
+    const dist = Math.hypot(vx, vy);
+    let hit = null;
+    if (dist > 1e-6) {
+      const need = c.r - dist;
+      if (need > 0.5) hit = { ux: vx / dist, uy: vy / dist, d: need };
+    } else {
+      const dx = c.cx - b.cx;
+      const dy = c.cy - b.cy;
+      const ox = b.hw + c.r - Math.abs(dx);
+      const oy = b.hh + c.r - Math.abs(dy);
+      hit = ox < oy ? { ux: sign(dx), uy: 0, d: ox } : { ux: 0, uy: sign(dy), d: oy };
+    }
+    if (!hit) return null;
+    return flip ? { ux: -hit.ux, uy: -hit.uy, d: hit.d } : hit;
+  };
+  // 같은 group 은 한 덩어리로 움직인다(A·B·C·D·RS 의 서로 자리, START·SELECT 줄 등 모양이 흐트러지지 않게) — 덩어리 안 짝은 재지 않음.
+  const bodyOf = (it) => items.filter((o) => (it.group !== undefined ? o.group === it.group : o === it));
+  const move = (body, dx, dy) => {
+    for (const o of body) {
+      o.x += dx;
+      o.y += dy;
+    }
+  };
+  // 화면 안(가장자리 edge px 여유, 들어가지 않으면 가운데) — 덩어리 둘레 상자 기준.
+  const keepIn = (body) => {
+    const fit = (lo, hi, max) => (hi - lo + edge * 2 >= max ? max / 2 - (lo + hi) / 2 : lo < edge ? edge - lo : hi > max - edge ? max - edge - hi : 0);
+    const l = Math.min(...body.map((o) => o.x - o.w / 2));
+    const r = Math.max(...body.map((o) => o.x + o.w / 2));
+    const t = Math.min(...body.map((o) => o.y - o.h / 2));
+    const b = Math.max(...body.map((o) => o.y + o.h / 2));
+    move(body, fit(l, r, W), fit(t, b, H));
+  };
+  const apart = (p, q) => p.group === undefined || p.group !== q.group;
+  for (let round = 0; round < rounds; round++) {
+    let moved = false;
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (!apart(items[i], items[j])) continue;
+        const hit = overlap(shapeOf(items[i]), shapeOf(items[j]));
+        if (!hit) continue;
+        const a = bodyOf(items[i]);
+        const b = bodyOf(items[j]);
+        move(a, (hit.ux * hit.d) / 2, (hit.uy * hit.d) / 2);
+        move(b, (-hit.ux * hit.d) / 2, (-hit.uy * hit.d) / 2);
+        keepIn(a);
+        keepIn(b);
+        moved = true;
+      }
+      for (const wall of fixed) {
+        const hit = overlap(shapeOf(items[i]), shapeOf(wall));
+        if (!hit) continue;
+        const a = bodyOf(items[i]);
+        move(a, hit.ux * hit.d, hit.uy * hit.d);
+        keepIn(a);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const left = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) if (apart(items[i], items[j]) && overlap(shapeOf(items[i]), shapeOf(items[j]))?.d > gap + 1) left.push([items[i].id, items[j].id]);
+    for (const wall of fixed) if (overlap(shapeOf(items[i]), shapeOf(wall))?.d > gap + 1) left.push([items[i].id, wall.id]);
+  }
+  return left;
 }
 
 // 크기 표시: 같은 비율 "120%", 따로면 "가로×세로%"(예: "240×100%").
@@ -309,9 +416,9 @@ export class PadEditor {
       if (this.editing) this.exit(false);
       return;
     }
+    this.defaultsCache = null;
     const model = this.editing ? this.work : this.placement() === "big" ? this.bigLayout(landscape) : this.sideFor(this.currentSig(), landscape);
     this.model = model ?? { controls: {} };
-    this.defaultsCache = null;
     body.setAttribute("data-pad-free", "");
     this.applyModel(this.model);
     if (this.editing) this.syncFrames();
@@ -393,6 +500,25 @@ export class PadEditor {
       let cy = (Number.isFinite(def.y) ? def.y : 0.5) * rect.h;
       ({ cx, cy } = clampCenter(cx, cy, size.w, size.h, rect.w, rect.h));
       this.placeNode(node, cx, cy, size.w, size.h, rect);
+      this.setHit(node, c.id, size);
+    }
+  }
+
+  // 자유 배치의 .pad 는 화면 전체를 덮어 pointer-events:none 이라, 버튼 상자 밖 여백을 눌러도 pad 가 손가락을 받지 못했다.
+  // 기본 배치와 같은 여백(pad.js keyMargin — 짧은 변 × 0.4, 40px 까지)·방향 손 닿는 범위(dirReach)만큼 누르는 자리를
+  // 넓힌다(--hit, CSS ::after). 어느 버튼인지는 그대로 pad.js 가 좌표로 고른다.
+  setHit(node, id, size) {
+    if (id === "dir") {
+      const r = Math.min(size.w, size.h) / 2;
+      node.style.setProperty("--hit", `${Math.round(r * (dirReach(this.deps.skin().mode) - 1))}px`);
+      return;
+    }
+    const keys = id === "keypad" ? node.querySelectorAll("[data-key]") : [node];
+    for (const key of keys) {
+      const r = key === node ? size : key.getBoundingClientRect();
+      const w = r.w ?? r.width;
+      const h = r.h ?? r.height;
+      if (w >= 1) key.style.setProperty("--hit", `${Math.round(keyMargin(w, h))}px`);
     }
   }
 
@@ -459,30 +585,39 @@ export class PadEditor {
     for (const c of CONTROLS) {
       const node = c.id === "screen" ? el.stage : this.node(c);
       if (!node) continue;
-      for (const v of ["position", "left", "top", "translate"]) node.style.removeProperty(v);
-      if (c.id === "keypad") for (const v of KEYPAD_INLINE) node.style.removeProperty(v);
+      for (const v of ["position", "left", "top", "translate", "--hit"]) node.style.removeProperty(v);
+      if (c.id === "keypad") {
+        for (const v of KEYPAD_INLINE) node.style.removeProperty(v);
+        for (const key of node.querySelectorAll("[data-key]")) key.style.removeProperty("--hit");
+      }
     }
     if (el.face) for (const v of ["--face-w", "--face-h", "--face-up", "--rs-band"]) el.face.style.removeProperty(v);
     this.deps.clearScreenInline?.();
   }
 
-  // 기본(격자) 배치에서의 조작부 가운데(비율)·화면 크기. 자유 CSS 를 잠깐 끄고 rect 를 읽는다.
+  // 기본(격자) 배치에서의 조작부 가운데(비율)·크기(px)·화면 크기. 자유 CSS·배율·늘림을 잠깐 끄고 rect 를 읽는다 —
+  // 배율이 걸린 채 재면 격자 칸 끝에 붙은 버튼(A·B·소프트 키 등)의 가운데가 커진 만큼 안쪽으로 밀려 기본 자리가 틀어진다.
   captureDefaults() {
     const { body } = this.deps;
+    const skin = this.deps.skin();
     const rect = this.deps.appRect();
     const had = body.hasAttribute("data-pad-free");
     if (had) body.removeAttribute("data-pad-free");
+    const looks = { scaleMul: skin.scaleMul, colorHex: skin.colorHex, stretch: skin.stretch };
+    const scaled = Object.keys(looks.scaleMul ?? {}).length || Object.keys(looks.stretch ?? {}).length;
+    if (scaled) skin.setOverrides({ colorHex: looks.colorHex });
     const saved = [];
     for (const c of CONTROLS) {
       const node = this.node(c);
       if (!node) continue;
-      // 화면은 자유 배치에서 폭·높이도 인라인이라 함께 비워야 격자 기준 rect 가 읽힌다(버튼 크기는 skin 값이라 건드리지 않음).
+      // 화면은 자유 배치에서 폭·높이도 인라인이라 함께 비워야 격자 기준 rect 가 읽힌다. 키패드 자유 비율 간격도 잠깐 뺀다.
       const isScreen = c.id === "screen";
-      saved.push([node, node.style.position, node.style.left, node.style.top, node.style.translate, node.style.width, node.style.height, isScreen]);
-      for (const v of ["position", "left", "top", "translate"]) node.style.removeProperty(v);
-      if (isScreen) { node.style.removeProperty("width"); node.style.removeProperty("height"); }
+      const props = ["position", "left", "top", "translate", ...(isScreen ? ["width", "height"] : []), ...(c.id === "keypad" ? KEYPAD_INLINE : [])];
+      saved.push([node, props.map((p) => [p, node.style.getPropertyValue(p)])]);
+      for (const p of props) node.style.removeProperty(p);
     }
     const controls = {};
+    const sizes = {};
     let screen = { x: 0.5, y: 0.5 };
     for (const c of CONTROLS) {
       // 화면 기본 가운데는 실제 게임 화면(.screen) 기준 — 넓은 stage 영역이 아닌 화면이 있는 자리.
@@ -494,24 +629,91 @@ export class PadEditor {
       const cy = (r.top + r.height / 2 - rect.top) / rect.h;
       if (c.id === "screen") screen = { x: cx, y: cy };
       else controls[c.id] = { x: cx, y: cy };
+      sizes[c.id] = { w: r.width, h: r.height };
     }
-    for (const [node, position, left, top, translate, width, height, isScreen] of saved) {
-      node.style.position = position;
-      node.style.left = left;
-      node.style.top = top;
-      node.style.translate = translate;
-      if (isScreen) { node.style.width = width; node.style.height = height; }
-    }
+    for (const [node, props] of saved) for (const [p, v] of props) if (v) node.style.setProperty(p, v);
+    if (scaled) skin.setOverrides(looks);
     if (had) body.setAttribute("data-pad-free", "");
-    return { controls, screen };
+    return { controls, screen, sizes };
   }
 
-  // "크게"(방향 1 안 A) 프리셋: 기본 가운데 + 버튼만 키운다. 저장하지 않고 그때그때 만든다.
+  // "크게"(방향 1 안 A) 프리셋: 버튼을 키우고, 기본 가운데에서 커져 서로 겹치는 조작부를 떼어 놓는다(저장하지 않고 그때그때).
+  // 예전에는 기본 가운데 그대로 키워 세로 화면에서 A 가 B 를 거의 덮었다(B 가운데를 눌러도 A+B).
+  // 자리가 모자라면(세로 화면의 C·D·RS 게임, 모바일 키패드 등) 겹친 채 남은 묶음의 배율을 0.05 씩 줄여 다시 — 겹치지 않는 가장 큰 크기.
+  // 묶음(같은 배율): A·B·C·D·RS / START·SELECT / L·R / 키패드·소프트 키.
   bigLayout(landscape) {
-    const bump = { a: 1.5, b: 1.5, c: 1.5, d: 1.5, rs: 1.5, START: 1.4, SELECT: 1.4, L: 1.17, R: 1.17, keypad: 1.25 };
-    const controls = {};
-    for (const [id, scale] of Object.entries(bump)) controls[id] = { scale };
     void landscape;
+    // [id 들, 배율, 한 덩어리(서로 자리 그대로 함께 움직임)] — 키패드·소프트 키는 배율만 같고 따로 움직인다.
+    const groups = [[["a", "b", "c", "d", "rs"], 1.5, true], [["START", "SELECT"], 1.4, true], [["L", "R"], 1.17, true], [["keypad", "soft1", "soft2"], 1.25, false]];
+    const groupOf = Object.fromEntries(groups.flatMap(([ids], gi) => ids.map((id) => [id, gi])));
+    const factor = groups.map(([, k]) => k);
+    const def = (this.defaultsCache = this.captureDefaults()); // 화면 기본 자리도 이 값으로(positionAll)
+    const rect = this.deps.appRect();
+    // 실제로 그려질 배율(기기 픽셀 정수 칸 — skin.effScale 과 같은 반올림)로 크기를 어림한다.
+    const effective = (id, k) => {
+      const base = this.deps.basePx(id) || 1;
+      return Math.max(1, Math.round(base * k)) / base;
+    };
+    const fixed = def.sizes.screen ? [{ id: "screen", x: def.screen.x * rect.w, y: def.screen.y * rect.h, w: def.sizes.screen.w, h: def.sizes.screen.h, shape: "box" }] : [];
+    // 상단 아이콘(도구) 버튼도 움직이지 않는 것 — 조작부보다 위에 그려져 밀려 들어간 버튼이 가려진다(가로 모바일 소프트 키 등).
+    // 접힌 햄버거 창 안 도구는 visibility:hidden 이라 빼고 센다.
+    const win = this.deps.win();
+    for (const tool of this.deps.el().bar?.querySelectorAll(".tool") ?? []) {
+      const r = tool.getBoundingClientRect();
+      if (r.width < 1 || tool.offsetParent === null || win.getComputedStyle(tool).visibility === "hidden") continue;
+      fixed.push({ id: "bar", x: r.left + r.width / 2 - rect.left, y: r.top + r.height / 2 - rect.top, w: r.width, h: r.height, shape: "box" });
+    }
+    let items = [];
+    for (let attempt = 0; attempt < 24; attempt++) {
+      items = [];
+      for (const c of CONTROLS) {
+        if (c.id === "screen") continue;
+        const at = def.controls[c.id];
+        const size = def.sizes[c.id];
+        if (!at || !size) continue;
+        const gi = groupOf[c.id];
+        const k = gi === undefined ? 1 : effective(c.id, factor[gi]);
+        const rigid = gi !== undefined && groups[gi][2];
+        items.push({ id: c.id, x: at.x * rect.w, y: at.y * rect.h, w: size.w * (rigid ? 1 : k), h: size.h * (rigid ? 1 : k), k, group: rigid ? gi : undefined, shape: ROUND_IDS.has(c.id) ? "round" : c.id === "dir" ? "disc" : "box" });
+      }
+      // 덩어리는 둘레 상자 가운데를 기준으로 자리 간격까지 같은 배로 — 기본 배치의 서로 자리 그대로 커진다(덩어리 안은 안 겹침).
+      for (let gi = 0; gi < groups.length; gi++) {
+        const body = items.filter((it) => it.group === gi);
+        if (!body.length) continue;
+        const ax = (Math.min(...body.map((o) => o.x - o.w / 2)) + Math.max(...body.map((o) => o.x + o.w / 2))) / 2;
+        const ay = (Math.min(...body.map((o) => o.y - o.h / 2)) + Math.max(...body.map((o) => o.y + o.h / 2))) / 2;
+        for (const o of body) {
+          o.x = ax + (o.x - ax) * o.k;
+          o.y = ay + (o.y - ay) * o.k;
+          o.w *= o.k;
+          o.h *= o.k;
+        }
+        // 화면 끝까지 벌어진 묶음(L·R, 소프트 키 양옆)은 화면 안에 들어오도록 간격만 좁힌다.
+        for (const [pos, len, max] of [["x", "w", rect.w], ["y", "h", rect.h]]) {
+          const lo = body.reduce((m, o) => (o[pos] < m[pos] ? o : m));
+          const hi = body.reduce((m, o) => (o[pos] > m[pos] ? o : m));
+          const span = hi[pos] - lo[pos];
+          const room = max - 8 - (lo[len] + hi[len]) / 2;
+          if (span > room && span > 0) {
+            const mid = pos === "x" ? ax : ay;
+            const f = Math.max(0, room) / span;
+            for (const o of body) o[pos] = mid + (o[pos] - mid) * f;
+          }
+        }
+      }
+      const left = separate(items, fixed, rect.w, rect.h);
+      if (!left.length) break;
+      let shrink = new Set(left.flat().map((id) => groupOf[id]).filter((gi) => gi !== undefined && factor[gi] > 1));
+      // 겹친 짝이 더 줄일 수 없는 것끼리면(밀려난 방향·L 이 아이콘에 닿음 등) 커진 묶음 모두를 함께 줄인다 — 다 1배면 기본 배치(안 겹침).
+      if (!shrink.size) shrink = new Set(factor.map((k, gi) => (k > 1 ? gi : -1)).filter((gi) => gi >= 0));
+      if (!shrink.size) break;
+      for (const gi of shrink) factor[gi] = Math.max(1, Math.round((factor[gi] - 0.05) * 100) / 100);
+    }
+    const controls = {};
+    for (const it of items) {
+      const gi = groupOf[it.id];
+      controls[it.id] = { x: it.x / rect.w, y: it.y / rect.h, ...(gi !== undefined && factor[gi] > 1 ? { scale: factor[gi] } : {}) };
+    }
     return { controls };
   }
 

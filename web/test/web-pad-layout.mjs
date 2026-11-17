@@ -7,6 +7,9 @@
 //        키는 칸 수로 늘어 픽셀 그대로(캔버스 css 크기 × dpr = 캔버스 픽셀, 배율 정수) · 크기 표시·"원래 비율" · 저장 → 다시 열기 같은 상자 ·
 //        누르는 자리(pad.measure)도 늘어난 키 · 방향 조작부 가로만 늘이기(그림 그대로·상자만) · 화면은 변 손잡이 없음 ·
 //        카드 한 줄 버튼·값 위·아래 일치, 글자 잉크 세로 가운데(1 기기 픽셀 이내).
+// big = "크게" 배치: 커진 버튼끼리·게임 화면과 겹치지 않음(A·B·C·D = 위쪽 원, 방향 = 원, 나머지 = 상자) · B 가운데 = B 만,
+//        A 가운데 = A 만(전에는 A 가 B 를 덮어 A+B) · 자유 배치에서도 버튼 상자 밖 여백(기본 배치와 같은 식)을 누르면 그 버튼,
+//        여백 밖(게임 화면 가운데)은 pad 가 받지 않음.
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -19,7 +22,7 @@ const args = process.argv.slice(2);
 const opt = {};
 for (let i = 0; i < args.length; i++) opt[args[i].replace(/^--/, "")] = args[++i];
 const ENGINE = opt.engine ?? "chromium";
-const ONLY = new Set(String(opt.only ?? "soft,stretch").split(","));
+const ONLY = new Set(String(opt.only ?? "soft,stretch,big").split(","));
 const SHOTS = opt.shots ?? "";
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "noop.js") : import.meta.url);
@@ -40,6 +43,13 @@ const pack = async (name, patch = {}) => {
 // .wmba 와 같은 설명서(방향·소프트 키·숫자 키패드, 세로 화면).
 const MOBILE = { preset: "none", dpad: "both", buttons: [["OK", "ok", "Enter"], ["CLR", "clear", "Backspace"], ["SOFT1", "soft1", "BracketLeft"], ["SOFT2", "soft2", "BracketRight"], ["RIGHT", "right", "ArrowRight"], ["LEFT", "left", "ArrowLeft"], ["UP", "up", "ArrowUp"], ["DOWN", "down", "ArrowDown"], ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [`N${n}`, `num${n}`, `Digit${n}`]), ["STAR", "star", "NumpadMultiply"], ["HASH", "hash", "NumpadDivide"]].map(([id, role, code]) => ({ id, role, code })) };
 const GAME = { file: "pl-mob.wmba", bytes: await pack("hello-script", { id: "com.example.padlayout", input: MOBILE, screen: { width: 240, height: 320 }, group: "mobile" }) };
+const btn = (list) => list.map(([id, role, bit]) => ({ id, role, bit }));
+const FIGHT = { preset: "none", dpad: "opposite", buttons: btn([["UP", "up", 6], ["DOWN", "down", 7], ["LEFT", "left", 5], ["RIGHT", "right", 4], ["P", "a", 0], ["K", "b", 1], ["BEAST", "c", 10], ["BTN4", "d", 11], ["START", "start", 3], ["COIN", "select", 2]]), rs: [{ buttons: ["P", "K"], hold: 6 }] };
+const BIG_GAMES = {
+  gba: { file: "pl-gba.wgba", bytes: await pack("hello-webapi") },
+  fight: { file: "pl-fight.wgba", bytes: await pack("hello-webapi", { id: "com.example.padfight", input: FIGHT, display: { aspect: "4:3" } }) },
+  mob: GAME,
+};
 
 const dist = opt.dist ? path.resolve(opt.dist) : undefined;
 const local = await startLocal(dist ? { dist } : {});
@@ -57,7 +67,7 @@ async function newPage({ width, height, prefs = {} }) {
     // 합성 포인터(시험)는 실제 포인터가 아니라 setPointerCapture 가 예외를 낸다 — 시험에서만 무시.
     Element.prototype.setPointerCapture = function () {};
   }, prefs);
-  await context.route(`**/${GAME.file}`, (route) => route.fulfill({ body: GAME.bytes, contentType: "application/octet-stream" }));
+  for (const g of Object.values(BIG_GAMES)) await context.route(`**/${g.file}`, (route) => route.fulfill({ body: g.bytes, contentType: "application/octet-stream" }));
   const page = await context.newPage();
   // 예제 게임(hello-script)이 격리 틀 안에서 localStorage 를 읽다 나는 오류·R2·SW 차단은 시험 대상 밖.
   page.on("pageerror", (e) => {
@@ -68,11 +78,11 @@ async function newPage({ width, height, prefs = {} }) {
   return { context, page };
 }
 
-async function openGame(page) {
+async function openGame(page, game = GAME) {
   await page.evaluate(async (file) => {
     const buf = await (await fetch(`/${file}`)).arrayBuffer();
     await window.webgba.openFiles([new File([buf], file)]);
-  }, GAME.file);
+  }, game.file);
   await page.waitForFunction(() => window.webgba.state.game && !window.webgba.state.opening, null, { timeout: 30000 });
   await page.waitForTimeout(300);
 }
@@ -183,11 +193,14 @@ async function legacyChecks(view) {
     const got = await boxes(page);
     const free = await page.evaluate(() => document.body.hasAttribute("data-pad-free"));
     const ratio = (id) => got[id].w / base[id].w;
-    // 기본 자리 = 격자 칸(소프트 L 은 왼쪽 끝, 소프트 R 은 오른쪽 끝에 맞춤 · 세로는 가운데(세로 화면)·위 맞춤(가로 화면))
-    // — 커진 만큼 안쪽·아래로 자란다.
-    const edges = Math.abs(got.soft1.l - base.soft1.l) <= 2 && Math.abs(got.soft2.l + got.soft2.w - (base.soft2.l + base.soft2.w)) <= 2;
-    const rows = ["soft1", "soft2"].every((id) => (landscape ? Math.abs(got[id].t - base[id].t) <= 2 : near(got[id].cy, base[id].cy)));
-    ok(`${key}: 예전 저장 배치(키패드만, 크기 125%) — 직접 배치 적용 · 소프트 키 = 기본 자리(양 끝 맞춤) · 크기는 키패드 크기(약 125%) 그대로`, free && edges && rows && ["soft1", "soft2"].every((id) => Math.abs(ratio(id) - 1.25) < 0.12) && !overlap(got.soft1, got.soft2), JSON.stringify({ base: [base.soft1, base.soft2], got: [got.soft1, got.soft2] }));
+    // 기본 자리 = 기본 배치에서 그 키의 가운데(배율을 빼고 잰 격자 자리) — 커진 만큼 사방으로 자란다(화면 밖이면 안으로).
+    const fit = (id) => {
+      const c = got[id];
+      const want = base[id];
+      const inside = c.l >= -0.5 && c.l + c.w <= view.width + 0.5;
+      return near(c.cy, want.cy) && (near(c.cx, want.cx) || (inside && (c.l <= 1 || c.l + c.w >= view.width - 1)));
+    };
+    ok(`${key}: 예전 저장 배치(키패드만, 크기 125%) — 직접 배치 적용 · 소프트 키 = 기본 자리 가운데 · 크기는 키패드 크기(약 125%) 그대로`, free && ["soft1", "soft2"].every((id) => fit(id) && Math.abs(ratio(id) - 1.25) < 0.12) && !overlap(got.soft1, got.soft2), JSON.stringify({ base: [base.soft1, base.soft2], got: [got.soft1, got.soft2] }));
     await shot(page, `soft_legacy_${ENGINE}_${view.label}`);
   } finally {
     await context.close();
@@ -398,8 +411,107 @@ async function stretchShots() {
   }
 }
 
+// 보이는 조작부 모양(pad-editor separate 와 같은 근사) — 겹침 검사용.
+const shapes = (page) => page.evaluate(() => {
+  const sel = { dir: "[data-dpad]", a: ".key--a", b: ".key--b", c: ".key--c", d: ".key--d", rs: ".key--rs", L: ".key--l", R: ".key--r", START: ".key--start", SELECT: ".key--select", keypad: ".keypad", soft1: ".key--soft1", soft2: ".key--soft2", screen: ".screen" };
+  const out = {};
+  for (const [id, s] of Object.entries(sel)) {
+    const n = document.querySelector(s);
+    if (!n || n.offsetParent === null || n.hasAttribute("data-off")) continue;
+    const r = n.getBoundingClientRect();
+    if (r.width < 1) continue;
+    out[id] = { l: r.left, t: r.top, w: r.width, h: r.height, round: ["a", "b", "c", "d"].includes(id), disc: id === "dir" };
+  }
+  // 상단 아이콘(도구) 버튼 — 조작부보다 위에 그려져 겹치면 그 조작부가 가려진다.
+  out.tools = [...document.querySelectorAll("#bar .tool")].filter((n) => n.offsetParent !== null && n.getBoundingClientRect().width >= 1 && getComputedStyle(n).visibility !== "hidden").map((n) => {
+    const r = n.getBoundingClientRect();
+    return { l: r.left, t: r.top, w: r.width, h: r.height };
+  });
+  return out;
+});
+function shapeHits(p, q) {
+  const geo = (s) => (s.round ? { c: true, x: s.l + s.w / 2, y: s.t + s.w / 2, r: s.w / 2 } : s.disc ? { c: true, x: s.l + s.w / 2, y: s.t + s.h / 2, r: Math.min(s.w, s.h) / 2 } : { c: false, x: s.l + s.w / 2, y: s.t + s.h / 2, hw: s.w / 2, hh: s.h / 2 });
+  const a = geo(p);
+  const b = geo(q);
+  const tol = 3; // 반올림·외곽선 1~2px 은 겹침으로 보지 않음
+  if (a.c && b.c) return a.r + b.r - Math.hypot(a.x - b.x, a.y - b.y) > tol;
+  if (!a.c && !b.c) return a.hw + b.hw - Math.abs(a.x - b.x) > tol && a.hh + b.hh - Math.abs(a.y - b.y) > tol;
+  const [c, x] = a.c ? [a, b] : [b, a];
+  const nx = Math.max(x.x - x.hw, Math.min(c.x, x.x + x.hw));
+  const ny = Math.max(x.y - x.hh, Math.min(c.y, x.y + x.hh));
+  return c.r - Math.hypot(c.x - nx, c.y - ny) > tol;
+}
+
+async function bigChecks(view, gameKey) {
+  const key = `${ENGINE} ${view.label} ${gameKey}`;
+  const { context, page } = await newPage({ ...view, prefs: { padPlacement: "big", padCombo: true } });
+  try {
+    await openGame(page, BIG_GAMES[gameKey]);
+    const { tools, ...s } = await shapes(page);
+    const ids = Object.keys(s);
+    const bad = [];
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (shapeHits(s[ids[i]], s[ids[j]])) bad.push(`${ids[i]}×${ids[j]}`);
+    for (const id of ids) if (id !== "screen" && tools.some((t) => shapeHits(s[id], t))) bad.push(`${id}×도구`);
+    const scales = await page.evaluate(() => window.webgba.skin.scaleMul);
+    ok(`${key}: "크게" — 커진 버튼(A ${scales.A ?? 1}배·키패드 ${scales.N1 ?? 1}배)끼리·게임 화면·상단 아이콘과 겹침 없음`, bad.length === 0 && (scales.A ?? scales.N1) > 1, bad.join(" ") || ids.join(","));
+    const hits = await page.evaluate(() => {
+      const pad = window.webgba.pad;
+      pad.invalidate();
+      const m = pad.measure();
+      const at = (name) => {
+        const k = m.keys.find((x) => x.name === name);
+        return k ? pad.hit(k.cx, k.box.top + k.box.width / 2, "keys", null) : null;
+      };
+      return { A: at("A"), B: at("B"), combo: pad.combo() };
+    });
+    if (hits.A) ok(`${key}: B 가운데 = B 만 · A 가운데 = A 만(A·B 함께 누르기 켬)`, hits.combo && hits.A.join() === "A" && hits.B.join() === "B", JSON.stringify(hits));
+    await shot(page, `big_${ENGINE}_${view.label}_${gameKey}`);
+  } finally {
+    await context.close();
+  }
+}
+
+// 버튼 상자 밖 여백: 기본 배치는 .pad 가 받아 가장 가까운 버튼(pad.js keyAt 여백). 자유 배치(크게)도 같은 여백까지 받는지.
+async function marginChecks(view) {
+  for (const place of ["default", "big"]) {
+    const key = `${ENGINE} ${view.label} ${place}`;
+    const { context, page } = await newPage({ ...view, prefs: { padPlacement: place } });
+    try {
+      await openGame(page, BIG_GAMES.gba);
+      const r = await page.evaluate(() => {
+        const pad = window.webgba.pad;
+        pad.invalidate();
+        const m = pad.measure();
+        const out = {};
+        for (const name of ["SELECT", "START", "A"]) {
+          const k = m.keys.find((x) => x.name === name);
+          // 상자 위쪽 바로 바깥(여백 안): 여백 - 3px
+          const x = k.cx;
+          const y = k.box.top - Math.max(1, k.margin - 3);
+          const el = document.elementFromPoint(x, y);
+          out[name] = { margin: Math.round(k.margin), inPad: Boolean(el && document.getElementById("pad").contains(el)), hit: pad.hit(x, y, "keys", null) };
+        }
+        const scr = document.querySelector(".screen").getBoundingClientRect();
+        const mid = document.elementFromPoint(scr.left + scr.width / 2, scr.top + scr.height / 2);
+        out.screen = Boolean(mid && document.getElementById("pad").contains(mid));
+        return out;
+      });
+      const fine = ["SELECT", "START"].every((n) => r[n].inPad && r[n].hit.join() === n);
+      ok(`${key}: 버튼 상자 위 여백(SELECT ${r.SELECT.margin}px·START ${r.START.margin}px 안쪽)을 누르면 pad 가 받아 그 버튼 · 게임 화면 가운데는 pad 가 받지 않음`, fine && !r.screen, JSON.stringify(r));
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 const VIEWS = [{ label: "세로", width: 390, height: 844 }, { label: "가로", width: 844, height: 390 }];
 try {
+  if (ONLY.has("big")) {
+    for (const view of VIEWS) {
+      for (const game of ["gba", "fight", "mob"]) await bigChecks(view, game);
+      await marginChecks(view);
+    }
+  }
   if (ONLY.has("soft")) {
     for (const view of VIEWS) {
       await softChecks(view);
