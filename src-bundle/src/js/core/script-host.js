@@ -256,6 +256,7 @@ export class ScriptHost {
         volume: this.volume,
         paused: this.paused,
         speed: this.speed,
+        fastMute: Boolean(this.fastMute),
         autoFire: this.fire,
         text: { tap: this.text.tap ?? "" },
         throttleTap: !isMobile(this.manifest),
@@ -449,6 +450,14 @@ export class ScriptHost {
   setVolume(volume) {
     this.volume = volume;
     this.post({ type: "volume", value: volume });
+  }
+
+  // 가속 중 음소거(fastMute) 를 게임에 알린다 — 게임(game.js)이 speed 와 함께 참조해 가속 리샘플·음소거를 정한다.
+  setFastMute(on) {
+    const next = Boolean(on);
+    if (next === this.fastMute) return;
+    this.fastMute = next;
+    this.post({ type: "fastMute", on: next });
   }
 
   async stateSave() {

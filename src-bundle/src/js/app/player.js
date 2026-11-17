@@ -543,6 +543,12 @@ export class Player {
     this.host.setAutoFire(this.fireRate ? indices : [], this.fireRate);
   }
 
+  // 가속 중 음소거 설정 — 토글 시에도 host(스크립트 게임)로 바로 전달.
+  setFastMute(on) {
+    this.fastMute = Boolean(on);
+    this.pushScript();
+  }
+
   fireKeys(keys) {
     const rate = this.fireRate;
     const mask = rate ? this.fireMask : 0;
@@ -672,6 +678,7 @@ export class Player {
     if (!host?.script || !this.running) return;
     host.setInput(this.paused ? 0 : this.withMacro(this.resolveDpad(this.held | this.padNow), this.macroOut));
     host.setSpeed(this.runSpeed);
+    if (typeof host.setFastMute === "function") host.setFastMute(this.fastMute);
   }
 
   get runSpeed() {

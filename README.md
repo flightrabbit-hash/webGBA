@@ -575,7 +575,8 @@ Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화�
 | `webgba.save.read()` → `Promise<Uint8Array \| null>` · `webgba.save.write(bytes)` | 이 게임의 세이브(`save.maxSize`까지). `save.kind`가 `"storage"`일 때만(다른 kind이면 `read`는 null, `write`는 오류) |
 | `webgba.state.onSave(fn)` · `webgba.state.onLoad(fn)` | 퀵슬롯: `fn()`이 `Uint8Array`(64MB까지)를 반환 / `fn(bytes)`가 `true`·`false`를 반환. 둘 다 호출해야 퀵슬롯이 활성화 |
 | `webgba.input.held` · `webgba.on("button", fn)` | 버튼 단위 입력이 필요한 경우: 현재 눌린 버튼 id의 Set(`has`·`size`·반복) / `{id, down}` |
-| `webgba.on("pause"·"resume"·"speed", fn)` | 일시정지·재개·빨리 감기 배수(게임이 반영해도 되고 무시해도 됨). 일시정지 동안 `requestAnimationFrame`은 틀이 보류. `on`은 리스너 해제 함수를 반환 |
+| `webgba.on("pause"·"resume"·"speed"·"fastMute", fn)` | 일시정지·재개·빨리 감기 배수·가속 중 음소거(게임이 반영해도 되고 무시해도 됨). 일시정지 동안 `requestAnimationFrame`은 틀이 보류. `on`은 리스너 해제 함수를 반환 |
+| `webgba.fastMute` | 가속 중 음소거가 켜졌는지(boolean). 설정에서 바뀌면 틀이 `{type:"fastMute", on}`을 보내고 `on("fastMute", fn)`으로 알린다. 가속(speed>1) 중 이 값이 `true`면 소리를 내지 않는 것을 권장 |
 | `webgba.audioContext()` | 틀이 음량·일시정지를 제어하는 공용 `AudioContext`(권장) |
 | `webgba.ready()` · `webgba.exit(reason)` · `webgba.log(level, text)` | 시작 완료(호스트가 로딩 화면을 닫음 — 호출하지 않아도 10초 후 표시) · 정지 · 로그 |
 | `webgba.net` | 멀티플레이 — [7장](#7-멀티플레이)(7.4). manifest에 `multiplayer`가 있으면 객체, 없으면 `null`(멀티플레이를 모르는 옛 webGBA, `multiplayer.protocol`이 호스트가 아는 번호보다 큰 게임도 `null`) |
@@ -1789,7 +1790,7 @@ node tools/wgba.mjs check game.wapk   # 확장자·② 전용·AndroidManifest.x
 [runtime "script" — 자체 JS가 있는 게임]
 - JS는 출처 없는 sandbox iframe(srcdoc) 안에서 실행된다. 네트워크(fetch·XHR·WebSocket·WebRTC)·IndexedDB·쿠키·실제 localStorage·팝업·상위 창 이동·스레드(SharedArrayBuffer·pthreads)를 사용할 수 없다(멀티플레이는 webgba.net). localStorage는 메모리 기반 대체 객체다.
 - entry 필수. JS chunk 이름은 항상 "js"(entry.js는 생략). entry.style "module": JS가 export default async function start(webgba){…}를 내보낸다. "emscripten": emscripten Glue(일반·MODULARIZE·EXPORT_ES6) — 틀이 Module{canvas, wasmBinary, locateFile, arguments, print, printErr, preRun, onRuntimeInitialized, onAbort}를 전달한다. 데이터 파일은 files 매핑({"파일 이름":"data.<이름>" 또는 "rom"})으로 지정하고, --preload-file의 .data도 같은 방식. 권장 빌드 -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=FS.
-- webgba 객체: version(1), manifest, lang, canvas(#canvas, screen 크기), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: 주소, save.read()/save.write(bytes)(save.kind "storage"일 때만), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false)(둘 다 호출해야 퀵슬롯 활성화), input.held, on("button"|"pause"|"resume"|"speed", fn), audioContext(), ready()(시작 완료 시 호출), exit(reason), log(level,text), net(manifest에 multiplayer가 있으면 멀티플레이 객체, 없으면 null — 아래 [멀티플레이]).
+- webgba 객체: version(1), manifest, lang, canvas(#canvas, screen 크기), wasm()→ArrayBuffer, wasmModule(), chunk(name)→Uint8Array, chunkURL(name)→blob: 주소, save.read()/save.write(bytes)(save.kind "storage"일 때만), state.onSave(fn→Uint8Array)/state.onLoad(fn(bytes)→true|false)(둘 다 호출해야 퀵슬롯 활성화), input.held, fastMute(가속 중 음소거 boolean), on("button"|"pause"|"resume"|"speed"|"fastMute", fn), audioContext(), ready()(시작 완료 시 호출), exit(reason), log(level,text), net(manifest에 multiplayer가 있으면 멀티플레이 객체, 없으면 null — 아래 [멀티플레이]).
 - save.kind: "storage"(기본, webgba.save), "localStorage"(틀 localStorage 전체를 세이브로), "files"(emscripten FS의 save.files[0] 경로, FS 내보내기 필요), "none". maxSize 기본 1MB, 16MB까지.
 - 버튼별 code(게임이 수신하는 KeyboardEvent.code). 호스트가 사용자가 누른 키를 이 code의 keydown/keyup으로 변환해 전달한다(isTrusted는 false이므로 검사하지 않는다). preset 기본값은 "none".
 

@@ -63,7 +63,8 @@
   let paused = false;
   let speed = 1;
   let volume = 1;
-  const listeners = { button: new Set(), pause: new Set(), resume: new Set(), speed: new Set(), touch: new Set(), resize: new Set() };
+  let fastMute = false;
+  const listeners = { button: new Set(), pause: new Set(), resume: new Set(), speed: new Set(), fastMute: new Set(), touch: new Set(), resize: new Set() };
   const emit = (name, value) => {
     for (const fn of listeners[name]) {
       try {
@@ -640,11 +641,15 @@
       get view() {
         return viewNow();
       },
+      get fastMute() {
+        return fastMute;
+      },
       on: (name, fn) => {
         const set = listeners[name];
         if (!set || typeof fn !== "function") return () => {};
         set.add(fn);
         if (name === "speed" && speed !== 1) fn(speed);
+        if (name === "fastMute") fn(fastMute);
         if (name === "touch") touchAttach();
         if (name === "resize") {
           const v = viewNow();
@@ -820,6 +825,7 @@
     setVolume(data.volume ?? 1);
     if (data.paused) setPaused(true);
     speed = Number(data.speed) || 1;
+    fastMute = Boolean(data.fastMute);
     setFire(data.autoFire);
     if (data.manifest.pointer?.use) canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     let ls = {};
@@ -870,6 +876,12 @@
         if (Number(data.value) !== speed) {
           speed = Number(data.value) || 1;
           emit("speed", speed);
+        }
+        break;
+      case "fastMute":
+        if (Boolean(data.on) !== fastMute) {
+          fastMute = Boolean(data.on);
+          emit("fastMute", fastMute);
         }
         break;
       case "volume":
