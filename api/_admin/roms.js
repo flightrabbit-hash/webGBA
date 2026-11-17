@@ -29,9 +29,22 @@ export function cleanNames(value) {
   return Object.keys(out).length ? out : null;
 }
 
+// 목록에 보일 이름 = 라이브러리 표시 이름 규칙(wgba-format shownName·shownTitle): .wmba(모바일)는 "[M] ", .wapk(Android)는 "[A] " 를
+// 이름·짧은 이름의 언어마다 앞에 붙인다. 설명서에는 넣지 않고 목록에서만 붙이며, 이미 붙어 있으면(이전 roms.json·서버 다시 읽기) 다시 붙이지 않는다.
+export const NAME_PREFIX = Object.freeze({ wmba: "[M] ", wapk: "[A] " });
+
+const eachName = (value, fn) => (typeof value === "string" ? fn(value) : value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).map(([lang, text]) => [lang, typeof text === "string" ? fn(text) : text])) : value);
+
+/** 접두어를 뗀 뒤 검사한 이름(길이 검사·저장 이름은 이 값으로). */
+const plainNames = (value, prefix) => cleanNames(prefix ? eachName(value, (text) => (text.startsWith(prefix) ? text.slice(prefix.length) : text)) : value);
+const withPrefix = (plain, prefix) => (prefix && plain ? eachName(plain, (text) => `${prefix}${text}`) : plain);
+
 /** 게임 하나(머리 읽은 값 + 버킷 객체 정보) → roms.json 항목. group·category = 라이브러리 그룹(발행 묶음 groups.json, 없으면 넣지 않음). */
 export function romItem({ id, version, key, size, etag = "", names = null, short = null, label = null, group = null, category = null }) {
-  const item = { id, version, key, size, etag, file: saveFileName({ id, version, names, ext: keyExt(key) || "wgba" }), names: cleanNames(names), short: cleanNames(short), label: typeof label === "string" && LABEL_RE.test(label) && label.length <= ROMS.LABEL_MAX ? label : null };
+  const ext = keyExt(key) || "wgba";
+  const prefix = NAME_PREFIX[ext] ?? "";
+  const plain = plainNames(names, prefix);
+  const item = { id, version, key, size, etag, file: saveFileName({ id, version, names: prefix ? plain : names, ext }), names: withPrefix(plain, prefix), short: withPrefix(plainNames(short, prefix), prefix), label: typeof label === "string" && LABEL_RE.test(label) && label.length <= ROMS.LABEL_MAX ? label : null };
   if (GROUPS.includes(group)) {
     item.group = group;
     if (typeof category === "string" && CATEGORY_RE.test(category)) item.category = category;

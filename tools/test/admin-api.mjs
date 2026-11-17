@@ -9,6 +9,7 @@ import { packWgba } from "../../src-bundle/src/js/core/wgba-format.js";
 import { startFakeUpstash } from "./fake-upstash.mjs";
 import { keyFile, startFakeR2 } from "./fake-r2-private.mjs";
 import { adminKey, privatePrune, privateUpload } from "../lib/admin-cmds.mjs";
+import { romItem } from "../../api/_admin/roms.js";
 
 const require = createRequire(import.meta.url);
 const { encode: encodePng } = require("./png.cjs");
@@ -340,7 +341,16 @@ try {
   }
   const romNine = romsWmba.items.find((i) => i.id === "local.minigame9");
   ok("upload --wmba = 비공개 wmba/<id>/<버전>.wmba · 같은 id 이전 버전 삭제 · wgba/ 그대로 · 버킷 목록 1번", wmbaPuts.join() === "wmba/local.minigame9/1.0.0.wmba" && wmbaDeletes.join() === "wmba/local.minigame9/0.9.0.wmba" && wgbaLeft && wmbaLists === 1, `${wmbaPuts.join(" ")} · 삭제 ${wmbaDeletes.join(" ")} · 목록 ${wmbaLists}`);
-  ok("roms.json .wmba 항목 = 키 wmba/… · 저장 이름 <id 의 local. 뒤>.wmba · 이름 · 라벨 · 그룹 mobile", romNine?.key === "wmba/local.minigame9/1.0.0.wmba" && romNine.file === "minigame9.wmba" && romNine.names.ko === "미니게임 9" && /^data:image\/png;base64,/.test(romNine.label) && romNine.group === "mobile" && romNine.category === "WIPI-KTF", JSON.stringify(romNine && { ...romNine, label: romNine.label?.slice(0, 20) }));
+  ok("roms.json .wmba 항목 = 키 wmba/… · 저장 이름 <id 의 local. 뒤>.wmba · 이름(언어마다 [M]) · 라벨 · 그룹 mobile", romNine?.key === "wmba/local.minigame9/1.0.0.wmba" && romNine.file === "minigame9.wmba" && romNine.names.ko === "[M] 미니게임 9" && romNine.names.en === "[M] Mini Game Nine" && /^data:image\/png;base64,/.test(romNine.label) && romNine.group === "mobile" && romNine.category === "WIPI-KTF", JSON.stringify(romNine && { ...romNine, label: romNine.label?.slice(0, 20) }));
+  {
+    const base = { id: "local.grandchase", version: "1.0.0", key: "wmba/local.grandchase/1.0.0.wmba", size: 9 };
+    const once = romItem({ ...base, names: { en: "Grand Chase", ko: "그랜드체이스", ja: "Grand Chase" }, short: { en: "GC", ko: "[M] 그체" } });
+    const again = romItem({ ...base, names: once.names, short: once.short });
+    const plainWgba = romItem({ id: "io.example.alpha", version: "1.2.0", key: "wgba/io.example.alpha/1.2.0.wgba", size: 9, names: { en: "Alpha", ko: "알파" }, short: "A" });
+    const android = romItem({ id: "local.app", version: "1.0.0", key: "wapk/local.app/1.0.0.wapk", size: 9, names: "App" });
+    const long = romItem({ ...base, names: `[M] ${"x".repeat(120)}` });
+    ok("roms.json 이름 [M] = 라이브러리 표시 규칙(.wmba 이름·짧은 이름 언어마다 · 이미 있으면 그대로 · .wgba 그대로 · .wapk [A] · 저장 이름 영향 없음)", JSON.stringify(once.names) === JSON.stringify({ ko: "[M] 그랜드체이스", en: "[M] Grand Chase", ja: "[M] Grand Chase" }) && JSON.stringify(once.short) === JSON.stringify({ ko: "[M] 그체", en: "[M] GC" }) && JSON.stringify(again) === JSON.stringify(once) && once.file === "grandchase.wmba" && plainWgba.names.en === "Alpha" && plainWgba.short === "A" && plainWgba.file === "alpha.wgba" && android.names === "[A] App" && long.names === `[M] ${"x".repeat(120)}`, JSON.stringify({ once: once.names, short: once.short, wgba: plainWgba.names, android: android.names }));
+  }
   ok("설명서는 .wmba 인데 파일 이름이 .wgba → 올리지 않음", /\.wgba 가 설명서\(\.wmba\)와 다릅니다/.test(extMismatch) && !r2.has("wmba/local.wrong/1.0.0.wmba"), extMismatch);
   clock += ADMIN.ROMS_MS + 1;
   const withWmba = await call("GET", "list", { token: viaToken });
