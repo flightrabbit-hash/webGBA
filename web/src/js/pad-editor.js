@@ -8,11 +8,15 @@ export const SCALE_MAX = 2;
 export const SNAP_GRID = 8;
 export const SNAP_TOL = 6;
 
-// 편집 단위(조작부). keys = skin 배율을 거는 part 이름, colorKeys = 색을 거는 part(없으면 keys),
-// colorDefault = 자동 색의 색 고르기 id. screen 은 게임 화면(색 없음).
+// 편집 단위(조작부). 버튼은 각각 독립(A·B·C·D·RS 따로). keys = skin 배율을 거는 part 이름,
+// colorKeys = 색을 거는 part(없으면 keys), colorDefault = 자동 색의 색 고르기 id. screen 은 게임 화면(색 없음).
 export const CONTROLS = [
   { id: "dir", sel: "[data-dpad]", keys: ["dir"], colorDefault: "button" },
-  { id: "face", sel: ".face", keys: ["A", "B", "C", "D", "RS"], colorKeys: ["A", "B", "C", "D"], colorDefault: "accent" },
+  { id: "a", sel: ".key--a", keys: ["A"], colorDefault: "accent" },
+  { id: "b", sel: ".key--b", keys: ["B"], colorDefault: "accent" },
+  { id: "c", sel: ".key--c", keys: ["C"], colorDefault: "cd" },
+  { id: "d", sel: ".key--d", keys: ["D"], colorDefault: "cd" },
+  { id: "rs", sel: ".key--rs", keys: ["RS"], colorDefault: "rs" },
   { id: "L", sel: ".key--l", keys: ["L"], colorDefault: "button" },
   { id: "R", sel: ".key--r", keys: ["R"], colorDefault: "button" },
   { id: "START", sel: ".key--start", keys: ["START"], colorDefault: "pill" },
@@ -24,8 +28,14 @@ export const CONTROL_BY_ID = Object.fromEntries(CONTROLS.map((c) => [c.id, c]));
 
 export const orientationKey = (landscape) => (landscape ? "landscape" : "portrait");
 
-// 저장 레이아웃 정리: 방향별 { controls: { id: {x,y,scale,color} }, screen:{x,y,scale} }. 모르는 값은 버린다.
-export function normalizeLayout(raw) {
+// 레이아웃 키 = 그 게임이 쓰는 조작부 집합(signature). 같은 집합이면 공유, 다르면 별도(화면 제외, 정렬 — 결정적).
+export function layoutSignature(ids) {
+  const seen = new Set(ids.filter((id) => id && id !== "screen"));
+  return [...seen].sort().join(",") || "default";
+}
+
+// 한 방향 레코드 정리: { controls: { id:{x,y,scale,color} } }. 모르는 값은 버린다.
+function normalizeSide(raw) {
   const out = {};
   for (const orient of ["landscape", "portrait"]) {
     const side = raw?.[orient];
@@ -46,8 +56,20 @@ export function normalizeLayout(raw) {
   return out;
 }
 
-export const hasLayout = (layout, landscape) => {
-  const side = layout?.[orientationKey(landscape)];
+// 저장 레이아웃 정리: { [signature]: { landscape:{controls}, portrait:{controls} } }. 빈 것은 버린다.
+export function normalizeLayout(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [sig, side] of Object.entries(raw)) {
+    if (!sig || typeof side !== "object") continue;
+    const norm = normalizeSide(side);
+    if (Object.keys(norm).length) out[sig] = norm;
+  }
+  return out;
+}
+
+export const hasLayout = (layout, landscape, sig) => {
+  const side = layout?.[sig]?.[orientationKey(landscape)];
   return Boolean(side && Object.keys(side.controls ?? {}).length);
 };
 
@@ -172,11 +194,11 @@ export class PadEditor {
     return normalizeLayout(this.deps.prefs().padLayout);
   }
 
-  // 지금 방향에 자유 배치를 적용할지. custom = 저장된 방향만, big = 항상(프리셋).
+  // 지금 방향에 자유 배치를 적용할지. custom = 이 게임 집합의 저장된 방향만, big = 항상(프리셋).
   freeActive(landscape) {
     const place = this.placement();
     if (place === "big") return true;
-    if (place === "custom") return this.editing || hasLayout(this.layout(), landscape);
+    if (place === "custom") return this.editing || hasLayout(this.layout(), landscape, this.currentSig());
     return false;
   }
 
@@ -196,7 +218,7 @@ export class PadEditor {
       if (this.editing) this.exit(false);
       return;
     }
-    const model = this.editing ? this.work : this.placement() === "big" ? this.bigLayout(landscape) : this.layout()[this.orient];
+    const model = this.editing ? this.work : this.placement() === "big" ? this.bigLayout(landscape) : this.sideFor(this.currentSig(), landscape);
     this.model = model ?? { controls: {} };
     this.defaultsCache = null;
     body.setAttribute("data-pad-free", "");
@@ -241,7 +263,6 @@ export class PadEditor {
         this.positionScreen(rec, whole ? null : defaults().screen, rect);
         continue;
       }
-      if (c.id === "face") this.applyFaceVars(rec?.scale ?? 1);
       node.style.position = "absolute";
       const size = this.sizeOf(node);
       if (size.w < 1 || size.h < 1) continue;
@@ -249,8 +270,7 @@ export class PadEditor {
       let cx = (Number.isFinite(def.x) ? def.x : 0.5) * rect.w;
       let cy = (Number.isFinite(def.y) ? def.y : 0.5) * rect.h;
       ({ cx, cy } = clampCenter(cx, cy, size.w, size.h, rect.w, rect.h));
-      node.style.left = `${Math.round(cx - size.w / 2)}px`;
-      node.style.top = `${Math.round(cy - size.h / 2)}px`;
+      this.placeNode(node, cx, cy, size.w, size.h, rect);
     }
   }
 
@@ -266,24 +286,34 @@ export class PadEditor {
     this.deps.setScreenCenter(c.cx, c.cy);
   }
 
-  // face 묶음 내부 크기(--face-w 등)를 face 배율에 맞춰 element 에 직접 건다.
-  applyFaceVars(mul) {
-    const node = this.deps.el().face;
-    if (!node) return;
-    if (!mul || mul === 1) {
-      for (const v of ["--face-w", "--face-h", "--face-up", "--rs-band"]) node.style.removeProperty(v);
-      return;
-    }
-    const vars = this.deps.faceVars(mul);
-    for (const [k, v] of Object.entries(vars)) node.style.setProperty(k, `${v}px`);
-  }
-
   node(control) {
     const el = this.deps.el();
     if (control.id === "screen") return el.stage;
     if (control.id === "dir") return el.dpad;
-    if (control.id === "face") return el.face;
     return this.deps.pad().querySelector(control.sel);
+  }
+
+  // 그 게임이 보여 주는 편집 대상(화면 제외)으로 레이아웃 signature. display:none(미정의 C·D·RS) 은 제외.
+  currentSig() {
+    const ids = [];
+    for (const c of CONTROLS) {
+      if (c.id === "screen") continue;
+      const node = this.node(c);
+      if (node && !node.hidden && !node.hasAttribute("data-off") && node.offsetParent !== null) ids.push(c.id);
+    }
+    return layoutSignature(ids);
+  }
+
+  sideFor(sig, landscape) {
+    return this.layout()[sig]?.[orientationKey(landscape)];
+  }
+
+  // 조작부 node 를 (cx,cy) 가운데(appRect 기준)에 배치. offsetParent 원점을 빼 어느 컨테이너(.pad·.face·.app)든 맞춘다.
+  placeNode(node, cx, cy, w, h, rect) {
+    const op = node.offsetParent;
+    const o = op ? op.getBoundingClientRect() : { left: rect.left, top: rect.top };
+    node.style.left = `${Math.round(cx - w / 2 - (o.left - rect.left))}px`;
+    node.style.top = `${Math.round(cy - h / 2 - (o.top - rect.top))}px`;
   }
 
   sizeOf(node) {
@@ -322,7 +352,8 @@ export class PadEditor {
     const controls = {};
     let screen = { x: 0.5, y: 0.5 };
     for (const c of CONTROLS) {
-      const node = this.node(c);
+      // 화면 기본 가운데는 실제 게임 화면(.screen) 기준 — 넓은 stage 영역이 아닌 화면이 있는 자리.
+      const node = c.id === "screen" ? (this.deps.el().screen ?? this.node(c)) : this.node(c);
       if (!node || node.hidden || node.hasAttribute("data-off")) continue;
       const r = node.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) continue;
@@ -343,7 +374,7 @@ export class PadEditor {
 
   // "크게"(방향 1 안 A) 프리셋: 기본 가운데 + 버튼만 키운다. 저장하지 않고 그때그때 만든다.
   bigLayout(landscape) {
-    const bump = { face: 1.5, START: 1.4, SELECT: 1.4, L: 1.17, R: 1.17, keypad: 1.25 };
+    const bump = { a: 1.5, b: 1.5, c: 1.5, d: 1.5, rs: 1.5, START: 1.4, SELECT: 1.4, L: 1.17, R: 1.17, keypad: 1.25 };
     const controls = {};
     for (const [id, scale] of Object.entries(bump)) controls[id] = { scale };
     void landscape;
@@ -359,7 +390,8 @@ export class PadEditor {
     if (this.editing || !this.canEdit(landscape)) return;
     const orient = orientationKey(landscape);
     this.orient = orient;
-    const saved = this.layout()[orient];
+    this.sig = this.currentSig();
+    const saved = this.sideFor(this.sig, landscape);
     this.before = { placement: this.placement(), layout: this.deps.prefs().padLayout };
     // 저장된 배치가 없으면 기본 격자에서 가운데를 포착해 씨앗으로(저장값 우선).
     const def = this.captureDefaults();
@@ -402,7 +434,10 @@ export class PadEditor {
 
   save() {
     if (!this.editing) return;
-    const layout = normalizeLayout({ ...this.deps.prefs().padLayout, [this.orient]: this.work });
+    const sig = this.sig || this.currentSig();
+    const all = normalizeLayout(this.deps.prefs().padLayout);
+    const side = { ...(all[sig] ?? {}), [this.orient]: this.work };
+    const layout = normalizeLayout({ ...all, [sig]: side });
     this.deps.prefs().padLayout = layout;
     this.deps.setPlacement("custom", { silent: true });
     this.deps.persist({ padPlacement: "custom", padLayout: layout });
@@ -428,15 +463,17 @@ export class PadEditor {
       parent?.append(n);
       return n;
     };
-    const root = mk("padedit");
-    root.setAttribute("role", "dialog");
-    root.setAttribute("aria-label", t(`web.pad.edit.title.${this.orient}`));
-    const grid = mk("padedit__grid", root);
-    // 빈 곳을 누르면 선택 해제(아래 조작부·화면으로 입력이 새지 않게 막는다).
-    grid.addEventListener("pointerdown", (event) => {
+    // 점 격자(배경 참고)는 조작부 아래 층(별도 element). 조작부는 그 위에서 또렷하게 보이고, 테두리·손잡이는 맨 위.
+    const backdrop = mk("padedit__grid");
+    backdrop.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       if (this.selected) this.select(null);
     });
+    this.deps.mount(backdrop);
+    this.backdrop = backdrop;
+    const root = mk("padedit");
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", t(`web.pad.edit.title.${this.orient}`));
     // 점선 테두리·손잡이는 막대·카드 아래 층(막대·카드가 늘 위에서 눌리게).
     this.framesLayer = mk("padedit__frames", root);
     const bar = mk("padedit__bar", root);
@@ -464,6 +501,7 @@ export class PadEditor {
     this.card = mk("padedit__card", root);
     this.overlay = root;
     this.deps.mount(root);
+    this.deps.body.setAttribute("data-pad-edit", "");
     this.syncFrames();
     this.renderCard();
     this.onKey = (event) => {
@@ -474,15 +512,14 @@ export class PadEditor {
 
   teardownOverlay() {
     if (this.onKey) this.deps.doc().removeEventListener("keydown", this.onKey);
+    this.cleanupDrag();
     this.overlay?.remove();
     this.overlay = null;
+    this.backdrop?.remove();
+    this.backdrop = null;
+    this.framesLayer = null;
     this.frames.clear();
-    if (this.raf) {
-      this.deps.win().cancelAnimationFrame(this.raf);
-      this.raf = 0;
-    }
-    this.pending = null;
-    this.drag = null;
+    this.deps.body.removeAttribute("data-pad-edit");
   }
 
   // 조작부마다 점선 테두리 + 모서리 손잡이. 선택한 것은 강조·크기 배지.
@@ -628,6 +665,7 @@ export class PadEditor {
   }
 
   // ---- 끌기/크기(한 프레임에 1번만 — rAF coalesce) ------------------------
+  // 끌기 시작: 지금 가운데(appRect 기준)·크기를 잡아 둔다. 손가락과 요소의 시작 간격은 가운데+포인터 델타로 유지(점프 없음).
   onDown(event, id, kind) {
     event.preventDefault();
     event.stopPropagation();
@@ -646,10 +684,13 @@ export class PadEditor {
       cy: r.top + r.height / 2 - rect.top,
       w: r.width,
       h: r.height,
-      scale: rec.scale ?? 1,
+      baseW: Math.max(12, r.width),
+      baseH: Math.max(12, r.height),
+      scale: clampScale(rec.scale ?? 1),
       basePx: this.deps.basePx(id),
     };
     const win = this.deps.win();
+    node.setPointerCapture?.(event.pointerId);
     this.moveFn = (e) => this.onMove(e);
     this.upFn = (e) => this.onUp(e);
     win.addEventListener("pointermove", this.moveFn, { passive: false });
@@ -674,6 +715,7 @@ export class PadEditor {
     const d = this.drag;
     const rect = this.deps.appRect();
     const node = this.node(CONTROL_BY_ID[d.id]);
+    if (!node) return;
     const dx = this.pending.x - d.startX;
     const dy = this.pending.y - d.startY;
     if (d.kind === "move") {
@@ -684,26 +726,23 @@ export class PadEditor {
       ({ cx, cy } = clampCenter(snapped.cx, snapped.cy, d.w, d.h, rect.w, rect.h));
       this.live = { cx, cy };
       if (d.id === "screen") this.deps.setScreenCenter(cx, cy);
-      else {
-        node.style.left = `${Math.round(cx - d.w / 2)}px`;
-        node.style.top = `${Math.round(cy - d.h / 2)}px`;
-      }
+      else this.placeNode(node, cx, cy, d.w, d.h, rect);
       this.drawGuides(snapped.guides, rect);
     } else {
-      // 크기: 손잡이를 바깥으로 끌수록 커진다. 가운데는 고정(d.cx·d.cy).
-      const far = (dx + dy) / 2;
-      const target = clampScale(d.scale * (1 + far / Math.max(40, d.w)));
+      // 크기: 손잡이를 가운데에서 멀리 끌수록 커진다(모서리 무관·가운데 고정). 기기 픽셀 정수 칸은 skin.effScale 이 반올림.
+      const r0 = Math.hypot(d.baseW / 2, d.baseH / 2) || 1;
+      const now = Math.hypot(this.pending.x - (rect.left + d.cx), this.pending.y - (rect.top + d.cy));
+      const target = clampScale(d.scale * now / r0);
       this.live = { scale: target };
       const rec = this.work.controls[d.id];
       rec.scale = target;
-      if (d.id === "face") this.applyFaceVars(target);
+      if (d.id === "screen") { rec.x = d.cx / rect.w; rec.y = d.cy / rect.h; }
       this.deps.skin().setOverrides(this.overridesFromWork(this.work));
-      if (d.id !== "screen") {
-        const size = this.sizeOf(node);
-        node.style.left = `${Math.round(d.cx - size.w / 2)}px`;
-        node.style.top = `${Math.round(d.cy - size.h / 2)}px`;
-      } else {
+      if (d.id === "screen") {
         this.positionScreen(rec, null, rect);
+      } else {
+        const size = this.sizeOf(node);
+        this.placeNode(node, d.cx, d.cy, size.w, size.h, rect);
       }
       this.updateBadge(d.id);
     }
@@ -757,16 +796,21 @@ export class PadEditor {
     Object.assign(f.box.style, { left: `${r.left - rect.left}px`, top: `${r.top - rect.top}px`, width: `${r.width}px`, height: `${r.height}px` });
   }
 
+  // 끌기 리스너·rAF·임시 상태를 모두 해제(업·취소·오버레이 철거 공용 — 재진입 때 깨끗하게).
+  cleanupDrag() {
+    const win = this.deps.win();
+    if (this.moveFn) win.removeEventListener("pointermove", this.moveFn);
+    if (this.upFn) { win.removeEventListener("pointerup", this.upFn); win.removeEventListener("pointercancel", this.upFn); }
+    this.moveFn = null;
+    this.upFn = null;
+    if (this.raf) { win.cancelAnimationFrame(this.raf); this.raf = 0; }
+    this.drag = null;
+    this.pending = null;
+    this.live = null;
+  }
+
   onUp(event) {
     if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-    const win = this.deps.win();
-    win.removeEventListener("pointermove", this.moveFn);
-    win.removeEventListener("pointerup", this.upFn);
-    win.removeEventListener("pointercancel", this.upFn);
-    if (this.raf) {
-      win.cancelAnimationFrame(this.raf);
-      this.raf = 0;
-    }
     const d = this.drag;
     const rect = this.deps.appRect();
     const rec = this.work.controls[d.id] ?? (this.work.controls[d.id] = {});
@@ -776,9 +820,7 @@ export class PadEditor {
     } else if (d.kind === "resize" && this.live) {
       rec.scale = clampScale(this.live.scale);
     }
-    this.drag = null;
-    this.pending = null;
-    this.live = null;
+    this.cleanupDrag();
     for (const g of this.framesLayer?.querySelectorAll(".padedit__guide") ?? []) g.remove();
     this.syncFrames();
     this.renderCard();

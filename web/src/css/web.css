@@ -5118,6 +5118,21 @@ body[data-pad-free] .stage {
   z-index: 2;
 }
 
+/* 자율배치: A·B·C·D·RS 는 각각 독립 — face 는 칸을 채우기만 하고, 버튼은 저마다 inline left/top 로 배치. */
+body[data-pad-free] .pad > .face {
+  inset: 0;
+  width: auto;
+  height: auto;
+  pointer-events: none;
+}
+
+body[data-pad-free] .face > .key {
+  position: absolute;
+  margin: 0;
+  inset: auto;
+  pointer-events: auto;
+}
+
 body[data-pad-free] .zone {
   display: none;
 }
@@ -5134,11 +5149,14 @@ body[data-pad-free] .bar {
   z-index: 10;
   font: 15px/1.4 var(--font-ui);
   color: var(--text);
+  pointer-events: none;
 }
 
+/* 점 격자(배경 참고)는 조작부 아래 층. 조작부(.pad·.stage)는 편집 중 그 위로 올려 또렷하게 보이게. */
 .padedit__grid {
   position: absolute;
   inset: 0;
+  z-index: 3;
   background-color: var(--veil);
   background-image: radial-gradient(circle, var(--line-strong) 1px, transparent 1.4px);
   background-size: 8px 8px;
@@ -5146,15 +5164,20 @@ body[data-pad-free] .bar {
   touch-action: none;
 }
 
+body[data-pad-free][data-pad-edit] .pad,
+body[data-pad-free][data-pad-edit] .stage {
+  z-index: 4;
+}
+
 .padedit__bar {
   position: absolute;
   left: 50%;
-  top: 8px;
+  top: calc(8px + env(safe-area-inset-top, 0px));
   translate: -50% 0;
   display: flex;
   align-items: center;
   gap: var(--gap-1);
-  max-width: calc(100% - 16px);
+  max-width: calc(100% - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   padding: 6px 8px;
   background: var(--bg-raised);
   outline: 2px solid var(--line-strong);
@@ -5199,12 +5222,12 @@ body[data-pad-free] .bar {
 .padedit__card {
   position: absolute;
   left: 50%;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   translate: -50% 0;
   display: flex;
   flex-direction: column;
   gap: var(--gap-1);
-  width: min(400px, calc(100% - 32px));
+  width: min(400px, calc(100% - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   padding: 10px 12px;
   background: var(--bg-raised);
   outline: 2px solid var(--line-strong);

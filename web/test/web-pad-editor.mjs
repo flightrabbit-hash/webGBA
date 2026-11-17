@@ -6,38 +6,74 @@ import assert from "node:assert/strict";
 import {
   normalizeLayout, hasLayout, orientationKey, clampScale, scalePercent, scaleStep,
   clampCenter, snapCenter, colorChoices, colorHexOf, activeColorId, CONTROL_BY_ID,
+  layoutSignature, CONTROLS, PadEditor,
 } from "../src/js/pad-editor.js";
 import * as PX from "../src/js/pixel-ui.js";
 
+test("placeNode subtracts offsetParent origin (no jump in any container)", () => {
+  const ed = new PadEditor();
+  const mk = (opLeft, opTop) => ({ offsetParent: { getBoundingClientRect: () => ({ left: opLeft, top: opTop }) }, style: {} });
+  const rect = { left: 0, top: 0, w: 800, h: 400 };
+  // offsetParent 원점 = appRect 원점(.pad) → 보정 0
+  const a = mk(0, 0);
+  ed.placeNode(a, 100, 80, 20, 10, rect);
+  assert.equal(a.style.left, "90px"); // 100 - 10 - 0
+  assert.equal(a.style.top, "75px"); // 80 - 5 - 0
+  // offsetParent 가 화면 중간(.face) → 그 원점만큼 빼 같은 화면 자리에 놓임
+  const b = mk(40, 20);
+  ed.placeNode(b, 100, 80, 20, 10, rect);
+  assert.equal(b.style.left, "50px"); // 100 - 10 - 40
+  assert.equal(b.style.top, "55px"); // 80 - 5 - 20
+});
+
 const PAL = PX.paletteOf({ body: "#101828", button: "#35406a", accent: "#6c93ff", ink: "#eef1f8", outline: "#05070e" });
+const SIG = "a,b,dir";
 
 test("orientationKey", () => {
   assert.equal(orientationKey(true), "landscape");
   assert.equal(orientationKey(false), "portrait");
 });
 
-test("normalizeLayout keeps valid, drops unknown", () => {
-  const raw = { landscape: { controls: { face: { x: 0.4, y: 0.6, scale: 1.3, color: "cd" }, bogus: { x: 0.1 }, screen: { color: "x", scale: 1.2 } } }, junk: 1 };
+test("layoutSignature = sorted present ids, screen excluded, deterministic", () => {
+  assert.equal(layoutSignature(["dir", "a", "b"]), "a,b,dir");
+  assert.equal(layoutSignature(["b", "a", "dir"]), "a,b,dir"); // 순서 무관
+  assert.equal(layoutSignature(["dir", "a", "b", "screen"]), "a,b,dir"); // 화면 제외
+  assert.equal(layoutSignature(["a", "a", "b"]), "a,b"); // 중복 제거
+  assert.equal(layoutSignature([]), "default");
+});
+
+test("buttons are independent controls (a·b·c·d·rs), no face group", () => {
+  const ids = CONTROLS.map((c) => c.id);
+  for (const id of ["a", "b", "c", "d", "rs"]) assert.ok(ids.includes(id), `has ${id}`);
+  assert.ok(!ids.includes("face"), "no face group");
+  assert.equal(CONTROL_BY_ID.a.keys[0], "A");
+  assert.equal(CONTROL_BY_ID.b.keys[0], "B");
+});
+
+test("normalizeLayout keeps valid per signature, drops unknown", () => {
+  const raw = { [SIG]: { landscape: { controls: { a: { x: 0.4, y: 0.6, scale: 1.3, color: "accent" }, bogus: { x: 0.1 }, screen: { color: "x", scale: 1.2 } } } }, "": { landscape: { controls: { a: { x: 0.2 } } } } };
   const out = normalizeLayout(raw);
-  assert.deepEqual(out.landscape.controls.face, { x: 0.4, y: 0.6, scale: 1.3, color: "cd" });
-  assert.equal(out.landscape.controls.bogus, undefined);
-  assert.equal("color" in out.landscape.controls.screen, false); // screen 은 색 없음
-  assert.equal(out.landscape.controls.screen.scale, 1.2);
-  assert.equal(out.portrait, undefined);
+  assert.deepEqual(out[SIG].landscape.controls.a, { x: 0.4, y: 0.6, scale: 1.3, color: "accent" });
+  assert.equal(out[SIG].landscape.controls.bogus, undefined);
+  assert.equal("color" in out[SIG].landscape.controls.screen, false); // screen 은 색 없음
+  assert.equal(out[SIG].landscape.controls.screen.scale, 1.2);
+  assert.equal(out[SIG].portrait, undefined);
+  assert.equal(out[""], undefined); // 빈 signature 키는 버림
 });
 
 test("normalizeLayout clamps ranges", () => {
-  const out = normalizeLayout({ portrait: { controls: { L: { x: 2, y: -1, scale: 9 } } } });
-  assert.equal(out.portrait.controls.L.x, 1);
-  assert.equal(out.portrait.controls.L.y, 0);
-  assert.equal(out.portrait.controls.L.scale, 2);
+  const out = normalizeLayout({ [SIG]: { portrait: { controls: { L: { x: 2, y: -1, scale: 9 } } } } });
+  assert.equal(out[SIG].portrait.controls.L.x, 1);
+  assert.equal(out[SIG].portrait.controls.L.y, 0);
+  assert.equal(out[SIG].portrait.controls.L.scale, 2);
 });
 
-test("hasLayout", () => {
-  const lay = normalizeLayout({ landscape: { controls: { L: { x: 0.5 } } } });
-  assert.equal(hasLayout(lay, true), true);
-  assert.equal(hasLayout(lay, false), false);
-  assert.equal(hasLayout({}, true), false);
+test("hasLayout checks signature + orientation", () => {
+  const lay = normalizeLayout({ [SIG]: { landscape: { controls: { L: { x: 0.5 } } } } });
+  assert.equal(hasLayout(lay, true, SIG), true);
+  assert.equal(hasLayout(lay, false, SIG), false); // 세로 없음
+  assert.equal(hasLayout(lay, true, "a,dir"), false); // 다른 집합
+  assert.equal(hasLayout({}, true, SIG), false);
 });
 
 test("clampScale range", () => {
@@ -96,10 +132,11 @@ test("colorChoices = theme palette faces, deduped, stable ids", () => {
 });
 
 test("activeColorId = override else control default", () => {
-  const face = CONTROL_BY_ID.face;
-  assert.equal(activeColorId(face, { color: "cd" }), "cd");
-  assert.equal(activeColorId(face, {}), "accent");
-  assert.equal(activeColorId(face, undefined), "accent");
+  const a = CONTROL_BY_ID.a;
+  assert.equal(activeColorId(a, { color: "cd" }), "cd");
+  assert.equal(activeColorId(a, {}), "accent"); // A·B 기본 = 강조색
+  assert.equal(activeColorId(a, undefined), "accent");
+  assert.equal(activeColorId(CONTROL_BY_ID.c, {}), "cd"); // C·D 기본 = cd
 });
 
 test("recolorRoles rebuilds one role face, memoizes, no-op when empty", () => {

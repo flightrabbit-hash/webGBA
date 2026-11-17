@@ -726,8 +726,11 @@ function faceVarsFor(mul) {
   return { "--face-w": faceWidth(face, unit), "--face-h": Math.round(face.h * unit) + (four ? up : 0) + band, "--face-up": up, "--rs-band": band };
 }
 
-// 자율배치에서 게임 화면 크기·위치: layout 이 정한 --sw/--sh 를 기준으로 배율·이동.
+// 자율배치에서 게임 화면 크기·위치의 기준(배율 1일 때 크기). layout 이 매번 갱신 — setScreenFreeSize 가 --sw/--sh 를
+// 덮어쓰므로 --sw/--sh 를 다시 읽지 않는다(배율이 겹겹이 쌓이는 것 방지).
+let screenBaseSize = null;
 function screenFreeBase() {
+  if (screenBaseSize) return screenBaseSize;
   const cs = getComputedStyle(document.documentElement);
   return { w: parseFloat(cs.getPropertyValue("--sw")) || 240, h: parseFloat(cs.getPropertyValue("--sh")) || 160 };
 }
@@ -1391,6 +1394,7 @@ function layout() {
   root.setProperty("--face-shift", `${((ART.shoulderH - ART.pillH) * unit + 8 - 10) / 2}px`);
   root.setProperty("--sw", `${sw}px`);
   root.setProperty("--sh", `${sh}px`);
+  screenBaseSize = { w: sw, h: sh };
   root.setProperty("--stage-h", `${sh + edge * 2 + drop}px`);
   root.setProperty("--mobile-drop-px", `${drop}px`);
   root.setProperty("--mobile-keypad-drop-px", `${keypadDrop}px`);
@@ -4768,10 +4772,11 @@ function padPlacementFields(p) {
   ];
   if (placement !== "custom" || padMode() === "off") return out;
   const saved = normalizeLayout(p.padLayout);
+  const sig = padEditor.currentSig();
   const cur = window.innerWidth > window.innerHeight;
   for (const landscape of [true, false]) {
     const orient = landscape ? "landscape" : "portrait";
-    const has = hasLayout(saved, landscape);
+    const has = hasLayout(saved, landscape, sig);
     const note = cur === landscape ? (has ? t("web.pad.edit.state.saved") : t("web.pad.edit.state.default")) : t("web.pad.edit.rotate");
     const edit = button({
       label: t("web.pad.edit.btn"),
@@ -5344,6 +5349,16 @@ function wire() {
   window.addEventListener("resize", layout);
   window.addEventListener("orientationchange", () => setTimeout(layout, 120));
   window.visualViewport?.addEventListener("resize", layout);
+  // 방향이 바뀌면 설정 시트의 "가로·세로 배치 [편집]" 활성 조건을 다시 그린다(지금 방향만 편집 가능).
+  let padLastLandscape = window.innerWidth > window.innerHeight;
+  const onPadOrient = () => {
+    const now = window.innerWidth > window.innerHeight;
+    if (now === padLastLandscape) return;
+    padLastLandscape = now;
+    if (state.sheet === "settings") renderSheet();
+  };
+  window.addEventListener("resize", onPadOrient);
+  window.addEventListener("orientationchange", () => setTimeout(onPadOrient, 140));
   coarse.addEventListener?.("change", layout);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", () => netWin.pageHide());
