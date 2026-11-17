@@ -148,6 +148,8 @@ function buildPalette(b, id) {
   put(pal, 'fbOn', fam(b.accent, b.ink));
   const well = mix(b.body, o, 0.45);
   pal.well = well; pal.wellHi = mix(well, W, 0.16); pal.wellLo = mix(well, o, 0.4);
+  pal.wellSh1 = mix(well, o, 0.55); pal.wellSh2 = mix(well, o, 0.25);
+  pal.offSh1 = mix(off.side, o, 0.45); pal.offSh2 = mix(off.side, o, 0.2);
   pal.ring = b.accent; pal.ringHi = mix(b.accent, W, 0.55);
   pal.icOffHi = mix(offFace, W, 0.5); pal.icOffLo = mix(offFace, o, 0.3);
   return pal;
@@ -691,8 +693,8 @@ export const STICK_DIRECTIONS = ['right', 'up-right', 'up', 'up-left', 'left', '
 const STICK_D = 37, KNOB_D = 21, STICK_TRAVEL = 7, STICK_RANGE = 14; // 아트 픽셀(손잡이 이동 한도, 입력 세기 1이 되는 거리)
 
 /**
- * 스틱 받침(움푹한 원). state 'normal'|'pressed'(누르는 중이면 테두리가 강조색으로)|'disabled'.
- * direction: STICK_DIRECTIONS 중 하나면 그 방향 테두리를 살짝 밝힌다(없으면 null).
+ * 스틱 받침(움푹한 원). 바깥 보더 1px 아래로 2단 그림자(진한 → 옅은)가 고르게 둘러싸고 받침으로 내려간다.
+ * state 'normal'|'pressed'|'disabled'. direction 이 있으면(끌 때만) 보더 바로 안쪽에 강조색 방향 호(135°, 가운데 45° 가장 밝음).
  */
 export function renderStickBase({ state = 'normal', direction = null, scale = 1, palette } = {}) {
   palette = resolvePalette(palette);
@@ -706,27 +708,25 @@ export function renderStickBase({ state = 'normal', direction = null, scale = 1,
     const art = new Art(D, D);
     const ang = dir ? (STICK_DIRECTIONS.indexOf(dir) * 45) : null;
     const off = st === 'disabled';
+    const steps = ['wellSh1', 'wellSh2']; // 보더 안쪽 2단 그림자: 진한 → 옅은
     for (let y = 0; y < D; y++) for (let x = 0; x < D; x++) {
       const v = d(x, y);
       if (!v) continue;
-      const g = d(x + 1, y) - d(x - 1, y) + d(x, y + 1) - d(x, y - 1);
       const dx = x + 0.5 - c, dy = y + 0.5 - c;
       const a = ((Math.atan2(-dy, dx) * 180) / Math.PI + 360) % 360;
-      const inSector = ang != null && Math.abs(((a - ang + 540) % 360) - 180) <= 22.5;
       let role;
       if (v === 1) role = 'outline';
-      else if (v === 2) role = inSector ? 'ring' : off ? 'offLo' : g > 0 ? 'bodyHi' : g < 0 ? 'bodyLo2' : 'body';
-      else if (v === 3) role = inSector ? 'ringHi' : off ? 'off' : st === 'pressed' ? 'ring' : 'body';
-      else if (v === 4) role = 'outline';
-      else if (v === 5) role = off ? 'offSide' : g > 0 ? 'wellLo' : g < 0 ? 'wellHi' : 'well';
-      else role = off ? 'offSide' : 'well';
+      else if (v === 2 || v === 3) {
+        let arc = null;
+        if (v === 2 && !off && ang != null) {
+          const df = Math.abs(((a - ang + 540) % 360) - 180);
+          if (df <= 22.5) arc = 'ringHi';
+          else if (df <= 67.5) arc = 'ring';
+        }
+        if (arc) role = arc;
+        else { const r = steps[v - 2]; role = off ? (v === 2 ? 'offSh1' : 'offSh2') : r; }
+      } else role = off ? 'offSide' : 'well';
       art.set(x, y, role);
-    }
-    // 8방향 길잡이 점
-    for (let k = 0; k < 8; k++) {
-      const t = (k * Math.PI) / 4;
-      const x = Math.floor(c + Math.cos(t) * 11), y = Math.floor(c - Math.sin(t) * 11);
-      if (art.get(x, y) === 'well') art.set(x, y, 'wellLo');
     }
     return finish('stick', art, s, palette, {
       state: st, direction: dir,
@@ -737,7 +737,7 @@ export function renderStickBase({ state = 'normal', direction = null, scale = 1,
   });
 }
 
-/** 스틱 손잡이(둥근 엄지 받침, 위에서 본 모양). state 'normal'|'pressed'|'disabled'. */
+/** 스틱 손잡이(강조색 둥근 엄지 받침, 위에서 본 모양). state 'normal'|'pressed'|'disabled'. */
 export function renderStickKnob({ state = 'normal', scale = 1, palette } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
@@ -745,14 +745,14 @@ export function renderStickKnob({ state = 'normal', scale = 1, palette } = {}) {
   return cached(palette, `knob|${st}|${s}`, () => {
     const D = KNOB_D, c = D / 2;
     const inside = circleInside(D);
-    const base = buttonRoles('btn', st);
+    const base = buttonRoles('ab', st);
     const roles = st === 'pressed' ? { ...base, face: base.lo, hi: base.face, lo: base.side } : base;
     const { art, faceBox } = extrude({
       W: D, H: D, inside, depth: 0, shadow: 0, roles,
       decor: (x, y) => {
         const dx = x + 0.5 - c, dy = y + 0.5 - c, r = Math.hypot(dx, dy);
-        if (r >= 5 && r < 6.2) return dx + dy < 0 ? roles.lo : roles.hi; // 오목한 엄지 홈 테
-        if (st !== 'disabled' && ((x === 5 && y === 4) || (x === 4 && y === 5) || (x === 5 && y === 5))) return roles.hi;
+        if (r >= 7 && r < 8.1) return dx + dy > 0 ? roles.lo : null; // 보더 안쪽 아랫면 그림자 테
+        if (st !== 'disabled' && ((x === 6 && y === 5) || (x === 5 && y === 6) || (x === 6 && y === 6) || (x === 7 && y === 5) || (x === 5 && y === 7))) return roles.hi;
         return null;
       },
     });

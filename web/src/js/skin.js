@@ -349,7 +349,9 @@ export class Skin {
   drawDir() {
     const dirBase = this.dirArt ?? this.art;
     const scale = this.effScale("dir", dirBase);
-    const palette = this.colorHex.dir ? PX.recolorRoles(this.palette, { btn: this.colorHex.dir }) : this.palette;
+    // 색 지정 역할은 모드별로: 십자 D-pad = 몸통(btn), 스틱 = 강조색 손잡이(ab).
+    const recolorRole = this.mode === "dpad" ? "btn" : "ab";
+    const palette = this.colorHex.dir ? PX.recolorRoles(this.palette, { [recolorRole]: this.colorHex.dir }) : this.palette;
     if (this.mode === "dpad") {
       const pressed = [...this.down].filter((name) => STICK_NAMES[name]).map((name) => STICK_NAMES[name]);
       this.paint(this.dpad, PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette }));

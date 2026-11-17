@@ -113,6 +113,55 @@ test("recolorRoles rebuilds one role face, memoizes, no-op when empty", () => {
   assert.equal(PX.recolorRoles(PAL, {}), PAL); // 지정 없으면 그대로
 });
 
+// 원형 패드(스틱) N2 그래픽: 받침 2단 그림자·방향 호·강조색 손잡이. 역할 맵(_art)으로 검사(canvas stub).
+function stubCanvas() {
+  if (globalThis.OffscreenCanvas) return;
+  const ctx = {
+    imageSmoothingEnabled: false,
+    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
+    putImageData() {},
+    drawImage() {},
+  };
+  globalThis.OffscreenCanvas = class { constructor(w, h) { this.width = w; this.height = h; } getContext() { return ctx; } };
+}
+const roleSet = (render) => new Set(render._art.roles.filter(Boolean));
+
+test("palette has 2-step shadow roles, darker than well", () => {
+  for (const k of ["wellSh1", "wellSh2", "offSh1", "offSh2"]) assert.equal(typeof PAL[k], "string");
+  assert.notEqual(PAL.wellSh1, PAL.well);
+  assert.notEqual(PAL.wellSh1, PAL.wellSh2); // 2단(진한·옅은)
+});
+
+test("stick base idle = 2-step shadow + well, no body/ring, 1px outline only", () => {
+  stubCanvas();
+  const r = roleSet(PX.renderStickBase({ palette: PAL }));
+  for (const k of ["outline", "wellSh1", "wellSh2", "well"]) assert.ok(r.has(k), `has ${k}`);
+  for (const k of ["body", "bodyHi", "bodyLo2", "ring", "ringHi"]) assert.ok(!r.has(k), `no ${k}`);
+});
+
+test("stick base direction arc only while dragging", () => {
+  stubCanvas();
+  const idle = roleSet(PX.renderStickBase({ palette: PAL })); // 방향 없음(평소) = 호 없음
+  assert.ok(!idle.has("ring") && !idle.has("ringHi"));
+  const drag = roleSet(PX.renderStickBase({ state: "pressed", direction: "up", palette: PAL }));
+  assert.ok(drag.has("ring") && drag.has("ringHi")); // 끌 때(방향 전달) 호(가운데 가장 밝음)
+  const off = roleSet(PX.renderStickBase({ state: "disabled", direction: "up", palette: PAL }));
+  assert.ok(!off.has("ring") && !off.has("ringHi")); // 비활성화 시 호 없음
+});
+
+test("stick base disabled uses off shadow steps", () => {
+  stubCanvas();
+  const r = roleSet(PX.renderStickBase({ state: "disabled", palette: PAL }));
+  assert.ok(r.has("offSh1") && r.has("offSh2"));
+});
+
+test("stick knob is accent(ab)", () => {
+  stubCanvas();
+  const r = roleSet(PX.renderStickKnob({ palette: PAL }));
+  assert.ok(r.has("ab"), "accent face");
+  assert.ok(!r.has("btn"), "no button face");
+});
+
 // skin 조작부별 배율·색: DOM 없이 constructor + 순수 메서드만 시험(그리기 호출하지 않음).
 test("skin per-control scale and color (no DOM draw)", async () => {
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });

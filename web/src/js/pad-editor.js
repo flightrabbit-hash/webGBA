@@ -572,6 +572,12 @@ export class PadEditor {
     return b;
   }
 
+  // 지정 없을 때 체크할 기본 색. 방향 조작부는 모드에 따라(스틱 = 강조색 손잡이, 십자 = 몸통).
+  defaultColorId(control) {
+    if (control.id === "dir" && this.deps.skin().mode === "stick") return "accent";
+    return control.colorDefault ?? null;
+  }
+
   colorRow(control, rec) {
     const doc = this.deps.doc();
     const t = this.deps.t;
@@ -582,7 +588,7 @@ export class PadEditor {
     name.textContent = t("web.pad.edit.color");
     row.append(name);
     const choices = colorChoices(this.deps.skin().palette);
-    const active = rec.color ?? control.colorDefault;
+    const active = rec.color ?? this.defaultColorId(control);
     for (const choice of choices) {
       const sw = doc.createElement("button");
       sw.type = "button";
