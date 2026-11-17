@@ -5304,6 +5304,16 @@ function showUpdate(worker) {
 
 async function registerWorker() {
   if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  if (BUILD.sw === false) {
+    // 테스트 빌드: SW 등록하지 않고, 이전에 설치된 SW·캐시를 지운다(옛 빌드가 남지 않게).
+    try {
+      for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister();
+      if (window.caches) for (const key of await caches.keys()) await caches.delete(key);
+    } catch (error) {
+      logLine("WARN", `서비스 워커 해제 실패: ${reason(error)}`);
+    }
+    return;
+  }
   try {
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     state.reg = reg;

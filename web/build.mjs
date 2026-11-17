@@ -15,7 +15,9 @@ const root = path.resolve(web, "..");
 const src = path.join(web, "src");
 const app = path.join(root, "src-bundle", "src");
 const coreDir = path.join(root, "src-bundle", "bin", "core");
-const out = path.resolve(process.argv[2] ?? path.join(web, "dist"));
+const args = process.argv.slice(2);
+const noSW = args.includes("--no-sw"); // 테스트(LAN) 빌드: 서비스 워커 끔(캐시로 옛 빌드가 남지 않게)
+const out = path.resolve(args.find((a) => !a.startsWith("--")) ?? path.join(web, "dist"));
 
 const SHARED = ["app/player.js", "app/patch-loader.js", "app/zip-pick.js", "app/update-pick.js", "app/admin-ui.js", "core/admin.js", "core/wgba-update.js", "core/update-worker.js","app/net-window.js", "app/board-panel.js", "core/net/board.js", "core/net/lan.js", "core/net/ice.js","core/net/session.js", "core/net/net-host.js", "core/net/qr.js", "core/net/signal.js", "core/web-host.js", "core/gpu-bridge.js", "core/rom-kind.js", "core/wgbp.js", "core/zip.js", "core/wgba-format.js", "core/wgba-read.js", "core/lang-text.js", "core/script-host.js", "core/runner.js", "core/patch-worker.js", "shell/i18n.js", "shell/theme.js", "vendor/pako.js", "vendor/jsqr.js"];
 const LANGS = ["ko", "en", "ja"];
@@ -131,23 +133,38 @@ const hashOf = (files) => {
   return hash.digest("hex").slice(0, 10);
 };
 const contentHash = hashOf(listFiles(out));
-fs.writeFileSync(path.join(out, "js", "build-info.js"), `export const BUILD = ${JSON.stringify({ version, hash: contentHash })};\n`);
+fs.writeFileSync(path.join(out, "js", "build-info.js"), `export const BUILD = ${JSON.stringify({ version, hash: contentHash, sw: !noSW })};\n`);
 
-// 서비스 워커가 파일마다 내용 해시를 알면 업데이트 때 해시가 같은 파일은 이전 캐시에서 복사하고 바뀐 파일만 받는다.
-const fileHash = (rel) => crypto.createHash("sha256").update(fs.readFileSync(path.join(out, rel))).digest("hex").slice(0, 16);
-const precache = listFiles(out).filter((rel) => !rel.startsWith("licenses/") && !rel.endsWith(".txt"));
-const files = [["/", fileHash("index.html")], ...precache.map((rel) => [`/${rel}`, fileHash(rel)])];
-const sw = fs
-  .readFileSync(path.join(src, "sw.js"), "utf8")
-  .replace('"__WEBGBA_VERSION__"', JSON.stringify(`${version}-${contentHash}`))
-  .replace('["__WEBGBA_FILES__"]', JSON.stringify(files));
-if (sw.includes("__WEBGBA_")) fail("sw.js 자리 표시를 채우지 못했습니다");
-fs.writeFileSync(path.join(out, "sw.js"), sw);
+let files;
+if (noSW) {
+  // 테스트 빌드: 페이지는 SW 를 등록하지 않고(main registerWorker), sw.js 는 기존 SW 를 스스로 해제·캐시 삭제하는 스텁.
+  // 이미 설치된 아이폰 SW 는 다음 로드에서 등록된 /sw.js 로 이 스텁을 받아 자폭 → 그 뒤로는 매 새로고침이 항상 최신.
+  const stub = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  for (const k of await caches.keys()) await caches.delete(k);
+  await self.registration.unregister();
+  for (const c of await self.clients.matchAll({ type: "window" })) c.navigate(c.url);
+})()));
+`;
+  fs.writeFileSync(path.join(out, "sw.js"), stub);
+  files = [];
+} else {
+  // 서비스 워커가 파일마다 내용 해시를 알면 업데이트 때 해시가 같은 파일은 이전 캐시에서 복사하고 바뀐 파일만 받는다.
+  const fileHash = (rel) => crypto.createHash("sha256").update(fs.readFileSync(path.join(out, rel))).digest("hex").slice(0, 16);
+  const precache = listFiles(out).filter((rel) => !rel.startsWith("licenses/") && !rel.endsWith(".txt"));
+  files = [["/", fileHash("index.html")], ...precache.map((rel) => [`/${rel}`, fileHash(rel)])];
+  const sw = fs
+    .readFileSync(path.join(src, "sw.js"), "utf8")
+    .replace('"__WEBGBA_VERSION__"', JSON.stringify(`${version}-${contentHash}`))
+    .replace('["__WEBGBA_FILES__"]', JSON.stringify(files));
+  if (sw.includes("__WEBGBA_")) fail("sw.js 자리 표시를 채우지 못했습니다");
+  fs.writeFileSync(path.join(out, "sw.js"), sw);
+}
 
 const all = listFiles(out).map((rel) => ({ full: path.join(out, rel), rel }));
 const result = check(all);
 if (result.problems.length) fail(`롬 없음 검사:\n  ${result.problems.join("\n  ")}`);
 if (result.big.length) fail(`1MB 넘는 파일: ${result.big.join(", ")}`);
 
-console.log(`웹 빌드 ${version}-${contentHash} → ${path.relative(root, out) || out}`);
-console.log(`파일 ${all.length}개 · ${result.bytesTotal}바이트 · 오프라인 캐시 ${files.length}개 · 롬 없음 검사 통과`);
+console.log(`웹 빌드 ${version}-${contentHash}${noSW ? " (SW 끔·테스트)" : ""} → ${path.relative(root, out) || out}`);
+console.log(`파일 ${all.length}개 · ${result.bytesTotal}바이트 · ${noSW ? "서비스 워커 없음(자폭 스텁)" : `오프라인 캐시 ${files.length}개`} · 롬 없음 검사 통과`);
