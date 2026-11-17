@@ -559,10 +559,12 @@ chunk `manifest`는 UTF-8 JSON 객체 한 개입니다(BOM 없음, 64KB 이하).
 | --- | --- |
 | wasm 컴파일·실행, 캔버스 2D·WebGL, `requestAnimationFrame` | 네트워크(fetch·XHR·WebSocket·이미지 주소·폼 — CSP로 차단, WebRTC는 틀 스크립트가 게임보다 먼저 삭제). 멀티플레이는 `webgba.net`(7장) |
 | 키 입력 — 호스트가 사용자 배치를 게임의 `code`로 변환해 `keydown`·`keyup`을 전달(틀이 생성한 이벤트라 `isTrusted`는 false), 캔버스 위 포인터 이벤트 | IndexedDB·쿠키·실제 localStorage(출처가 없어 차단) → `webgba.save`. `localStorage`·`sessionStorage`는 틀이 메모리 기반 대체 객체로 교체하고, `save.kind: "localStorage"`이면 해당 내용을 호스트가 세이브로 저장 |
-| `AudioContext`·AudioWorklet. 게임이 생성한 `AudioContext`도 호스트가 음량·일시정지를 제어. 오디오가 잠겨 있으면 틀 위에 "눌러서 시작" Overlay | 게임패드 API(호스트가 조회해 키로 전달), 전체 화면(호스트 버튼), 팝업·`alert`·다른 주소로 이동(이동하면 호스트가 틀을 삭제하고 게임을 정지) |
+| `AudioContext`·AudioWorklet. 게임이 생성한 `AudioContext`도 호스트가 음량·일시정지를 제어. 오디오가 잠겨 있으면 틀 위에 "눌러서 시작" Overlay(WebKit의 모바일 게임은 아래 소리 중계라 출력하지 않음) | 게임패드 API(호스트가 조회해 키로 전달), 전체 화면(호스트 버튼), 팝업·`alert`·다른 주소로 이동(이동하면 호스트가 틀을 삭제하고 게임을 정지) |
 | `blob:` 주소의 Worker·스크립트·그림 | 스레드(SharedArrayBuffer·pthreads) — 규격 1에서 지원하지 않음 |
 
 Safari(WebKit)는 사용자 입력(클릭·터치)이 아직 없는 틀의 화면 갱신을 30Hz로 제한합니다. 틀은 2초 넘게 40fps 미만이면 같은 "눌러서 시작" Overlay를 출력합니다. 모바일 게임(.wmba·.wapk)은 이 검사에서 제외합니다 — 게임 자체 화면 갱신이 초당 30회 미만이라 30Hz 제한으로 줄지 않습니다. 소리가 잠겨 Overlay가 출력된 동안 키 입력(호스트 경유)이 들어오면 소리 시작을 다시 시도하고, 브라우저가 허용하면 Overlay를 닫습니다.
+
+WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wmba·.wapk)의 소리는 본 창이 냅니다(소리 중계). WebKit은 `AudioContext` 시작에 그 문서 자신의 사용자 입력을 요구하는데, 본 창의 입력(라이브러리·가상 키)은 출처가 없는 틀로 전달되지 않기 때문입니다. 틀은 게임에 같은 형태의 `AudioContext`·`AudioWorkletNode`를 제공합니다(지원: `audioWorklet.addModule`, `new AudioWorkletNode(ctx, 이름, 옵션)`, `connect(destination)`, `sampleRate`·`state`·`resume`). 호스트는 게임마다 새 `AudioContext`에 같은 모듈·노드를 생성하고, 노드 포트를 내용을 보지 않고 그대로 연결합니다. 게임을 고른 입력이 유효한 동안(약 5초) 열리면 바로, 아니면 첫 입력(가상 키·게임 화면 터치·키)에서 소리가 시작되며, Overlay는 출력하지 않습니다. 모듈은 본 창의 AudioWorkletGlobalScope에서 실행되므로(DOM·저장소·fetch·Worker·동적 `import` 없음) `import` 낱말이 포함된 모듈은 거부합니다. Chrome·Android·Windows 앱은 이전처럼 틀 안에서 소리를 냅니다(시험용 강제: localStorage `webgba.audioRelay` `"1"`·`"0"`).
 
 ##### 4.2.2 `webgba` 객체 (틀 API 1)
 

@@ -164,6 +164,7 @@
   const pausedByUs = new Set();
   let unlocked = false;
   let tapTimer = 0;
+  // 소리 중계(아래)를 쓰면 게임 소리는 본 창 컨텍스트라 contexts 가 비어 소리 잠김 덮개가 뜨지 않는다
   function needTap() {
     if (unlocked || paused) return false;
     if (throttled) return true;
@@ -219,6 +220,8 @@
   function unlock() {
     unlocked = true;
     tap.hidden = true;
+    // 틀 안 누름은 본 창(조상)에도 사용자 동작을 남긴다 → 중계 소리(본 창 AudioContext)를 호스트가 지금 열 수 있다
+    if (relay.on && relay.state !== "running") send({ type: "audio", op: "gesture" });
     if (paused) return;
     for (const ac of contexts) if (ac.state === "suspended") NativeAC.prototype.resume.call(ac).catch(() => {});
   }
@@ -227,6 +230,112 @@
     for (const ac of contexts) if (ac.state === "suspended") NativeAC.prototype.resume.call(ac).catch(() => {});
   }
   for (const type of ["pointerdown", "touchend", "keydown"]) W.addEventListener(type, (event) => event.isTrusted && unlock(), true);
+
+  // ── 소리 중계(init audio.relay — 웹킷의 모바일 게임): 게임의 AudioWorklet 을 본 창의 AudioContext 에서 돌린다 ──
+  //   웹킷은 AudioContext 시작에 그 문서 자신의 사용자 동작(transient activation)을 요구하는데, 본 창 누름(가상 키·라이브러리)은
+  //   출처 없는 이 틀로 번지지 않는다 → 틀 안 컨텍스트는 화면을 직접 누르기 전까지 잠김. 본 창 컨텍스트는 어느 누름으로도 열린다.
+  //   게임에는 같은 모양의 AudioContext·AudioWorkletNode 를 준다: 모듈 글은 호스트로 보내고, 노드 포트는 호스트가 진짜 노드 포트와 잇는다.
+  //   지원: audioWorklet.addModule · new AudioWorkletNode(ctx, 이름, 옵션) · connect(destination) · sampleRate · state · resume.
+  const nativeFetch = W.fetch.bind(W);
+  const NativeAWN = W.AudioWorkletNode ?? null;
+  const relay = { on: false, rate: 48000, state: "suspended", seq: 0, contexts: new Set(), modules: new Map(), waiting: [] };
+  class RelayAudioContext extends EventTarget {
+    constructor() {
+      super();
+      this.onstatechange = null;
+      this.closed = false;
+      this.sampleRate = relay.rate;
+      this.baseLatency = 0;
+      this.destination = Object.freeze({ context: this, maxChannelCount: 2, channelCount: 2, numberOfInputs: 1, numberOfOutputs: 0 });
+      this.audioWorklet = Object.freeze({ addModule: (url) => relayModule(url) });
+      relay.contexts.add(this);
+    }
+    get state() {
+      return this.closed ? "closed" : relay.state;
+    }
+    get currentTime() {
+      return 0;
+    }
+    resume() {
+      if (this.closed) return Promise.reject(new DOMException("closed", "InvalidStateError"));
+      if (relay.state === "running") return Promise.resolve();
+      send({ type: "audio", op: "wake" });
+      return new Promise((resolve) => relay.waiting.push(resolve));
+    }
+    suspend() {
+      return Promise.resolve();
+    }
+    close() {
+      this.closed = true;
+      relay.contexts.delete(this);
+      return Promise.resolve();
+    }
+  }
+  class RelayAudioWorkletNode extends EventTarget {
+    constructor(context, name, options = {}) {
+      super();
+      const channel = new MessageChannel();
+      this.context = context;
+      this.port = channel.port1;
+      this.parameters = new Map();
+      this.onprocessorerror = null;
+      this.id = ++relay.seq;
+      send({ type: "audio", op: "node", id: this.id, name: String(name), options: options && typeof options === "object" ? options : {}, port: channel.port2 }, [channel.port2]);
+    }
+    connect(target) {
+      if (target !== this.context.destination) throw new DOMException("소리 중계는 destination 연결만 지원", "NotSupportedError");
+      send({ type: "audio", op: "connect", id: this.id });
+      return target;
+    }
+    disconnect() {
+      send({ type: "audio", op: "disconnect", id: this.id });
+    }
+  }
+  function AudioWorkletNodeShim(context, name, options) {
+    if (!new.target) throw new TypeError("AudioWorkletNode: new 로 만들어야 함");
+    if (context instanceof RelayAudioContext) return new RelayAudioWorkletNode(context, name, options);
+    if (!NativeAWN) throw new TypeError("AudioWorkletNode 없음");
+    return Reflect.construct(NativeAWN, [context, name, options], NativeAWN);
+  }
+  async function relayModule(url) {
+    const text = await (await nativeFetch(String(url))).text();
+    const id = ++relay.seq;
+    return new Promise((resolve, reject) => {
+      relay.modules.set(id, { resolve, reject });
+      send({ type: "audio", op: "module", id, text });
+    });
+  }
+  function useRelay(info) {
+    relay.on = true;
+    relay.rate = Number(info.rate) > 0 ? Number(info.rate) : 48000;
+    relay.state = typeof info.state === "string" ? info.state : "suspended";
+    W.AudioContext = RelayAudioContext;
+    if ("webkitAudioContext" in W) W.webkitAudioContext = RelayAudioContext;
+    W.AudioWorkletNode = AudioWorkletNodeShim;
+  }
+  function onAudio(data) {
+    if (data.op === "state") {
+      const next = ["running", "suspended", "interrupted", "closed"].includes(data.state) ? data.state : "suspended";
+      if (next === relay.state) return;
+      relay.state = next;
+      for (const ac of relay.contexts) {
+        const event = new Event("statechange");
+        ac.dispatchEvent(event);
+        try {
+          ac.onstatechange?.(event);
+        } catch (error) {
+          report("error", error);
+        }
+      }
+      if (next === "running") for (const done of relay.waiting.splice(0)) done();
+    } else if (data.op === "module") {
+      const wait = relay.modules.get(data.id);
+      if (!wait) return;
+      relay.modules.delete(data.id);
+      if (data.error) wait.reject(new DOMException(String(data.error), "AbortError"));
+      else wait.resolve();
+    }
+  }
 
   // ── 저장소: 출처가 없어 진짜 localStorage·sessionStorage 는 SecurityError → 메모리에 두는 것으로 바꿔 끼운다.
   //    설명서 save.kind "localStorage" 면 localStorage 내용을 호스트가 이 게임의 세이브로 저장한다. ──
@@ -822,6 +931,7 @@
     tap.setAttribute("aria-label", String(data.text?.tap ?? "▶"));
     tap.textContent = String(data.text?.tap ?? "");
     throttleTap = data.throttleTap !== false;
+    if (data.audio?.relay) useRelay(data.audio);
     setVolume(data.volume ?? 1);
     if (data.paused) setPaused(true);
     speed = Number(data.speed) || 1;
@@ -911,6 +1021,9 @@
         break;
       case "net":
         onNet(data);
+        break;
+      case "audio":
+        onAudio(data);
         break;
     }
   }
