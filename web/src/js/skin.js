@@ -209,11 +209,15 @@ export class Skin {
     // 자율배치 편집(custom 배치)에서만 채워진다 — part 이름 → 배율 곱(1 기준)·색(hex). 비어 있으면 기본 동작 그대로.
     this.scaleMul = {};
     this.colorHex = {};
+    // 자유 비율: part 이름 → { x, y } (배율 위에 더 늘리는 가로·세로 배, 1 이상). 둥근 사각형 부품은 칸 수를 늘려 그리고,
+    // 둥근 버튼·방향은 그림은 그대로 두고 상자(누르는 자리)만 넓힌다.
+    this.stretch = {};
   }
 
-  setOverrides({ scaleMul = {}, colorHex = {} } = {}) {
+  setOverrides({ scaleMul = {}, colorHex = {}, stretch = {} } = {}) {
     this.scaleMul = scaleMul;
     this.colorHex = colorHex;
+    this.stretch = stretch;
     this.redraw();
   }
 
@@ -343,7 +347,13 @@ export class Skin {
     const state = this.down.has(name) ? "pressed" : "normal";
     const part = KEY_PARTS[name];
     const scale = this.effScale(name, this.art);
-    this.paint(host, PX.renderGameButton(part, { label: keyLabel(name), side: name, state, scale, palette: this.paletteFor(part, name) }));
+    const st = this.stretch[name];
+    const wide = st?.x > 1 ? st.x : 1;
+    const tall = st?.y > 1 ? st.y : 1;
+    // 둥근 사각형 부품은 칸 수를 늘려 그리고(픽셀 그대로), 둥근 A·B·C·D 는 그림을 가운데 두고 상자만 넓힌다.
+    const round = part === "a" || part === "b" || part === "c" || part === "d";
+    const render = PX.renderGameButton(part, { label: keyLabel(name), side: name, state, scale, palette: this.paletteFor(part, name), ...(round ? {} : { wide, tall }) });
+    this.paint(host, render, round ? { minW: Math.round(render.width * wide), minH: Math.round(render.height * tall) } : {});
   }
 
   drawDir() {
@@ -352,15 +362,20 @@ export class Skin {
     // 색 지정 역할은 모드별로: 십자 D-pad = 몸통(btn), 스틱 = 강조색 손잡이(ab).
     const recolorRole = this.mode === "dpad" ? "btn" : "ab";
     const palette = this.colorHex.dir ? PX.recolorRoles(this.palette, { [recolorRole]: this.colorHex.dir }) : this.palette;
+    // 자유 비율: 방향은 그림을 가운데 두고 상자(누르는 자리)만 가로·세로로 넓힌다.
+    const st = this.stretch.dir;
+    const wide = st?.x > 1 ? st.x : 1;
+    const tall = st?.y > 1 ? st.y : 1;
     if (this.mode === "dpad") {
       const pressed = [...this.down].filter((name) => STICK_NAMES[name]).map((name) => STICK_NAMES[name]);
-      this.paint(this.dpad, PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette }));
+      const render = PX.renderDpad({ pressed: pressed.length ? pressed : "none", scale, palette });
+      this.paint(this.dpad, render, { minW: Math.round(render.width * wide), minH: Math.round(render.height * tall) });
       return;
     }
     const base = PX.renderStickBase({ scale, palette });
     const knob = PX.renderStickKnob({ scale, palette });
     const size = Math.max(base.width, knob.height);
-    const canvas = this.paint(this.dpad, base, { minW: size, minH: size });
+    const canvas = this.paint(this.dpad, base, { minW: Math.round(size * wide), minH: Math.round(size * tall) });
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const s = this.stickState;

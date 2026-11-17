@@ -6,9 +6,45 @@ import assert from "node:assert/strict";
 import {
   normalizeLayout, hasLayout, orientationKey, clampScale, scalePercent, scaleStep,
   clampCenter, snapCenter, colorChoices, colorHexOf, activeColorId, CONTROL_BY_ID,
-  layoutSignature, CONTROLS, PadEditor,
+  layoutSignature, CONTROLS, PadEditor, boxScale, stretchOf, setBox, sizeText, isStretched, STRETCH_MAX,
 } from "../src/js/pad-editor.js";
 import * as PX from "../src/js/pixel-ui.js";
+
+test("free ratio: old {scale} reads as same ratio, box multipliers sx·sy", () => {
+  assert.deepEqual(boxScale({ scale: 1.3 }), { x: 1.3, y: 1.3 }); // 예전 저장 = 같은 비율
+  assert.deepEqual(boxScale(undefined), { x: 1, y: 1 });
+  assert.equal(isStretched({ scale: 1.3 }), false);
+  const rec = setBox({}, 2.5, 1.25); // 키패드 가로 250%·세로 125%
+  assert.equal(rec.scale, 1.25); // 그림 배율 = 작은 쪽
+  assert.deepEqual(stretchOf(rec), { x: 2, y: 1 });
+  assert.equal(sizeText(rec), "250×125%");
+  setBox(rec, 1.25, 1.25); // 원래 비율 → 예전 형식으로
+  assert.deepEqual(rec, { scale: 1.25 });
+  assert.equal(sizeText(rec), "125%");
+  const big = setBox({}, 9, 0.1); // 범위
+  assert.equal(big.sx, STRETCH_MAX);
+  assert.equal(big.sy, 0.75);
+  assert.equal(big.scale, 0.75);
+});
+
+test("normalizeLayout keeps sx·sy (not for screen), drops same-ratio pairs", () => {
+  const out = normalizeLayout({ "dir,keypad": { portrait: { controls: { keypad: { x: 0.5, y: 0.8, scale: 9, sx: 2.6, sy: 1.1 }, dir: { x: 0.2, y: 0.8, sx: 1.2, sy: 1.2 }, screen: { x: 0.5, y: 0.3, scale: 1.1, sx: 2, sy: 1 } } } } });
+  const c = out["dir,keypad"].portrait.controls;
+  assert.deepEqual(c.keypad, { x: 0.5, y: 0.8, scale: 1.1, sx: 2.6, sy: 1.1 });
+  assert.deepEqual(c.dir, { x: 0.2, y: 0.8, scale: 1.2 });
+  assert.deepEqual(c.screen, { x: 0.5, y: 0.3, scale: 1.1 }); // 화면은 비율 고정
+});
+
+test("pixel-ui rounded parts stretch by art pixels (scale unchanged)", () => {
+  stubCanvas();
+  const key = PX.renderKeypadKey({ label: "5", scale: 3, wide: 2, tall: 1 });
+  const plain = PX.renderKeypadKey({ label: "5", scale: 3 });
+  assert.equal(key.art.w, plain.art.w * 2); // 21 → 42 칸
+  assert.equal(key.art.h, plain.art.h);
+  assert.equal(key.scale, plain.scale); // 픽셀 배율 그대로(뭉개지지 않음)
+  const pill = PX.renderPill({ label: "-", scale: 2, wide: 1.5 });
+  assert.equal(pill.art.w, Math.round(31 * 1.5));
+});
 
 test("placeNode subtracts offsetParent origin (no jump in any container)", () => {
   const ed = new PadEditor();

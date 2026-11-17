@@ -564,13 +564,17 @@ export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, pa
   });
 }
 
+// 자유 비율(직접 배치): 둥근 사각형 부품은 아트 픽셀 칸 수를 늘려 가로·세로를 따로 키운다(배율은 그대로라 픽셀이 뭉개지지 않음).
+// wide·tall = 기본 칸 수에 곱할 값(1 이상). 모서리 반지름·글자는 그대로, 가운데 정렬.
+const stretchLen = (base, mul) => Math.max(base, Math.round(base * (Number(mul) || 1)));
+
 /** L·R 어깨 버튼. side: 'L'|'R'. */
-export function renderShoulder({ side = 'L', state = 'normal', scale = 1, palette } = {}) {
+export function renderShoulder({ side = 'L', state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `shoulder|${side}|${st}|${s}`, () => {
-    const W = 37, H = 13;
+  const W = stretchLen(37, wide), H = stretchLen(13, tall);
+  return cached(palette, `shoulder|${side}|${st}|${s}|${W}x${H}`, () => {
     const inside = side === 'R' ? roundRectInside(W, H, 2.5, 7, 2.5, 2.5) : roundRectInside(W, H, 7, 2.5, 2.5, 2.5);
     const roles = buttonRoles('sh', st);
     const { art, faceBox } = extrude({
@@ -585,13 +589,13 @@ export function renderShoulder({ side = 'L', state = 'normal', scale = 1, palett
 }
 
 /** START·SELECT 알약 버튼. tone 'rs' = RS 버튼(같은 모양, 색만 rs 계열). */
-export function renderPill({ label = 'START', state = 'normal', scale = 1, palette, tone = 'pill' } = {}) {
+export function renderPill({ label = 'START', state = 'normal', scale = 1, palette, tone = 'pill', wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
   const prefix = tone === 'rs' ? 'rs' : 'pill';
-  return cached(palette, `${prefix}|${label}|${st}|${s}`, () => {
-    const W = 31, H = 11;
+  const W = stretchLen(31, wide), H = stretchLen(11, tall);
+  return cached(palette, `${prefix}|${label}|${st}|${s}|${W}x${H}`, () => {
     const inside = roundRectInside(W, H, 5.5, 5.5, 5.5, 5.5);
     const roles = buttonRoles(prefix, st);
     const { art, faceBox } = extrude({
@@ -605,12 +609,12 @@ export function renderPill({ label = 'START', state = 'normal', scale = 1, palet
   });
 }
 
-export function renderKeypadKey({ label = '1', state = 'normal', scale = 1, palette } = {}) {
+export function renderKeypadKey({ label = '1', state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `num|${label}|${st}|${s}`, () => {
-    const { w: W, h: H } = SIZES.num;
+  const W = stretchLen(SIZES.num.w, wide), H = stretchLen(SIZES.num.h, tall);
+  return cached(palette, `num|${label}|${st}|${s}|${W}x${H}`, () => {
     const inside = roundRectInside(W, H, 4, 4, 4, 4);
     const roles = buttonRoles('sh', st);
     const { art, faceBox } = extrude({
@@ -624,12 +628,12 @@ export function renderKeypadKey({ label = '1', state = 'normal', scale = 1, pale
   });
 }
 
-export function renderClearKey({ state = 'normal', scale = 1, palette } = {}) {
+export function renderClearKey({ state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `clearKey|${st}|${s}`, () => {
-    const { w: W, h: H } = SIZES.clearKey;
+  const W = stretchLen(SIZES.clearKey.w, wide), H = stretchLen(SIZES.clearKey.h, tall);
+  return cached(palette, `clearKey|${st}|${s}|${W}x${H}`, () => {
     const inside = roundRectInside(W, H, 4, 4, 4, 4);
     const roles = buttonRoles('sh', st);
     const { art, faceBox } = extrude({
@@ -643,12 +647,12 @@ export function renderClearKey({ state = 'normal', scale = 1, palette } = {}) {
   });
 }
 
-export function renderActionKey({ state = 'normal', scale = 1, palette } = {}) {
+export function renderActionKey({ state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `action|${st}|${s}`, () => {
-    const { w: W, h: H } = SIZES.action;
+  const W = stretchLen(SIZES.action.w, wide), H = stretchLen(SIZES.action.h, tall);
+  return cached(palette, `action|${st}|${s}|${W}x${H}`, () => {
     const inside = roundRectInside(W, H, 8, 8, 8, 8);
     const roles = buttonRoles('ab', st);
     const gloss = new Set([2 * W + 6, 2 * W + 7, 3 * W + 5]);

@@ -1,6 +1,7 @@
 // 모바일 패드 자율배치 에디터: "직접 배치"(custom) 배치에서 조작부를 화면 위에서 끌어 옮기고(자유 위치),
-// 모서리로 크기를 바꾸고, 테마 색 안에서 색을 고른다. 가로·세로 배치를 따로 저장한다.
+// 모서리로 크기(같은 비율)·변으로 가로만·세로만 바꾸고, 테마 색 안에서 색을 고른다. 가로·세로 배치를 따로 저장한다.
 // 순수 함수(데이터 모델·좌표·색 계산)는 node 로 바로 시험한다 — 아래 export. 편집 UI(PadEditor)는 브라우저에서만 생성.
+import { SIZES, KEYPAD_GAP, partSize } from "./pixel-ui.js";
 
 export const PAD_PLACEMENTS = ["default", "big", "custom"];
 export const SCALE_MIN = 0.75;
@@ -30,6 +31,7 @@ export const CONTROLS = [
 ];
 export const CONTROL_BY_ID = Object.fromEntries(CONTROLS.map((c) => [c.id, c]));
 const SOFT_IDS = ["soft1", "soft2"];
+const KEYPAD_INLINE = ["--keypad-gap", "column-gap", "grid-template-columns"]; // 키패드 자유 비율 간격(keypadGap)
 
 export const orientationKey = (landscape) => (landscape ? "landscape" : "portrait");
 
@@ -53,6 +55,7 @@ function normalizeSide(raw) {
       if (Number.isFinite(rec.x)) clean.x = Math.min(1, Math.max(0, rec.x));
       if (Number.isFinite(rec.y)) clean.y = Math.min(1, Math.max(0, rec.y));
       if (Number.isFinite(rec.scale)) clean.scale = clampScale(rec.scale);
+      if (c.id !== "screen" && Number.isFinite(rec.sx) && Number.isFinite(rec.sy)) setBox(clean, rec.sx, rec.sy);
       if (c.color !== false && typeof rec.color === "string") clean.color = rec.color;
       if (Object.keys(clean).length) controls[c.id] = clean;
     }
@@ -91,6 +94,72 @@ export const hasLayout = (layout, landscape, sig) => {
 
 export const clampScale = (mul) => Math.min(SCALE_MAX, Math.max(SCALE_MIN, Number(mul) || 1));
 export const scalePercent = (mul) => Math.round((Number(mul) || 1) * 100);
+
+// 자유 비율(가로·세로 따로). 레코드 = { scale, sx?, sy? } — scale = 그림 배율(같은 비율, 0.75~2, 예전 형식 그대로),
+// sx·sy = 상자 가로·세로 배율(기본 크기 기준, 0.75~4). sx·sy 가 없으면 상자 = scale(같은 비율 — 예전 저장 배치).
+// 그림 배율은 늘 둘 중 작은 값이라 픽셀이 뭉개지지 않고, 남는 쪽은 skin 이 칸 수(둥근 사각형)·상자(둥근 버튼·방향)로 늘린다.
+// 화면(게임 그림)은 비율을 지킨다 — sx·sy 없음.
+export const STRETCH_MAX = 4;
+const SAME_RATIO = 0.005;
+export const clampBox = (mul) => Math.min(STRETCH_MAX, Math.max(SCALE_MIN, Number(mul) || 1));
+
+export function boxScale(rec) {
+  const s = Number.isFinite(rec?.scale) ? rec.scale : 1;
+  return { x: Number.isFinite(rec?.sx) ? rec.sx : s, y: Number.isFinite(rec?.sy) ? rec.sy : s };
+}
+
+// 그림 배율 위에 더 늘리는 가로·세로 배(1 이상).
+export function stretchOf(rec) {
+  const box = boxScale(rec);
+  const art = Number.isFinite(rec?.scale) ? rec.scale : Math.min(box.x, box.y);
+  return { x: Math.max(1, box.x / art), y: Math.max(1, box.y / art) };
+}
+
+export const isStretched = (rec) => {
+  const st = stretchOf(rec);
+  return st.x > 1 + SAME_RATIO || st.y > 1 + SAME_RATIO;
+};
+
+// 상자 배율을 정한다. 같은 비율(그리고 2 이하)이면 sx·sy 를 지워 예전 형식({scale})으로 남긴다.
+export function setBox(rec, x, y) {
+  const bx = clampBox(x);
+  const by = clampBox(y);
+  if (Math.abs(bx - by) <= SAME_RATIO && bx <= SCALE_MAX) {
+    rec.scale = clampScale(bx);
+    delete rec.sx;
+    delete rec.sy;
+  } else {
+    rec.scale = clampScale(Math.min(bx, by));
+    rec.sx = bx;
+    rec.sy = by;
+  }
+  return rec;
+}
+
+// 키패드를 가로·세로 따로 늘였을 때 칸 간격(css px). 키는 칸 수로 늘리고(pixel-ui stretchLen 과 같은 반올림), 남는 길이는
+// 간격이 채워 키패드 상자 = 기본 크기(배율 1) × sx·sy 가 정확히 맞는다 — 가로 100% 로 맞춘 뒤 세로를 바꿔도 가로가 그대로.
+// 키패드 모양(web.css .keypad): 3칸 × (숫자 4줄 + CLR·OK 1줄), 줄 사이와 CLR·OK 줄 위 여백이 같은 간격.
+// unit = 배율 1 의 아트 1칸(css px), keyUnit = 지금 그림 배율의 아트 1칸(css px).
+export function keypadGaps({ unit, keyUnit, box, stretch }) {
+  const len = (base, mul) => Math.max(base, Math.round(base * mul));
+  const extra = partSize("num", 1).h - SIZES.num.h; // 키 아래 옆면·그림자 칸
+  const lastBase = Math.max(SIZES.clearKey.h, SIZES.action.h);
+  const keyW = len(SIZES.num.w, stretch.x) * keyUnit;
+  const numH = (len(SIZES.num.h, stretch.y) + extra) * keyUnit;
+  const lastH = (Math.max(len(SIZES.clearKey.h, stretch.y), len(SIZES.action.h, stretch.y)) + extra) * keyUnit;
+  const baseW = (3 * SIZES.num.w + 2 * KEYPAD_GAP) * unit;
+  const baseH = (4 * (SIZES.num.h + extra) + lastBase + extra + 5 * KEYPAD_GAP) * unit;
+  // key = 칸 폭 — 칸을 이 폭으로 고정해 두 칸에 걸친 OK 가 반올림으로 1px 넓어도 칸이 벌어지지 않게(간격 쪽으로 넘침).
+  return { key: keyW, col: Math.max(0, (baseW * box.x - 3 * keyW) / 2), row: Math.max(0, (baseH * box.y - 4 * numH - lastH) / 5) };
+}
+
+// 크기 표시: 같은 비율 "120%", 따로면 "가로×세로%"(예: "240×100%").
+export function sizeText(rec) {
+  const box = boxScale(rec);
+  const x = scalePercent(box.x);
+  const y = scalePercent(box.y);
+  return x === y ? `${x}%` : `${x}×${y}%`;
+}
 
 // 배율은 기기 픽셀 정수 단위로 커진다 — 지금 배율의 기기 픽셀 수(basePx×mul)를 1칸씩 바꾼 뒤 다시 곱으로.
 export function scaleStep(mul, dir, basePx) {
@@ -248,26 +317,57 @@ export class PadEditor {
     if (this.editing) this.syncFrames();
   }
 
-  // 모델 → skin 배율·색 override 묶음. 색 id → 지금 테마 hex.
+  // 모델 → skin 배율·색·늘림 override 묶음. 색 id → 지금 테마 hex.
   overridesFromWork(model) {
     const palette = this.deps.skin().palette;
     const scaleMul = {};
     const colorHex = {};
+    const stretch = {};
     for (const c of CONTROLS) {
       if (c.id === "screen") continue;
       const rec = model.controls?.[c.id];
       if (!rec) continue;
       if (rec.scale && rec.scale !== 1) for (const k of c.keys) scaleMul[k] = rec.scale;
+      if (isStretched(rec)) {
+        const st = stretchOf(rec);
+        for (const k of c.keys) stretch[k] = st;
+      }
       if (c.color !== false && rec.color) {
         const hex = colorHexOf(palette, rec.color);
         if (hex) for (const k of c.colorKeys ?? c.keys) colorHex[k] = hex;
       }
     }
-    return { scaleMul, colorHex };
+    return { scaleMul, colorHex, stretch };
+  }
+
+  // skin 에 배율·색·늘림을 넘기고 키패드 칸 간격을 맞춘다(자리는 건드리지 않음).
+  refreshLook(model) {
+    this.deps.skin().setOverrides(this.overridesFromWork(model));
+    this.keypadGap(model);
+  }
+
+  // 키패드를 가로·세로 따로 늘이면 키(칸 수로 늘림) 사이 간격으로 상자 크기를 정확히 맞춘다(keypadGaps).
+  // 간격은 기기 픽셀 정수로 내림(키 그림이 반 픽셀에 놓여 흐려지지 않고, 상자가 목표보다 커지지 않게).
+  // 세로 간격은 CLR·OK 줄 위 여백(--keypad-gap)도 함께.
+  keypadGap(model) {
+    const node = this.node(CONTROL_BY_ID.keypad);
+    if (!node) return;
+    const rec = model.controls?.keypad;
+    if (!isStretched(rec)) {
+      for (const v of KEYPAD_INLINE) node.style.removeProperty(v);
+      return;
+    }
+    const skin = this.deps.skin();
+    const dpr = skin.dpr || 1;
+    const gaps = keypadGaps({ unit: skin.px(skin.art) / dpr, keyUnit: skin.effScale("N1", skin.art) / dpr, box: boxScale(rec), stretch: stretchOf(rec) });
+    const px = (v) => `${Math.floor(v * dpr + 0.001) / dpr}px`;
+    node.style.setProperty("--keypad-gap", px(gaps.row));
+    node.style.columnGap = px(gaps.col);
+    node.style.gridTemplateColumns = `repeat(3, ${px(gaps.key)})`;
   }
 
   applyModel(model) {
-    this.deps.skin().setOverrides(this.overridesFromWork(model));
+    this.refreshLook(model);
     this.positionAll(model);
   }
 
@@ -360,6 +460,7 @@ export class PadEditor {
       const node = c.id === "screen" ? el.stage : this.node(c);
       if (!node) continue;
       for (const v of ["position", "left", "top", "translate"]) node.style.removeProperty(v);
+      if (c.id === "keypad") for (const v of KEYPAD_INLINE) node.style.removeProperty(v);
     }
     if (el.face) for (const v of ["--face-w", "--face-h", "--face-up", "--rs-band"]) el.face.style.removeProperty(v);
     this.deps.clearScreenInline?.();
@@ -603,7 +704,8 @@ export class PadEditor {
     this.deps.body.removeAttribute("data-pad-edit");
   }
 
-  // 조작부마다 점선 테두리 + 모서리 손잡이. 선택한 것은 강조·크기 배지.
+  // 조작부마다 점선 테두리 + 손잡이(선택했을 때). 모서리 = 같은 비율 크기, 변 = 가로만·세로만(둘 다 가운데 기준).
+  // 변 손잡이는 화면 가운데 쪽 변에 둔다(화면 끝에 붙은 조작부도 손잡이가 화면 안) — 화면(게임 그림)은 비율을 지켜 변 손잡이 없음.
   syncFrames() {
     if (!this.framesLayer) return;
     const rect = this.deps.appRect();
@@ -629,8 +731,17 @@ export class PadEditor {
         box.append(handle, badge);
         box.addEventListener("pointerdown", (e) => this.onDown(e, c.id, "move"));
         handle.addEventListener("pointerdown", (e) => this.onDown(e, c.id, "resize"));
+        f = { box, handle, badge, hx: null, hy: null };
+        if (c.id !== "screen") {
+          f.hx = doc.createElement("div");
+          f.hx.className = "padedit__handle padedit__handle--x";
+          f.hy = doc.createElement("div");
+          f.hy.className = "padedit__handle padedit__handle--y";
+          box.append(f.hx, f.hy);
+          f.hx.addEventListener("pointerdown", (e) => this.onDown(e, c.id, "resize-x"));
+          f.hy.addEventListener("pointerdown", (e) => this.onDown(e, c.id, "resize-y"));
+        }
         this.framesLayer.append(box);
-        f = { box, handle, badge };
         this.frames.set(c.id, f);
       }
       const r = node.getBoundingClientRect();
@@ -640,12 +751,16 @@ export class PadEditor {
         width: `${r.width}px`,
         height: `${r.height}px`,
       });
-      f.box.classList.toggle("is-on", this.selected === c.id);
+      const on = this.selected === c.id;
+      f.box.classList.toggle("is-on", on);
       f.box.classList.toggle("is-right", r.left + r.width / 2 - rect.left > rect.w / 2);
+      f.box.classList.toggle("is-low", r.top + r.height / 2 - rect.top > rect.h / 2);
       const rec = this.work.controls[c.id];
-      f.badge.textContent = `${this.deps.t(`web.pad.ctl.${c.id}`)} ${scalePercent(rec?.scale ?? 1)}%`;
-      f.badge.hidden = this.selected !== c.id;
-      f.handle.hidden = this.selected !== c.id;
+      f.badge.textContent = `${this.deps.t(`web.pad.ctl.${c.id}`)} ${sizeText(rec)}`;
+      f.badge.hidden = !on;
+      f.handle.hidden = !on;
+      if (f.hx) f.hx.hidden = !on;
+      if (f.hy) f.hy.hidden = !on;
     }
   }
 
@@ -710,12 +825,36 @@ export class PadEditor {
     name.textContent = `${t("web.pad.edit.size")} · ${t(`web.pad.ctl.${c.id}`)}`;
     const minus = this.cardBtn("−", () => this.bumpScale(-1));
     const val = doc.createElement("span");
-    val.className = "padedit__val";
-    val.textContent = `${scalePercent(rec.scale ?? 1)}%`;
-    const plus = this.cardBtn("+", () => this.bumpScale(1));
+    const stretched = Number.isFinite(rec.sx);
+    val.className = `padedit__val${stretched ? " padedit__val--wide" : ""}`;
+    val.textContent = sizeText(rec);
+    const plus = this.cardBtn("", () => this.bumpScale(1));
+    // "+" 글자는 글꼴 안에서 반 픽셀 낮게 앉는다 — 잉크 세로 가운데로 글자만 반 픽셀 올린다(버튼 상자는 −·값과 같은 줄).
+    const glyph = doc.createElement("span");
+    glyph.className = "padedit__plus";
+    glyph.textContent = "+";
+    plus.append(glyph);
     row.append(name, minus, val, plus);
     this.card.append(row);
+    // 가로·세로를 따로 바꿨으면 "원래 비율"(지금 그림 배율의 같은 비율로) 버튼.
+    if (stretched) {
+      const ratio = doc.createElement("div");
+      ratio.className = "padedit__row padedit__row--ratio";
+      const fix = this.cardBtn(t("web.pad.edit.ratio"), () => this.resetRatio());
+      fix.classList.add("padedit__ratio");
+      ratio.append(fix);
+      this.card.append(ratio);
+    }
     if (c.color !== false) this.card.append(this.colorRow(c, rec));
+  }
+
+  resetRatio() {
+    const rec = this.work.controls[this.selected];
+    if (!rec) return;
+    setBox(rec, rec.scale ?? 1, rec.scale ?? 1);
+    this.applyModel(this.work);
+    this.syncFrames();
+    this.renderCard();
   }
 
   cardBtn(label, on) {
@@ -776,7 +915,14 @@ export class PadEditor {
     const rec = this.work.controls[c.id];
     if (!rec) return;
     const basePx = this.deps.basePx(c.id);
-    rec.scale = scaleStep(rec.scale ?? 1, dir, basePx);
+    const before = rec.scale ?? 1;
+    const next = scaleStep(before, dir, basePx);
+    // 가로·세로를 따로 바꾼 조작부는 그 비율 그대로 함께 키우고 줄인다(그림 배율 = 작은 쪽이 한 칸씩).
+    if (Number.isFinite(rec.sx) && c.id !== "screen") {
+      const box = boxScale(rec);
+      const f = next / before;
+      setBox(rec, box.x * f, box.y * f);
+    } else rec.scale = next;
     this.applyModel(this.work);
     this.syncFrames();
     this.renderCard();
@@ -792,6 +938,7 @@ export class PadEditor {
     const r = node.getBoundingClientRect();
     const rect = this.deps.appRect();
     const rec = this.work.controls[id] ?? (this.work.controls[id] = { x: 0.5, y: 0.5, scale: 1 });
+    const box = boxScale(rec);
     this.drag = {
       id,
       kind,
@@ -805,6 +952,8 @@ export class PadEditor {
       baseW: Math.max(12, r.width),
       baseH: Math.max(12, r.height),
       scale: clampScale(rec.scale ?? 1),
+      bx: box.x,
+      by: box.y,
       basePx: this.deps.basePx(id),
     };
     const win = this.deps.win();
@@ -846,16 +995,29 @@ export class PadEditor {
       this.live = { cx, cy };
       this.placeNode(node, cx, cy, d.w, d.h, rect); // 화면·버튼 모두 같은 기준(현재 위치·offsetParent 원점)
       this.drawGuides(snapped.guides, rect);
+    } else if (d.kind === "resize-x" || d.kind === "resize-y") {
+      this.resizeEdge(d, node, rect);
+      this.updateBadge(d.id);
     } else {
       // 크기: 손잡이를 가운데에서 멀리 끌수록 커진다(모서리 무관·가운데 고정). 기기 픽셀 정수 칸은 skin.effScale 이 반올림.
+      // 가로·세로를 따로 바꾼 조작부는 그 비율 그대로 함께(그림 배율 = 작은 쪽 0.75~2, 상자는 4 까지).
       const r0 = Math.hypot(d.baseW / 2, d.baseH / 2) || 1;
       const now = Math.hypot(this.pending.x - (rect.left + d.cx), this.pending.y - (rect.top + d.cy));
-      const target = clampScale(d.scale * now / r0);
-      this.live = { scale: target };
       const rec = this.work.controls[d.id];
-      rec.scale = target;
+      if (d.id === "screen" || (d.bx === d.by && d.bx <= SCALE_MAX)) {
+        const target = clampScale(d.scale * now / r0);
+        this.live = { scale: target };
+        if (d.id === "screen") rec.scale = target;
+        else setBox(rec, target, target);
+      } else {
+        const lo = Math.min(d.bx, d.by);
+        const hi = Math.max(d.bx, d.by);
+        const f = Math.max(SCALE_MIN / lo, Math.min(now / r0, SCALE_MAX / lo, STRETCH_MAX / hi));
+        setBox(rec, d.bx * f, d.by * f);
+        this.live = { scale: rec.scale };
+      }
       if (d.id === "screen") { rec.x = d.cx / rect.w; rec.y = d.cy / rect.h; }
-      this.deps.skin().setOverrides(this.overridesFromWork(this.work));
+      this.refreshLook(this.work);
       if (d.id === "screen") {
         this.positionScreen(rec, null, rect);
       } else {
@@ -867,11 +1029,49 @@ export class PadEditor {
     this.syncSelectedFrame();
   }
 
+  // 변 손잡이: 가로만(또는 세로만) 늘이고 줄인다. 모서리처럼 가운데 기준 — 손잡이와 가운데 사이 거리의 두 배가 그 방향 길이.
+  // 손잡이가 화면 가운데 쪽 변에 있어, 어디에 놓인 조작부든 반대쪽 화면 끝까지 끌면 가로(세로) 100% 가 된다
+  // (화면을 넘으면 화면 크기에서 멈추고 화면 안으로 밀려 들어온다). 격자 맞춤이면 100%·원래 비율에 붙는다.
+  resizeEdge(d, node, rect) {
+    const rec = this.work.controls[d.id];
+    const horiz = d.kind === "resize-x";
+    const span = horiz ? rect.w : rect.h;
+    const size0 = horiz ? d.w : d.h;
+    const center = horiz ? d.cx : d.cy;
+    const at = horiz ? this.pending.x - rect.left : this.pending.y - rect.top;
+    let want = Math.max(12, Math.min(span, 2 * Math.abs(at - center)));
+    const full = this.snapOn && span - want <= SNAP_TOL * 2;
+    if (full) want = span;
+    const other = horiz ? d.by : d.bx;
+    let mul = (horiz ? d.bx : d.by) * (want / size0);
+    if (!full && this.snapOn && Math.abs(mul - other) / other < 0.03) mul = other; // 원래 비율 근처면 원래 비율로
+    const apply = (m) => {
+      if (horiz) setBox(rec, m, d.by);
+      else setBox(rec, d.bx, m);
+      this.refreshLook(this.work);
+      return this.sizeOf(node);
+    };
+    const len = (s) => (horiz ? s.w : s.h);
+    let size = apply(mul);
+    // 그림 칸 수는 정수라 반올림으로 몇 px 어긋난다 — 100% 에 붙였으면 화면 크기에 가깝게 맞추고, 화면보다 크면 줄인다.
+    for (let i = 0; i < 4 && full && len(size) < span - 0.5; i++) {
+      mul *= span / len(size);
+      size = apply(mul);
+    }
+    for (let i = 0; i < 6 && len(size) > span + 0.5; i++) {
+      mul *= (span / len(size)) * 0.998;
+      size = apply(mul);
+    }
+    const { cx, cy } = clampCenter(d.cx, d.cy, size.w, size.h, rect.w, rect.h);
+    this.live = { cx, cy };
+    this.placeNode(node, cx, cy, size.w, size.h, rect);
+  }
+
   updateBadge(id) {
     const f = this.frames.get(id);
     if (!f) return;
     const rec = this.work.controls[id];
-    f.badge.textContent = `${this.deps.t(`web.pad.ctl.${id}`)} ${scalePercent(rec?.scale ?? 1)}%`;
+    f.badge.textContent = `${this.deps.t(`web.pad.ctl.${id}`)} ${sizeText(rec)}`;
   }
 
   otherBoxes(skipId, rect) {
@@ -932,7 +1132,8 @@ export class PadEditor {
     const d = this.drag;
     const rect = this.deps.appRect();
     const rec = this.work.controls[d.id] ?? (this.work.controls[d.id] = {});
-    if (d.kind === "move" && this.live) {
+    if ((d.kind === "move" || d.kind === "resize-x" || d.kind === "resize-y") && this.live) {
+      // 변으로 늘이다 화면 끝에 닿으면 화면 안으로 밀려 가운데가 바뀐다 — 그 가운데를 저장.
       rec.x = Math.min(1, Math.max(0, this.live.cx / rect.w));
       rec.y = Math.min(1, Math.max(0, this.live.cy / rect.h));
     } else if (d.kind === "resize" && this.live) {

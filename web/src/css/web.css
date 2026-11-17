@@ -5394,6 +5394,23 @@ body[data-pad-edit][data-layout="portrait"] .bar {
   line-height: 1;
 }
 
+/* "+" 글자는 글꼴 안에서 반 픽셀 낮게 앉는다 — 글자만 반 픽셀 올려 잉크 세로 가운데(여백으로는 1px 단위라 넘침). */
+.padedit__plus {
+  display: inline-block;
+  translate: 0 -0.5px;
+}
+
+/* 가로·세로 따로("240×100%")면 글자 폭만큼. */
+.padedit__val--wide {
+  width: auto;
+  min-width: 56px;
+  white-space: nowrap;
+}
+
+.padedit__row--ratio {
+  justify-content: flex-end;
+}
+
 .padedit__swatch {
   flex: none;
   width: 32px;
@@ -5465,6 +5482,53 @@ body[data-view="start"] .padedit__sel[data-ctl="screen"]:not(.is-on)::after {
   background: var(--accent);
   outline: 2px solid var(--bg-sunken);
   touch-action: none;
+}
+
+/* 모서리(같은 비율)는 바깥쪽 아래 모서리, 변(가로만·세로만)은 화면 가운데 쪽 변 가운데 — 셋이 겹치지 않게.
+   변 손잡이는 막대 모양(어느 쪽으로 늘이는지), 누르는 자리는 ::before 로 넓힌다. */
+.padedit__sel.is-right .padedit__handle:not(.padedit__handle--x):not(.padedit__handle--y) {
+  left: auto;
+  right: -13px;
+}
+
+.padedit__handle--x,
+.padedit__handle--y {
+  bottom: auto;
+}
+
+.padedit__handle--x {
+  left: auto;
+  right: -8px;
+  top: 50%;
+  width: 16px;
+  height: 32px;
+  translate: 0 -50%;
+}
+
+.padedit__sel.is-right .padedit__handle--x {
+  right: auto;
+  left: -8px;
+}
+
+.padedit__handle--y {
+  left: 50%;
+  top: auto;
+  bottom: -8px;
+  width: 32px;
+  height: 16px;
+  translate: -50% 0;
+}
+
+.padedit__sel.is-low .padedit__handle--y {
+  bottom: auto;
+  top: -8px;
+}
+
+.padedit__handle--x::before,
+.padedit__handle--y::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 .padedit__badge {
