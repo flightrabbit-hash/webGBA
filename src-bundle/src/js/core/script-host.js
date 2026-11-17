@@ -32,6 +32,35 @@ const LOG_KEEP = 300;
 const LOG_PER_SEC = 100;
 const SAVE_MAX_DEFAULT = 1 << 20;
 
+const RELAY_MODULE_MAX = 1 << 20;
+const RELAY_NODES_MAX = 8;
+const RELAY_GESTURES = ["pointerdown", "pointerup", "touchend", "keydown", "click"];
+
+// 소리 중계(모바일 게임 · 웹킷): 웹킷(iOS·macOS Safari, iOS 의 모든 브라우저)은 AudioContext 를 그 문서 자신의 사용자 동작으로만
+// 시작하고, 본 창 누름은 출처 없는 틀로 번지지 않는다 → 게임의 AudioWorklet 을 본 창 AudioContext 에서 돌린다(runner.js 소리 중계).
+// localStorage "webgba.audioRelay" 가 "1"·"0" 이면 그대로 따른다(시험용).
+function relayWanted(manifest) {
+  if (!isMobile(manifest) || typeof AudioContext !== "function" || typeof AudioWorkletNode !== "function") return false;
+  let force = null;
+  try {
+    force = globalThis.localStorage?.getItem("webgba.audioRelay") ?? null;
+  } catch {}
+  if (force === "1" || force === "0") return force === "1";
+  return /Apple/.test(globalThis.navigator?.vendor ?? "");
+}
+
+/** 틀이 보낸 AudioWorkletNode 옵션 중 쓸 것만(구조 복제로 온 값). */
+function relayNodeOptions(o) {
+  const out = {};
+  if (!o || typeof o !== "object") return out;
+  for (const key of ["numberOfInputs", "numberOfOutputs", "channelCount"]) if (Number.isInteger(o[key]) && o[key] >= 0 && o[key] <= 32) out[key] = o[key];
+  if (Array.isArray(o.outputChannelCount)) out.outputChannelCount = o.outputChannelCount.filter((n) => Number.isInteger(n) && n >= 1 && n <= 32).slice(0, 8);
+  for (const key of ["channelCountMode", "channelInterpretation"]) if (typeof o[key] === "string") out[key] = o[key];
+  if (o.parameterData && typeof o.parameterData === "object") out.parameterData = o.parameterData;
+  if (o.processorOptions !== undefined) out.processorOptions = o.processorOptions;
+  return out;
+}
+
 let runnerText = null;
 
 async function runnerSource() {
@@ -130,6 +159,110 @@ export class ScriptHost {
     this.onHostKey = onHostKey;
     this.onNet = null;
     this.ready = false;
+    this.relay = null;
+    this.onGesture = null;
+  }
+
+  // ── 소리 중계: 본 창 AudioContext(게임마다 새로 — 등록한 처리기 이름이 다음 게임과 겹치지 않게) ──
+  openRelay() {
+    this.closeRelay();
+    if (!relayWanted(this.manifest)) return;
+    try {
+      const ac = new AudioContext({ latencyHint: "interactive" });
+      const gain = ac.createGain();
+      gain.gain.value = this.volume;
+      gain.connect(ac.destination);
+      const relay = { ac, gain, nodes: new Map(), held: false };
+      ac.addEventListener("statechange", () => this.relay === relay && this.post({ type: "audio", op: "state", state: ac.state }));
+      this.relay = relay;
+      this.onGesture = () => this.wakeRelay(true);
+      for (const type of RELAY_GESTURES) window.addEventListener(type, this.onGesture, { capture: true, passive: true });
+      // 게임을 고른 누름이 아직 살아 있으면(사용자 동작은 약 5초) 여기서 바로 열린다. 아니면 다음 누름·키에서.
+      this.wakeRelay(true);
+    } catch (error) {
+      this.writeLog("warn", `소리 중계를 열지 못함: ${error}`);
+      this.closeRelay();
+    }
+  }
+
+  // gesture: 사용자 동작 안(또는 직후 — 틀 안 누름이 남긴 본 창 동작)에서 부를 때. iOS 오디오 세션을 깨우려고 1표본 무음을 한 번 튼다.
+  wakeRelay(gesture = false) {
+    const relay = this.relay;
+    if (!relay || this.paused || relay.ac.state === "running" || relay.ac.state === "closed") return;
+    if (gesture) {
+      try {
+        const blip = relay.ac.createBufferSource();
+        blip.buffer = relay.ac.createBuffer(1, 1, relay.ac.sampleRate);
+        blip.connect(relay.ac.destination);
+        blip.start(0);
+      } catch {}
+    }
+    relay.ac.resume().catch(() => {});
+  }
+
+  closeRelay() {
+    const relay = this.relay;
+    this.relay = null;
+    if (this.onGesture) {
+      for (const type of RELAY_GESTURES) window.removeEventListener(type, this.onGesture, { capture: true });
+      this.onGesture = null;
+    }
+    if (!relay) return;
+    for (const { node, port } of relay.nodes.values()) {
+      try {
+        node.disconnect();
+        node.port.close();
+        port.close();
+      } catch {}
+    }
+    relay.ac.close().catch(() => {});
+  }
+
+  async relayFrom(data) {
+    const relay = this.relay;
+    if (data.op === "gesture") return this.wakeRelay(true);
+    if (data.op === "wake") return this.wakeRelay(false);
+    if (data.op === "module") {
+      if (!Number.isInteger(data.id)) return;
+      let error = "";
+      try {
+        if (!relay) throw new Error("no relay");
+        const text = String(data.text ?? "");
+        // 게임 글이 틀 밖(본 창의 AudioWorkletGlobalScope)에서 돈다. 그 범위에는 DOM·저장소·fetch·Worker 가 없고 동적 import 도 막혀,
+        // 남은 바깥 길은 정적 import 뿐 → import 낱말이 있는 모듈은 받지 않는다(키워드는 이스케이프로 쓸 수 없음).
+        if (text.length > RELAY_MODULE_MAX || /\bimport\b/.test(text)) throw new Error("module refused");
+        const url = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+        try {
+          await relay.ac.audioWorklet.addModule(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      } catch (e) {
+        error = String(e?.message ?? e).slice(0, 200) || "module";
+      }
+      if (this.relay === relay) this.post({ type: "audio", op: "module", id: data.id, error });
+    } else if (data.op === "node") {
+      const port = data.port;
+      if (!relay || !Number.isInteger(data.id) || !(port instanceof MessagePort) || relay.nodes.size >= RELAY_NODES_MAX) return port?.close?.();
+      try {
+        const node = new AudioWorkletNode(relay.ac, String(data.name ?? "").slice(0, 64), relayNodeOptions(data.options));
+        // 틀 포트 ↔ 진짜 노드 포트: 내용은 보지 않고 그대로 넘긴다(옮긴 포트도 — 게임의 소리 스레드가 처리기와 바로 이야기)
+        port.onmessage = (event) => node.port.postMessage(event.data, [...event.ports]);
+        node.port.onmessage = (event) => port.postMessage(event.data, [...event.ports]);
+        node.onprocessorerror = () => this.noteLog("warn", "audio processor error");
+        relay.nodes.set(data.id, { node, port });
+      } catch (e) {
+        this.noteLog("warn", `audio node: ${e?.message ?? e}`);
+        port.close();
+      }
+    } else if (data.op === "connect" || data.op === "disconnect") {
+      const entry = relay?.nodes.get(data.id);
+      if (!entry) return;
+      try {
+        if (data.op === "connect") entry.node.connect(relay.gain);
+        else entry.node.disconnect();
+      } catch {}
+    }
   }
 
   netPost(message, transfer = []) {
@@ -214,6 +347,7 @@ export class ScriptHost {
     // 화면이 틀 크기를 맞춘다(exe: 정수 배율·영역 맞춤, 웹: 화면 칸 꽉). 틀은 처음부터 보여야 requestAnimationFrame 이 돈다.
     this.onFrame?.(frame);
     await hello;
+    this.openRelay();
     const ready = new Promise((resolve) => {
       this.readyDone = resolve;
       this.readyTimer = setTimeout(resolve, READY_WAIT_MS);
@@ -260,6 +394,7 @@ export class ScriptHost {
         autoFire: this.fire,
         text: { tap: this.text.tap ?? "" },
         throttleTap: !isMobile(this.manifest),
+        audio: this.relay ? { relay: true, rate: this.relay.ac.sampleRate, state: this.relay.ac.state } : null,
         net: this.manifest.multiplayer && !netNewer(this.manifest) ? { protocol: 1, ordered: true, inputs: false, rejoin: this.manifest.multiplayer.rejoin === true } : null,
       },
       transfer,
@@ -367,6 +502,9 @@ export class ScriptHost {
       case "net":
         if (typeof data.op === "string") this.netFrom(data);
         break;
+      case "audio":
+        if (typeof data.op === "string") this.relayFrom(data);
+        break;
       case "exit":
         this.halt(String(data.reason ?? "").slice(0, 300) || (this.text.exited ?? "exit"));
         break;
@@ -428,6 +566,21 @@ export class ScriptHost {
   setPaused(paused) {
     this.paused = Boolean(paused);
     this.post({ type: "pause", paused: this.paused });
+    const relay = this.relay;
+    if (!relay || relay.ac.state === "closed") return;
+    if (this.paused) {
+      if (relay.ac.state === "running") {
+        relay.held = true;
+        relay.ac.suspend().catch(() => {});
+      }
+    } else if (relay.held) {
+      // 한 번 시작한 컨텍스트는 사용자 동작 없이 다시 켜진다
+      relay.held = false;
+      relay.ac.resume().catch(() => {});
+    } else {
+      // 아직 한 번도 안 열렸으면: 일시정지를 푼 누름(창 capture 수신은 아직 일시정지라 건너뜀) 안에서 연다
+      this.wakeRelay(true);
+    }
   }
 
   setSpeed(speed) {
@@ -450,6 +603,7 @@ export class ScriptHost {
   setVolume(volume) {
     this.volume = volume;
     this.post({ type: "volume", value: volume });
+    if (this.relay) this.relay.gain.gain.value = volume;
   }
 
   // 가속 중 음소거(fastMute) 를 게임에 알린다 — 게임(game.js)이 speed 와 함께 참조해 가속 리샘플·음소거를 정한다.
@@ -522,6 +676,7 @@ export class ScriptHost {
     } catch {}
     this.port = null;
     this.stateOn = false;
+    this.closeRelay();
     this.removeFrame();
   }
 }
