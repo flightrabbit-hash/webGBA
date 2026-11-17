@@ -5262,8 +5262,29 @@ body[data-pad-free][data-pad-edit] .pad {
   min-height: 32px;
 }
 
-.padedit__row--color {
+.padedit__row--color,
+.padedit__row--seg {
   flex-wrap: wrap;
+}
+
+.padedit__seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--bg-hover);
+  border: 0;
+  outline: 2px solid var(--bg-sunken);
+  font: inherit;
+}
+
+.padedit__seg.is-on {
+  background: var(--bg-active);
+  color: var(--on);
 }
 
 .padedit__name {

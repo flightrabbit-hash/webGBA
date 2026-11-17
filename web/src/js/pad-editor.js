@@ -179,7 +179,11 @@ export class PadEditor {
     this.drag = null;
     this.raf = 0;
     this.pending = null;
+    this.setKind = "game"; // 편집 중인 조작부 집합(game·cd·rs·cdrs·keypad)
   }
+
+  // 편집에서 고를 수 있는 조작부 집합(강제 표시). 현재 게임 + 추가 버튼.
+  static SETS = ["game", "cd", "rs", "cdrs", "keypad"];
 
   init(deps) {
     this.deps = deps;
@@ -398,14 +402,9 @@ export class PadEditor {
     return this.deps.landscape() === landscape && this.deps.padOn();
   }
 
-  startEdit(landscape) {
-    if (this.editing || !this.canEdit(landscape)) return;
-    const orient = orientationKey(landscape);
-    this.orient = orient;
-    this.sig = this.currentSig();
+  // 지금 signature·방향의 저장값(없으면 기본 격자 가운데)으로 작업 사본을 만든다.
+  buildSeed(landscape) {
     const saved = this.sideFor(this.sig, landscape);
-    this.before = { placement: this.placement(), layout: this.deps.prefs().padLayout };
-    // 저장된 배치가 없으면 기본 격자에서 가운데를 포착해 씨앗으로(저장값 우선).
     const def = this.captureDefaults();
     const seed = { controls: {} };
     for (const c of CONTROLS) {
@@ -419,6 +418,16 @@ export class PadEditor {
       if (!Number.isFinite(seed.controls[c.id].x)) seed.controls[c.id].x = base.x;
       if (!Number.isFinite(seed.controls[c.id].y)) seed.controls[c.id].y = base.y;
     }
+    return seed;
+  }
+
+  startEdit(landscape) {
+    if (this.editing || !this.canEdit(landscape)) return;
+    this.orient = orientationKey(landscape);
+    this.setKind = "game";
+    this.sig = this.currentSig();
+    this.before = { placement: this.placement(), layout: this.deps.prefs().padLayout };
+    const seed = this.buildSeed(landscape);
     this.defaultsSeed = JSON.parse(JSON.stringify(seed));
     this.work = seed;
     this.selected = null;
@@ -427,6 +436,25 @@ export class PadEditor {
     this.deps.hold(true);
     this.deps.relayout();
     this.buildOverlay();
+  }
+
+  // 조작부 집합 전환: 해당 버튼을 편집용으로 강제 표시 → 그 집합의 signature·배치로 다시 구성.
+  pickSet(kind) {
+    if (!this.editing || !PadEditor.SETS.includes(kind) || kind === this.setKind) return;
+    this.setKind = kind;
+    this.deps.forceSet(kind);
+    this.sig = this.currentSig();
+    this.selected = null;
+    this.reseed();
+    this.applyModel(this.work);
+    this.syncFrames();
+    this.renderCard();
+  }
+
+  reseed() {
+    const seed = this.buildSeed(this.orient === "landscape");
+    this.defaultsSeed = JSON.parse(JSON.stringify(seed));
+    this.work = seed;
   }
 
   exit(apply) {
@@ -441,6 +469,8 @@ export class PadEditor {
     }
     this.before = null;
     this.work = null;
+    this.setKind = "game";
+    this.deps.forceSet?.("game"); // 강제로 켠 버튼을 실제 게임 상태로 원복
     this.deps.relayout();
   }
 
@@ -584,12 +614,37 @@ export class PadEditor {
     this.renderCard();
   }
 
-  // 가운데 미세 조절 카드: 선택한 조작부 이름·크기 − + ·색 고르기.
+  // 조작부 집합 선택(세그먼트): 현재 게임이 안 쓰는 C·D·RS·키패드도 편집용으로 꺼내 배치·저장한다.
+  segmentRow() {
+    const doc = this.deps.doc();
+    const t = this.deps.t;
+    const row = doc.createElement("div");
+    row.className = "padedit__row padedit__row--seg";
+    const name = doc.createElement("span");
+    name.className = "padedit__name";
+    name.textContent = t("web.pad.edit.set");
+    row.append(name);
+    for (const kind of PadEditor.SETS) {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "padedit__seg";
+      b.textContent = t(`web.pad.edit.set.${kind}`);
+      const on = (this.setKind || "game") === kind;
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-pressed", String(on));
+      b.addEventListener("click", () => this.pickSet(kind));
+      row.append(b);
+    }
+    return row;
+  }
+
+  // 가운데 미세 조절 카드: 조작부 집합 · 선택한 조작부 이름·크기 − + ·색 고르기.
   renderCard() {
     if (!this.card) return;
     const doc = this.deps.doc();
     const t = this.deps.t;
     this.card.replaceChildren();
+    this.card.append(this.segmentRow());
     const help = doc.createElement("p");
     help.className = "padedit__help";
     help.textContent = this.selected ? t("web.pad.edit.help2") : t("web.pad.edit.help1");

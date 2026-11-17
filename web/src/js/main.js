@@ -761,6 +761,35 @@ function clearScreenFree() {
   for (const v of ["position", "left", "top", "width", "height"]) el.stage.style.removeProperty(v);
 }
 
+// 편집용 조작부 집합 강제 표시. kind "game" = 실제 게임 가시성으로 원복, 그 외 = 해당 버튼을 임시로 켬(그림까지).
+// state.input·state.mobile·player 는 건드리지 않고 가시 속성만 직접 맞춘다(setInput 의 변경 감지에 의존하지 않음 → 원복 확실).
+function padEditForceSet(kind) {
+  const slots = touchSlots(state.input);
+  // 1) 실제 게임 가시성으로 리셋(이전 강제 흔적 제거).
+  document.body.toggleAttribute("data-mobile", Boolean(state.mobile));
+  const realExtra = EXTRA_PAD.filter((n) => slots.has(n));
+  if (realExtra.length) el.pad.dataset.extra = realExtra.join(" "); else delete el.pad.dataset.extra;
+  applyRs();
+  for (const node of el.pad.querySelectorAll("[data-key]")) {
+    if (EXTRA_PAD.includes(node.dataset.key) || node.dataset.key === "RS") continue;
+    node.toggleAttribute("data-off", !slots.has(node.dataset.key));
+  }
+  el.dpad.toggleAttribute("data-off", !DIRS.some((n) => slots.has(n)));
+  // 2) 강제 표시.
+  if (kind && kind !== "game") {
+    if (kind === "keypad") {
+      document.body.toggleAttribute("data-mobile", true);
+      for (const n of el.pad.querySelectorAll(".keypad [data-key], .key--soft1, .key--soft2, .key--clear, .key--ok")) n.removeAttribute("data-off");
+    } else {
+      if (kind === "cd" || kind === "cdrs") el.pad.dataset.extra = EXTRA_PAD.join(" ");
+      if (kind === "rs" || kind === "cdrs") el.pad.toggleAttribute("data-rs", true);
+      for (const sel of [".key--c", ".key--d", ".key--rs"]) el.pad.querySelector(sel)?.removeAttribute("data-off");
+    }
+  }
+  skin.redraw();
+  layout();
+}
+
 function initPadEditor() {
   padEditor.init({
     body: document.body,
@@ -791,6 +820,7 @@ function initPadEditor() {
     setScreenSize: (w, h) => setScreenFreeSize(w, h),
     setScreenCenter: (cx, cy) => setScreenFreeCenter(cx, cy),
     clearScreenInline: () => clearScreenFree(),
+    forceSet: (kind) => padEditForceSet(kind),
   });
 }
 
