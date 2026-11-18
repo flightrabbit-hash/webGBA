@@ -1,4 +1,4 @@
-// GPU 그리기 실행기(src-bundle/src/js/core/gpu-bridge.js, README 4.1.4) 단위 시험 — 형식별 UPLOAD(RGBA8·RGB10_A2·R16UI)와 READ.
+// GPU 그리기 실행기(src-bundle/src/js/core/gpu-bridge.js, README 4.1.4) 단위 시험 — 형식별 UPLOAD(RGBA8·RGB10_A2·R16UI)·READ·COPY(대상 FBO가 아직 없는 첫 COPY 포함).
 // 롬·게임 없이 가짜 wasm 메모리(ArrayBuffer)에 명령 목록을 써서 GpuBridge.run 으로 실행하고, 텍스처 내용을 GL 로 읽어 원본과 비교한다.
 // 원본 데이터는 메모리 끝에 딱 맞게 둔다(필요한 바이트보다 짧게 잡으면 텍스처가 비고 GL 오류, 길게 잡으면 RangeError).
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-gpu.mjs [--browser chromium|webkit] [--chrome <chrome.exe>]
@@ -49,7 +49,7 @@ try {
   await page.waitForFunction(() => window.ready === true, null, { timeout: 10000 });
 
   const cases = await page.evaluate(() => {
-    const OP = { TEXTURE: 2, UPLOAD: 8, READ: 10 };
+    const OP = { TEXTURE: 2, TARGET: 3, UPLOAD: 8, COPY: 9, READ: 10 };
     const FMT = { RGBA8: 1, RGB10_A2: 2, R16UI: 3 };
     const BYTES = { 1: 4, 2: 4, 3: 2 };
     const LIST_AT = 16;
@@ -146,6 +146,29 @@ try {
       return out;
     }
 
+    function copyCase({ name, pre }) {
+      const W = 4, H = 3, bytes = W * H * 4;
+      const size = 8192 + bytes, dataAt = size - bytes;
+      const buffer = new ArrayBuffer(size);
+      const u8 = new Uint8Array(buffer);
+      for (let n = 0; n < W * H; n++) texel(FMT.RGBA8, n).forEach((v, k) => (u8[dataAt + n * 4 + k] = v));
+      const words = [...record(OP.TEXTURE, 1, FMT.RGBA8, W, H), ...record(OP.UPLOAD, 1, 0, 0, W, H, FMT.RGBA8, dataAt, W), ...record(OP.TEXTURE, 2, FMT.RGBA8, W, H)];
+      if (pre) words.push(...record(OP.TARGET, 2, 0, 0, W, H));
+      words.push(...record(OP.COPY, 1, 2, 1, 0, 0, 1, 3, 2));
+      const r = runList(buffer, words);
+      const got = r.thrown ? [] : readTexture(2, FMT.RGBA8, W, H);
+      const want = Array.from({ length: W * H }, () => "0,0,0,0");
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 3; i++) want[(1 + j) * W + i] = texel(FMT.RGBA8, j * W + 1 + i).join(",");
+      let diff = 0, first = "";
+      for (let i = 0; i < want.length; i++) {
+        if (got[i] !== want[i]) {
+          diff++;
+          if (!first) first = `(${i % W},${Math.floor(i / W)}) ${got[i]} ≠ ${want[i]}`;
+        }
+      }
+      return { name, bytes, dataAt, size, thrown: r.thrown, glError: r.glError, diff, first };
+    }
+
     return {
       renderer: gl.getParameter(gl.RENDERER),
       list: [
@@ -157,6 +180,8 @@ try {
         uploadCase({ name: "RGB10_A2 부분 2×3 @(1,0), 행 길이 3, 메모리 끝", fmt: FMT.RGB10_A2, texW: 4, texH: 4, x: 1, y: 0, w: 2, h: 3, row: 3, align: 0 }),
         uploadCase({ name: "R16UI 전체 5×3, 2바이트 정렬 주소, 메모리 끝", fmt: FMT.R16UI, texW: 5, texH: 3, x: 0, y: 0, w: 5, h: 3, row: 5, align: 2 }),
         uploadCase({ name: "R16UI 부분 3×2 @(1,1), 행 길이 4, 메모리 끝", fmt: FMT.R16UI, texW: 4, texH: 4, x: 1, y: 1, w: 3, h: 2, row: 4, align: 0 }),
+        copyCase({ name: "첫 COPY — 원본·대상 FBO 모두 아직 없음, (1,0) → (0,1) 3×2" }),
+        copyCase({ name: "COPY — 대상 TARGET 선지정(우회 방식)", pre: true }),
       ],
       stats: bridge.stats,
       lost: gl.isContextLost(),

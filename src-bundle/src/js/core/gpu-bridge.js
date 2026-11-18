@@ -227,9 +227,9 @@ export class GpuBridge {
           break;
         }
         case OP.COPY: {
-          const from = this.textures.get(w(1)), to = this.textures.get(w(2));
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.framebuffer(from));
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.framebuffer(to));
+          const src = this.framebuffer(this.textures.get(w(1))), dst = this.framebuffer(this.textures.get(w(2)));
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, src);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dst);
           gl.blitFramebuffer(w(3), w(4), w(3) + w(7), w(4) + w(8), w(5), w(6), w(5) + w(7), w(6) + w(8), gl.COLOR_BUFFER_BIT, gl.NEAREST);
           gl.bindFramebuffer(gl.FRAMEBUFFER, null);
           break;
