@@ -221,7 +221,7 @@ export class GpuBridge {
           gl.pixelStorei(gl.UNPACK_ROW_LENGTH, row);
           gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
           const pixels = row * (height - 1) + width;
-          gl.texSubImage2D(gl.TEXTURE_2D, 0, w(2), w(3), width, height, f.format, f.type, new f.view(buffer, w(7), pixels));
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, w(2), w(3), width, height, f.format, f.type, new f.view(buffer, w(7), (pixels * f.bytes) / f.view.BYTES_PER_ELEMENT));
           gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
           this.stats.bytes += pixels * f.bytes;
           break;
