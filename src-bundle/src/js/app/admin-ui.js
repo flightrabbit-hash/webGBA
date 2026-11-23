@@ -275,6 +275,7 @@ export function createAdminFlow(d) {
   async function importRoms() {
     const got = await fetchList();
     if (!got) return null;
+    d.listed?.(got.listing.items ?? []);
     const session = got.rec;
     const ids = await d.registeredIds();
     await d.groupsReady?.();

@@ -17,6 +17,11 @@ export const FILE_MAX = 512 * 1024 * 1024;
 export const STEPS_MAX = 64;
 export const TEST_KEY = "webgba.updateTest";
 export const INDEX_TIME_KEY = "webgba.updateIndexTime";
+export const LATEST_KEY = "webgba.updateLatest";
+export const LATEST_MAX_AGE = 24 * 60 * 60 * 1000;
+export const OPEN_RETRY_MS = 10 * 60 * 1000;
+const LATEST_MAX = 256;
+const LATEST_FROM = new Set(["index", "feed", "roms"]);
 
 export const FEED_HOST = "https://pub-da193dc1ff6540a4a6654def95a1a92f.r2.dev";
 const FEED_KEY = "BFhhvxjl7AcTB5l5YA648fDFzdgTvC2Il3FO+yu4KPfaH2iYD85g6vUOsQ7JHBOpg+6nBN1LpO5WbPfbm0MJ/cY=";
@@ -315,13 +320,16 @@ export function fetchFeed(url, { fetchImpl = globalThis.fetch, timeout = 10000, 
   });
 }
 
+const sourceKey = (source) => `${source.feed}\n${source.key}`;
+const indexKey = (index) => `index\n${index.url}\n${index.key}`;
+
 function groupSources(games, overrides) {
   const wanted = new Map();
   for (const game of games) {
     if (!game.gameId || !game.version) continue;
     const source = updateSource(game, overrides);
     if (!source) continue;
-    const id = `${source.feed}\n${source.key}`;
+    const id = sourceKey(source);
     if (!wanted.has(id)) wanted.set(id, { id, source, gameId: game.gameId, games: [] });
     wanted.get(id).games.push(game);
   }
@@ -329,12 +337,12 @@ function groupSources(games, overrides) {
 }
 
 export function loadIndex(index, { fetchImpl = globalThis.fetch, timeout = 10000, cache, memory }) {
-  const id = `index\n${index.url}\n${index.key}`;
+  const id = indexKey(index);
   if (!cache.has(id)) {
     const work = fetchFeed(index.url, { fetchImpl, timeout, max: INDEX_MAX, code: "indexBad" })
       .then((text) => verifyIndex(text, index.key, { url: index.url, memory }))
-      .then((list) => ({ list, error: null }), (error) => {
-        if (error instanceof UpdateError) return { list: null, error };
+      .then((list) => ({ list, error: null, at: Date.now() }), (error) => {
+        if (error instanceof UpdateError) return { list: null, error, at: Date.now() };
         if (error && typeof error === "object") error.where = index.url;
         throw error;
       });
@@ -348,7 +356,7 @@ function loadFeed({ id, source, gameId }, options) {
   const { fetchImpl, timeout, cache } = options;
   if (cache.has(id)) return cache.get(id);
   const single = async (error = null, where = "") => ({ feed: await fetchFeed(source.feed, { fetchImpl, timeout }).then((text) => verifyFeed(text, source.key, source.feed)), error, where });
-  const work = !source.index
+  const work = (!source.index
     ? single()
     : loadIndex(source.index, options).then(async ({ list, error }) => {
         if (!list) return single(error, source.index.url);
@@ -358,7 +366,8 @@ function loadFeed({ id, source, gameId }, options) {
           if (!(failure instanceof UpdateError)) throw failure;
           return single(failure, `${source.index.url} ${gameId}`);
         }
-      });
+      })
+  ).then((got) => ({ ...got, at: Date.now() }));
   work.catch(() => {});
   cache.set(id, work);
   return work;
@@ -368,7 +377,7 @@ export function prefetchFeeds(games, { overrides = null, fetchImpl = globalThis.
   for (const group of groupSources(games, overrides).values()) loadFeed(group, { fetchImpl, timeout, cache, memory });
 }
 
-export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {}, cache = null, memory = indexMemory() } = {}) {
+export async function checkGames(games, { overrides = null, fetchImpl = globalThis.fetch, timeout = 10000, log = () => {}, cache = null, memory = indexMemory(), onFeed = null } = {}) {
   const wanted = groupSources(games, overrides);
   const options = { fetchImpl, timeout, cache: cache ?? new Map(), memory };
   const told = new Set();
@@ -386,6 +395,7 @@ export async function checkGames(games, { overrides = null, fetchImpl = globalTh
         const got = await loadFeed(group, options);
         feed = got.feed;
         if (got.error) once(got.error, ["INFO", `업데이트 목록 사용 안 함 ${got.where}: ${got.error.message} → 게임별 버전 파일`]);
+        onFeed?.({ feed, source, at: got.at });
       } catch (error) {
         once(error, ["WARN", `업데이트 확인 실패 ${error?.where ?? source.feed}: ${error?.code ?? error?.name ?? ""} ${error?.message ?? error}`]);
         return;
@@ -406,6 +416,172 @@ export async function checkGames(games, { overrides = null, fetchImpl = globalTh
     }),
   );
   return found;
+}
+
+export const newerVersion = (version, than) => {
+  try {
+    return compareVersions(version, than) > 0;
+  } catch {
+    return false;
+  }
+};
+
+export function forgetFeeds(games, { overrides = null, cache }) {
+  for (const group of groupSources(games, overrides).values()) {
+    cache.delete(group.id);
+    if (group.source.index) cache.delete(indexKey(group.source.index));
+  }
+}
+
+export async function indexFeeds(list, index, at = Date.now()) {
+  const out = [];
+  for (const id of Object.keys(list?.feeds ?? {})) {
+    if (!ID_RE.test(id)) continue;
+    const source = { feed: new URL(`${id}/latest.json`, index.url).href, key: index.key, index };
+    try {
+      out.push({ feed: await indexedFeed(list, id, source), source, at });
+    } catch {}
+  }
+  return out;
+}
+
+export function createVersionCache({ storage = globalThis.localStorage, now = Date.now, online = () => globalThis.navigator?.onLine !== false, maxAge = LATEST_MAX_AGE, retry = OPEN_RETRY_MS } = {}) {
+  const signed = new Map();
+  let table = null;
+  let remembering = null;
+  let lastFetch = -Infinity;
+  const fresh = (at) => now() - at < maxAge;
+
+  const read = () => {
+    if (table) return table;
+    table = {};
+    try {
+      const raw = JSON.parse(storage?.getItem(LATEST_KEY) ?? "{}");
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [id, entry] of Object.entries(raw)) {
+          if (ID_RE.test(id) && VERSION_RE.test(entry?.version ?? "") && Number.isFinite(entry.at) && LATEST_FROM.has(entry.from)) table[id] = { version: entry.version, at: entry.at, from: entry.from, feed: typeof entry.feed === "string" ? entry.feed : "" };
+        }
+      }
+    } catch {
+      table = {};
+    }
+    return table;
+  };
+
+  const write = (entries) => {
+    const all = { ...read() };
+    for (const entry of entries) {
+      const had = all[entry.id];
+      if (had && had.at > entry.at) continue;
+      all[entry.id] = { version: entry.version, at: entry.at, from: entry.from, feed: entry.feed ?? "" };
+    }
+    table = Object.fromEntries(Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, LATEST_MAX));
+    try {
+      storage?.setItem(LATEST_KEY, JSON.stringify(table));
+    } catch {}
+  };
+
+  const keepFeeds = (list) => {
+    for (const { feed, source, at } of list) {
+      const had = signed.get(feed.id);
+      if (!had || at >= had.at) signed.set(feed.id, { feed, key: sourceKey(source), at });
+    }
+    write(list.map(({ feed, source, at }) => ({ id: feed.id, version: feed.version, from: source.index ? "index" : "feed", feed: source.feed, at })));
+  };
+
+  const keepFeed = (got) => {
+    if (got?.feed && got.source && Number.isFinite(got.at)) keepFeeds([got]);
+  };
+
+  function rememberIndex({ index, cache, fetchImpl = globalThis.fetch, timeout = 10000, memory = indexMemory(), log = () => {} }) {
+    if (remembering) return remembering;
+    if (!online()) return Promise.resolve(0);
+    remembering = loadIndex(index, { fetchImpl, timeout, cache, memory })
+      .then(async ({ list, error, at }) => {
+        if (!list) {
+          log("INFO", `업데이트 버전 캐시 갱신 안 함 ${index.url}: ${error?.message ?? ""}`);
+          return 0;
+        }
+        const got = await indexFeeds(list, index, at);
+        keepFeeds(got);
+        log("INFO", `업데이트 버전 캐시 갱신 · 목록 게임 ${got.length}개`);
+        return got.length;
+      })
+      .catch((error) => {
+        log("WARN", `업데이트 버전 캐시 갱신 실패 ${error?.where ?? index.url}: ${error?.code ?? error?.name ?? ""} ${error?.message ?? error}`);
+        return 0;
+      });
+    return remembering;
+  }
+
+  function rememberList(items, at = now()) {
+    const best = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!ID_RE.test(item?.id ?? "") || !VERSION_RE.test(item?.version ?? "")) continue;
+      const had = best.get(item.id);
+      if (!had || newerVersion(item.version, had)) best.set(item.id, item.version);
+    }
+    const all = read();
+    const entries = [];
+    for (const [id, version] of best) {
+      const had = all[id];
+      if (had && fresh(had.at) && newerVersion(had.version, version)) continue;
+      entries.push(had && had.version === version ? { ...had, id, at } : { id, version, from: "roms", feed: "", at });
+    }
+    write(entries);
+    return entries.length;
+  }
+
+  async function newerFor(game, { overrides = null, cache, fetchImpl = globalThis.fetch, timeout = 10000, memory = indexMemory(), log = () => {} } = {}) {
+    const source = game?.gameId && game.version ? updateSource(game, overrides) : null;
+    if (!source) return { feed: null, why: "source" };
+    const key = sourceKey(source);
+    const fromMemory = () => {
+      const mem = signed.get(game.gameId);
+      if (!mem || mem.key !== key || !fresh(mem.at)) return undefined;
+      return newerVersion(mem.feed.version, game.version) ? mem.feed : null;
+    };
+    let feed = fromMemory();
+    if (feed !== undefined) return { feed, why: "memory" };
+    const hint = read()[game.gameId];
+    const usable = hint && fresh(hint.at) && (hint.from === "roms" ? Boolean(source.index) : hint.feed === source.feed);
+    if (usable && !newerVersion(hint.version, game.version)) return { feed: null, why: "cache" };
+    if (remembering) {
+      await remembering;
+      feed = fromMemory();
+      if (feed !== undefined) return { feed, why: "memory" };
+    }
+    const options = { overrides, fetchImpl, timeout, cache, memory, log, onFeed: keepFeed };
+    if (cache.has(key)) {
+      await checkGames([game], options);
+      feed = fromMemory();
+      if (feed !== undefined) return { feed, why: "memory" };
+    }
+    if (!online()) return { feed: null, why: "offline" };
+    if (now() - lastFetch < retry) return { feed: null, why: "retry" };
+    lastFetch = now();
+    forgetFeeds([game], { overrides, cache });
+    const was = signed.get(game.gameId);
+    await checkGames([game], options);
+    if (source.index && cache.has(indexKey(source.index))) {
+      const { list, at } = await loadIndex(source.index, { fetchImpl, timeout, cache, memory }).catch(() => ({ list: null }));
+      if (list) keepFeeds(await indexFeeds(list, source.index, at));
+    }
+    const mem = signed.get(game.gameId);
+    const got = mem && mem !== was && mem.key === key ? mem.feed : null;
+    return { feed: got && newerVersion(got.version, game.version) ? got : null, why: "fetch" };
+  }
+
+  return {
+    rememberIndex,
+    rememberList,
+    newerFor,
+    keepFeed,
+    get: (id) => read()[id] ?? null,
+    get remembering() {
+      return remembering;
+    },
+  };
 }
 
 export function fetchChecked(ref, { fetchImpl = globalThis.fetch, onProgress = () => {}, signal = null, timeout = 300000 } = {}) {

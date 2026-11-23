@@ -799,6 +799,9 @@
 
   "update.title": "업데이트 {count}개",
   "update.text": "새 버전이 있습니다. 세이브는 그대로 이어집니다.",
+  "update.open.title": "업데이트 후 시작",
+  "update.open.text": "새 버전이 있습니다. 업데이트 후 게임을 시작합니다(세이브 유지). 업데이트하지 않으면 현재 버전으로 시작합니다.",
+  "update.open.full": "새 버전이 있습니다. 원본 롬으로 새 버전 생성 후 게임을 시작합니다(세이브 유지). 업데이트하지 않으면 현재 버전으로 시작합니다.",
   "update.listLabel": "업데이트할 게임",
   "update.row.versions": "{from} → {to}",
   "update.row.patch": "{versions} · {size}",

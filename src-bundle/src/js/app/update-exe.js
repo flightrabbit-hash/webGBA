@@ -1,4 +1,4 @@
-import { buildGauge, checkGames, fetchChecked, GAUGE, planUpdate, prefetchFeeds, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
+import { buildGauge, checkGames, createVersionCache, FEED_INDEX, fetchChecked, GAUGE, planUpdate, prefetchFeeds, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./update-pick.js";
 import { runPatchJob } from "./patch-loader.js";
 import { readWgba, pickText } from "../core/wgba-read.js";
@@ -6,6 +6,7 @@ import { readTocFrom, unpackChunk } from "../core/wgba-format.js";
 import { sha1Hex } from "../core/wgbp.js";
 
 const INDEX_MAX = 64;
+const DONE_MS = 600;
 // 업데이트 확인·롬 가져오기 등록 확인 대상 = 같은 Pack 형식의 게임 파일(.wgba · .wmba 모바일 · .wapk Android)
 const PACK_FILE_RE = /\.(wgba|wmba|wapk)$/i;
 
@@ -14,9 +15,13 @@ export function createExeUpdater(d) {
   const items = new Map();
   const urls = [];
   const feeds = d.cache ?? new Map();
+  const versions = d.versions ?? createVersionCache();
+  const notified = new Map();
   let checked = false;
   let shown = null;
+  let flow = null;
   const keyOf = (path) => path.replace(/\//g, "\\").toLowerCase();
+  const overrides = () => (d.testMode() ? readOverrides() : null);
 
   const pending = (path) => {
     const item = path ? items.get(keyOf(path)) : null;
@@ -58,7 +63,23 @@ export function createExeUpdater(d) {
   function prepare() {
     if (checked || navigator.onLine === false) return;
     const games = Object.values(d.prefs().updateIndex ?? {}).map((entry) => ({ gameId: entry.gameId, version: entry.version, update: entry.update }));
-    prefetchFeeds(games, { overrides: d.testMode() ? readOverrides() : null, cache: feeds });
+    prefetchFeeds(games, { overrides: overrides(), cache: feeds });
+  }
+
+  const remember = () => versions.rememberIndex({ index: overrides()?.index ?? FEED_INDEX, cache: feeds, log: d.log });
+
+  function rememberList(list) {
+    const count = versions.rememberList(list);
+    d.log("INFO", `업데이트 버전 캐시 갱신 · 롬 가져오기 목록 게임 ${count}개`);
+    return count;
+  }
+
+  function labelOf(wgba) {
+    const image = wgba?.images?.label;
+    if (!image) return null;
+    const label = { url: URL.createObjectURL(new Blob([image.bytes], { type: `image/${image.format}` })), width: image.width, height: image.height };
+    urls.push(label.url);
+    return label;
   }
 
   async function check(paths) {
@@ -78,8 +99,9 @@ export function createExeUpdater(d) {
       if (games.length >= INDEX_MAX) break;
     }
     d.savePrefs({ updateIndex: Object.fromEntries(Object.entries(cache).slice(-INDEX_MAX)) });
-    const found = await checkGames(games, { overrides: d.testMode() ? readOverrides() : null, log: d.log, cache: feeds });
+    const found = await checkGames(games, { overrides: overrides(), log: d.log, cache: feeds, onFeed: versions.keepFeed });
     for (const { game, feed } of found) {
+      if (items.has(game.key)) continue;
       let bytes;
       try {
         bytes = await d.core.fileReadBytes(game.info.path);
@@ -95,17 +117,16 @@ export function createExeUpdater(d) {
       }
       let label = null;
       try {
-        const wgba = await readWgba(bytes);
-        if (wgba?.images.label) label = { url: URL.createObjectURL(new Blob([wgba.images.label.bytes], { type: `image/${wgba.images.label.format}` })), width: wgba.images.label.width, height: wgba.images.label.height };
+        label = labelOf(await readWgba(bytes));
       } catch {
         label = null;
       }
-      if (label) urls.push(label.url);
       items.set(game.key, { key: game.key, path: game.info.path, gameId: game.gameId, names: game.info.name, feed, plan, label, name: "", from: game.version, to: feed.version, kind: plan.kind, size: plan.size, state: "ready", stage: "", fraction: 0, reason: "", running: false });
       d.log("INFO", `업데이트 있음 ${game.gameId} ${game.version} → ${feed.version} (${plan.kind}${plan.steps.length ? ` ${plan.steps.length}단계` : ""} ${plan.size}바이트) ${game.info.path}`);
     }
     if (!items.size) return 0;
     d.refresh();
+    if (flow) await flow;
     await open();
     return items.size;
   }
@@ -119,25 +140,27 @@ export function createExeUpdater(d) {
     d.refresh();
   }
 
-  async function applyOne(item, progress) {
+  async function applyOne(item, progress, signal = null) {
     const bytes = await d.core.fileReadBytes(item.path);
     const plan = planUpdate(item.feed, await sha1Hex(bytes));
     if (plan.kind !== "patch") throw new UpdateError("changed");
     const out = await runSteps(bytes, plan, item.feed, {
+      signal,
       onProgress: (fraction, stage) => progress({ stage: stage === "download" ? "download" : "apply", fraction }),
       apply: (source, delta, options) => applyInWorker(source, delta, options),
     });
+    if (signal?.aborted) throw new UpdateError("cancelled");
     await writeVerified(item, out);
     progress({ stage: "apply", fraction: 1 });
     d.log("INFO", `업데이트 완료 ${item.gameId} ${plan.steps.length}단계 → ${item.to} ${item.path}`);
     return true;
   }
 
-  async function installOne(item, progress) {
+  async function installOne(item, progress, signal = null) {
     const rom = await d.pickRom(item);
     if (!rom) return false;
     progress({ stage: "download", fraction: 0 });
-    const patch = await fetchChecked(item.feed.full, { onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * GAUGE.download }) });
+    const patch = await fetchChecked(item.feed.full, { signal, onProgress: (got, total) => progress({ stage: "download", fraction: (got / total) * GAUGE.download }) });
     progress({ stage: "rom", fraction: GAUGE.download });
     let made;
     try {
@@ -146,17 +169,19 @@ export function createExeUpdater(d) {
       throw new Error(d.patchText(error, rom));
     }
     if (made.sha1 !== item.feed.wgba.sha1) throw new UpdateError("fullMismatch");
+    if (signal?.aborted) throw new UpdateError("cancelled");
     await writeVerified(item, made.wgba);
     progress({ stage: "rom", fraction: 1 });
     d.log("INFO", `업데이트 전체 설치 ${item.gameId} → ${item.to} ${item.path} (${rom})`);
     return true;
   }
 
-  const guard = (work) => async (item, progress) => {
+  const guard = (work) => async (item, progress, signal) => {
     try {
-      return await work(item, progress);
+      return await work(item, progress, signal);
     } catch (error) {
-      d.log("WARN", `업데이트 실패 ${item.gameId} ${item.from} → ${item.to} ${item.path}: ${error?.code ?? ""} ${error?.message ?? error}`);
+      if (error?.code === "cancelled") d.log("INFO", `업데이트 취소 ${item.gameId} ${item.from} → ${item.to} ${item.path}`);
+      else d.log("WARN", `업데이트 실패 ${item.gameId} ${item.from} → ${item.to} ${item.path}: ${error?.code ?? ""} ${error?.message ?? error}`);
       throw new Error(updateErrorText(error));
     }
   };
@@ -173,28 +198,32 @@ export function createExeUpdater(d) {
     return img;
   }
 
+  const rowButton = (onClick) => {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "btn";
+    node.dataset.action = "update-row";
+    node.append(Object.assign(document.createElement("span"), { className: "upick__label" }));
+    node.addEventListener("click", onClick);
+    return node;
+  };
+  const ROW_KINDS = { primary: "btn--go", warn: "btn--warn", plain: "" };
+
   async function open(keys = null, { start = false } = {}) {
-    const list = [...items.values()].filter((item) => (keys ? keys.includes(item.key) : item.state !== "done"));
+    const list = [...items.values()].filter((item) => (keys ? keys.includes(item.key) : item.state !== "done" && notified.get(item.key) !== item.to));
     if (!list.length) return null;
     for (const item of list) {
       item.running = d.running(item.path);
       item.name = pickText(item.names, d.lang()) || d.baseOf(item.path);
+      notified.set(item.key, item.to);
     }
     let later = null;
     let go = null;
     const picker = updatePicker({
       items: list,
       art,
-      button: (onClick) => {
-        const node = document.createElement("button");
-        node.type = "button";
-        node.className = "btn";
-        node.dataset.action = "update-row";
-        node.append(Object.assign(document.createElement("span"), { className: "upick__label" }));
-        node.addEventListener("click", onClick);
-        return node;
-      },
-      kinds: { primary: "btn--go", warn: "btn--warn", plain: "" },
+      button: rowButton,
+      kinds: ROW_KINDS,
       apply: guard(applyOne),
       install: guard(installOne),
       stop: async (item) => {
@@ -231,6 +260,134 @@ export function createExeUpdater(d) {
     return picker;
   }
 
+  function ask(item) {
+    item.running = false;
+    item.name = pickText(item.names, d.lang()) || d.baseOf(item.path);
+    let left = null;
+    let go = null;
+    let abort = null;
+    let pending = null;
+    let stopping = false;
+    let closing = false;
+    const close = (value) => {
+      if (closing) return;
+      closing = true;
+      d.closeDialog(value);
+    };
+    const track = (work) => (target, progress) => {
+      const controller = new AbortController();
+      abort = controller;
+      pending = work(target, progress, controller.signal).finally(() => {
+        if (abort === controller) abort = null;
+      });
+      return pending;
+    };
+    const picker = updatePicker({
+      items: [item],
+      art,
+      button: rowButton,
+      kinds: ROW_KINDS,
+      apply: track(guard(applyOne)),
+      install: track(guard(installOne)),
+      stop: async () => true,
+      onChange: ({ busy }) => {
+        if (!go) return;
+        const done = !busy && item.state === "done";
+        if (!busy && (stopping || done)) {
+          left.disabled = true;
+          go.disabled = true;
+          if (stopping) close(done);
+          else setTimeout(() => close(true), DONE_MS);
+          return;
+        }
+        go.disabled = busy;
+        left.disabled = stopping;
+        left.textContent = busy ? "CANCEL" : "LATER";
+      },
+    });
+    picker.node.classList.add("upick--single");
+    const cancel = () => {
+      if (!picker.busy) return close(false);
+      stopping = true;
+      left.disabled = true;
+      abort?.abort();
+    };
+    const answer = d.openDialog({
+      title: t("update.open.title"),
+      body: [t(item.kind === "full" ? "update.open.full" : "update.open.text"), picker.node],
+      kind: "pick",
+      actions: [
+        { label: "LATER", run: cancel },
+        { label: "UPDATE", go: true, run: () => picker.run([item]) },
+      ],
+    });
+    [left, go] = d.el.dialogActions.children;
+    picker.refresh();
+    window.addEventListener("resize", picker.center);
+    shown = picker;
+    const result = answer.then(async (value) => {
+      window.removeEventListener("resize", picker.center);
+      if (shown === picker) shown = null;
+      if (picker.busy) {
+        stopping = true;
+        abort?.abort();
+        await pending?.catch(() => {});
+        await null;
+      }
+      d.refresh();
+      const updated = value === true || item.state === "done";
+      d.log("INFO", updated ? `파일 열기 전 업데이트 완료 → 새 파일로 실행 ${item.gameId} ${item.to} ${item.path}` : `파일 열기 전 업데이트 안 함 → 현재 버전으로 실행 ${item.gameId} ${item.from} ${item.path}`);
+      return updated;
+    });
+    if (item.kind === "patch") picker.run([item]);
+    return result;
+  }
+
+  async function beforeOpen(path, wgba, bytes) {
+    const m = wgba?.manifest;
+    if (!m?.id || !m.version) return false;
+    if (shown || d.dialogOpen() || navigator.onLine === false) {
+      d.log("INFO", `파일 열기 전 업데이트 확인 건너뜀(${navigator.onLine === false ? "오프라인" : "다른 창 표시 중"}) ${m.id} ${m.version} ${path}`);
+      return false;
+    }
+    const game = { gameId: m.id, version: m.version, update: m.update && typeof m.update === "object" ? { feed: String(m.update.feed ?? ""), key: String(m.update.key ?? "") } : null };
+    const work = (async () => {
+      const got = await versions.newerFor(game, { overrides: overrides(), cache: feeds, log: d.log });
+      if (!got.feed) {
+        if (got.why !== "source" && got.why !== "cache" && got.why !== "memory") d.log("INFO", `파일 열기 전 업데이트 확인 · 새 버전 정보 없음(${got.why}) ${m.id} ${m.version} ${path}`);
+        return false;
+      }
+      const key = keyOf(path);
+      if (notified.get(key) === got.feed.version) {
+        d.log("INFO", `파일 열기 전 업데이트 · 이번 실행에서 이미 안내함 ${m.id} ${m.version} → ${got.feed.version} ${path}`);
+        return false;
+      }
+      const sha1 = await sha1Hex(bytes);
+      const plan = planUpdate(got.feed, sha1);
+      if (plan.kind === "latest") return false;
+      if (plan.kind === "none") {
+        d.log("INFO", `업데이트 경로 없음(표시 안 함) ${m.id} ${m.version} → ${got.feed.version} SHA-1 ${sha1.slice(0, 8)} ${path}`);
+        return false;
+      }
+      const item = { key, path, gameId: m.id, names: m.name, feed: got.feed, plan, label: items.get(key)?.label ?? labelOf(wgba), name: "", from: m.version, to: got.feed.version, kind: plan.kind, size: plan.size, state: "ready", stage: "", fraction: 0, reason: "", running: false };
+      items.set(key, item);
+      notified.set(key, item.to);
+      d.log("INFO", `파일 열기 전 업데이트 있음 ${m.id} ${m.version} → ${got.feed.version} (${plan.kind}${plan.steps.length ? ` ${plan.steps.length}단계` : ""} ${plan.size}바이트 · 버전 정보 ${got.why}) ${path}`);
+      d.refresh();
+      return ask(item);
+    })();
+    const mine = work.catch(() => false);
+    flow = mine;
+    try {
+      return await work;
+    } catch (error) {
+      d.log("WARN", `파일 열기 전 업데이트 확인 실패 ${m.id} ${m.version} ${path}: ${error?.code ?? ""} ${error?.message ?? error}`);
+      return false;
+    } finally {
+      if (flow === mine) flow = null;
+    }
+  }
+
   /** 경로들의 게임 파일(.wgba · .wmba · .wapk) 게임 id(설명서 조회 캐시 updateIndex 재사용 — 바뀐 파일만 읽음). */
   async function ids(paths) {
     const cache = { ...(d.prefs().updateIndex ?? {}) };
@@ -249,11 +406,16 @@ export function createExeUpdater(d) {
 
   return {
     prepare,
+    remember,
+    rememberList,
     check,
     open,
+    beforeOpen,
+    idle: () => flow ?? Promise.resolve(false),
     pending,
     keyOf,
     ids,
+    versions,
     get items() {
       return items;
     },

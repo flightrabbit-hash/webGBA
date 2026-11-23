@@ -799,6 +799,9 @@
 
   "update.title": "Updates ({count})",
   "update.text": "New versions are available. Your saves carry over.",
+  "update.open.title": "Update before starting",
+  "update.open.text": "A new version is available. The game starts after the update (saves carry over). Without the update, the current version starts.",
+  "update.open.full": "A new version is available. It is built from the original ROM, then the game starts (saves carry over). Without the update, the current version starts.",
   "update.listLabel": "Games to update",
   "update.row.versions": "{from} → {to}",
   "update.row.patch": "{versions} · {size}",

@@ -967,7 +967,7 @@ async function openPath(path, options = {}) {
       ext = extOf(path);
       made.loader?.set("open", 0);
     }
-    const ok = WASM_EXT.has(ext) ? await openWasm(path, options) : await openRom(path);
+    const ok = WASM_EXT.has(ext) ? await openWasm(path, { ...options, made: Boolean(made) }) : await openRom(path);
     if (!ok) {
       made?.loader?.close();
       return false;
@@ -1210,18 +1210,22 @@ async function resolveWebRom(build, ask) {
 // 설명서에 multiplayer 가 있는 게임만 그 빌드 틀에서 WebRTC·DNS 미리 찾기를 쓸 수 있다(결정 102-3). 그 외(.wasm·폴더 빌드·옛 .wgba)는 막힘.
 const allowsNet = (wgba) => Boolean(wgba?.manifest?.multiplayer);
 
-async function openWasm(path, { preferPage = false } = {}) {
+async function readPack(path) {
   const bytes = await core.fileReadBytes(path);
   if (!isWasmBytes(bytes)) throw new Error(t("status.notWasm", { name: baseOf(path) }));
-  const sha = shaOf(bytes);
-  // 목차(webgba.toc)가 있는 .wgba: 설명서를 보고 code 조각만 컴파일, 롬은 rom 조각에서. 없으면(옛 .wgba·.wasm) 지금 그대로.
-  let wgba = null;
   try {
-    wgba = await readWgba(bytes);
+    return { bytes, wgba: await readWgba(bytes) };
   } catch (error) {
     core.log("WARN", `.wgba 목차·설명서를 읽지 못했습니다 ${path}: ${reason(error)}`);
     throw new Error(wgbaErrorText(error));
   }
+}
+
+async function openWasm(path, { preferPage = false, made = false } = {}) {
+  // 목차(webgba.toc)가 있는 .wgba: 설명서를 보고 code 조각만 컴파일, 롬은 rom 조각에서. 없으면(옛 .wgba·.wasm) 지금 그대로.
+  let { bytes, wgba } = await readPack(path);
+  if (wgba && !made && autoUpdate() && (await updater.beforeOpen(path, wgba, bytes))) ({ bytes, wgba } = await readPack(path));
+  const sha = shaOf(bytes);
   const problem = wgba ? supportProblem(wgba.manifest) : null;
   if (problem) throw new Error(problemText(problem));
   const info = wgba ? gameInfo(wgba) : null;
@@ -2506,6 +2510,8 @@ const updater = createExeUpdater({
   prefs: () => state.prefs,
   savePrefs,
   openDialog,
+  closeDialog: (value) => dialogDone?.(value),
+  dialogOpen: () => !el.layer.hidden,
   testMode: () => Boolean(state.info?.settings?.useDevelopKit),
   running: (path) => Boolean(state.game && samePath(state.game.path, path)),
   closeGame: () => closeGame(),
@@ -2557,6 +2563,7 @@ const admin = createAdminFlow({
   icon,
   notify: (text, level = "info") => status(text, level),
   changed: () => syncControls(),
+  listed: (items) => updater.rememberList(items),
   registeredIds: async () => {
     let inApp = [];
     try {
@@ -2589,7 +2596,10 @@ const autoUpdate = () => !(state.info?.settings?.useDevelopKit && state.prefs?.u
 
 async function checkUpdates() {
   if (!autoUpdate()) return;
-  if (await appUpdater.check()) await appUpdater.open();
+  if (await appUpdater.check()) {
+    await updater.idle();
+    await appUpdater.open();
+  }
   await updater.check(updatePaths());
 }
 
@@ -2601,6 +2611,7 @@ async function boot() {
   if (autoUpdate()) {
     updater.prepare();
     appUpdater.prepare();
+    updater.remember();
   }
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");

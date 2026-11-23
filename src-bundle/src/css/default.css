@@ -1298,6 +1298,11 @@ html.is-rail-collapsed .sidepanel {
   border-bottom: 1px solid var(--line);
 }
 
+.upick--single .zpick__all,
+.upick--single .upick__check {
+  display: none;
+}
+
 .upick__item.is-off {
   cursor: default;
 }

@@ -799,6 +799,9 @@
 
   "update.title": "アップデート {count}件",
   "update.text": "新しいバージョンがあります。セーブはそのまま引き継がれます。",
+  "update.open.title": "アップデートしてから開始",
+  "update.open.text": "新しいバージョンがあります。アップデート後にゲームを開始します（セーブは引き継ぎ）。アップデートしない場合は現在のバージョンで開始します。",
+  "update.open.full": "新しいバージョンがあります。元のROMで新しいバージョンを作成してからゲームを開始します（セーブは引き継ぎ）。アップデートしない場合は現在のバージョンで開始します。",
   "update.listLabel": "アップデートするゲーム",
   "update.row.versions": "{from} → {to}",
   "update.row.patch": "{versions} · {size}",
