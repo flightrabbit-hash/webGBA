@@ -1719,6 +1719,10 @@ html.is-rail-collapsed .sidepanel {
   grid-column: span 2;
 }
 
+.rsx__key--glyph {
+  font: 15px/1 var(--font-ui);
+}
+
 .rsx__key {
   min-width: 0;
   padding: 0 4px;

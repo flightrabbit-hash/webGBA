@@ -620,6 +620,8 @@ function cloneRs(source) {
     book: { active: source.book.active, slots: source.book.slots.map((slot) => slot && { name: slot.name, steps: copy(slot.steps) }) },
     fallback: source.fallback ? copy(source.fallback) : null,
     slots: source.slots,
+    texts: source.texts ?? {},
+    names: source.names ?? {},
     changed: false,
     opened: new Set(),
   };
@@ -822,13 +824,15 @@ function drawRs() {
     keysRow.setAttribute("role", "group");
     keysRow.setAttribute("aria-label", t("macro.keys"));
     for (const key of slots) {
+      const text = RS_ARROWS[key] ?? rs.texts[key] ?? key;
       const chip = document.createElement("button");
       chip.type = "button";
-      chip.className = `keys__slot rsx__key${key.length > 1 && !RS_ARROWS[key] ? " rsx__key--word" : ""}`;
+      const glyph = !RS_ARROWS[key] && [...text].length === 1 && text.codePointAt(0) > 0x7e;
+      chip.className = `keys__slot rsx__key${[...text].length > 1 && !RS_ARROWS[key] ? " rsx__key--word" : ""}${glyph ? " rsx__key--glyph" : ""}`;
       chip.dataset.key = key;
       chip.dataset.group = RS_GROUP[key];
-      chip.textContent = RS_ARROWS[key] ?? key;
-      chip.title = RS_ARROWS[key] ? t(`key.${key}`) : key;
+      chip.textContent = text;
+      chip.title = RS_ARROWS[key] ? t(`key.${key}`) : rs.names[key] ?? key;
       chip.setAttribute("aria-pressed", String(step.keys.includes(key)));
       chip.addEventListener("click", () => {
         const on = !step.keys.includes(key);

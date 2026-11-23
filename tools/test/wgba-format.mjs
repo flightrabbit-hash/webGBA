@@ -361,6 +361,26 @@ ok(pickText(manifestA.name, "ko") === "헬로 웹 API" && pickText(manifestA.nam
   ok(other.errors.length === 0 && other.warnings.some((w) => w.includes("en·ko·ja") && w.includes("fr")), "검사: en·ko·ja 칸이 없으면 경고(그 밖의 언어 칸을 씀)", other.warnings.join(" / "));
   const bad = [check({ name: undefined }), check({ name: {} }), check({ name: ["x"] }), check({ name: { en: 3 } })];
   ok(bad.every((r) => r.errors.length === 1), "검사: 이름 없음·빈 객체·배열·글이 아닌 칸 = 오류", bad.map((r) => r.errors[0]).join(" / "));
+  const { slotNames, slotTexts } = await import("../../src-bundle/src/js/app/player.js");
+  const { resolveInput: resolve } = await import("../../src-bundle/src/js/core/wgba-format.js");
+  const ps1Input = { preset: "none", buttons: [
+    { id: "CIRCLE", role: "a", code: "KeyZ", label: "○", touchLabel: "○" },
+    { id: "CROSS", role: "b", code: "KeyX", label: "×", touchLabel: { en: "×", ko: "×" } },
+    { id: "L2", role: "l2", code: "KeyQ", label: "L2", touchLabel: "L2" },
+    { id: "JUMP", role: "c", code: "KeyC", label: { en: "Jump", ko: "점프" } },
+    { id: "ONLY", role: "d", code: "KeyV", touchLabel: { en: "ATK", ko: "공격" } },
+    { id: "START", role: "start", code: "Enter", touchLabel: " " },
+  ] };
+  const ps1 = resolve({ runtime: "script", input: ps1Input });
+  const texts = slotTexts(ps1, "ko");
+  ok(ps1.buttons[0].touchLabel === "○" && JSON.stringify(texts) === JSON.stringify({ A: "○", B: "×", D: "공격" }), "touchLabel: resolveInput 이 넘김 · 터치 자리(a·b·c·d·l·r·start·select)만 · 언어 순서 · 빈 글은 자리 이름", JSON.stringify(texts));
+  const names = slotNames(ps1, "en");
+  ok(names.A === "○" && names.C === "Jump" && names.D === "ATK" && buttonLabel(ps1.buttons[4], "ko") === "공격" && buttonLabel({ id: "X1" }, "ko") === "X1", "버튼 이름: label → touchLabel → id(키 설정·조작법·RS 칸 설명)", JSON.stringify(names));
+  const gbaTouch = resolve({ runtime: "webapi", input: { preset: "gba", buttons: [{ id: "A", role: "a", bit: 0, touchLabel: "○" }] } });
+  ok(gbaTouch.gba === false && resolve({ runtime: "webapi", input: { preset: "gba" } }).gba === true && resolve({ runtime: "webapi" }).buttons.every((b) => b.touchLabel === null), "touchLabel 을 준 GBA 버튼 = GBA 10버튼 그대로가 아님(게임 버튼 목록), 없으면 null");
+  const touchCheck = check({ runtime: "script", entry: { style: "module" }, input: { ...ps1Input, buttons: [...ps1Input.buttons, { id: "LONG", role: "select", code: "Backspace", label: "가".repeat(9), touchLabel: { en: "", ko: "123456789" } }] } });
+  const tw = touchCheck.warnings.join(" / ");
+  ok(touchCheck.errors.filter((e) => /label|touchLabel/.test(e)).length === 0 && /L2: touchLabel 은 터치 자리/.test(tw) && /LONG: label 이 8자를 넘습니다/.test(tw) && /LONG: touchLabel\.ko 이 8자를 넘습니다/.test(tw) && /LONG: touchLabel\.en 이 비었습니다/.test(tw) && !/CIRCLE/.test(tw), "검사: label·touchLabel 8자·빈 칸·터치 자리 밖 = 경고(오류 아님, 앱은 엶)", tw);
 }
 // 규약 번호가 높은 게임(결정 181 가): 열림·멀티플레이 꺼짐·안내 문구
 {

@@ -133,6 +133,7 @@ Admin mode "Import ROMs" (`api/v1/admin/[op].js`, from webGBA 0.9.1, for a singl
   Playback rules: one press plays the sequence once from the start · holding RS keeps the last step's keys pressed (release to end) · pressing any other key (keyboard, gamepad, on-screen button) during playback stops RS input from that frame and sends that key · pressing RS again during playback restarts it · auto fire is not applied to RS input · nothing plays while paused.
   Input goes through the normal input path every game frame, so fast-forward and multiplayer give the same per-frame result (② self-JS games follow screen refresh time).
   Windows app: assign a keyboard key or gamepad button to the "RS button" row in Settings › Keys (none by default) and edit presets and steps under RS button on the same page. Web version: the RS button on screen (a pill above the right-hand buttons, in its own colour) and Settings › RS button › Edit.
+- **Button glyphs per game** — a manifest button's `touchLabel` (e.g. PlayStation `○` `×` `△` `□`, Nintendo 64 `C◀` `C▼`) is shown on the web version's on-screen buttons and in RS editor cells instead of the slot name (A·B·START …). Key settings and the controls list show the button's `label`. Spec for authors: [5.8](#58-button-glyph-touchlabel).
 - **Fast-forward sound** — sound keeps playing while fast-forwarding, sped up by the same factor. To keep it quiet, use Settings › General › Sound › Mute while fast forwarding.
 - **Opening files** — open dialog, drag and drop from Explorer, list of games in the same folder (`.gba`, `.gb`, `.gbc`, `.wgba`, `.wasm`; jump to the previous/next game),
   favorites, recent files, and command-line arguments from file association (passed to the running window if already open). Only file names are shown on screen, never full paths.
@@ -635,7 +636,8 @@ One button:
 | --- | --- |
 | `id` | Button name (`A`, `JUMP` …; letters, digits, `_`, `-`, 16 characters; unique) |
 | `role` | Position: `up` `down` `left` `right` · face `a` `b` `c` `d` (at most 4) · `l` `r` `l2` `r2` · `start` `select` · `extra`. Decides the default key, gamepad button and touch position. Except `extra`, one button per role |
-| `label` | Text shown on screen (string or per language — same order as "Text per language" in 3.1; 6 characters or fewer recommended, up to 8). Defaults to `id` |
+| `label` | Button name — shown in key settings, the controls list and the RS cell tooltip (string or per language — same order as "Text per language" in 3.1; 6 characters or fewer recommended, up to 8). Defaults to `touchLabel`, then `id` |
+| `touchLabel` | (Optional) Button glyph — shown on the on-screen (touch) button and in RS cells instead of the slot name (string or per language; 4 characters or fewer recommended, up to 8). Only for roles `a` `b` `c` `d` `l` `r` `start` `select`. Without it the slot name (A·B·C·D·L·R·START·SELECT) stays. [5.8](#58-button-glyph-touchlabel) |
 | `bit` | **Required for ①**: bit number 0–31 in `Web_RunFrame(keys)` (pressed = 1) |
 | `code` | **Required for ②**: the `KeyboardEvent.code` the game JS listens for (e.g. `"Space"`, `"KeyZ"`). The host also fills in `key`·`keyCode` |
 | `keys` | Default keyboard keys (up to 4 `KeyboardEvent.code` values). Defaults to the role's keys |
@@ -719,13 +721,13 @@ The `code` a game listens for can be anything (the host translates). How simulta
     { "id": "DOWN", "role": "down", "code": "ArrowDown" },
     { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
     { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
-    { "id": "JUMP", "role": "a", "label": { "en": "Jump", "ko": "점프" }, "code": "Space" },
-    { "id": "MENU", "role": "start", "code": "Escape" }
+    { "id": "JUMP", "role": "a", "label": { "en": "Jump", "ko": "점프" }, "touchLabel": { "en": "JUMP", "ko": "점프" }, "code": "Space" },
+    { "id": "MENU", "role": "start", "touchLabel": "MENU", "code": "Escape" }
   ]
 }
 ```
 
-When the user presses `Z` (default `a` = `KeyZ`), the game receives a key event with `code: "Space"`, `key: " "`, `keyCode: 32`. The touch screen shows a direction pad + "Jump" + "MENU" at the bottom centre.
+When the user presses `Z` (default `a` = `KeyZ`), the game receives a key event with `code: "Space"`, `key: " "`, `keyCode: 32`. The touch screen shows a direction pad + "JUMP" on the A slot ("점프" on a Korean screen) + "MENU" at the bottom centre. The controls list shows `label` (Jump) and `id` (MENU).
 
 #### 5.7 Default RS button input `input.rs`
 
@@ -748,6 +750,57 @@ A game can give a default for input that presses several buttons in a set order 
 - 1–32 steps. Every `Web_RunFrame(keys)` (①) frame the host sends the step's button bits together with the user's input. In frames where the RS step has a direction, the RS direction replaces the user's direction (a diagonal passes as is, whatever the two-directions setting), and auto fire is not applied.
 - The playback rules (one press = one playback, holding keeps the last step, any other key stops it from that frame) are host behaviour (Main features › RS button).
 - `check` validates the format, ranges, button ids and roles.
+
+#### 5.8 Button glyph `touchLabel`
+
+Games whose buttons differ from the GBA ones — PlayStation (○ × △ □), Nintendo 64 (C▲ C▼, Z) and so on — use `touchLabel` to show the original button names on the on-screen buttons, so players do not have to translate A·B into the real buttons.
+
+| Place | Shows |
+| --- | --- |
+| On-screen buttons of the web version (phone and PC; default, large, custom layout, overlay) | `touchLabel` — otherwise the slot name |
+| RS editor cells (web version and Windows app) | `touchLabel` — otherwise the slot name. Hover shows `label` |
+| Control names in the custom layout editor (web version) | Slot name + `touchLabel` (e.g. "A button (○)") |
+| Key settings (Windows app), controls list (web version and Windows app) | `label` — otherwise `touchLabel`, then `id` |
+
+- **Drawing**: drawn in webGBA's pixel font = capital letters A–Z (lower case is drawn as capitals), digits 0–9, `+` `-` `/` `.` `·` space, symbols `○` `×` `△` `□` `▲` `▼` `◀` `▶` `↑` `↓` `←` `→` (`◯` `✕` `✖` `╳` `◁` `▷` `▽` are drawn the same). Other characters (Hangul, kana …) are drawn with the web version's font (Galmuri11).
+- **Size**: the largest text that fits inside the button face (2 pixels inside the outline) is used. Round buttons and L·R try large letters (5×7) → small letters (3×5) → font; START·SELECT try small letters → font. If it does not fit at the button's pixel size it is drawn smaller in device pixels, and if it still does not fit the slot name is shown. At the button's own pixel size a round button fits 3 large letters (`C▲`, `L1`, `ABC`; 2 of the symbols `○` `×` `△` `□`), L·R fit 5 (`START`), and START·SELECT fit 6 small letters (`SELECT`).
+- Button colour, position, size and touch area do not change (C·D colour follows the role).
+- Buttons without `touchLabel` (including existing .wgba files) keep the slot name. Older webGBA versions ignore the field.
+- Roles `l2`, `r2` and `extra` have no touch position, so nothing is shown (keyboard and gamepad only; the controls list shows `label` and the keys).
+- `check` warns about `label`/`touchLabel` over 8 characters or empty, and about `touchLabel` on a role without a touch position (a warning, not an error — the app still opens the file).
+
+Example ① PlayStation style (② own JS):
+
+```json
+"input": {
+  "preset": "none",
+  "buttons": [
+    { "id": "UP", "role": "up", "code": "ArrowUp" },
+    { "id": "DOWN", "role": "down", "code": "ArrowDown" },
+    { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
+    { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
+    { "id": "CIRCLE", "role": "a", "code": "KeyZ", "label": "○", "touchLabel": "○" },
+    { "id": "CROSS", "role": "b", "code": "KeyX", "label": "×", "touchLabel": "×" },
+    { "id": "TRIANGLE", "role": "c", "code": "KeyC", "label": "△", "touchLabel": "△" },
+    { "id": "SQUARE", "role": "d", "code": "KeyV", "label": "□", "touchLabel": "□" },
+    { "id": "L1", "role": "l", "code": "KeyA", "label": "L1", "touchLabel": "L1" },
+    { "id": "R1", "role": "r", "code": "KeyS", "label": "R1", "touchLabel": "R1" },
+    { "id": "L2", "role": "l2", "code": "KeyQ", "label": "L2" },
+    { "id": "R2", "role": "r2", "code": "KeyW", "label": "R2" },
+    { "id": "START", "role": "start", "code": "Enter" },
+    { "id": "SELECT", "role": "select", "code": "Backspace" }
+  ]
+}
+```
+
+Example ② Nintendo 64 style (two C buttons on touch slots; the other C buttons and Z on keyboard and gamepad):
+
+```json
+{ "id": "C_LEFT", "role": "c", "code": "KeyJ", "label": "C◀", "touchLabel": "C◀" },
+{ "id": "C_DOWN", "role": "d", "code": "KeyK", "label": "C▼", "touchLabel": "C▼" },
+{ "id": "C_UP", "role": "extra", "code": "KeyI", "label": "C▲", "keys": ["KeyI"] },
+{ "id": "Z", "role": "l2", "code": "KeyQ", "label": "Z" }
+```
 
 ---
 

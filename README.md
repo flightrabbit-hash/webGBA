@@ -132,6 +132,7 @@ node tools/run.cjs   # 전체 명령 목록
   재생 규칙: RS를 한 번 누르면 처음부터 한 번 재생 · 누르고 있으면 마지막 단계의 키를 계속 누름(떼면 끝) · 재생 중 다른 키(키보드·게임패드·화면 버튼)를 누르면 그 프레임부터 RS 입력을 멈추고 그 키를 입력 · 재생 중 RS를 다시 누르면 처음부터 · 연사는 RS 입력에 적용하지 않음 · 일시정지 중에는 재생하지 않음.
   입력은 게임 프레임마다 일반 입력과 같은 경로로 들어가므로 빨리 감기·멀티플레이 중에도 같은 프레임 결과입니다(② 자체 JS 게임은 화면 갱신 시간 기준).
   Windows 앱: 설정 창 › 키의 "RS 버튼" 칸에 키보드 키나 게임패드 버튼을 지정(기본 없음)하고, 같은 탭 아래 RS 버튼에서 프리셋·단계를 편집합니다. 웹 버전: 화면의 RS 버튼(버튼 묶음 위 우측 알약, 다른 버튼과 다른 색)과 설정 › RS 버튼 › 편집.
+- **게임마다 버튼 글자** — 설명서 버튼의 `touchLabel`(예 PlayStation `○` `×` `△` `□`, Nintendo 64 `C◀` `C▼`)을 웹 버전 가상 버튼과 RS 편집 칸에 자리 이름(A·B·START…) 대신 표시합니다. 키 설정·조작법 목록은 버튼 `label`을 표시합니다. 제작자용 규격은 [5.8](#58-버튼-글자-touchlabel).
 - **빨리 감기 소리** — 빨리 감기 중에도 배수만큼 빨라진 소리를 출력합니다. 소리를 끄려면 설정 창 › 일반 › 소리 › 빨리 감기 중 소리 끄기.
 - **열기** — 열기 대화상자, 탐색기에서 Drag & Drop, 같은 폴더의 게임 목록(`.gba`·`.gb`·`.gbc`·`.wgba`·`.wasm`, 이전·다음 게임으로 이동),
   즐겨찾기, 최근 연 파일, 연결 프로그램 인자(이미 실행 중이면 해당 창에서 열기). 화면에는 경로 없이 파일명만 표시됩니다.
@@ -624,7 +625,8 @@ WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wm
 | --- | --- |
 | `id` | 버튼 이름(`A`, `JUMP` …, 영문·숫자·`_`·`-` 16자, 중복 불가) |
 | `role` | 위치: `up` `down` `left` `right` · 앞면 `a` `b` `c` `d`(최대 4개) · `l` `r` `l2` `r2` · `start` `select` · `extra`. 기본 키·게임패드·터치 위치를 이 값으로 결정. `extra` 외에는 role 한 개에 버튼 한 개 |
-| `label` | 화면에 표시할 문자열(문자열 또는 언어별 — 3.1 "언어별 글"과 같은 순서, 6자 이하 권장, 8자까지). 없으면 `id` |
+| `label` | 버튼 이름 — 키 설정·조작법 목록·RS 칸 설명에 표시(문자열 또는 언어별 — 3.1 "언어별 글"과 같은 순서, 6자 이하 권장, 8자까지). 없으면 `touchLabel` → `id` |
+| `touchLabel` | (선택) 버튼 글자 — 가상 버튼(터치 화면)과 RS 칸에 자리 이름 대신 표시(문자열 또는 언어별, 4자 이하 권장, 8자까지). role `a` `b` `c` `d` `l` `r` `start` `select` 버튼만. 없으면 자리 이름(A·B·C·D·L·R·START·SELECT) 그대로. [5.8](#58-버튼-글자-touchlabel) |
 | `bit` | **① 필수**: `Web_RunFrame(keys)`의 비트 번호 0~31(눌림 = 1) |
 | `code` | **② 필수**: 게임 JS가 수신하는 `KeyboardEvent.code`(예 `"Space"`, `"KeyZ"`). 호스트는 `key`·`keyCode`도 맞춰 전달 |
 | `keys` | 기본 키보드 배치(`KeyboardEvent.code` 4개까지). 없으면 `role`의 기본값 |
@@ -708,13 +710,13 @@ WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wm
     { "id": "DOWN", "role": "down", "code": "ArrowDown" },
     { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
     { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
-    { "id": "JUMP", "role": "a", "label": { "en": "Jump", "ko": "점프" }, "code": "Space" },
-    { "id": "MENU", "role": "start", "code": "Escape" }
+    { "id": "JUMP", "role": "a", "label": { "en": "Jump", "ko": "점프" }, "touchLabel": { "en": "JUMP", "ko": "점프" }, "code": "Space" },
+    { "id": "MENU", "role": "start", "touchLabel": "MENU", "code": "Escape" }
   ]
 }
 ```
 
-사용자가 `Z`를 누르면(기본 `a` = `KeyZ`) 게임은 `code: "Space"`, `key: " "`, `keyCode: 32`인 키 이벤트를 수신합니다. 터치 화면에는 방향 패드 + "점프" + 하단 가운데 "MENU"가 생성됩니다.
+사용자가 `Z`를 누르면(기본 `a` = `KeyZ`) 게임은 `code: "Space"`, `key: " "`, `keyCode: 32`인 키 이벤트를 수신합니다. 터치 화면에는 방향 패드 + A 자리 "점프"(영어 화면 "JUMP") + 하단 가운데 "MENU"가 생성됩니다. 조작법 목록은 `label`(점프)과 `id`(MENU)를 표시합니다.
 
 #### 5.7 RS 버튼 기본 입력 `input.rs`
 
@@ -737,6 +739,57 @@ WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wm
 - 단계는 1~32개. 호스트는 `Web_RunFrame(keys)`(①) 프레임마다 단계의 버튼 비트를 사용자 입력과 함께 전달합니다. RS 단계에 방향이 있는 프레임에는 사용자 방향 대신 RS 방향을 전달하고(방향 동시 입력 설정과 무관하게 대각선 그대로), 연사는 적용하지 않습니다.
 - 재생 규칙(한 번 누름 = 한 번 재생, 누르고 있으면 마지막 단계 유지, 다른 키가 들어오면 그 프레임부터 중단)은 호스트 동작입니다(주요 기능 › RS 버튼).
 - `check`는 형식·범위·버튼 id·role을 검사합니다.
+
+#### 5.8 버튼 글자 `touchLabel`
+
+PlayStation(○ × △ □)·Nintendo 64(C▲ C▼·Z) 등 GBA와 다른 버튼을 쓰는 게임은 `touchLabel`로 가상 버튼에 원래 버튼 이름을 표시합니다. 사용자가 화면의 A·B를 보고 원래 버튼으로 바꿔 생각하지 않아도 됩니다.
+
+| 자리 | 표시하는 값 |
+| --- | --- |
+| 웹 버전 가상 버튼(휴대폰·PC, 기본·크게·직접 배치·오버레이) | `touchLabel` — 없으면 자리 이름 |
+| RS 편집 칸(웹 버전·Windows 앱) | `touchLabel` — 없으면 자리 이름. 마우스를 올리면 `label` |
+| 직접 배치 편집의 조작부 이름(웹 버전) | 자리 이름 + `touchLabel`(예 "A 버튼 (○)") |
+| 키 설정(Windows 앱)·조작법 목록(웹 버전·Windows 앱) | `label` — 없으면 `touchLabel` → `id` |
+
+- **그리기**: webGBA 픽셀 글자로 그립니다. 픽셀 글자 = 영문 대문자 A~Z(소문자는 대문자로 그림), 숫자 0~9, `+` `-` `/` `.` `·` 공백, 기호 `○` `×` `△` `□` `▲` `▼` `◀` `▶` `↑` `↓` `←` `→`(같은 뜻의 `◯` `✕` `✖` `╳` `◁` `▷` `▽`도 같은 그림). 그 밖의 글자(한글·가나 등)는 웹 버전 글꼴(갈무리11)로 그립니다.
+- **크기**: 버튼 면 안(외곽선에서 2픽셀 안쪽)에 들어가는 가장 큰 글자를 사용합니다. 둥근 버튼·L·R = 큰 글자(5×7) → 작은 글자(3×5) → 글꼴, START·SELECT = 작은 글자 → 글꼴 순서입니다. 버튼 그림 픽셀 단위로 들어가지 않으면 기기 픽셀 단위로 줄여 그리고, 그래도 들어가지 않으면 자리 이름을 표시합니다. 큰 글자 기준 둥근 버튼은 영문 3자(`C▲`·`L1`·`ABC`, 기호 `○` `×` `△` `□` 는 2자), L·R 은 5자(`START`)까지, START·SELECT 는 작은 글자 6자(`SELECT`)까지 버튼 그림 픽셀 그대로 들어갑니다.
+- 버튼 색·자리·크기·누르는 영역은 그대로입니다(C·D 색은 role 기준).
+- `touchLabel`이 없는 버튼(기존 .wgba 포함)은 자리 이름을 그대로 표시합니다. 이 필드를 모르는 이전 webGBA는 무시합니다.
+- role `l2`·`r2`·`extra`는 터치 자리가 없어 표시하지 않습니다(키보드·게임패드 전용, 조작법 목록에 `label`과 키를 표시).
+- `check`는 `label`·`touchLabel`의 8자 초과·빈 칸, 터치 자리가 아닌 role의 `touchLabel`을 경고합니다(오류 아님 — 앱은 그대로 엶).
+
+예 ① PlayStation 형(② 자체 JS):
+
+```json
+"input": {
+  "preset": "none",
+  "buttons": [
+    { "id": "UP", "role": "up", "code": "ArrowUp" },
+    { "id": "DOWN", "role": "down", "code": "ArrowDown" },
+    { "id": "LEFT", "role": "left", "code": "ArrowLeft" },
+    { "id": "RIGHT", "role": "right", "code": "ArrowRight" },
+    { "id": "CIRCLE", "role": "a", "code": "KeyZ", "label": "○", "touchLabel": "○" },
+    { "id": "CROSS", "role": "b", "code": "KeyX", "label": "×", "touchLabel": "×" },
+    { "id": "TRIANGLE", "role": "c", "code": "KeyC", "label": "△", "touchLabel": "△" },
+    { "id": "SQUARE", "role": "d", "code": "KeyV", "label": "□", "touchLabel": "□" },
+    { "id": "L1", "role": "l", "code": "KeyA", "label": "L1", "touchLabel": "L1" },
+    { "id": "R1", "role": "r", "code": "KeyS", "label": "R1", "touchLabel": "R1" },
+    { "id": "L2", "role": "l2", "code": "KeyQ", "label": "L2" },
+    { "id": "R2", "role": "r2", "code": "KeyW", "label": "R2" },
+    { "id": "START", "role": "start", "code": "Enter" },
+    { "id": "SELECT", "role": "select", "code": "Backspace" }
+  ]
+}
+```
+
+예 ② Nintendo 64 형(C 버튼 두 개만 터치 자리, 나머지 C 버튼·Z는 키보드·게임패드):
+
+```json
+{ "id": "C_LEFT", "role": "c", "code": "KeyJ", "label": "C◀", "touchLabel": "C◀" },
+{ "id": "C_DOWN", "role": "d", "code": "KeyK", "label": "C▼", "touchLabel": "C▼" },
+{ "id": "C_UP", "role": "extra", "code": "KeyI", "label": "C▲", "keys": ["KeyI"] },
+{ "id": "Z", "role": "l2", "code": "KeyQ", "label": "Z" }
+```
 
 ---
 

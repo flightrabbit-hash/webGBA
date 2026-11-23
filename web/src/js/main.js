@@ -9,7 +9,7 @@ import { BOARD_TEXTS, BoardPanel } from "./app/board-panel.js";
 import { API_PATH, Signal } from "./core/net/signal.js";
 import { readPatch, sha1Hex, WgbpError } from "./core/wgbp.js";
 import { openLoader, runPatchJob } from "./app/patch-loader.js";
-import { audioSessionType, AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, FRAME_MS, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_NAME_MAX, MACRO_STEPS_MAX, macroBook, macroFrameCount, macroOf, normalizeMacro, Player } from "./app/player.js";
+import { audioSessionType, AUTO_FIRE_LEVEL, AUTO_FIRE_RATES, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_MODES, dpadFor, FRAME_MS, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, MACRO_FRAMES_MAX, MACRO_GAP, MACRO_HOLD, MACRO_KEYS, MACRO_NAME_MAX, MACRO_STEPS_MAX, macroBook, macroFrameCount, macroOf, normalizeMacro, Player, slotNames, slotTexts } from "./app/player.js";
 import { GB_SCREEN, kindKey, romKind, romType, systemKind } from "./core/rom-kind.js";
 import * as i18n from "./shell/i18n.js";
 import * as theme from "./shell/theme.js";
@@ -822,7 +822,14 @@ function initPadEditor() {
     setScreenCenter: (cx, cy) => setScreenFreeCenter(cx, cy),
     clearScreenInline: () => clearScreenFree(),
     forceSet: (kind) => padEditForceSet(kind),
+    ctlName: (id) => padCtlName(id),
   });
+}
+
+function padCtlName(id) {
+  const name = t(`web.pad.ctl.${id}`);
+  const text = slotTexts(state.input)[id.length === 1 ? id.toUpperCase() : id];
+  return text ? t("web.pad.ctl.named", { name, label: text }) : name;
 }
 
 function padMark(name, down) {
@@ -875,6 +882,7 @@ function setInput(input) {
   }
   player.setLayout(next, keyTable());
   player.setDpadMode(dpadFor(next, state.prefs));
+  skin.setLabels(slotTexts(next));
   if (applyRs()) changed = true;
   if (changed && document.documentElement.dataset.ready) layout();
 }
@@ -4672,6 +4680,7 @@ function applyTheme(mode) {
 async function setLang(id) {
   savePrefs({ lang: id });
   await i18n.use(id);
+  skin.setLabels(slotTexts(state.input));
   context.quotaText = t("web.quota");
   state.boardFont = null;
   queueBoard();
@@ -4965,6 +4974,8 @@ function renderRs() {
   }
   const book = rsBook();
   const slots = rsSlots();
+  const chipText = slotTexts(state.input);
+  const chipName = slotNames(state.input);
   const opened = (state.rsOpen ??= new Set());
   const rerender = () => {
     const top = el.sheetBody.scrollTop;
@@ -5060,13 +5071,18 @@ function renderRs() {
     keys.setAttribute("role", "group");
     keys.setAttribute("aria-label", t("macro.keys"));
     for (const key of slots) {
-      const chip = make("button", `rs-key${key.length > 1 && !RS_ARROWS[key] ? " rs-key--word" : ""}`);
+      const text = RS_ARROWS[key] ?? chipText[key] ?? key;
+      const name = RS_ARROWS[key] ? t(`key.${key}`) : chipName[key] ?? key;
+      const chip = make("button", `rs-key${[...text].length > 1 && !RS_ARROWS[key] ? " rs-key--word" : ""}`);
       chip.type = "button";
       chip.dataset.key = key;
       chip.dataset.group = RS_GROUP[key];
       chip.setAttribute("aria-pressed", String(step.keys.includes(key)));
-      if (RS_ARROWS[key]) chip.setAttribute("aria-label", t(`key.${key}`));
-      chip.append(make("span", "rs-key__label", RS_ARROWS[key] ?? key));
+      if (name !== text) {
+        chip.setAttribute("aria-label", name);
+        chip.title = name;
+      }
+      chip.append(make("span", "rs-key__label", text));
       chip.addEventListener("click", () => {
         const on = !step.keys.includes(key);
         step.keys = MACRO_KEYS.filter((k) => (k === key ? on : step.keys.includes(k)));
@@ -5821,6 +5837,7 @@ async function boot() {
   applyTheme(state.prefs.theme);
   await i18n.use(i18n.known(state.prefs.lang) ? state.prefs.lang : "ko");
   document.fonts?.ready.then(() => {
+    skin.refreshText();
     state.glyphCache?.clear();
     state.baselineCache?.clear();
     centerInk(document);

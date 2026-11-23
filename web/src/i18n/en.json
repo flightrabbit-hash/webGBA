@@ -107,6 +107,7 @@
   "web.pad.ctl.soft1": "Soft L",
   "web.pad.ctl.soft2": "Soft R",
   "web.pad.ctl.screen": "Game screen",
+  "web.pad.ctl.named": "{name} ({label})",
   "web.padCombo": "Press A and B together",
   "web.padCombo.note": "Pressing between A and B presses both",
   "web.rs": "RS button",

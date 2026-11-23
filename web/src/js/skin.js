@@ -22,6 +22,32 @@ const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "star
 const KEY_LABELS = { STAR: "*", HASH: "#" };
 const keyLabel = (name) => KEY_LABELS[name] ?? (/^N\d$/.test(name) ? name.slice(1) : name);
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
+const LABEL_KEYS = new Set(["A", "B", "C", "D", "L", "R", "START", "SELECT"]);
+const LABEL_FONT = "12px Galmuri11";
+const LABEL_ALPHA = 128;
+
+function rasterLabel(text) {
+  if (typeof document === "undefined" || !document.fonts?.check?.(LABEL_FONT, text)) return null;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.font = LABEL_FONT;
+  const width = Math.ceil(ctx.measureText(text).width) + 2;
+  const height = 16;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.font = LABEL_FONT;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#000";
+  ctx.fillText(text, 1, 2);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    let row = "";
+    for (let x = 0; x < width; x++) row += data[(y * width + x) * 4 + 3] >= LABEL_ALPHA ? "#" : ".";
+    rows.push(row);
+  }
+  return rows.some((row) => row.includes("#")) ? rows : null;
+}
 
 const MENU_ART = [
   "..............",
@@ -212,6 +238,21 @@ export class Skin {
     // 자유 비율: part 이름 → { x, y } (배율 위에 더 늘리는 가로·세로 배, 1 이상). 둥근 사각형 부품은 칸 수를 늘려 그리고,
     // 둥근 버튼·방향은 그림은 그대로 두고 상자(누르는 자리)만 넓힌다.
     this.stretch = {};
+    this.labels = {};
+    PX.setTextRaster(rasterLabel);
+  }
+
+  setLabels(labels = {}) {
+    const next = Object.fromEntries(Object.entries(labels).filter(([name, text]) => LABEL_KEYS.has(name) && text));
+    if (JSON.stringify(next) === JSON.stringify(this.labels)) return false;
+    this.labels = next;
+    for (const name of LABEL_KEYS) this.drawKey(name);
+    return true;
+  }
+
+  refreshText() {
+    PX.setTextRaster(rasterLabel);
+    if (Object.keys(this.labels).length) for (const name of LABEL_KEYS) this.drawKey(name);
   }
 
   setOverrides({ scaleMul = {}, colorHex = {}, stretch = {} } = {}) {
@@ -352,7 +393,7 @@ export class Skin {
     const tall = st?.y > 1 ? st.y : 1;
     // 둥근 사각형 부품은 칸 수를 늘려 그리고(픽셀 그대로), 둥근 A·B·C·D 는 그림을 가운데 두고 상자만 넓힌다.
     const round = part === "a" || part === "b" || part === "c" || part === "d";
-    const render = PX.renderGameButton(part, { label: keyLabel(name), side: name, state, scale, palette: this.paletteFor(part, name), ...(round ? {} : { wide, tall }) });
+    const render = PX.renderGameButton(part, { label: keyLabel(name), side: name, text: this.labels[name] ?? "", state, scale, palette: this.paletteFor(part, name), ...(round ? {} : { wide, tall }) });
     this.paint(host, render, round ? { minW: Math.round(render.width * wide), minH: Math.round(render.height * tall) } : {});
   }
 

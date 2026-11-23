@@ -167,11 +167,34 @@ export function layoutKeys(layout, global = DEFAULT_KEYS, saved = null) {
   return out;
 }
 
-/** 키 설정·조작법에 보일 버튼 이름: 설명서 label(pickText 순서) → GBA 버튼 이름 → id. */
+/** 키 설정·조작법에 보일 버튼 이름: 설명서 label → touchLabel(pickText 순서) → GBA 버튼 이름 → id. */
 export function buttonLabel(button, language = lang()) {
-  const text = pickText(button.label, language);
+  const text = [pickText(button.label, language), pickText(button.touchLabel, language)].find((value) => value.trim());
   if (text) return text;
   return BUTTONS.includes(button.id) ? t(`key.${button.id}`) : button.id;
+}
+
+export const FACE_SLOTS = Object.freeze(["A", "B", "C", "D", "L", "R", "START", "SELECT"]);
+
+/** 터치 자리(A·B·C·D·L·R·START·SELECT) → 그 자리 버튼의 설명서 touchLabel. 없는 자리는 빠짐(자리 이름 그대로). */
+export function slotTexts(input, language = lang()) {
+  const out = {};
+  for (const b of input?.buttons ?? []) {
+    const slot = typeof b.role === "string" ? b.role.toUpperCase() : "";
+    const text = FACE_SLOTS.includes(slot) ? pickText(b.touchLabel, language).trim() : "";
+    if (text) out[slot] = text;
+  }
+  return out;
+}
+
+/** RS 자리(MACRO_KEYS) → 그 자리 버튼의 이름(buttonLabel). */
+export function slotNames(input, language = lang()) {
+  const out = {};
+  for (const b of input?.buttons ?? []) {
+    const slot = typeof b.role === "string" ? b.role.toUpperCase() : "";
+    if (MACRO_KEYS.includes(slot) && !out[slot]) out[slot] = buttonLabel(b, language);
+  }
+  return out;
 }
 
 const AXIS_RE = /^([+-]?)axis(\d)$/;

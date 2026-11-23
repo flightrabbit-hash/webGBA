@@ -95,6 +95,8 @@ export function parseAspect(text) {
 export const MOBILE_ROLES = Object.freeze(["ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"]);
 export const ANDROID_ROLES = Object.freeze(["back", "menu"]);
 export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", ...MOBILE_ROLES, ...ANDROID_ROLES]);
+export const TOUCH_LABEL_ROLES = Object.freeze(["a", "b", "c", "d", "l", "r", "start", "select"]);
+export const LABEL_MAX = 8;
 export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
 export const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;
 export const ANDROID = "Android";
@@ -290,7 +292,7 @@ function manifestMacro(raw, buttons) {
 /**
  * 설명서 input → 이 게임의 버튼 목록(규격 5장). 설명서가 없으면(.gba·목차 없는 옛 .wgba·.wasm) GBA 10버튼.
  * preset 기본값은 ① "gba"·② "none". buttons 는 preset 뒤에 붙고 같은 id 면 preset 것을 바꾼다.
- * 돌려줌 { gameId, gba, buttons: [{ id, role, label, bit, code, keys, pad, touch }] }:
+ * 돌려줌 { gameId, gba, buttons: [{ id, role, label, touchLabel, bit, code, keys, pad, touch }] }:
  *  - role: 아는 role 만(없거나 이미 쓴 role 이면 null — extra 처럼 기본 키·터치 자리 없음)
  *  - keys: 설명서가 적은 기본 키(4개까지) 또는 null(앱이 role 기본으로 채움) · pad: 설명서 값 또는 role 기본
  *  - gba: GBA 10버튼 그대로(바꾼 키·패드·이름·숨김 없음) — 앱은 키 설정을 앱 전체 값으로, 화면은 지금 그대로.
@@ -319,7 +321,7 @@ export function resolveInput(manifest) {
     if (role === "extra") role = null;
     const keys = Array.isArray(raw.keys) ? raw.keys.filter((code) => typeof code === "string" && code).slice(0, 4) : null;
     const pad = Array.isArray(raw.pad) ? raw.pad.filter((p) => (Number.isInteger(p) && p >= 0 && p < 32) || (typeof p === "string" && PAD_AXIS_RE.test(p))) : null;
-    buttons.push({ id: raw.id, role, label: raw.label ?? null, bit: script ? null : raw.bit, code: script ? raw.code : null, keys, pad, touch: raw.touch === "hide" || (shown && role && !shown.has(role)) ? "hide" : "auto" });
+    buttons.push({ id: raw.id, role, label: raw.label ?? null, touchLabel: raw.touchLabel ?? null, bit: script ? null : raw.bit, code: script ? raw.code : null, keys, pad, touch: raw.touch === "hide" || (shown && role && !shown.has(role)) ? "hide" : "auto" });
   }
   const shoulders2 = used.has("l2") || used.has("r2");
   for (const b of buttons) {
@@ -331,7 +333,7 @@ export function resolveInput(manifest) {
     buttons.length === GBA_PRESET.length &&
     GBA_PRESET.every((p, i) => {
       const b = buttons[i];
-      return b.id === p.id && b.role === p.role && b.bit === p.bit && !b.keys && !b.label && b.touch === "auto" && b.pad.join() === ROLE_PAD[p.role].join();
+      return b.id === p.id && b.role === p.role && b.bit === p.bit && !b.keys && !b.label && !b.touchLabel && b.touch === "auto" && b.pad.join() === ROLE_PAD[p.role].join();
     });
   const rs = manifestMacro(input.rs, buttons);
   return { gameId: typeof manifest?.id === "string" ? manifest.id : "", gba, buttons, dpad: DPAD_MODES.includes(input.dpad) ? input.dpad : null, rs: rs?.length ? rs : null };
@@ -805,6 +807,12 @@ export function checkManifest(m, errors, warnings) {
     if (b.role && b.role !== "extra" && roles.has(b.role) && roles.get(b.role) !== b.id) errors.push(`버튼 ${b.id}: role ${b.role} 를 ${roles.get(b.role)} 도 씁니다`);
     if (b.role) roles.set(b.role, b.id);
     for (const key of b.keys ?? []) if (HOST_KEYS.includes(key)) warnings.push(`버튼 ${b.id}: 기본 키 ${key} 는 호스트 몫 키입니다`);
+    for (const key of ["label", "touchLabel"]) {
+      if (b[key] === undefined) continue;
+      const text = textProblems(`버튼 ${b.id}: ${key}`, b[key], LABEL_MAX);
+      warnings.push(...text.errors, ...text.warnings);
+    }
+    if (b.touchLabel !== undefined && !TOUCH_LABEL_ROLES.includes(b.role)) warnings.push(`버튼 ${b.id}: touchLabel 은 터치 자리(${TOUCH_LABEL_ROLES.join("·")}) 버튼에만 표시합니다`);
   }
   if (m.input?.rs !== undefined) checkMacro(m.input.rs, roles, errors);
   // 더 높은 규약은 다른 칸 규칙을 모르므로 검사하지 않는다 — 멀티플레이만 끄고 실행(규격 7.2, 결정 181 가)

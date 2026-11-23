@@ -10,7 +10,7 @@ import { createExeUpdater } from "../app/update-exe.js";
 import { createAppUpdater } from "../app/update-app.js";
 import { ADMIN_APP_API, adminClient, readRecord } from "../core/admin.js";
 import { createAdminFlow } from "../app/admin-ui.js";
-import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player } from "../app/player.js";
+import { AUTO_FIRE_LEVEL, autoFireLevel, buttonLabel, codeOf, DEFAULT_KEYS, DPAD_DEFAULT, DPAD_MODES, dpadFor, GB_LAYOUT, GBA_LAYOUT, gameDpadPatch, layoutKeys, macroBook, macroOf, normalizeMacro, PAD_CODE_RE, Player, slotNames, slotTexts } from "../app/player.js";
 import { GB_SCREEN, kindKey, romType, systemKind } from "../core/rom-kind.js";
 import { androidOf, resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
@@ -1761,6 +1761,8 @@ async function settingsSnapshot() {
           book: rsBook(),
           fallback: state.input.rs ?? null,
           slots: state.input.buttons.map((b) => b.role?.toUpperCase()).filter(Boolean),
+          texts: slotTexts(state.input),
+          names: slotNames(state.input),
         }
       : null,
     theme: state.prefs.theme ?? { mode: "dark", colors: {} },

@@ -309,6 +309,42 @@ const BIG = { // 5x7
   9: ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
   '*': ['.....', '#.#.#', '.###.', '#####', '.###.', '#.#.#', '.....'],
   '#': ['.#.#.', '.#.#.', '#####', '.#.#.', '#####', '.#.#.', '.#.#.'],
+  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+  G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  I: ['###', '.#.', '.#.', '.#.', '.#.', '.#.', '###'],
+  J: ['..###', '...#.', '...#.', '...#.', '...#.', '#..#.', '.##..'],
+  M: ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
+  N: ['#...#', '#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#'],
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
+  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+  U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
+  W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '#.#.#', '.#.#.'],
+  X: ['#...#', '#...#', '.#.#.', '..#..', '.#.#.', '#...#', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+  Z: ['#####', '....#', '...#.', '..#..', '.#...', '#....', '#####'],
+  '+': ['.....', '..#..', '..#..', '#####', '..#..', '..#..', '.....'],
+  '-': ['....', '....', '....', '####', '....', '....', '....'],
+  '/': ['....#', '....#', '...#.', '..#..', '.#...', '#....', '#....'],
+  '.': ['.', '.', '.', '.', '.', '.', '#'],
+  '·': ['.', '.', '.', '#', '.', '.', '.'],
+  ' ': ['.', '.', '.', '.', '.', '.', '.'],
+  '○': ['..###..', '.#...#.', '#.....#', '#.....#', '#.....#', '.#...#.', '..###..'],
+  '×': ['#.....#', '.#...#.', '..#.#..', '...#...', '..#.#..', '.#...#.', '#.....#'],
+  '△': ['...#...', '..#.#..', '..#.#..', '.#...#.', '.#...#.', '#.....#', '#######'],
+  '□': ['#######', '#.....#', '#.....#', '#.....#', '#.....#', '#.....#', '#######'],
+  '▲': ['.......', '.......', '...#...', '..###..', '.#####.', '#######', '.......'],
+  '▼': ['.......', '#######', '.#####.', '..###..', '...#...', '.......', '.......'],
+  '◀': ['...#', '..##', '.###', '####', '.###', '..##', '...#'],
+  '▶': ['#...', '##..', '###.', '####', '###.', '##..', '#...'],
+  '↑': ['..#..', '.###.', '#.#.#', '..#..', '..#..', '..#..', '..#..'],
+  '↓': ['..#..', '..#..', '..#..', '..#..', '#.#.#', '.###.', '..#..'],
+  '←': ['.......', '..#....', '.#.....', '#######', '.#.....', '..#....', '.......'],
+  '→': ['.......', '....#..', '.....#.', '#######', '.....#.', '....#..', '.......'],
 };
 const SMALL = { // 높이 5, 폭은 글자마다
   S: ['###', '#..', '###', '..#', '###'],
@@ -324,7 +360,80 @@ const SMALL = { // 높이 5, 폭은 글자마다
   e: ['...', '.##', '#.#', '##.', '.##'],
   b: ['#..', '##.', '#.#', '#.#', '##.'],
   '-': ['.....', '.....', '#####', '.....', '.....'],
+  D: ['##.', '#.#', '#.#', '#.#', '##.'],
+  F: ['###', '#..', '##.', '#..', '#..'],
+  H: ['#.#', '#.#', '###', '#.#', '#.#'],
+  I: ['###', '.#.', '.#.', '.#.', '###'],
+  J: ['..#', '..#', '..#', '#.#', '.#.'],
+  K: ['#.#', '#.#', '##.', '#.#', '#.#'],
+  M: ['#...#', '##.##', '#.#.#', '#...#', '#...#'],
+  N: ['#..#', '##.#', '#.##', '#..#', '#..#'],
+  O: ['.#.', '#.#', '#.#', '#.#', '.#.'],
+  P: ['##.', '#.#', '##.', '#..', '#..'],
+  Q: ['.#.', '#.#', '#.#', '##.', '.##'],
+  U: ['#.#', '#.#', '#.#', '#.#', '###'],
+  V: ['#.#', '#.#', '#.#', '#.#', '.#.'],
+  W: ['#...#', '#...#', '#.#.#', '#.#.#', '.#.#.'],
+  X: ['#.#', '#.#', '.#.', '#.#', '#.#'],
+  Y: ['#.#', '#.#', '.#.', '.#.', '.#.'],
+  Z: ['###', '..#', '.#.', '#..', '###'],
+  0: ['###', '#.#', '#.#', '#.#', '###'],
+  1: ['.#.', '##.', '.#.', '.#.', '###'],
+  2: ['##.', '..#', '.#.', '#..', '###'],
+  3: ['##.', '..#', '.#.', '..#', '##.'],
+  4: ['#.#', '#.#', '###', '..#', '..#'],
+  5: ['###', '#..', '##.', '..#', '##.'],
+  6: ['.##', '#..', '###', '#.#', '###'],
+  7: ['###', '..#', '.#.', '.#.', '.#.'],
+  8: ['###', '#.#', '###', '#.#', '###'],
+  9: ['###', '#.#', '###', '..#', '##.'],
+  '+': ['...', '.#.', '###', '.#.', '...'],
+  '/': ['..#', '..#', '.#.', '#..', '#..'],
+  '.': ['.', '.', '.', '.', '#'],
+  '·': ['.', '.', '#', '.', '.'],
+  ' ': ['.', '.', '.', '.', '.'],
+  '○': ['.###.', '#...#', '#...#', '#...#', '.###.'],
+  '×': ['#...#', '.#.#.', '..#..', '.#.#.', '#...#'],
+  '△': ['..#..', '.#.#.', '.#.#.', '#...#', '#####'],
+  '□': ['#####', '#...#', '#...#', '#...#', '#####'],
+  '▲': ['.....', '..#..', '.###.', '#####', '.....'],
+  '▼': ['.....', '#####', '.###.', '..#..', '.....'],
+  '◀': ['..#', '.##', '###', '.##', '..#'],
+  '▶': ['#..', '##.', '###', '##.', '#..'],
+  '↑': ['.#.', '###', '.#.', '.#.', '.#.'],
+  '↓': ['.#.', '.#.', '.#.', '###', '.#.'],
+  '←': ['.....', '.#...', '#####', '.#...', '.....'],
+  '→': ['.....', '...#.', '#####', '...#.', '.....'],
 };
+
+const GLYPH_ALIAS = { '◯': '○', '✕': '×', '✖': '×', '╳': '×', '◁': '◀', '▷': '▶', '▽': '▼', '・': '·', '－': '-', '＋': '+', '／': '/' };
+const normLabel = (text) => [...String(text)].map((ch) => GLYPH_ALIAS[ch] ?? (ch >= 'a' && ch <= 'z' ? ch.toUpperCase() : ch)).join('');
+function trimGlyph(rows) {
+  const cols = rows[0].length;
+  const used = (x) => rows.some((r) => r[x] === '#');
+  let x0 = 0, x1 = cols - 1;
+  while (x0 < x1 && !used(x0)) x0++;
+  while (x1 > x0 && !used(x1)) x1--;
+  return used(x0) ? rows.map((r) => r.slice(x0, x1 + 1)) : rows;
+}
+function fontRows(text, font) {
+  const chars = [...(text || '')];
+  if (!chars.length || !chars.every((ch) => font[ch])) return null;
+  const glyphs = chars.map((ch) => trimGlyph(font[ch]));
+  return glyphs[0].map((_, y) => glyphs.map((g) => g[y]).join('.'));
+}
+
+let rasterText = null;
+let rasterGen = 0;
+export function setTextRaster(fn) {
+  rasterText = typeof fn === 'function' ? fn : null;
+  rasterGen++;
+  caches = new WeakMap();
+}
+export function labelFont(text) {
+  const t = normLabel(text);
+  return fontRows(t, BIG) ? 'big' : fontRows(t, SMALL) ? 'small' : null;
+}
 
 /** 글자열 → 비트맵 줄 배열('#' = 잉크). */
 function textBitmap(text, font) {
@@ -353,6 +462,75 @@ function stampCentered(art, box, rows, role) {
   const oy = box.y0 + Math.floor((bh - ib.h) / 2) - ib.y0;
   rows.forEach((r, y) => [...r].forEach((c, x) => { if (c === '#') art.set(ox + x, oy + y, role); }));
   return { x0: ox + ib.x0, y0: oy + ib.y0, x1: ox + ib.x1, y1: oy + ib.y1 };
+}
+
+const LABEL_MARGIN = 2;
+
+function faceSafe(art, roles) {
+  const face = new Set([roles.face, roles.hi, roles.lo]);
+  const near = [];
+  for (let dy = -LABEL_MARGIN; dy <= LABEL_MARGIN; dy++) for (let dx = -LABEL_MARGIN; dx <= LABEL_MARGIN; dx++) if (Math.abs(dx) + Math.abs(dy) <= LABEL_MARGIN) near.push([dx, dy]);
+  return (x, y) => near.every(([dx, dy]) => face.has(art.get(x + dx, y + dy)));
+}
+
+function inkCells(rows) {
+  const out = [];
+  rows.forEach((r, y) => [...r].forEach((c, x) => { if (c === '#') out.push([x, y]); }));
+  return out;
+}
+
+function fitAt(box, ib, unit, scale) {
+  const bw = (box.x1 - box.x0 + 1) * scale, bh = (box.y1 - box.y0 + 1) * scale;
+  return { ox: box.x0 * scale + Math.floor((bw - ib.w * unit) / 2) - ib.x0 * unit, oy: box.y0 * scale + Math.floor((bh - ib.h * unit) / 2) - ib.y0 * unit };
+}
+
+function placeLabel(art, faceBox, rows, roles) {
+  const ib = inkBox(rows);
+  if (!ib) return null;
+  const safe = faceSafe(art, roles);
+  const { ox, oy } = fitAt(faceBox, ib, 1, 1);
+  return inkCells(rows).every(([x, y]) => safe(ox + x, oy + y)) ? stampCentered(art, faceBox, rows, roles.ink) : null;
+}
+
+function placeFine(art, faceBox, rows, roles, scale) {
+  const ib = inkBox(rows);
+  if (!ib || scale < 2) return null;
+  const safe = faceSafe(art, roles);
+  const cells = inkCells(rows);
+  for (let unit = scale - 1; unit >= 1; unit--) {
+    const { ox, oy } = fitAt(faceBox, ib, unit, scale);
+    const fits = cells.every(([x, y]) => {
+      const x0 = Math.floor((ox + x * unit) / scale), x1 = Math.floor((ox + x * unit + unit - 1) / scale);
+      const y0 = Math.floor((oy + y * unit) / scale), y1 = Math.floor((oy + y * unit + unit - 1) / scale);
+      return safe(x0, y0) && safe(x1, y0) && safe(x0, y1) && safe(x1, y1);
+    });
+    if (fits) return { ox, oy, unit, cells, role: roles.ink, box: { x: ox + ib.x0 * unit, y: oy + ib.y0 * unit, w: ib.w * unit, h: ib.h * unit } };
+  }
+  return null;
+}
+
+function stampLabel(art, faceBox, text, slot, roles, fonts, scale) {
+  if (text) {
+    const t = normLabel(text);
+    for (const font of fonts) {
+      const rows = fontRows(t, font);
+      const ink = rows && placeLabel(art, faceBox, rows, roles);
+      if (ink) return { ink, fine: null };
+    }
+    const raster = rasterText ? rasterText(String(text)) : null;
+    const rasterInk = raster && placeLabel(art, faceBox, raster, roles);
+    if (rasterInk) return { ink: rasterInk, fine: null };
+    const fine = placeFine(art, faceBox, fontRows(t, SMALL) ?? raster ?? [], roles, scale);
+    if (fine) return { ink: null, fine };
+  }
+  return { ink: stampCentered(art, faceBox, slot, roles.ink), fine: null };
+}
+
+function paintFine(canvas, fine, pal) {
+  if (!fine) return;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = pal[fine.role];
+  for (const [x, y] of fine.cells) ctx.fillRect(fine.ox + x * fine.unit, fine.oy + y * fine.unit, fine.unit, fine.unit);
 }
 
 // ---------------------------------------------------------------------------
@@ -540,11 +718,12 @@ export function renderDpad({ pressed = 'none', state = 'normal', scale = 1, pale
 }
 
 /** 둥근 A·B 버튼(C·D 도 같은 모양, 색만 cd 계열 — 면·빛·옆면·글자 모두). */
-export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, palette } = {}) {
+export function renderRoundButton({ label = 'A', text = '', state = 'normal', scale = 1, palette } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
-  return cached(palette, `round|${label}|${st}|${s}`, () => {
+  const shown = text && text !== label ? String(text) : '';
+  return cached(palette, `round|${label}|${shown ? `${shown}|${rasterGen}` : ''}|${st}|${s}`, () => {
     const D = 23;
     const inside = circleInside(D);
     const roles = buttonRoles(label === 'C' || label === 'D' ? 'cd' : 'ab', st);
@@ -554,13 +733,15 @@ export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, pa
       offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
       decor: (x, y) => (st !== 'disabled' && gloss.has(y * D + x) ? roles.hi : null),
     });
-    const ink = stampCentered(art, faceBox, BIG[label], roles.ink);
-    return finish('round', art, s, palette, {
-      label, state: st, faceBox, inkBox: ink,
+    const { ink, fine } = stampLabel(art, faceBox, shown, BIG[label], roles, [BIG, SMALL], s);
+    const out = finish('round', art, s, palette, {
+      label, text: shown, state: st, faceBox, inkBox: ink, fineInk: fine?.box ?? null,
       hit: { x: 0, y: 0, w: D * s, h: (D + GAME_DEPTH) * s },
       circle: { cx: (D / 2) * s, cy: (D / 2 + (st === 'pressed' ? 1 : 0)) * s, r: (D / 2) * s },
       inside, depth: GAME_DEPTH,
     });
+    paintFine(out.canvas, fine, palette);
+    return out;
   });
 }
 
@@ -569,43 +750,49 @@ export function renderRoundButton({ label = 'A', state = 'normal', scale = 1, pa
 const stretchLen = (base, mul) => Math.max(base, Math.round(base * (Number(mul) || 1)));
 
 /** L·R 어깨 버튼. side: 'L'|'R'. */
-export function renderShoulder({ side = 'L', state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
+export function renderShoulder({ side = 'L', text = '', state = 'normal', scale = 1, palette, wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
   const W = stretchLen(37, wide), H = stretchLen(13, tall);
-  return cached(palette, `shoulder|${side}|${st}|${s}|${W}x${H}`, () => {
+  const shown = text && text !== side ? String(text) : '';
+  return cached(palette, `shoulder|${side}|${shown ? `${shown}|${rasterGen}` : ''}|${st}|${s}|${W}x${H}`, () => {
     const inside = side === 'R' ? roundRectInside(W, H, 2.5, 7, 2.5, 2.5) : roundRectInside(W, H, 7, 2.5, 2.5, 2.5);
     const roles = buttonRoles('sh', st);
     const { art, faceBox } = extrude({
       W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
     });
-    const ink = stampCentered(art, faceBox, BIG[side], roles.ink);
-    return finish('shoulder', art, s, palette, {
-      label: side, state: st, faceBox, inkBox: ink,
+    const { ink, fine } = stampLabel(art, faceBox, shown, BIG[side], roles, [BIG, SMALL], s);
+    const out = finish('shoulder', art, s, palette, {
+      label: side, text: shown, state: st, faceBox, inkBox: ink, fineInk: fine?.box ?? null,
       hit: { x: 0, y: 0, w: W * s, h: (H + GAME_DEPTH) * s }, inside, depth: GAME_DEPTH,
     });
+    paintFine(out.canvas, fine, palette);
+    return out;
   });
 }
 
 /** START·SELECT 알약 버튼. tone 'rs' = RS 버튼(같은 모양, 색만 rs 계열). */
-export function renderPill({ label = 'START', state = 'normal', scale = 1, palette, tone = 'pill', wide = 1, tall = 1 } = {}) {
+export function renderPill({ label = 'START', text = '', state = 'normal', scale = 1, palette, tone = 'pill', wide = 1, tall = 1 } = {}) {
   palette = resolvePalette(palette);
   const s = intScale(scale);
   const st = state === 'pressed' || state === 'disabled' ? state : 'normal';
   const prefix = tone === 'rs' ? 'rs' : 'pill';
   const W = stretchLen(31, wide), H = stretchLen(11, tall);
-  return cached(palette, `${prefix}|${label}|${st}|${s}|${W}x${H}`, () => {
+  const shown = text && text !== label ? String(text) : '';
+  return cached(palette, `${prefix}|${label}|${shown ? `${shown}|${rasterGen}` : ''}|${st}|${s}|${W}x${H}`, () => {
     const inside = roundRectInside(W, H, 5.5, 5.5, 5.5, 5.5);
     const roles = buttonRoles(prefix, st);
     const { art, faceBox } = extrude({
       W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
     });
-    const ink = stampCentered(art, faceBox, textBitmap(label, SMALL), roles.ink);
-    return finish('pill', art, s, palette, {
-      label, state: st, faceBox, inkBox: ink,
+    const { ink, fine } = stampLabel(art, faceBox, shown, textBitmap(label, SMALL), roles, [SMALL], s);
+    const out = finish('pill', art, s, palette, {
+      label, text: shown, state: st, faceBox, inkBox: ink, fineInk: fine?.box ?? null,
       hit: { x: 0, y: 0, w: W * s, h: (H + GAME_DEPTH) * s }, inside, depth: GAME_DEPTH,
     });
+    paintFine(out.canvas, fine, palette);
+    return out;
   });
 }
 
@@ -678,7 +865,7 @@ export function renderGameButton(name, opts = {}) {
     case 'a': case 'b': case 'c': case 'd': return renderRoundButton({ ...opts, label: name.toUpperCase() });
     case 'l': case 'r': return renderShoulder({ ...opts, side: name.toUpperCase() });
     case 'start': case 'select': return renderPill({ ...opts, label: name.toUpperCase() });
-    case 'rs': return renderPill({ ...opts, label: 'RS', tone: 'rs' });
+    case 'rs': return renderPill({ ...opts, text: '', label: 'RS', tone: 'rs' });
     case 'num': return renderKeypadKey(opts);
     case 'action': return renderActionKey(opts);
     case 'soft': return renderPill({ ...opts, label: '-' });

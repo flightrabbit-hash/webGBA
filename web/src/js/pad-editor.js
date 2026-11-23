@@ -383,6 +383,10 @@ export class PadEditor {
     this.deps = deps;
   }
 
+  ctlName(id) {
+    return this.deps.ctlName?.(id) ?? this.deps.t(`web.pad.ctl.${id}`);
+  }
+
   placement() {
     const p = this.deps.prefs().padPlacement;
     return PAD_PLACEMENTS.includes(p) ? p : "default";
@@ -925,7 +929,7 @@ export class PadEditor {
         const box = doc.createElement("div");
         box.className = "padedit__sel";
         box.dataset.ctl = c.id;
-        box.dataset.label = this.deps.t(`web.pad.ctl.${c.id}`);
+        box.dataset.label = this.ctlName(c.id);
         const handle = doc.createElement("div");
         handle.className = "padedit__handle";
         const badge = doc.createElement("div");
@@ -958,7 +962,7 @@ export class PadEditor {
       f.box.classList.toggle("is-right", r.left + r.width / 2 - rect.left > rect.w / 2);
       f.box.classList.toggle("is-low", r.top + r.height / 2 - rect.top > rect.h / 2);
       const rec = this.work.controls[c.id];
-      f.badge.textContent = `${this.deps.t(`web.pad.ctl.${c.id}`)} ${sizeText(rec)}`;
+      f.badge.textContent = `${this.ctlName(c.id)} ${sizeText(rec)}`;
       f.badge.hidden = !on;
       f.handle.hidden = !on;
       if (f.hx) f.hx.hidden = !on;
@@ -1024,7 +1028,7 @@ export class PadEditor {
     row.className = "padedit__row";
     const name = doc.createElement("span");
     name.className = "padedit__name";
-    name.textContent = `${t("web.pad.edit.size")} · ${t(`web.pad.ctl.${c.id}`)}`;
+    name.textContent = `${t("web.pad.edit.size")} · ${this.ctlName(c.id)}`;
     const minus = this.cardBtn("−", () => this.bumpScale(-1));
     const val = doc.createElement("span");
     const stretched = Number.isFinite(rec.sx);
@@ -1273,7 +1277,7 @@ export class PadEditor {
     const f = this.frames.get(id);
     if (!f) return;
     const rec = this.work.controls[id];
-    f.badge.textContent = `${this.deps.t(`web.pad.ctl.${id}`)} ${sizeText(rec)}`;
+    f.badge.textContent = `${this.ctlName(id)} ${sizeText(rec)}`;
   }
 
   otherBoxes(skipId, rect) {
