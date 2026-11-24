@@ -489,7 +489,7 @@ body:not([data-view="start"]) .start {
   justify-content: flex-start;
   align-items: stretch;
   gap: 6px;
-  padding: 6px;
+  padding: 5px 6px;
   overflow-y: auto;
   overscroll-behavior: none;
 }
@@ -521,6 +521,16 @@ body:not([data-view="start"]) .start {
 .start.has-list .start__head .btn {
   min-height: 32px;
   flex: none;
+}
+
+.start__head .btn {
+  font-family: var(--font-small);
+  font-size: 12px;
+}
+
+.start__head .btn__label {
+  height: 16px;
+  line-height: 16px;
 }
 
 .recent {
@@ -598,8 +608,8 @@ body:not([data-view="start"]) .start {
   align-items: center;
   align-self: flex-end;
   gap: 2px;
-  height: 28px;
-  padding: 0 4px 0 8px;
+  min-height: 32px;
+  padding: 0 14px;
   font-family: var(--font-small);
   font-size: 12px;
   cursor: pointer;
