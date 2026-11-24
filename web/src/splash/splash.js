@@ -49,18 +49,53 @@
   const LONG_MS = 4000;
   const HOME_VP_X = 199;
   const HOME_VP_Y = 150;
+  const MARK_SPREAD = 0.8;
   const STRIP_ROWS = { meadow: 64, sunset: 52 };
-  const NAMES = ["sky", "cloud", "cloud-shade", "sun-rim", "sun-mid", "sun-core", "sun-band", "ground-far", "ground-mid", "ground-near", "ground-a", "ground-b", "band", "path", "path-edge", "pebble", "flower-a", "flower-b", "flower-c", "flower-d", "flower-core", "tuft", "wood", "wood-dark", "pole", "lamp", "lamp-core", "shadow", "fill"];
+  const SCENES = {
+    "spring-cherry": [224, 172, 185, 2, "petal", 46],
+    tulip: [235, 122, 115, 34, "petal", 40],
+    "summer-beach": [226, 186, 185, 5, "dot", 44],
+    sunflower: [228, 115, 117, 20, "petal", 40],
+    bamboo: [225, 199, 147, 26, "leaf", 36],
+    hydrangea: [232, 222, 162, 44, "petal", 40],
+    "autumn-maple": [233, 235, 190, 6, "leaf", 48],
+    desert: [224, 130, 127, 40, "pebble", 34],
+    temple: [224, 156, 117, 17, "leaf", 34],
+    market: [223, 166, 147, 45, "petal", 42],
+    "winter-snow": [233, 146, 92, 21, "dot", 50],
+    "cloud-path": [227, 156, 182, 24, "glint", 30],
+    candy: [227, 226, 175, 41, "dot", 50],
+    library: [224, 231, 130, 28, "dot", 36],
+    train: [226, 203, 60, 14, "dot", 26],
+    castle: [224, 183, 170, 37, "glint", 30],
+    "rain-alley": [224, 192, 137, 33, "glint", 40],
+    greenhouse: [233, 247, 107, 36, "glint", 30],
+    christmas: [225, 141, 92, 46, "dot", 46],
+    "starry-hill": [223, 213, 137, 27, "glint", 30],
+    "crystal-cave": [227, 214, 165, 12, "glint", 34],
+    space: [222, 154, 200, 43, "glint", 40],
+    festival: [224, 200, 177, 35, "glint", 36],
+    underwater: [226, 226, 147, 48, "glint", 34],
+    "neon-street": [224, 215, 185, 22, "glint", 40],
+    halloween: [224, 141, 105, 30, "leaf", 36],
+  };
+  const NAMES = ["sky", "cloud", "cloud-shade", "sun-rim", "sun-mid", "sun-core", "sun-band", "ground-far", "ground-mid", "ground-near", "ground-a", "ground-b", "band", "path", "path-edge", "pebble", "flower-a", "flower-b", "flower-c", "flower-d", "flower-core", "tuft", "wood", "wood-dark", "pole", "lamp", "lamp-core", "shadow", "fill", "marks"];
   const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const bayer = (x, y) => BAYER[(y & 3) * 4 + (x & 3)];
 
-  const variant = plan.variant;
-  const home = variant === "home";
+  let variant = plan.variant || null;
+  let home = false;
+  let scene = null;
+  const P = {};
   const stat = { frames: 0, approach: 0, gap: 0, held: 0, clock: 0 };
   let finish = () => {};
   const api = {
     variant,
+    slot: plan.slot,
     stat,
+    get shadow() {
+      return P.shadow || "";
+    },
     startAt: 0,
     readyAt: 0,
     closedAt: 0,
@@ -91,24 +126,33 @@
     finish();
   }
 
-  splash.dataset.variant = variant;
+  splash.dataset.variant = plan.variant || "wait";
   splash.hidden = false;
   document.getElementById("boot")?.remove();
 
   const style = getComputedStyle(document.documentElement);
-  const P = {};
-  for (const name of NAMES) P[name] = style.getPropertyValue(`--sp-${variant}-${name}`).trim();
   const textInk = style.getPropertyValue("--sp-text").trim();
   const textEdge = style.getPropertyValue("--sp-text-edge").trim();
   const rgb = (hex) => {
     const n = parseInt(hex.slice(1), 16);
     return [n >> 16, (n >> 8) & 255, n & 255];
   };
-  const skyStops = home ? [] : P.sky.split(",").map((item) => {
-    const [at, color] = item.trim().split(/\s+/);
-    return { at: Number(at), rgb: rgb(color) };
-  });
-  const band = Number(P.band || 0);
+  const hex = (c) => `#${c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("")}`;
+  let skyStops = [];
+  let band = 0;
+
+  function begin(name) {
+    variant = api.variant = name;
+    home = name === "home";
+    scene = SCENES[name] || null;
+    splash.dataset.variant = name;
+    for (const key of NAMES) P[key] = style.getPropertyValue(`--sp-${name}-${key}`).trim();
+    skyStops = home || scene ? [] : P.sky.split(",").map((item) => {
+      const [at, color] = item.trim().split(/\s+/);
+      return { at: Number(at), rgb: rgb(color) };
+    });
+    band = Number(P.band || 0);
+  }
 
   const back = document.createElement("canvas");
   const front = document.createElement("canvas");
@@ -205,6 +249,8 @@
   let strip = null;
   let mask = null;
   let skyLayer = null;
+  let picture = null;
+  let pixels = null;
   let patterns = null;
 
   function fit() {
@@ -241,7 +287,8 @@
     place(front, fw, fh, fx, fy, 1);
     place(text, tw, th, tx, ty, 1);
     for (const c of [bctx, fctx, tctx]) c.imageSmoothingEnabled = false;
-    skyLayer = home ? null : paintSky();
+    skyLayer = home || scene ? null : paintSky();
+    picture = scene ? paintPicture() : null;
     backDrawn = false;
     drawn = null;
     patterns = null;
@@ -256,6 +303,47 @@
     canvas.style.height = `${(h * scale) / dpr}px`;
     canvas.style.left = `${x / dpr}px`;
     canvas.style.top = `${y / dpr}px`;
+  }
+
+  function readPixels(image) {
+    const work = document.createElement("canvas");
+    work.width = image.width;
+    work.height = image.height;
+    const w = work.getContext("2d", { willReadFrequently: true });
+    w.drawImage(image, 0, 0);
+    return { w: image.width, h: image.height, data: w.getImageData(0, 0, image.width, image.height).data };
+  }
+
+  function paintPicture() {
+    const { LW, LH, AX, hyL, s, N, feetEnd } = view;
+    const [ax, ay, half] = scene;
+    pixels ??= readPixels(strip);
+    const px = pixels;
+    const layer = document.createElement("canvas");
+    layer.width = LW;
+    layer.height = LH;
+    const c = layer.getContext("2d");
+    const image = c.createImageData(LW, LH);
+    const d = image.data;
+    const ox = AX - ax;
+    const oy = hyL - ay;
+    for (let y = 0; y < LH; y++) {
+      const sy = Math.min(px.h - 1, Math.max(0, y - oy));
+      for (let x = 0; x < LW; x++) {
+        const from = (sy * px.w + Math.min(px.w - 1, Math.max(0, x - ox))) * 4;
+        const to = (y * LW + x) * 4;
+        d[to] = px.data[from];
+        d[to + 1] = px.data[from + 1];
+        d[to + 2] = px.data[from + 2];
+        d[to + 3] = 255;
+      }
+    }
+    c.putImageData(image, 0, 0);
+    const fy = Math.min(px.h - 1, Math.max(0, Math.round(ay + feetEnd / s - hyL)));
+    const at = (fy * px.w + ax) * 4;
+    P.shadow = hex([px.data[at] * 0.68, px.data[at + 1] * 0.66, px.data[at + 2] * 0.7]);
+    view.worldHalf = (half * view.Dl * s) / (N * (px.h - 1 - ay));
+    return layer;
   }
 
   const rowOf = (Z) => view.hyL + view.Dl / Z;
@@ -473,6 +561,53 @@
     }
   }
 
+  const marks = [];
+  const marked = [];
+  function buildMarks() {
+    const colors = P.marks.split(",").map((color) => color.trim());
+    const rnd = seeded(scene[3] * 977 + 13);
+    for (let i = 0; i < scene[5]; i++) marks.push({ X: rnd() * 2 - 1, Zw: rnd() * LOOP_SMALL, color: colors[Math.floor(rnd() * colors.length)], Z: 0 });
+  }
+
+  function drawMarks(C) {
+    const kind = scene[4];
+    const near = nearDepth();
+    const spread = view.worldHalf * MARK_SPREAD;
+    marked.length = 0;
+    for (const it of marks) {
+      it.Z = near + ((((it.Zw + C) % LOOP_SMALL) + LOOP_SMALL) % LOOP_SMALL);
+      if (rowOf(it.Z) > view.hyL + 1) marked.push(it);
+    }
+    marked.sort((a, b) => b.Z - a.Z);
+    for (const it of marked) {
+      const k = unit(it.Z);
+      const x = xOf(it.X * spread, it.Z);
+      const y = rowOf(it.Z);
+      if (kind === "pebble") {
+        const size = Math.round(1.6 * k);
+        if (size >= 1) rect(x, y - size, size + 1, size, it.color);
+      } else if (kind === "petal") {
+        if (2 * k < 0.6) continue;
+        const w = Math.max(1, Math.round(2.6 * k));
+        const h = Math.max(1, Math.round(1.3 * k));
+        rect(x - w / 2, y - h, w, h, it.color);
+      } else if (kind === "leaf") {
+        if (2 * k < 0.6) continue;
+        const size = Math.max(1, Math.round(2.6 * k));
+        rect(x - size / 2, y - size, size, size, it.color);
+      } else if (kind === "glint") {
+        if (k < 0.45) continue;
+        const r = Math.max(0, Math.round(1.5 * k) - 1);
+        rect(x - r, y - 1, r * 2 + 1, 1, it.color);
+        if (r) rect(x, y - 1 - r, 1, r * 2 + 1, it.color);
+      } else {
+        if (k < 0.35) continue;
+        const size = Math.max(1, Math.round(1.3 * k));
+        rect(x, y - size, size, size, it.color);
+      }
+    }
+  }
+
   function lamp(x, y, k) {
     const h = Math.round(30 * k);
     if (h < 3) return;
@@ -557,6 +692,9 @@
         bctx.drawImage(strip, view.AX - HOME_VP_X, view.hyL - HOME_VP_Y);
         backDrawn = true;
       }
+    } else if (scene) {
+      bctx.drawImage(picture, 0, 0);
+      drawMarks(camera(t));
     } else {
       const C = camera(t);
       bctx.drawImage(skyLayer, 0, 0);
@@ -633,7 +771,8 @@
     const ms = (v) => (v ? `+${Math.round(v)}ms` : "-");
     const u = cat.union;
     return [
-      `variant ${variant} · device ${view.vw ?? "-"}x${view.vh ?? "-"} · s ${view.s ?? "-"} · k0 ${view.k0 ?? "-"} · N ${view.N ?? "-"}`,
+      `slot ${plan.slot} · ${plan.list.map(([id, weight]) => (weight === 1 ? id : `${id}*${weight}`)).join(" ")}`,
+      `variant ${variant ?? "-"} · device ${view.vw ?? "-"}x${view.vh ?? "-"} · s ${view.s ?? "-"} · k0 ${view.k0 ?? "-"} · N ${view.N ?? "-"}`,
       `cat ${u && view.N ? `${u.w * view.N}x${u.h * view.N} top ${view.top}` : "-"} · text ${view.tw ?? "-"}x${view.th ?? "-"}`,
       `first ${ms(api.startAt)} · elapsed ${api.startAt ? Math.round((api.closedAt || performance.now()) - api.startAt) : "-"}ms · anim ${Math.round(stat.clock)}ms`,
       `frames ${stat.frames} · approach ${stat.approach} · max gap ${Math.round(stat.gap)}ms · held ${Math.round(stat.held)}ms`,
@@ -641,13 +780,15 @@
     ];
   }, () => !api.closedAt);
 
-  plan.images
-    .then(([catImage, stripImage, textImage]) => {
+  plan.ready
+    .then(([name, [catImage, stripImage, textImage]]) => {
       if (api.closedAt) return;
+      begin(name);
       measureCat(catImage);
       strip = stripImage;
       mask = textImage;
-      if (!home) {
+      if (scene) buildMarks();
+      else if (!home) {
         buildItems();
         buildClouds();
       }

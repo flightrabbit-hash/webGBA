@@ -53,6 +53,35 @@
   --sp-home-fill: #2a1a12;
   --sp-home-shadow: #b07f55;
 
+  --sp-wait-fill: var(--boot-bg, #070a14);
+
+  --sp-spring-cherry-marks: #f7b8c9, #f49ab3, #fde3ea;
+  --sp-tulip-marks: #ff5a5a, #ff9ac0, #ffe15a;
+  --sp-summer-beach-marks: #e9d7a6, #8a5a33, #f6e6bd;
+  --sp-sunflower-marks: #ffd23b, #f5a623;
+  --sp-bamboo-marks: #8fc24a, #c8e07a, #5f8f2f;
+  --sp-hydrangea-marks: #7fa8ff, #b58cff, #ff9ccc;
+  --sp-autumn-maple-marks: #d8452b, #f08a24, #f6c23e;
+  --sp-desert-marks: #b9844f, #e9c58e, #8f6a48;
+  --sp-temple-marks: #6a9a3a, #8fbf4a, #4e6f2c;
+  --sp-market-marks: #ff6b6b, #ffd93b, #6bc5ff, #7be07b;
+  --sp-winter-snow-marks: #ffffff, #c9dcf0, #ffffff;
+  --sp-cloud-path-marks: #ffffff, #fff3c4;
+  --sp-candy-marks: #ff8fb1, #5fd3b0, #ffe14a, #a58bff;
+  --sp-library-marks: #f3d9a0, #e8b06a;
+  --sp-train-marks: #c99a5e, #e6c08a;
+  --sp-castle-marks: #ffd27a, #ffb347;
+  --sp-rain-alley-marks: #ffd27a, #9fd0ff, #cfe6ff;
+  --sp-greenhouse-marks: #cfe8ff, #ffffff;
+  --sp-christmas-marks: #ffffff, #ffe9a8;
+  --sp-starry-hill-marks: #fff6b0, #ffffff;
+  --sp-crystal-cave-marks: #8fe9ff, #d39bff;
+  --sp-space-marks: #ffffff, #9ff0ff, #ffe27a;
+  --sp-festival-marks: #ffb347, #ff6a3d, #ffe08a;
+  --sp-underwater-marks: #bff4ff, #ffffff;
+  --sp-neon-street-marks: #ff7ad9, #6ff3ff, #b78cff;
+  --sp-halloween-marks: #e07b22, #8b4b1f, #c9a24a;
+
   --sp-debug-bg: #000000;
   --sp-debug-ink: #ffffff;
 }
@@ -78,6 +107,10 @@
 
 .splash[data-variant="home"] {
   background: var(--sp-home-fill);
+}
+
+.splash[data-variant="wait"] {
+  background: var(--sp-wait-fill);
 }
 
 .splash canvas {
