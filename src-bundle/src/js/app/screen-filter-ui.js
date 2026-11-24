@@ -394,10 +394,24 @@ export function createScreenFilter(kit) {
     return g;
   }
 
+  function scrollMarks() {
+    return [panel, ...panel.querySelectorAll(".fp__body, [data-row]")]
+      .filter((n) => n.scrollLeft || n.scrollTop)
+      .map((n) => [n === panel ? "" : n.dataset.row ? `[data-row="${CSS.escape(n.dataset.row)}"]` : ".fp__body", n.scrollLeft, n.scrollTop]);
+  }
+
+  function restoreScroll(marks) {
+    for (const [sel, left, top] of marks) {
+      const n = sel ? panel.querySelector(sel) : panel;
+      if (!n) continue;
+      n.scrollLeft = left;
+      n.scrollTop = top;
+    }
+  }
+
   function render() {
     if (!panel || !ui.open) return;
-    const body0 = panel.querySelector(".fp__body");
-    const scroll = body0 ? body0.scrollTop : 0;
+    const marks = scrollMarks();
     const focusFid = document.activeElement?.closest?.("#filterPanel") ? document.activeElement.dataset.fid : "";
     const g = game();
     const ctx = ctxOf();
@@ -438,6 +452,7 @@ export function createScreenFilter(kit) {
     if (g?.unsupported) {
       body.append(banner("warn", t("sf.ban.frame"), t("sf.ban.frameText")));
       panel.replaceChildren(head, body);
+      restoreScroll(marks);
       if (focusFid) panel.querySelector(`[data-fid="${CSS.escape(focusFid)}"]`)?.focus({ preventScroll: true });
       padFocus();
       return;
@@ -498,7 +513,7 @@ export function createScreenFilter(kit) {
     const resetBtn = textBtn("refresh", scope === "game" ? t("sf.release") : t("sf.reset"), "f-reset", () => (scope === "game" ? askRelease() : askReset()), { kind: "danger" });
     foot.append(saveBtn, resetBtn);
     panel.replaceChildren(head, body, foot);
-    body.scrollTop = scroll;
+    restoreScroll(marks);
     if (ui.reveal) {
       const target = body.querySelector(`.fsec[data-sec="${ui.reveal}"]`);
       ui.reveal = null;
@@ -542,7 +557,10 @@ export function createScreenFilter(kit) {
       tile.append(cv, make("span", "ptile__name", pre.name));
       if (pre.tag) tile.append(make("span", `ptile__tag${pre.tag === "user" ? " ptile__tag--user" : ""}`, pre.tag === "user" ? t("sf.tag.user") : t("sf.tag.rec")));
       if (mod) tile.append(make("span", "ptile__mod", t("sf.tag.mod")));
-      tile.addEventListener("click", () => applyPreset(pre.id));
+      tile.addEventListener("click", () => {
+        ui.padFid = `p-${pre.id}`;
+        applyPreset(pre.id);
+      });
       tiles.append(fid(tile, `p-${pre.id}`));
     }
     const title = g?.recommend && recommendLook(g.recommend) ? t("sf.presetsRec", { n: BUILTIN.length, user: store.user.length, max: USER_MAX }) : t("sf.presets", { n: BUILTIN.length, user: store.user.length, max: USER_MAX });

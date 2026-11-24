@@ -826,6 +826,161 @@ if (want("recommend") && opt.gba) {
   await context.close();
 }
 
+// ---------------------------------------------------------------- 9. 프리셋 선택 뒤 스크롤 유지(휴대폰 프리셋 가로 줄 · PC 패널 세로 · 키보드·게임패드로 화면 밖 칸)
+if (want("scroll") && opt.gba) {
+  const scrollOf = (page) =>
+    page.evaluate(() => {
+      const row = document.querySelector("#filterPanel .ptiles");
+      const body = document.querySelector("#filterPanel .fp__body");
+      return { left: row.scrollLeft, top: body.scrollTop, maxLeft: row.scrollWidth - row.clientWidth, maxTop: body.scrollHeight - body.clientHeight, base: window.webgba.filter.debug().rec.rec.base };
+    });
+  // 칸이 프리셋 줄·패널 본문 안에 모두 보이는지(+ 줄·본문 가장자리와의 거리)
+  const shown = (page, fid) =>
+    page.evaluate((f) => {
+      const r = document.querySelector(`[data-fid="${f}"]`).getBoundingClientRect();
+      const row = document.querySelector("#filterPanel .ptiles").getBoundingClientRect();
+      const body = document.querySelector("#filterPanel .fp__body").getBoundingClientRect();
+      const inside = (b) => r.left >= b.left - 1 && r.right <= b.right + 1 && r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+      return { ok: inside(row) && inside(body), right: Math.round(row.right - r.right), top: Math.round(r.top - body.top) };
+    }, fid);
+  const tapTile = async (page, fid, touch) => {
+    const box = await page.locator(`[data-fid="${fid}"]`).boundingBox();
+    if (touch) await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    else await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(200);
+  };
+  // 스크롤을 옮기지 않는 조작(요소 클릭·막대 값)은 evaluate 로 — Playwright 의 자동 스크롤과 섞이지 않게
+  const clickFid = (page, fid) => page.evaluate((f) => document.querySelector(`[data-fid="${f}"]`).click(), fid);
+  const setRange = (page, fid, v) =>
+    page.evaluate(([f, n]) => {
+      const r = document.querySelector(`[data-fid="${f}"]`);
+      r.value = String(n);
+      r.dispatchEvent(new Event("input", { bubbles: true }));
+      r.dispatchEvent(new Event("change", { bubbles: true }));
+    }, [fid, v]);
+  const same = (a, b) => a.left === b.left && a.top === b.top;
+  for (const [name, viewport] of [["portrait", { width: 390, height: 844 }], ["landscape", { width: 844, height: 390 }]]) {
+    const { context, page } = await newPage({ viewport, mobile: true, dpr: 3, prefs: { pad: "on", padSet: true } });
+    await openGame(page, opt.gba);
+    await page.waitForTimeout(3000);
+    await page.evaluate(() => window.webgba.filter.open());
+    await page.waitForTimeout(300);
+    const dock = await page.evaluate(() => document.body.dataset.fp);
+    const last = await page.evaluate(() => [...document.querySelectorAll("#filterPanel .ptile")].pop().dataset.fid);
+    // 가로 줄 끝 + (세로로 굴릴 수 있으면) 패널 본문을 프리셋 줄이 위쪽에 오도록
+    const before = await page.evaluate(() => {
+      const row = document.querySelector("#filterPanel .ptiles");
+      const body = document.querySelector("#filterPanel .fp__body");
+      row.scrollLeft = row.scrollWidth;
+      body.scrollTop = Math.max(0, Math.round(row.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop - 6));
+      return { left: row.scrollLeft, top: body.scrollTop, maxTop: body.scrollHeight - body.clientHeight };
+    });
+    await tapTile(page, last, true);
+    let s = await scrollOf(page);
+    ok(`휴대폰 ${name}(Dock ${dock}): 프리셋 줄 끝으로 굴린 뒤 끝 칸(${last}) 탭 → 가로·세로 스크롤 유지`, before.left > 0 && s.base === last.slice(2) && same(s, before), JSON.stringify({ before, after: s }));
+    if (name === "portrait") {
+      await shot(page, "scroll_portrait_end");
+      let b = s;
+      await setRange(page, "s-color", 50);
+      s = await scrollOf(page);
+      ok("휴대폰 portrait: 강도 막대 변경 뒤 스크롤 유지", same(s, b), JSON.stringify({ b, s }));
+      b = s;
+      await clickFid(page, "scope-game");
+      await page.waitForTimeout(150);
+      s = await scrollOf(page);
+      ok("휴대폰 portrait: 적용 범위 「이 게임만」 전환 뒤 스크롤 유지", same(s, b), JSON.stringify({ b, s }));
+      await clickFid(page, "sec-color");
+      await page.waitForTimeout(150);
+      b = await scrollOf(page);
+      await clickFid(page, "c-color-sepia");
+      await page.waitForTimeout(150);
+      s = await scrollOf(page);
+      ok("휴대폰 portrait: 디테일(효과 칩 세피아) 변경 뒤 스크롤 유지", b.left === before.left && same(s, b), JSON.stringify({ b, s }));
+      await clickFid(page, "sec-color");
+      await page.waitForTimeout(150);
+      b = await scrollOf(page);
+      await clickFid(page, "f-save");
+      await page.waitForSelector("#dialog:not([hidden]) .dialog__input");
+      await page.click('#dialog [data-action="sf-save"]');
+      await page.waitForTimeout(200);
+      s = await scrollOf(page);
+      ok("휴대폰 portrait: 사용자 프리셋 저장(끝에 칸 추가·선택) 뒤 스크롤 유지", String(s.base).startsWith("user:") && same(s, b), JSON.stringify({ b, s }));
+      b = s;
+      await clickFid(page, "udel");
+      await page.waitForSelector("#dialog:not([hidden])");
+      await page.click('#dialog [data-action="sf-ok"]');
+      await page.waitForTimeout(200);
+      s = await scrollOf(page);
+      ok("휴대폰 portrait: 사용자 프리셋 삭제 뒤 스크롤 유지(줄어든 최대값 안에서)", s.base === null && s.left === Math.min(b.left, s.maxLeft) && s.top === Math.min(b.top, s.maxTop), JSON.stringify({ b, s }));
+      // 키보드: 가로 줄 처음에서 Tab 으로 화면 밖 끝 칸까지 → Enter
+      const lastKey = await page.evaluate(() => {
+        const row = document.querySelector("#filterPanel .ptiles");
+        row.scrollLeft = 0;
+        const tiles = [...row.querySelectorAll(".ptile")];
+        tiles[0].focus({ preventScroll: true });
+        return tiles.at(-1).dataset.fid;
+      });
+      const hidden = await shown(page, lastKey);
+      for (let i = 0; i < 20 && (await page.evaluate(() => document.activeElement?.dataset.fid)) !== lastKey; i++) await page.keyboard.press("Tab");
+      const tabbed = await scrollOf(page);
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(200);
+      s = await scrollOf(page);
+      const seen = await shown(page, lastKey);
+      ok(`휴대폰 portrait: 키보드 Tab 으로 화면 밖 칸(${lastKey}) → Enter 선택 → 그 칸이 보이고 스크롤 유지`, !hidden.ok && s.base === lastKey.slice(2) && seen.ok && same(s, tabbed), JSON.stringify({ hidden, tabbed, s, seen }));
+    }
+    ok(`휴대폰 ${name}: 오류 없음`, !page.errors.length, page.errors.slice(0, 3).join(" | "));
+    await context.close();
+  }
+  // PC: 우측 Dock 격자 · 패널 세로 스크롤 · 게임패드 R 로 화면 밖 칸
+  {
+    const { context, page } = await newPage({ viewport: { width: 1280, height: 560 }, pad: true });
+    await openGame(page, opt.gba);
+    await page.waitForTimeout(3000);
+    await page.evaluate(() => window.dispatchEvent(new Event("gamepadconnected")));
+    await page.evaluate(() => window.webgba.filter.open());
+    await page.waitForTimeout(300);
+    const prep = await page.evaluate(() => {
+      const body = document.querySelector("#filterPanel .fp__body");
+      const tiles = [...document.querySelectorAll("#filterPanel .ptile")];
+      const top0 = body.getBoundingClientRect().top;
+      body.scrollTop = Math.round(tiles.at(-1).getBoundingClientRect().top - top0 + body.scrollTop - 4);
+      const box = body.getBoundingClientRect();
+      const pick = tiles.filter((t) => !t.classList.contains("is-on") && t.getBoundingClientRect().top >= box.top && t.getBoundingClientRect().bottom <= box.bottom).pop();
+      return { top: body.scrollTop, maxTop: body.scrollHeight - body.clientHeight, fid: pick?.dataset.fid ?? "" };
+    });
+    await tapTile(page, prep.fid, false);
+    let s = await scrollOf(page);
+    ok(`PC: 패널 본문을 아래로 굴린 뒤 보이는 칸(${prep.fid}) 클릭 → 세로 스크롤 유지`, prep.top > 0 && s.base === prep.fid.slice(2) && s.top === prep.top, JSON.stringify({ prep, s }));
+    let b = s;
+    await setRange(page, "s-scale", 50);
+    s = await scrollOf(page);
+    ok("PC: 강도 막대 변경 뒤 세로 스크롤 유지", s.top === b.top, JSON.stringify({ b, s }));
+    // 게임패드: 「화면」 부분을 펼쳐 끝까지 굴림(프리셋 칸이 위로 화면 밖) → R(다음 프리셋) → 그 칸만큼만 굴려 보임
+    await clickFid(page, "sec-display");
+    await page.waitForTimeout(150);
+    const out = await page.evaluate(() => {
+      const body = document.querySelector("#filterPanel .fp__body");
+      body.scrollTop = body.scrollHeight;
+      return body.scrollTop;
+    });
+    const list = await page.evaluate(() => [...document.querySelectorAll("#filterPanel .ptile")].map((n) => n.dataset.fid));
+    const cur = (await scrollOf(page)).base;
+    const next = list[(list.indexOf(`p-${cur}`) + 1) % list.length];
+    const hidden = await shown(page, next);
+    await page.evaluate(() => (window.__pad.buttons[5].pressed = true));
+    await page.waitForTimeout(90);
+    await page.evaluate(() => (window.__pad.buttons[5].pressed = false));
+    await page.waitForTimeout(200);
+    s = await scrollOf(page);
+    const seen = await shown(page, next);
+    ok(`PC: 게임패드 R 로 화면 밖 칸(${next}) 선택 → 그 칸이 보이도록 최소한만 굴림`, !hidden.ok && s.base === next.slice(2) && seen.ok && seen.top <= 12 && s.top > 0, JSON.stringify({ out, hidden, s, seen }));
+    await shot(page, "scroll_pc_pad");
+    ok("PC: 오류 없음", !page.errors.length, page.errors.slice(0, 3).join(" | "));
+    await context.close();
+  }
+}
+
 await browser.close();
 main.srv.close();
 baseSrv?.srv.close();
