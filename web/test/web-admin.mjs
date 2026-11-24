@@ -1,5 +1,6 @@
 // 웹 관리자 모드 "롬 가져오기" 시험(로컬 전용 — 흉내 비공개 R2·가짜 Upstash, 실제 R2·Vercel 안 씀).
-//   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-admin.mjs --dist <웹 빌드> --shots <캡처 폴더> [--out <결과 json>]
+//   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-admin.mjs --dist <웹 빌드> --shots <캡처 폴더> [--out <결과 json>] [--only start]
+//   --only start = 처음 화면·도구 막대 「파일 열기」 ↔ 「롬 가져오기」 항목만
 // /api/v1/admin/* 요청은 브라우저 안에서 가로채 서버 함수(api/_admin/server.js)로 바로 넘긴다(Origin 등 머리는 브라우저가 붙인 그대로).
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -227,9 +228,79 @@ await context.route("**/api/v1/admin/**", async (route) => {
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
+
+// 처음 화면 「파일 열기」(#startOpen)·도구 막대 「파일 열기」(#btnOpen): 관리자 켬 = 「롬 가져오기」 글자·동작, 끔 = 그대로, 켬·끔 즉시 반영
+const ONLY_DONE = Symbol("only");
+const openButtons = (page) =>
+  page.evaluate(() => {
+    const s = document.getElementById("startOpen");
+    const b = document.getElementById("btnOpen");
+    return { start: s.querySelector(".btn__label").textContent.trim(), startKey: s.querySelector(".btn__label").dataset.i18n, title: b.title, aria: b.getAttribute("aria-label") };
+  });
+async function pressOpen(page, id) {
+  const chooser = page.waitForEvent("filechooser", { timeout: 2500 }).then(() => true, () => false);
+  await page.evaluate((id) => document.getElementById(id).click(), id);
+  const picked = await chooser;
+  await page.waitForTimeout(300);
+  const dialog = await page.evaluate(() => (document.getElementById("dialog").hidden ? "" : document.getElementById("dialogTitle").textContent.trim()));
+  if (dialog) {
+    await page.waitForTimeout(500);
+    await page.click('#dialogActions [data-action="admin-0"]');
+    await waitClosed(page);
+  }
+  return { picked, dialog };
+}
+async function closeSheetNow(page) {
+  await page.click("#sheetClose");
+  await page.waitForFunction(() => !window.webgba.state.sheet, null, { timeout: 5000 });
+  await page.waitForTimeout(400);
+}
+async function startScreen(page) {
+  const off = await openButtons(page);
+  const offStart = await pressOpen(page, "startOpen");
+  const offTool = await pressOpen(page, "btnOpen");
+  ok("관리자 끔: 처음 화면 「파일 열기」·도구 막대 툴팁 「게임 파일 열기 (Ctrl+O)」 · 누르면 파일 선택(롬 가져오기 창 없음)", off.start === "파일 열기" && off.title === "게임 파일 열기 (Ctrl+O)" && off.aria === off.title && offStart.picked && !offStart.dialog && offTool.picked && !offTool.dialog, JSON.stringify({ off, offStart, offTool }));
+  await openSettings(page);
+  await page.click('[data-action="cfg-admin"]');
+  await typePad(page, PIN);
+  await (await okButton(page)).click();
+  await waitClosed(page);
+  await page.waitForTimeout(300);
+  const onLive = await openButtons(page);
+  await closeSheetNow(page);
+  const on = await openButtons(page);
+  ok("관리자 켬(설정 [입력] 직후, 새로고침 없음): 처음 화면 버튼 「롬 가져오기」 · 도구 막대 툴팁·aria 「롬 가져오기」", [onLive, on].every((s) => s.start === "롬 가져오기" && s.startKey === "admin.import" && s.title === "롬 가져오기" && s.aria === "롬 가져오기"), JSON.stringify({ onLive, on }));
+  await inkCenter(page, "관리자 켬 처음 화면 버튼", "#startOpen");
+  await page.screenshot({ path: path.join(opt.shots, "admin_start_portrait_390x844.png") });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(opt.shots, "admin_start_pc_1280x800.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const onStart = await pressOpen(page, "startOpen");
+  const onTool = await pressOpen(page, "btnOpen");
+  ok("관리자 켬: 처음 화면 버튼·도구 막대 버튼 → 롬 가져오기 창(파일 선택 없음)", !onStart.picked && onStart.dialog.startsWith("롬 가져오기") && !onTool.picked && onTool.dialog.startsWith("롬 가져오기"), JSON.stringify({ onStart, onTool }));
+  await page.reload();
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  const reloaded = await openButtons(page);
+  ok("관리자 켬 + 새로고침: 「롬 가져오기」 유지", reloaded.start === "롬 가져오기" && reloaded.title === "롬 가져오기", JSON.stringify(reloaded));
+  await openSettings(page);
+  await page.click('[data-action="cfg-admin"]');
+  await page.waitForTimeout(300);
+  const offLive = await openButtons(page);
+  await closeSheetNow(page);
+  const offAgain = await pressOpen(page, "startOpen");
+  ok("관리자 해제 직후(새로고침 없음): 「파일 열기」·툴팁 원래대로 · 누르면 파일 선택", offLive.start === "파일 열기" && offLive.startKey === "web.openShort" && offLive.title === "게임 파일 열기 (Ctrl+O)" && offAgain.picked && !offAgain.dialog, JSON.stringify({ offLive, offAgain }));
+  ok("처음 화면 버튼: 화면 오류 없음", errors.length === 0, errors.join(" | "));
+}
+
 try {
   await page.goto(WEB);
   await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+  if (opt.only === "start") {
+    await startScreen(page);
+    throw ONLY_DONE;
+  }
 
   await openSettings(page);
   const off = await page.evaluate(() => {
@@ -464,6 +535,8 @@ try {
   });
   ok("업데이트 창 기본값 그대로(줄 버튼 있음·처음 체크 켜짐)", legacy.buttons === 1 && legacy.on === 1 && !legacy.bare, JSON.stringify(legacy));
   ok("화면 오류 없음", errors.length === 0, errors.join(" | "));
+} catch (error) {
+  if (error !== ONLY_DONE) throw error;
 } finally {
   await browser.close();
   web.kill();

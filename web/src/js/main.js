@@ -3411,6 +3411,7 @@ function fitRecent() {
 }
 
 async function refreshStart() {
+  syncOpenButtons();
   let roms = [];
   let saves = new Set();
   try {
@@ -5508,8 +5509,8 @@ async function registerWorker() {
 }
 
 function wire() {
-  el.btnOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
-  el.startOpen.addEventListener("click", () => pickFile({ multiple: true }).then(openFiles));
+  el.btnOpen.addEventListener("click", openOrImport);
+  el.startOpen.addEventListener("click", openOrImport);
   el.btnLibrary.addEventListener("click", () => openSheet("library"));
   el.btnSaves.addEventListener("click", () => ((state.lib.savesFor = null), openSheet("saves")));
   el.btnQuit.addEventListener("click", () => askCloseGame());
@@ -5927,6 +5928,7 @@ const admin = createAdminFlow({
   icon: (name) => iconNode(name),
   notify: (text, level = "info") => toast(text, level),
   changed: () => {
+    syncOpenButtons();
     if (state.sheet === "settings" || state.sheet === "library") renderSheet();
   },
   registeredIds: async () => new Set((await store.list(store.KIND_ROM).catch(() => [])).map((rom) => rom.gameId).filter(Boolean)),
@@ -5943,6 +5945,24 @@ const admin = createAdminFlow({
   log: logLine,
   centerDialog: () => centerInk(el.dialog),
 });
+
+function openOrImport() {
+  if (admin.isOn()) admin.importRoms();
+  else pickFile({ multiple: true }).then(openFiles);
+}
+
+function syncOpenButtons() {
+  const on = admin.isOn();
+  const label = el.startOpen.querySelector(".btn__label");
+  const key = on ? "admin.import" : "web.openShort";
+  if (label.dataset.i18n !== key) {
+    label.dataset.i18n = key;
+    label.textContent = t(key);
+    centerInk(el.startOpen);
+  }
+  const tip = on ? "admin.import" : "web.open";
+  if (el.btnOpen.dataset.i18nTitle !== tip) setLabel(el.btnOpen, tip);
+}
 
 function adminSetting() {
   const rec = admin.record();
