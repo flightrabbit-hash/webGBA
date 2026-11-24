@@ -39,7 +39,7 @@ export function createScreenFilter(kit) {
   const { make, iconNode } = kit;
   const t = (key, vars) => kit.t(kit.textKey ? kit.textKey(key) : key, vars);
   let store = cleanStore(kit.prefs().screenFilter);
-  const ui = { open: false, sec: null, compare: false, snapshot: null, padFid: "", reveal: null, sample: false };
+  const ui = { open: false, sec: null, compare: false, snapshot: null, padFid: "", reveal: null, sample: false, held: false };
   const gl = { engine: null, canvas: null, on: false, failed: false, warned: false, chain: null, ff: false, box: { w: 0, h: 0 } };
   const thumb = { engine: null, key: "", cache: new Map(), src: null };
   const slow = { at: 0, frames: 0, bad: 0, on: false };
@@ -48,6 +48,7 @@ export function createScreenFilter(kit) {
 
   const game = () => kit.game();
   const phone = () => kit.phone();
+  const netLive = () => Boolean(kit.netLive?.());
   const sectionName = (sec) => t(`sf.sec.${sec}`);
   const filterName = (sec, id) => t(`sf.f.${sec}.${id}`);
   const costName = (lv) => t(`sf.cost.${lv}`);
@@ -299,7 +300,9 @@ export function createScreenFilter(kit) {
     ui.snapshot = deep({ global: store.global, game: g?.gid ? store.games[g.gid] ?? null : null, gid: g?.gid ?? null });
     thumb.cache.clear();
     thumb.src = null;
-    kit.hold("filter", true);
+    ui.held = !netLive();
+    if (ui.held) kit.hold("filter", true);
+    kit.onPanel?.(true);
     ensurePanel();
     panel.hidden = false;
     kit.layout();
@@ -318,7 +321,9 @@ export function createScreenFilter(kit) {
       panel.hidden = true;
       panel.replaceChildren();
     }
-    kit.hold("filter", false);
+    if (ui.held) kit.hold("filter", false);
+    ui.held = false;
+    kit.onPanel?.(false);
     kit.layout();
     apply();
     kit.focusButton();
@@ -1249,6 +1254,12 @@ export function createScreenFilter(kit) {
     apply();
   }
 
+  function onNet() {
+    if (!ui.open || !ui.held || !netLive()) return;
+    ui.held = false;
+    kit.hold("filter", false, "net");
+  }
+
   function onResize() {
     boxSize();
     syncRadius({ paint: false });
@@ -1286,6 +1297,7 @@ export function createScreenFilter(kit) {
     toggle,
     onGame,
     onClosed,
+    onNet,
     onResize,
     onKey,
     reload,
@@ -1298,7 +1310,7 @@ export function createScreenFilter(kit) {
     get glOn() {
       return gl.on;
     },
-    debug: () => ({ store: deep(store), ui: { open: ui.open, sec: ui.sec, compare: ui.compare, sample: ui.sample }, gl: { on: gl.on, failed: gl.failed, passes: gl.engine?.passes ?? 0, cpuMs: gl.engine?.cpuMs ?? 0, chain: gl.chain }, radius: radiusNow, slow: slow.on, rec: recOf() }),
+    debug: () => ({ store: deep(store), ui: { open: ui.open, sec: ui.sec, compare: ui.compare, sample: ui.sample, held: ui.held }, gl: { on: gl.on, failed: gl.failed, passes: gl.engine?.passes ?? 0, cpuMs: gl.engine?.cpuMs ?? 0, chain: gl.chain }, radius: radiusNow, slow: slow.on, rec: recOf() }),
     padAction,
     engine: () => gl.engine,
   };

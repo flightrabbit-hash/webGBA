@@ -1,6 +1,7 @@
 // 웹 webGBA 화면 필터 시험(로컬 전용, 설계 38절) — 헤드리스 Chrome 으로 필터 렌더(시안과 비교)·성능·패널 흐름·게임패드·키보드·빨리 감기·퀵슬롯·형식·휴대폰 배치를 본다.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-filter.mjs <빌드 폴더> <캡처 폴더> --gba <롬.gba> [--wgba <포트.wgba>] [--arcade <① 게임.wgba>]
 //     [--script <② 게임.wgba|.wmba>] [--siaan <UX 시안 src 폴더> --cap <시안 캡처 폴더(rapid_battle.png)>] [--base <비교 빌드 폴더>] [--only 이름,…]
+//     [--net <멀티플레이 예제 폴더, 기본 docs/wgba/examples/net-webapi>] — mp 는 --gba 없이 실행(--only mp)
 // 빌드 폴더를 이 프로세스 안 정적 서버로 띄운다(node 1개 + 브라우저 1개). 시험 파일은 읽기만 하고 브라우저에 바로 넘긴다.
 import fs from "node:fs";
 import http from "node:http";
@@ -979,6 +980,211 @@ if (want("scroll") && opt.gba) {
     ok("PC: 오류 없음", !page.errors.length, page.errors.slice(0, 3).join(" | "));
     await context.close();
   }
+}
+
+// ---------------------------------------------------------------- 10. 멀티플레이 세션 중 패널(일시정지 없음) · 상태 메뉴와 겹침 없음
+// 두 컨텍스트(방장 = 휴대폰 세로, 참가자 = PC)를 연결 코드로 연결. 외부 요청은 모두 막고(route abort) ICE 서버를 비워 STUN·TURN 없이 로컬 host 후보만 사용.
+if (want("mp")) {
+  const { packWgba } = await import(pathToFileURL(path.join(here, "..", "..", "src-bundle", "src", "js", "core", "wgba-format.js")).href);
+  const netDir = path.resolve(opt.net ?? path.join(here, "..", "..", "docs", "wgba", "examples", "net-webapi"));
+  const netGame = (await packWgba({ wasm: fs.readFileSync(path.join(netDir, "game.wasm")), manifest: JSON.parse(fs.readFileSync(path.join(netDir, "manifest.json"), "utf8")) })).bytes;
+  const blocked = [];
+  const mpPage = async ({ viewport, mobile = false, pad = false }) => {
+    const context = await browser.newContext({ reducedMotion: "reduce", viewport, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: mobile ? 3 : 1, userAgent: mobile ? PHONE_UA : undefined, serviceWorkers: "block" });
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      if (url.startsWith(main.url)) return route.continue();
+      blocked.push(url.slice(0, 80));
+      return route.abort();
+    });
+    await context.addInitScript((m) => {
+      localStorage.setItem("webgba.installHint", "1");
+      if (m && !sessionStorage.getItem("sfSeeded")) {
+        localStorage.setItem("webgba.prefs", JSON.stringify({ pad: "on", padSet: true }));
+        sessionStorage.setItem("sfSeeded", "1");
+      }
+      Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+      const Orig = window.RTCPeerConnection;
+      if (Orig) {
+        const strip = (c) => ({ ...(c ?? {}), iceServers: [] });
+        const Peer = function (c, ...rest) {
+          return new Orig(strip(c), ...rest);
+        };
+        Peer.prototype = Orig.prototype;
+        Object.setPrototypeOf(Peer, Orig);
+        const set = Orig.prototype.setConfiguration;
+        Orig.prototype.setConfiguration = function (c) {
+          return set.call(this, strip(c));
+        };
+        window.RTCPeerConnection = Peer;
+      }
+    }, mobile);
+    if (pad) {
+      await context.addInitScript(() => {
+        const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+        const gp = { id: "test pad (STANDARD GAMEPAD)", index: 0, connected: true, mapping: "standard", axes: [0, 0, 0, 0], buttons, timestamp: 0 };
+        window.__pad = gp;
+        navigator.getGamepads = () => [gp, null, null, null];
+      });
+    }
+    const page = await context.newPage();
+    page.errors = [];
+    page.on("pageerror", (error) => page.errors.push(error.message));
+    page.on("console", (message) => message.type() === "error" && !/favicon|404|net::ERR_FAILED|Permissions policy/.test(message.text()) && page.errors.push(message.text()));
+    await page.goto(main.url);
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "1", null, { timeout: 30000 });
+    await page.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      await window.webgba.openFiles([new File([bytes], "net-demo.wgba")]);
+    }, Buffer.from(netGame).toString("base64"));
+    await page.waitForFunction(() => window.webgba.player.running && !window.webgba.state.opening, null, { timeout: 20000 });
+    await page.waitForTimeout(800);
+    return { context, page };
+  };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitFor = async (fn, ms = 15000) => {
+    const end = Date.now() + ms;
+    let last;
+    while (Date.now() < end) {
+      last = await fn();
+      if (last) return last;
+      await sleep(100);
+    }
+    return last;
+  };
+  const value = (page, action) => page.evaluate((a) => document.querySelector(`[data-action="${a}"]`)?.value ?? "", action);
+  const sheetOf = (page) => page.evaluate(() => window.webgba.state.sheet);
+  const toLan = async (page) => {
+    if (await page.$('[data-action="net-offline"]')) await page.click('[data-action="net-offline"]');
+  };
+  const pressKey = (page, code) =>
+    page.evaluate((c) => {
+      const p = window.webgba.player;
+      p.keyDown(c);
+      setTimeout(() => p.keyUp(c), 120);
+    }, code);
+  // 0.6초 동안 진행한 게임 프레임 수 · 일시정지 · 패널 상태
+  const run = (page, ms = 600) =>
+    page.evaluate(async (ms) => {
+      const w = window.webgba;
+      const a = w.player.frameNo;
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      const d = w.filter.debug();
+      return { frames: w.player.frameNo - a, paused: w.player.paused, open: w.filter.isOpen, held: d.ui.held, net: w.player.net.active, padMute: w.player.padMute };
+    }, ms);
+  const flow = (s) => JSON.stringify(s);
+  const both = (page) =>
+    page.evaluate(() => {
+      const box = (n) => {
+        if (!n || n.hidden || n.closest("[hidden]")) return null;
+        const r = n.getBoundingClientRect();
+        return r.width > 1 && r.height > 1 && getComputedStyle(n).opacity !== "0" ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null;
+      };
+      const board = window.webgba.net.board;
+      const a = box(board.root.querySelector(".mpb__panel"));
+      const b = box(document.getElementById("filterPanel"));
+      const cross = a && b ? Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)) : 0;
+      return { board: board.state.open, filter: window.webgba.filter.isOpen, boardBox: a, filterBox: b, cross, dock: document.body.dataset.fp ?? "" };
+    });
+
+  const { context: hc, page: H } = await mpPage({ viewport: { width: 390, height: 844 }, mobile: true });
+  const { context: gc, page: G } = await mpPage({ viewport: { width: 1280, height: 800 }, pad: true });
+  await G.evaluate(() => window.dispatchEvent(new Event("gamepadconnected")));
+
+  // 세션 아님: 지금처럼 일시정지
+  await G.evaluate(() => window.webgba.filter.open());
+  let g1 = await run(G);
+  await G.evaluate(() => window.webgba.filter.close());
+  let g2 = await run(G);
+  ok("멀티플레이 아님(PC): 패널 열기 → 일시정지(프레임 정지) · 닫기 → 재개", !g1.net && g1.open && g1.paused && g1.held && g1.frames === 0 && !g2.paused && g2.frames > 10, flow({ g1, g2 }));
+
+  // 방장(휴대폰) 연결 요청 → 방 만들기(연결 코드)
+  await pressKey(H, "KeyZ");
+  await H.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await toLan(H);
+  await H.click('[data-action="net-make"]');
+  const offer = await waitFor(() => value(H, "net-offer"), 10000);
+  // 참가자(PC): 연결 요청 → 세션 전 패널 열기(일시정지) → 참가 → 세션 시작 시 일시정지 해제(패널 유지)
+  await pressKey(G, "KeyZ");
+  await G.waitForFunction(() => window.webgba.state.sheet === "net", null, { timeout: 8000 });
+  await G.evaluate(() => window.webgba.filter.open());
+  g1 = await run(G, 400);
+  await toLan(G);
+  await G.click('[data-action="net-join"]');
+  await G.fill('[data-action="net-offer-in"]', offer);
+  await G.click('[data-action="net-offer-in-go"]');
+  const answer = await waitFor(() => value(G, "net-answer-out"), 10000);
+  await H.fill('[data-action="net-answer"]', answer);
+  await H.click('[data-action="net-answer-go"]');
+  const joined = await waitFor(() => G.evaluate(() => window.webgba.player.host?.ex?.Net_Open?.() === 1), 15000);
+  await waitFor(async () => (await sheetOf(H)) === "" && (await sheetOf(G)) === "", 6000);
+  g2 = await run(G);
+  ok("연결 코드로 방장 + 참가자 세션 연결(로컬 host 후보, 외부 요청 차단)", Boolean(joined) && g2.net, flow({ joined, net: g2.net, blocked: blocked.length }));
+  ok("패널 열린 채 세션 시작(PC 참가자): 시작 전 일시정지 → 시작 후 일시정지 해제·패널 유지·프레임 진행", g1.open && g1.paused && g1.held && !g1.net && g2.open && !g2.paused && !g2.held && g2.frames > 10, flow({ g1, g2 }));
+
+  // 게임패드: 패널이 열린 동안 게임에 게임패드 입력 없음, 닫으면 다시 전달
+  const padIndex = await G.evaluate(() => window.webgba.player.padLists.flatMap(([, list]) => list).find((i) => typeof i === "number" && ![0, 1, 3, 4, 5, 11, 12, 13, 14, 15].includes(i)) ?? -1);
+  await G.evaluate((i) => (window.__pad.buttons[i].pressed = true), padIndex);
+  const muted = await G.evaluate(() => window.webgba.player.padBits());
+  await G.evaluate((i) => (window.__pad.buttons[i].pressed = false), padIndex);
+  await setLook(G, "crt");
+  await G.waitForTimeout(300);
+  await shot(G, "mp_pc_filter_open");
+  await G.evaluate(() => window.webgba.filter.close());
+  g1 = await run(G);
+  await G.evaluate((i) => (window.__pad.buttons[i].pressed = true), padIndex);
+  const live = await G.evaluate(() => window.webgba.player.padBits());
+  await G.evaluate((i) => (window.__pad.buttons[i].pressed = false), padIndex);
+  ok("세션 중 패널 닫기(PC): 일시정지 없음·프레임 진행", !g1.open && !g1.paused && g1.frames > 10, flow(g1));
+  ok(`게임패드(버튼 ${padIndex}): 패널이 열린 동안 게임 입력 0, 닫은 뒤 전달`, padIndex >= 0 && muted === 0 && live !== 0, flow({ muted, live }));
+
+  // 방장(휴대폰 세로, 가상 버튼 자리 Dock): 세션 중 패널 열기 → 진행
+  await H.click("#btnFilter");
+  let h1 = await run(H);
+  const hDock = await H.evaluate(() => document.body.dataset.fp);
+  await H.waitForTimeout(200);
+  await shot(H, "mp_phone_portrait_filter_open");
+  await H.click('[data-fid="t-close"]');
+  let h2 = await run(H);
+  ok("세션 중 패널 열기(휴대폰 세로·Dock pad): 일시정지 없음·프레임 진행", h1.net && h1.open && !h1.paused && !h1.held && h1.frames > 10 && hDock === "pad", flow({ h1, hDock }));
+  ok("세션 중 패널 닫기(휴대폰 세로): 일시정지 없음·프레임 진행", !h2.open && !h2.paused && h2.frames > 10, flow(h2));
+
+  // 상태 메뉴 ↔ 화면 필터 패널: 한쪽을 열면 다른 쪽이 닫힘(휴대폰 세로 = 같은 가상 버튼 자리, PC = 좌우)
+  for (const [name, page] of [["휴대폰 세로", H], ["PC", G]]) {
+    await page.click("#btnNet");
+    await page.waitForTimeout(300);
+    const s1 = await both(page);
+    await page.click("#btnFilter");
+    await page.waitForTimeout(300);
+    const s2 = await both(page);
+    if (page === H) await shot(H, "mp_phone_portrait_board_to_filter");
+    await page.click("#btnNet");
+    await page.waitForTimeout(300);
+    const s3 = await both(page);
+    if (page === H) await shot(H, "mp_phone_portrait_filter_to_board");
+    const r = await run(page, 400);
+    ok(`${name}: 상태 메뉴 열린 채 필터 버튼 → 상태 메뉴 닫힘·패널만 표시 / 다시 멀티플레이 버튼 → 패널 닫힘·상태 메뉴만 표시(겹침 0)`, s1.board && !s1.filter && !s2.board && s2.filter && s2.cross === 0 && !s2.boardBox && s3.board && !s3.filter && !s3.filterBox && !r.paused, flow({ s1, s2, s3 }));
+    await page.evaluate(() => window.webgba.net.board.close({ instant: true }));
+  }
+
+  // 패널 열린 채 세션 끝(참가자 나가기): 패널 유지·일시정지 없음, 닫아도 그대로
+  await G.evaluate(() => window.webgba.filter.open());
+  g1 = await run(G, 400);
+  await G.evaluate(() => window.webgba.player.net.leave());
+  await waitFor(() => G.evaluate(() => !window.webgba.player.net.active), 6000);
+  g2 = await run(G);
+  await G.evaluate(() => window.webgba.filter.close());
+  const g3 = await run(G);
+  ok("패널 열린 채 세션 끝(PC 참가자 나가기): 패널 유지·일시정지 없음·프레임 진행, 닫은 뒤에도 진행", g1.net && g1.open && !g1.paused && !g2.net && g2.open && !g2.paused && !g2.held && g2.frames > 10 && !g3.open && !g3.paused && g3.frames > 10, flow({ g1, g2, g3 }));
+  // 세션이 끝난 뒤 다시 열면 지금처럼 일시정지
+  await G.evaluate(() => window.webgba.filter.open());
+  const g4 = await run(G, 400);
+  await G.evaluate(() => window.webgba.filter.close());
+  ok("세션이 끝난 뒤 패널 다시 열기: 일시정지(멀티플레이 아님 규칙)", !g4.net && g4.paused && g4.held && g4.frames === 0, flow(g4));
+  notes.mpBlocked = [...new Set(blocked)];
+  ok("멀티플레이: 오류 없음(방장·참가자)", !H.errors.length && !G.errors.length, [...H.errors, ...G.errors].slice(0, 3).join(" | "));
+  await hc.close();
+  await gc.close();
 }
 
 await browser.close();

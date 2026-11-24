@@ -141,6 +141,7 @@ const player = new AppPlayer({
   onNetChange: (snap) => {
     noteHold();
     netWin?.update(snap);
+    filterUi?.onNet();
     syncControls();
     queueMp();
     if (snap.hostWait && !mp.clock) mp.clock = setInterval(queueMp, 1000);
@@ -2510,7 +2511,7 @@ function filterGame() {
   return { gid: g.saveId, title, cssOnly: Boolean(player.host?.script), touch: Boolean(player.host?.hasPointer), wapk: Boolean(manifest && androidOf(manifest)), recommend: manifest?.display?.filter ?? null, frame: state.scriptFrame ?? null };
 }
 
-function filterHold(on) {
+function filterHold(on, why = "") {
   if (on) {
     if (player.active && !player.paused) {
       player.setPaused(true);
@@ -2521,7 +2522,7 @@ function filterHold(on) {
     sfHeld = false;
     if (player.active && player.paused) {
       player.setPaused(false);
-      journal.info("실행", "재개 · 화면 필터 패널 닫음");
+      journal.info("실행", why === "net" ? "재개 · 멀티플레이 세션 시작(화면 필터 패널 열림 유지)" : "재개 · 화면 필터 패널 닫음");
     }
   }
   syncControls();
@@ -2613,7 +2614,9 @@ filterUi = createScreenFilter({
   },
   prefs: () => state.prefs,
   savePrefs: (patch) => savePrefs(patch),
-  hold: (name, on) => filterHold(on),
+  hold: (name, on, why) => filterHold(on, why),
+  netLive: () => player.net.active,
+  onPanel: (open) => (player.padMute = open),
   toast: (text, level) => (state.opening ? state.openNotes.push(text) : status(text, level === "warn" ? "warn" : "info")),
   openDialog: (options) => filterDialog(options),
   dialogOpen: () => !el.layer.hidden,

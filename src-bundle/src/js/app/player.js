@@ -327,6 +327,7 @@ export class Player {
     this.bitOf = new Map();
     this.padMap = [];
     this.padLists = [];
+    this.padMute = false;
     this.rsPads = [];
     this.rsPadDown = false;
     this.macro = [];
@@ -552,7 +553,7 @@ export class Player {
   rsPadTick() {
     if (!this.rsPads.length) return;
     let down = false;
-    for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) if (gp && this.rsPads.some((i) => gp.buttons[i]?.pressed)) down = true;
+    if (!this.padMute) for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) if (gp && this.rsPads.some((i) => gp.buttons[i]?.pressed)) down = true;
     if (down === this.rsPadDown) return;
     this.rsPadDown = down;
     if (down) this.macroPress();
@@ -622,7 +623,7 @@ export class Player {
 
   padBits() {
     let bits = 0;
-    if (!this.padMap.length) return 0;
+    if (!this.padMap.length || this.padMute) return 0;
     for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
       if (!gp) continue;
       for (const [mask, test] of this.padMap) if (!(bits & mask) && test(gp)) bits |= mask;

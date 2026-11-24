@@ -258,6 +258,7 @@ const player = new WebPlayer({
   onNetWant: (request) => netWant(request),
   onNetChange: (snap) => {
     netWin?.update(snap);
+    filterUi?.onNet();
     syncControls();
     queueBoard();
     if (snap.hostWait && !boardState.clock) boardState.clock = setInterval(queueBoard, 1000);
@@ -333,6 +334,11 @@ filterUi = createScreenFilter({
   prefs: () => state.prefs,
   savePrefs: (patch) => savePrefs(patch),
   hold: (name, on) => hold(name, on),
+  netLive: () => player.net.active,
+  onPanel: (open) => {
+    player.padMute = open;
+    if (open) closeBoard({ instant: true });
+  },
   toast: (text, level) => toast(text, level ?? "info"),
   openDialog: (options) => openDialog(options),
   dialogOpen: () => Boolean(state.dialogDone),
@@ -657,6 +663,7 @@ function stopBoardHide() {
 function openBoard() {
   if (!player.net.active || boardState.open) return;
   if (state.menuOpen) setMenu(false);
+  if (filterUi.isOpen) filterUi.close();
   stopBoardHide();
   boardState.open = true;
   boardRoot.hidden = false;
