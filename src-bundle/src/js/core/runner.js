@@ -138,9 +138,11 @@
     }
   };
   // 타이머가 몰려 짧은 간격으로 두 번 오면(웹킷) 값이 튀므로 0.5초 이상 모였을 때만 낸다.
-  // 웹킷(사파리)은 사용자가 아직 누르지 않은 출처 다른 틀의 화면 갱신을 30Hz 로 묶는다 → 2초 넘게 40fps 아래면 "눌러서 시작" 덮개.
+  // 웹킷(사파리)은 사용자가 아직 누르지 않은 출처 다른 틀의 화면 갱신을 30Hz 로 묶는다 → 1배에서 2초 넘게 40fps 아래면 "눌러서 시작" 덮개.
   let statAt = now();
+  let speedAt = -Infinity;
   let slowWindows = 0;
+  let quickWindows = 0;
   let throttled = false;
   let throttleTap = true;
   nativeSetInterval(() => {
@@ -148,9 +150,15 @@
     if (at - statAt < 500) return;
     const fps = Math.round(((frames * 1000) / (at - statAt)) * 10) / 10;
     if (started) send({ type: "stats", fps, queued: rafLive.size + rafHeld.size });
-    slowWindows = throttleTap && started && !paused && frames > 0 && fps < 40 ? slowWindows + 1 : 0;
+    const watch = throttleTap && started && !paused && speed === 1 && statAt - speedAt >= 2000 && frames > 0;
+    slowWindows = watch && fps < 40 ? slowWindows + 1 : 0;
+    quickWindows = watch && throttled && fps >= 50 ? quickWindows + 1 : 0;
     if (slowWindows >= 2 && !throttled) {
       throttled = true;
+      checkTap();
+    } else if (quickWindows >= 2 && throttled) {
+      throttled = false;
+      quickWindows = 0;
       checkTap();
     }
     frames = 0;
@@ -985,6 +993,7 @@
       case "speed":
         if (Number(data.value) !== speed) {
           speed = Number(data.value) || 1;
+          speedAt = now();
           emit("speed", speed);
         }
         break;

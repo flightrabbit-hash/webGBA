@@ -8,6 +8,14 @@ import { lang, t } from "../shell/i18n.js";
 
 export const FRAME_MS = (280896 / 16777216) * 1000;
 const MAX_FRAMES_PER_TICK = 8;
+const FAST_BUDGET_PART = 0.8;
+const FAST_BUDGET_MIN_MS = 4;
+const FAST_BUDGET_MAX_MS = 14;
+const FAST_SECOND_PART = 0.9;
+const FAST_FILL_TARGET = 0.05;
+const FAST_FILL_GAIN = 2;
+const FAST_FILL_SPAN = 0.05;
+const FAST_FILL_POLL_MS = 100;
 const SAVE_DELAY_MS = 1000;
 const POINTER_BUTTONS = 7;
 const POINTER_WHEEL_STEP = 40;
@@ -338,6 +346,8 @@ export class Player {
     this.savePending = false;
     this.last = 0;
     this.acc = 0;
+    this.vsync = 1000 / 60;
+    this.frameCost = 0;
     this.frames = 0;
     this.statAt = 0;
     this.raf = 0;
@@ -793,8 +803,12 @@ export class Player {
       const node = new AudioWorkletNode(ac, "webgba-out", { outputChannelCount: [2] });
       const gain = ac.createGain();
       node.connect(gain).connect(ac.destination);
-      const audio = { ac, node, gain, time: ac.currentTime, moved: performance.now(), woke: false, stuck: false };
+      const audio = { ac, node, gain, time: ac.currentTime, moved: performance.now(), woke: false, stuck: false, fill: -1, fillAt: 0 };
       this.audio = audio;
+      node.port.addEventListener("message", (event) => {
+        if (typeof event.data?.fill === "number") audio.fill = event.data.fill;
+      });
+      node.port.start();
       ac.addEventListener("statechange", () => this.onAudioState(audio));
       this.applyVolume();
       // ② 자체 JS 게임은 틀이 스스로 소리를 낸다(표본률을 받지 않음)
@@ -912,6 +926,7 @@ export class Player {
     this.padPrev = 0;
     this.padNow = 0;
     this.pace = { speed: 1, emu: 0, real: 0 };
+    this.frameCost = 0;
     if (host.script) {
       this.pushAutoFire();
       // ② 자체 JS: 게임이 틀 안에서 스스로 그리고 소리를 낸다. 여기서는 입력·세이브·일시정지·소리 크기만.
@@ -1013,14 +1028,27 @@ export class Player {
     const pace = this.pace;
     if (pace.speed !== speed) {
       pace.speed = speed;
-      pace.emu = speed * FRAME_MS * 8;
-      pace.real = FRAME_MS * 8;
+      pace.emu = speed * FRAME_MS * 2;
+      pace.real = FRAME_MS * 2;
       this.squeeze = { at: 0, l: 0, r: 0, n: 0 };
       this.audio?.node.port.postMessage({ trim: 0.04 });
+      if (this.audio) this.audio.fill = -1;
     }
     if (speed <= 1) return 1;
     const live = pace.emu / Math.max(pace.real, 1);
     return live >= speed * 0.94 ? speed : Math.max(1, Math.min(speed, live));
+  }
+
+  fillAdjust(factor, now) {
+    const audio = this.audio;
+    if (!audio) return factor;
+    if (now - audio.fillAt >= FAST_FILL_POLL_MS) {
+      audio.fillAt = now;
+      audio.node.port.postMessage("fill");
+    }
+    if (audio.fill < 0) return factor;
+    const shift = Math.max(-FAST_FILL_SPAN, Math.min(FAST_FILL_SPAN, (audio.fill - FAST_FILL_TARGET) * FAST_FILL_GAIN));
+    return factor * (1 + shift);
   }
 
   notePace(ran, dt) {
@@ -1108,15 +1136,27 @@ export class Player {
       if (this.host.takeSaveDirty()) this.queueSave();
       return;
     }
+    if (gap > 2 && gap < 100) this.vsync += (gap - this.vsync) * (gap < this.vsync ? 0.5 : 0.02);
     const speed = this.runSpeed;
     this.acc += dt * speed;
     const padBits = this.padBits();
     if (padBits & ~this.padPrev) this.macroStop();
     this.notePad(padBits);
     this.rsPadTick();
-    const squeeze = this.audioFactor(speed);
+    const fast = speed > 1;
+    const squeeze = fast ? this.fillAdjust(this.audioFactor(speed), now) : this.audioFactor(speed);
+    const budget = fast ? Math.min(FAST_BUDGET_MAX_MS, Math.max(FAST_BUDGET_MIN_MS, this.vsync * FAST_BUDGET_PART)) : 0;
+    const tickStart = fast ? performance.now() : 0;
     let ran = 0;
     while (this.acc >= FRAME_MS && ran < MAX_FRAMES_PER_TICK) {
+      let frameStart = 0;
+      if (fast) {
+        frameStart = performance.now();
+        if (ran && frameStart - tickStart + this.frameCost > (ran === 1 ? Math.max(budget, this.vsync * FAST_SECOND_PART) : budget)) {
+          this.acc = Math.min(this.acc, FRAME_MS);
+          break;
+        }
+      }
       this.acc -= FRAME_MS;
       const input = this.frameKeys(padBits, ran === 0);
       if (ran === 0) {
@@ -1146,9 +1186,13 @@ export class Player {
       this.net.afterFrame();
       ran++;
       const samples = this.host.audio();
-      if (samples && this.audio) this.playAudio(samples, squeeze);
+      if (samples && this.audio && !(fast && this.fastMute)) this.playAudio(samples, squeeze);
       if (this.host.takeSaveDirty()) this.queueSave();
       if (m) this.noteFrame(m, performance.now() - begin);
+      if (fast) {
+        const cost = performance.now() - frameStart;
+        this.frameCost = this.frameCost ? this.frameCost + (cost - this.frameCost) * 0.25 : cost;
+      }
     }
     this.notePace(ran, dt);
     if (this.acc > FRAME_MS * MAX_FRAMES_PER_TICK) this.acc = 0;
