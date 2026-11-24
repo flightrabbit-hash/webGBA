@@ -2,7 +2,7 @@
 //   node tools/test/i18n-keys.mjs
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const src = path.join(root, "src-bundle", "src");
@@ -44,6 +44,29 @@ const DYNAMIC = [
   "panel.favoritesEmpty", "panel.filesEmpty", "panel.filesNone",
 ];
 for (const key of DYNAMIC) used.add(key);
+
+// 화면 필터(app/screen-filter-ui.js)가 정의(core/screen-filter.js)로 조합하는 키 — 웹 web/test/web-filter.mjs keys 와 같은 규칙
+const sf = await import(pathToFileURL(path.join(src, "js", "core", "screen-filter.js")).href);
+for (const sec of sf.SECTION_IDS) {
+  used.add(`sf.sec.${sec}`);
+  used.add(`sf.sec.${sec}.note`);
+  for (const f of sf.FILTERS[sec]) {
+    used.add(`sf.f.${sec}.${f.id}`);
+    used.add(`sf.f.${sec}.${f.id}.desc`);
+    for (const x of f.details) {
+      const key = `sf.d.${sec}.${f.id}.${x.k}`;
+      used.add(key);
+      if (x.descByValue) for (const o of x.options) used.add(`${key}.desc${o.v}`);
+      else if (x.type === "chips") for (const o of x.options) used.add(`sf.m.${o.v}`);
+      else used.add(`${key}.desc`);
+      if (x.type === "seg" && x.k !== "levels") for (const o of x.options) used.add(`sf.o.${sec}.${f.id}.${x.k}.${o.v}`);
+      if (x.lock) used.add(`sf.lock.${x.k}`);
+    }
+  }
+}
+for (const p of sf.BUILTIN) for (const k of [`sf.p.${p.id}`, `sf.p.${p.id}.desc`]) used.add(k);
+for (const k of ["sf.cost.0", "sf.cost.1", "sf.cost.2", "sf.button", "sf.buttonGame", "sf.buttonSlow", "sf.expand", "sf.collapse", "sf.exe.lock.curve"]) used.add(k);
+for (const w of ["scalefx", "toon", "stack"]) for (const k of [`sf.what.${w}`, `sf.lighten.${w}`]) used.add(k);
 
 const settingsJs = text(path.join(src, "js", "app", "settings.js"));
 const fieldKeys = [...settingsJs.matchAll(/\{ key: "(\w+)"([^}]*)\}/g)];

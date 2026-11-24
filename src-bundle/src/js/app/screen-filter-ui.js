@@ -24,7 +24,7 @@ import {
   sameLook,
   SECTION_IDS,
   USER_MAX,
-} from "./core/screen-filter.js";
+} from "../core/screen-filter.js";
 
 const LOAD_CLS = ["lite", "mid", "heavy"];
 const SLOW_FPS = 50;
@@ -36,7 +36,8 @@ const deep = (o) => JSON.parse(JSON.stringify(o));
 const pct = (v) => `${Math.round(v)}%`;
 
 export function createScreenFilter(kit) {
-  const { t, make, iconNode } = kit;
+  const { make, iconNode } = kit;
+  const t = (key, vars) => kit.t(kit.textKey ? kit.textKey(key) : key, vars);
   let store = cleanStore(kit.prefs().screenFilter);
   const ui = { open: false, sec: null, compare: false, snapshot: null, padFid: "", reveal: null, sample: false };
   const gl = { engine: null, canvas: null, on: false, failed: false, warned: false, chain: null, ff: false, box: { w: 0, h: 0 } };
@@ -47,9 +48,9 @@ export function createScreenFilter(kit) {
 
   const game = () => kit.game();
   const phone = () => kit.phone();
-  const sectionName = (sec) => t(`web.sf.sec.${sec}`);
-  const filterName = (sec, id) => t(`web.sf.f.${sec}.${id}`);
-  const costName = (lv) => t(`web.sf.cost.${lv}`);
+  const sectionName = (sec) => t(`sf.sec.${sec}`);
+  const filterName = (sec, id) => t(`sf.f.${sec}.${id}`);
+  const costName = (lv) => t(`sf.cost.${lv}`);
 
   function save() {
     kit.savePrefs({ screenFilter: deep(store) });
@@ -72,16 +73,16 @@ export function createScreenFilter(kit) {
 
   function ctxOf() {
     const g = game();
-    return { cssOnly: Boolean(g?.cssOnly), touch: Boolean(g?.touch), unsupported: false, ff: kit.ff(), phone: phone(), compare: ui.compare };
+    return { cssOnly: Boolean(g?.cssOnly), touch: Boolean(g?.touch), unsupported: Boolean(g?.unsupported), ff: kit.ff(), phone: phone(), compare: ui.compare };
   }
 
   function presets() {
     const g = game();
     const out = [];
     const rec = g?.recommend ? recommendLook(g.recommend) : null;
-    if (rec) out.push({ id: "rec", name: t("web.sf.tag.rec"), desc: t("web.sf.recDesc"), look: rec, tag: "rec" });
-    for (const p of BUILTIN) out.push({ id: p.id, name: t(`web.sf.p.${p.id}`), desc: t(`web.sf.p.${p.id}.desc`), look: p.look });
-    for (const u of store.user) out.push({ id: `user:${u.id}`, name: u.name, desc: t("web.sf.userDesc"), look: u.look, tag: "user", uid: u.id });
+    if (rec) out.push({ id: "rec", name: t("sf.tag.rec"), desc: t("sf.recDesc"), look: rec, tag: "rec" });
+    for (const p of BUILTIN) out.push({ id: p.id, name: t(`sf.p.${p.id}`), desc: t(`sf.p.${p.id}.desc`), look: p.look });
+    for (const u of store.user) out.push({ id: `user:${u.id}`, name: u.name, desc: t("sf.userDesc"), look: u.look, tag: "user", uid: u.id });
     return out;
   }
 
@@ -89,8 +90,8 @@ export function createScreenFilter(kit) {
 
   function labelOf(rec) {
     const p = rec.base && presetById(rec.base);
-    if (!p) return anyFilter(rec.look) ? t("web.sf.direct") : t("web.sf.p.orig");
-    return sameLook(rec.look, p.look) ? p.name : t("web.sf.modified", { name: p.name });
+    if (!p) return anyFilter(rec.look) ? t("sf.direct") : t("sf.p.orig");
+    return sameLook(rec.look, p.look) ? p.name : t("sf.modified", { name: p.name });
   }
 
   // ---------------------------------------------------------------- 출력
@@ -105,7 +106,7 @@ export function createScreenFilter(kit) {
           event.preventDefault();
           fail();
         });
-        kit.el.canvas.after(gl.canvas);
+        kit.mountCanvas(gl.canvas);
       }
       gl.engine = new FilterEngine(gl.canvas);
       return true;
@@ -121,7 +122,7 @@ export function createScreenFilter(kit) {
     setGl(false);
     if (!gl.warned) {
       gl.warned = true;
-      kit.toast(t("web.sf.toast.gl"), "warn");
+      kit.toast(t("sf.toast.gl"), "warn");
     }
     if (ui.open) render();
   }
@@ -134,19 +135,20 @@ export function createScreenFilter(kit) {
   }
 
   function boxSize() {
-    const box = kit.el.screen.getBoundingClientRect();
-    gl.box = { w: box.width, h: box.height };
+    gl.box = kit.box({ sample: ui.sample });
     return gl.box;
   }
 
   function sourceOf() {
     if (ui.sample) return sampleCanvas();
-    const c = kit.el.canvas;
+    const c = kit.sourceCanvas();
     return c.width && c.height ? c : null;
   }
 
   function outRect(src) {
-    const { w, h } = gl.box.w ? gl.box : boxSize();
+    const box = gl.box.w ? gl.box : boxSize();
+    const { w, h } = box;
+    if (kit.outRect) return kit.outRect(src, { sample: ui.sample });
     if (document.body.hasAttribute("data-stretch") || !src) return { x: 0, y: 0, w, h };
     const a = src.width / src.height;
     let ww = w;
@@ -235,7 +237,10 @@ export function createScreenFilter(kit) {
     const chain = live ? resolveChain(look, ctx) : null;
     gl.chain = chain;
     gl.ff = ctx.ff;
-    if (g?.cssOnly) {
+    if (g?.unsupported) {
+      setGl(false);
+      cssFilter(null);
+    } else if (g?.cssOnly) {
       setGl(false);
       cssFilter(chain);
     } else {
@@ -260,35 +265,27 @@ export function createScreenFilter(kit) {
     const rounded = Math.round(r * 10) / 10;
     if (rounded === radiusNow) return;
     radiusNow = rounded;
-    kit.el.screen.style.borderRadius = rounded ? `${rounded}px` : "";
-    if (paint) kit.paintFrame();
+    kit.setRadius(rounded, { paint, canvas: gl.canvas });
   }
 
   // ---------------------------------------------------------------- 도구 버튼
+  let buttonState = { on: false };
   function syncButton() {
-    const b = kit.el.btnFilter;
-    if (!b) return;
-    const { scope } = recOf();
+    const { scope, rec } = recOf();
     const g = game();
-    const on = Boolean(g) && anyFilter(recOf().rec.look);
-    const badge = b.querySelector(".tool__badge") ?? b.appendChild(make("span", "tool__badge"));
-    const text = badge.querySelector(".tool__badgeText") ?? badge.appendChild(make("span", "tool__badgeText"));
-    const badgeText = scope === "game" ? t("web.sf.gameBadge") : "";
-    if (text.textContent !== badgeText) text.textContent = badgeText;
-    if (badge.hidden !== !badgeText) badge.hidden = !badgeText;
-    if (slow.on) badge.dataset.tone = "warn";
-    else delete badge.dataset.tone;
-    b.toggleAttribute("data-slow", slow.on);
-    b.setAttribute("aria-pressed", String(ui.open));
-    const label = slow.on ? "web.sf.buttonSlow" : scope === "game" ? "web.sf.buttonGame" : "web.sf.button";
-    if (b.dataset.i18nTitle !== label) kit.setLabel(b, label);
-    if (b.dataset.on !== String(on || ui.open)) {
-      b.dataset.on = String(on || ui.open);
-      kit.syncTools();
-    }
+    const on = Boolean(g) && !g.unsupported && anyFilter(rec.look);
+    buttonState = {
+      on: on || ui.open,
+      open: ui.open,
+      game: scope === "game",
+      slow: slow.on,
+      badge: scope === "game" ? t("sf.gameBadge") : "",
+      label: slow.on ? "sf.buttonSlow" : scope === "game" ? "sf.buttonGame" : "sf.button",
+    };
+    kit.paintButton(buttonState);
   }
 
-  const buttonOn = () => kit.el.btnFilter?.dataset.on === "true";
+  const buttonOn = () => buttonState.on;
 
   // ---------------------------------------------------------------- 패널 열기·닫기
   function open() {
@@ -324,7 +321,7 @@ export function createScreenFilter(kit) {
     kit.hold("filter", false);
     kit.layout();
     apply();
-    kit.el.btnFilter?.focus?.({ preventScroll: true });
+    kit.focusButton();
   }
 
   const toggle = () => (ui.open ? close() : open());
@@ -336,7 +333,7 @@ export function createScreenFilter(kit) {
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-labelledby", "fpTitle");
     panel.hidden = true;
-    kit.el.app.append(panel);
+    kit.mount(panel);
   }
 
   function changed() {
@@ -362,14 +359,16 @@ export function createScreenFilter(kit) {
   }
 
   function toolBtn(icon, label, id, onClick, { disabled = false, danger = false } = {}) {
-    const b = make("button", `tool tool--small${danger ? " tool--danger" : ""}`);
-    b.type = "button";
-    b.title = label;
-    b.setAttribute("aria-label", label);
+    const b = kit.iconButton({ icon, label, danger });
     b.disabled = disabled;
-    b.append(iconNode(icon));
     if (onClick) b.addEventListener("click", onClick);
     return fid(b, id);
+  }
+
+  function textBtn(icon, label, id, onClick, { kind = "", small = false } = {}) {
+    const b = kit.button({ icon, label, kind, small });
+    if (onClick) b.addEventListener("click", onClick);
+    return id ? fid(b, id) : b;
   }
 
   function chip(text, cls = "") {
@@ -409,10 +408,10 @@ export function createScreenFilter(kit) {
     panel.classList.toggle("is-compare", ui.compare);
     const head = make("header", "fp__head");
     head.dataset.row = "tools";
-    const title = make("h2", "fp__title", t("web.sf.title"));
+    const title = make("h2", "fp__title", t("sf.title"));
     title.id = "fpTitle";
-    const chipText = !g ? t("web.sf.chip.all") : scope === "game" ? t("web.sf.chip.game") : t("web.sf.chip.global");
-    const compare = toolBtn("compare", t("web.sf.compare"), "t-compare", null);
+    const chipText = !g ? t("sf.chip.all") : g.unsupported ? t("sf.unsupported") : scope === "game" ? t("sf.chip.game") : t("sf.chip.global");
+    const compare = toolBtn("compare", t("sf.compare"), "t-compare", null, { disabled: Boolean(g?.unsupported) });
     const holdOn = (on) => (event) => {
       if (event.type.startsWith("key")) {
         if (event.key !== " " && event.key !== "Enter") return;
@@ -429,20 +428,27 @@ export function createScreenFilter(kit) {
     compare.addEventListener("contextmenu", (event) => event.preventDefault());
     head.append(
       title,
-      chip(chipText, scope === "game" ? "fp-chip--game" : ""),
+      chip(chipText, g?.unsupported ? "fp-chip--off" : scope === "game" ? "fp-chip--game" : ""),
       make("span", "fp__grow"),
       compare,
-      toolBtn("history", t("web.sf.undo"), "t-undo", () => undo(), { disabled: !changed() }),
-      toolBtn("x", t("web.sf.close"), "t-close", () => close()),
+      toolBtn("history", t("sf.undo"), "t-undo", () => undo(), { disabled: !changed() }),
+      toolBtn("x", t("sf.close"), "t-close", () => close()),
     );
     const body = make("div", "fp__body");
-    if (!g) body.append(banner("info", t("web.sf.ban.start"), t("web.sf.ban.startText")));
-    if (ctx.cssOnly) body.append(banner("warn", t("web.sf.ban.css"), t("web.sf.ban.cssText", { name: g.title })));
-    if (gl.failed && !ctx.cssOnly) body.append(banner("warn", t("web.sf.ban.gl"), t("web.sf.ban.glText")));
+    if (g?.unsupported) {
+      body.append(banner("warn", t("sf.ban.frame"), t("sf.ban.frameText")));
+      panel.replaceChildren(head, body);
+      if (focusFid) panel.querySelector(`[data-fid="${CSS.escape(focusFid)}"]`)?.focus({ preventScroll: true });
+      padFocus();
+      return;
+    }
+    if (!g) body.append(banner("info", t("sf.ban.start"), t("sf.ban.startText")));
+    if (ctx.cssOnly) body.append(banner("warn", t("sf.ban.css"), t("sf.ban.cssText", { name: g.title })));
+    if (gl.failed && !ctx.cssOnly) body.append(banner("warn", t("sf.ban.gl"), t("sf.ban.glText")));
     if (g) {
       const seg = make("div", "seg fscope");
       seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", t("web.sf.scope"));
+      seg.setAttribute("aria-label", t("sf.scope"));
       seg.dataset.row = "scope";
       const segBtn = (label, on, id, onClick) => {
         const b = make("button", "seg__btn");
@@ -455,52 +461,42 @@ export function createScreenFilter(kit) {
         return fid(b, id);
       };
       seg.append(
-        segBtn(t("web.sf.scope.global"), scope !== "game", "scope-global", () => {
+        segBtn(t("sf.scope.global"), scope !== "game", "scope-global", () => {
           if (scope === "game") askRelease();
         }),
-        segBtn(t("web.sf.scope.game"), scope === "game", "scope-game", () => {
+        segBtn(t("sf.scope.game"), scope === "game", "scope-game", () => {
           if (scope !== "game") makeGameScope();
         }),
       );
-      const note = scope === "game" ? t("web.sf.scope.noteGame", { name: g.title }) : scope === "wapk" ? t("web.sf.scope.noteWapk") : t("web.sf.scope.noteGlobal");
-      body.append(group(t("web.sf.scope"), seg, make("p", `fnote${scope === "game" ? " fnote--game" : ""}`, note)));
+      const note = scope === "game" ? t("sf.scope.noteGame", { name: g.title }) : scope === "wapk" ? t("sf.scope.noteWapk") : t("sf.scope.noteGlobal");
+      body.append(group(t("sf.scope"), seg, make("p", `fnote${scope === "game" ? " fnote--game" : ""}`, note)));
     }
     const ls = loadScore(look, ctx);
     const level = loadLevel(ls.score, ls.heavy);
     if (ctx.phone && level === 2 && !ctx.cssOnly) {
       const plan = lightenPlan(look);
-      const b = make("button", "btn btn--small");
-      b.type = "button";
-      b.dataset.row = "lighten";
-      b.append(iconNode("refresh"), make("span", "btn__label", t("web.sf.lighten")));
-      b.addEventListener("click", () => {
+      const b = textBtn("refresh", t("sf.lighten"), "lighten", () => {
         act(() => plan.apply(editRec().look));
-        kit.toast(t(`web.sf.lighten.${plan.what}`));
-      });
-      fid(b, "lighten");
-      body.append(banner("warn", t("web.sf.ban.heavy"), t("web.sf.ban.heavyText", { what: t(`web.sf.what.${plan.what}`) }), b));
-    } else if (slow.on) body.append(banner("warn", t("web.sf.ban.slow"), t("web.sf.ban.slowText")));
-    if (ctx.ff) body.append(banner("info", t("web.sf.ban.ff"), ctx.phone ? t("web.sf.ban.ffTextPhone") : t("web.sf.ban.ffText")));
+        kit.toast(t(`sf.lighten.${plan.what}`));
+      }, { small: true });
+      b.dataset.row = "lighten";
+      body.append(banner("warn", t("sf.ban.heavy"), t("sf.ban.heavyText", { what: t(`sf.what.${plan.what}`) }), b));
+    } else if (slow.on) body.append(banner("warn", t("sf.ban.slow"), t("sf.ban.slowText")));
+    if (ctx.ff) body.append(banner("info", t("sf.ban.ff"), ctx.phone ? t("sf.ban.ffTextPhone") : t("sf.ban.ffText")));
     body.append(presetGroup(rec, ctx));
-    const secs = group(t("web.sf.secs"));
+    const secs = group(t("sf.secs"));
     secs.classList.add("fsecs");
     for (const sec of SECTION_IDS) secs.append(sectionView(sec, look, ctx));
     body.append(secs);
     const load = make("p", "fload");
     const tag = make("b", `fload__tag fload__tag--${LOAD_CLS[level]}`, costName(level));
-    load.append(make("span", "", `${t("web.sf.load")} `), tag, make("span", "", ` · ${ctx.phone ? t("web.sf.loadPhone") : t("web.sf.loadPc")} · ${t("web.sf.loadNote")}`));
+    load.append(make("span", "", `${t("sf.load")} `), tag, make("span", "", ` · ${ctx.phone ? t("sf.loadPhone") : t("sf.loadPc")} · ${t("sf.loadNote")}`));
     body.append(load);
     const foot = make("footer", "fp__foot");
     foot.dataset.row = "foot";
-    const saveBtn = make("button", "btn btn--primary");
-    saveBtn.type = "button";
-    saveBtn.append(iconNode("floppy"), make("span", "btn__label", t("web.sf.save")));
-    saveBtn.addEventListener("click", () => askSave());
-    const resetBtn = make("button", "btn btn--danger");
-    resetBtn.type = "button";
-    resetBtn.append(iconNode("refresh"), make("span", "btn__label", scope === "game" ? t("web.sf.release") : t("web.sf.reset")));
-    resetBtn.addEventListener("click", () => (scope === "game" ? askRelease() : askReset()));
-    foot.append(fid(saveBtn, "f-save"), fid(resetBtn, "f-reset"));
+    const saveBtn = textBtn("floppy", t("sf.save"), "f-save", () => askSave(), { kind: "primary" });
+    const resetBtn = textBtn("refresh", scope === "game" ? t("sf.release") : t("sf.reset"), "f-reset", () => (scope === "game" ? askRelease() : askReset()), { kind: "danger" });
+    foot.append(saveBtn, resetBtn);
     panel.replaceChildren(head, body, foot);
     body.scrollTop = scroll;
     if (ui.reveal) {
@@ -527,7 +523,7 @@ export function createScreenFilter(kit) {
     const g = game();
     const tiles = make("div", "ptiles");
     tiles.setAttribute("role", "radiogroup");
-    tiles.setAttribute("aria-label", t("web.sf.presets", { n: BUILTIN.length, user: store.user.length, max: USER_MAX }));
+    tiles.setAttribute("aria-label", t("sf.presets", { n: BUILTIN.length, user: store.user.length, max: USER_MAX }));
     tiles.dataset.row = "presets";
     const tw = phone() ? THUMB_W.phone : THUMB_W.pc;
     const th = Math.round(tw / 1.5);
@@ -544,12 +540,12 @@ export function createScreenFilter(kit) {
       cv.style.width = `${tw}px`;
       cv.style.height = `${th}px`;
       tile.append(cv, make("span", "ptile__name", pre.name));
-      if (pre.tag) tile.append(make("span", `ptile__tag${pre.tag === "user" ? " ptile__tag--user" : ""}`, pre.tag === "user" ? t("web.sf.tag.user") : t("web.sf.tag.rec")));
-      if (mod) tile.append(make("span", "ptile__mod", t("web.sf.tag.mod")));
+      if (pre.tag) tile.append(make("span", `ptile__tag${pre.tag === "user" ? " ptile__tag--user" : ""}`, pre.tag === "user" ? t("sf.tag.user") : t("sf.tag.rec")));
+      if (mod) tile.append(make("span", "ptile__mod", t("sf.tag.mod")));
       tile.addEventListener("click", () => applyPreset(pre.id));
       tiles.append(fid(tile, `p-${pre.id}`));
     }
-    const title = g?.recommend && recommendLook(g.recommend) ? t("web.sf.presetsRec", { n: BUILTIN.length, user: store.user.length, max: USER_MAX }) : t("web.sf.presets", { n: BUILTIN.length, user: store.user.length, max: USER_MAX });
+    const title = g?.recommend && recommendLook(g.recommend) ? t("sf.presetsRec", { n: BUILTIN.length, user: store.user.length, max: USER_MAX }) : t("sf.presets", { n: BUILTIN.length, user: store.user.length, max: USER_MAX });
     const out = group(title, tiles);
     const cur = rec.base && presetById(rec.base);
     if (cur?.uid) {
@@ -561,15 +557,15 @@ export function createScreenFilter(kit) {
       input.value = cur.name;
       input.autocomplete = "off";
       input.spellcheck = false;
-      input.title = t("web.sf.rename");
-      input.setAttribute("aria-label", t("web.sf.rename"));
+      input.title = t("sf.rename");
+      input.setAttribute("aria-label", t("sf.rename"));
       input.addEventListener("change", () =>
         act(() => {
           const u = store.user.find((x) => x.id === cur.uid);
           if (u) u.name = [...input.value.trim()].slice(0, NAME_MAX).join("") || u.name;
         }),
       );
-      row.append(fid(input, "uname"), toolBtn("trash", t("web.sf.delete"), "udel", () => askDelete(cur.uid), { danger: true }));
+      row.append(fid(input, "uname"), toolBtn("trash", t("sf.delete"), "udel", () => askDelete(cur.uid), { danger: true }));
       out.append(row);
     }
     return out;
@@ -588,9 +584,9 @@ export function createScreenFilter(kit) {
       case "dec100":
         return (v / 100).toFixed(2);
       case "levels":
-        return t("web.sf.u.levels", { n: v });
+        return t("sf.u.levels", { n: v });
       case "curve":
-        return v ? pct(v) : t("web.sf.u.flat");
+        return v ? pct(v) : t("sf.u.flat");
       default:
         return String(v);
     }
@@ -626,10 +622,10 @@ export function createScreenFilter(kit) {
     toggleBtn.type = "button";
     toggleBtn.setAttribute("aria-expanded", String(opened));
     toggleBtn.disabled = locked;
-    toggleBtn.title = locked ? t("web.sf.lockedTitle", { name }) : t(opened ? "web.sf.collapse" : "web.sf.expand", { name });
+    toggleBtn.title = locked ? t("sf.lockedTitle", { name }) : t(opened ? "sf.collapse" : "sf.expand", { name });
     if (!disabled) toggleBtn.dataset.adjust = `s-${sec}`;
     const names = make("span", "fsec__names");
-    names.append(make("span", "fsec__name", name), make("span", "fsec__cur", locked ? t("web.sf.unsupported") : filterName(sec, id)));
+    names.append(make("span", "fsec__name", name), make("span", "fsec__cur", locked ? t("sf.unsupported") : filterName(sec, id)));
     toggleBtn.append(iconNode("chevron"), names);
     toggleBtn.addEventListener("click", () => {
       ui.sec = opened ? null : sec;
@@ -637,7 +633,7 @@ export function createScreenFilter(kit) {
       render();
     });
     const out = make("output", "fsec__val", disabled ? "—" : `${sVal}%`);
-    const r = range(0, 100, 5, sVal, t("web.sf.strength", { name }));
+    const r = range(0, 100, 5, sVal, t("sf.strength", { name }));
     r.classList.add("fsec__range");
     r.classList.toggle("is-neutral", disabled);
     r.disabled = disabled;
@@ -654,7 +650,7 @@ export function createScreenFilter(kit) {
     const body = make("div", "fsec__body");
     const chips = make("div", "fchips");
     chips.setAttribute("role", "radiogroup");
-    chips.setAttribute("aria-label", t("web.sf.chips", { name }));
+    chips.setAttribute("aria-label", t("sf.chips", { name }));
     chips.dataset.row = `chips-${sec}`;
     for (const x of FILTERS[sec]) {
       const c = costOf(sec, x.id, detailOf({ ...look, [sec]: { ...look[sec], id: x.id } }, sec));
@@ -664,7 +660,7 @@ export function createScreenFilter(kit) {
       b.setAttribute("role", "radio");
       b.setAttribute("aria-checked", String(x.id === id));
       b.disabled = lockedChip;
-      b.title = t(`web.sf.f.${sec}.${x.id}.desc`);
+      b.title = t(`sf.f.${sec}.${x.id}.desc`);
       b.append(make("span", "fchip__name", filterName(sec, x.id)));
       if (c >= 3) b.append(make("span", "fchip__heavy", costName(2)));
       b.addEventListener("click", () => act(() => (editRec().look[sec].id = x.id)));
@@ -673,28 +669,24 @@ export function createScreenFilter(kit) {
     body.append(chips);
     const lv = costLevel(costOf(sec, id, d));
     const desc = make("p", "fdesc");
-    desc.append(make("span", "", `${t(`web.sf.f.${sec}.${id}.desc`)} `), make("span", `fload__tag fload__tag--${LOAD_CLS[lv]}`, costName(lv)));
+    desc.append(make("span", "", `${t(`sf.f.${sec}.${id}.desc`)} `), make("span", `fload__tag fload__tag--${LOAD_CLS[lv]}`, costName(lv)));
     body.append(desc);
     const fields = f.details.map((x) => detailField(sec, look, x, d, ctx)).filter(Boolean);
     if (fields.length) body.append(...fields);
-    else body.append(make("p", "fnote fnote--empty", neutral ? t("web.sf.emptyNeutral", { name }) : t("web.sf.emptyNone", { name: filterName(sec, id) })));
+    else body.append(make("p", "fnote fnote--empty", neutral ? t("sf.emptyNeutral", { name }) : t("sf.emptyNone", { name: filterName(sec, id) })));
     if (!neutral) {
       const isDefault = look[sec].s === 100 && Object.entries(defaultsOf(sec, id)).every(([k, v]) => d[k] === v);
       const foot = make("div", "fsec__foot");
       foot.dataset.row = `foot-${sec}`;
-      const def = make("button", "btn btn--small");
-      def.type = "button";
-      def.disabled = isDefault;
-      def.title = t("web.sf.defaultTitle", { name: filterName(sec, id) });
-      def.append(iconNode("refresh"), make("span", "btn__label", t("web.sf.default")));
-      def.addEventListener("click", () =>
+      const def = textBtn("refresh", t("sf.default"), `def-${sec}`, () =>
         act(() => {
           const l = editRec().look;
           l[sec].s = 100;
           l[sec].d[id] = defaultsOf(sec, id);
-        }),
-      );
-      foot.append(make("span", "fnote", t("web.sf.strengthNote", { note: t(`web.sf.sec.${sec}.note`) })), fid(def, `def-${sec}`));
+        }), { small: true });
+      def.disabled = isDefault;
+      def.title = t("sf.defaultTitle", { name: filterName(sec, id) });
+      foot.append(make("span", "fnote", t("sf.strengthNote", { note: t(`sf.sec.${sec}.note`) })), def);
       body.append(foot);
     }
     el.append(body);
@@ -706,15 +698,15 @@ export function createScreenFilter(kit) {
     const id = look[sec].id;
     const v = d[x.k];
     const lock = x.lock ? x.lock(d, ctx) : null;
-    const lockText = lock ? t(`web.sf.lock.${lock}`) : "";
-    const key = `web.sf.d.${sec}.${id}.${x.k}`;
-    const descOf = (val) => (x.descByValue ? t(`${key}.desc${val}`) : x.type === "chips" ? t(`web.sf.m.${val}`) : t(`${key}.desc`));
+    const lockText = lock ? t(`sf.lock.${lock}`) : "";
+    const key = `sf.d.${sec}.${id}.${x.k}`;
+    const descOf = (val) => (x.descByValue ? t(`${key}.desc${val}`) : x.type === "chips" ? t(`sf.m.${val}`) : t(`${key}.desc`));
     const set = (val, full) => act(() => {
       const l = editRec().look;
       l[sec].d[id] = { ...detailOf(l, sec), [x.k]: val };
     }, { full });
     const label = make("span", "field__label", t(key));
-    if (x.adv) label.append(make("span", "advtag", t("web.sf.adv")));
+    if (x.adv) label.append(make("span", "advtag", t("sf.adv")));
     const rowId = `d-${sec}-${id}-${x.k}`;
     const text = make("div", "field__text");
     if (x.type === "range") {
@@ -759,7 +751,7 @@ export function createScreenFilter(kit) {
         b.setAttribute("role", "radio");
         b.setAttribute("aria-selected", String(o.v === v));
         b.setAttribute("aria-checked", String(o.v === v));
-        b.append(make("span", "seg__label", x.k === "levels" ? t("web.sf.u.levels", { n: o.v }) : t(`web.sf.o.${sec}.${id}.${x.k}.${o.v}`)));
+        b.append(make("span", "seg__label", x.k === "levels" ? t("sf.u.levels", { n: o.v }) : t(`sf.o.${sec}.${id}.${x.k}.${o.v}`)));
         b.addEventListener("click", () => set(o.v, true));
         seg.append(fid(b, `${rowId}-${o.v}`));
       }
@@ -777,7 +769,7 @@ export function createScreenFilter(kit) {
       b.type = "button";
       b.setAttribute("role", "radio");
       b.setAttribute("aria-checked", String(o.v === v));
-      b.title = t(`web.sf.m.${o.v}`);
+      b.title = t(`sf.m.${o.v}`);
       b.append(make("span", "fchip__name", o.t));
       if (o.cost >= 3) b.append(make("span", "fchip__heavy", costName(2)));
       b.addEventListener("click", () => set(o.v, true));
@@ -907,7 +899,7 @@ export function createScreenFilter(kit) {
       g.stroke();
     }
     g.fillStyle = "#f8f8f8";
-    g.font = '12px "Galmuri11"';
+    g.font = '12px "Galmuri11", sans-serif';
     g.fillText("SAMPLE", 112, 150);
     sampleC = c;
     return c;
@@ -931,7 +923,7 @@ export function createScreenFilter(kit) {
       const base = recOf();
       store.games[g.gid] = { look: deep(base.scope === "wapk" ? blankLook() : store.global.look), base: base.scope === "wapk" ? "orig" : store.global.base, title: g.title };
     });
-    kit.toast(t("web.sf.made", { name: g.title }));
+    kit.toast(t("sf.made", { name: g.title }));
   }
 
   function undo() {
@@ -944,7 +936,7 @@ export function createScreenFilter(kit) {
         else delete store.games[s.gid];
       }
     });
-    kit.toast(t("web.sf.undone"));
+    kit.toast(t("sf.undone"));
   }
 
   function setCompare(on) {
@@ -955,17 +947,17 @@ export function createScreenFilter(kit) {
   }
 
   const actions = (okLabel, danger) => [
-    { label: t("web.sf.btn.cancel"), value: false },
+    { label: t("sf.btn.cancel"), value: false },
     { label: okLabel, value: true, primary: !danger, danger, id: "sf-ok" },
   ];
 
   async function askRelease(gid = game()?.gid) {
     const r = gid && store.games[gid];
     if (!r) return;
-    const ok = await kit.openDialog({ title: t("web.sf.releaseTitle", { name: r.title || gid }), body: [t("web.sf.releaseText", { label: labelOf(store.global) })], actions: actions(t("web.sf.btn.reset"), true) });
+    const ok = await kit.openDialog({ title: t("sf.releaseTitle", { name: r.title || gid }), body: [t("sf.releaseText", { label: labelOf(store.global) })], actions: actions(t("sf.btn.reset"), true) });
     if (!ok) return;
     release(gid);
-    kit.toast(t("web.sf.released"));
+    kit.toast(t("sf.released"));
   }
 
   function release(gid) {
@@ -973,16 +965,16 @@ export function createScreenFilter(kit) {
   }
 
   async function askReset() {
-    const ok = await kit.openDialog({ title: t("web.sf.resetTitle"), body: [t("web.sf.resetText")], actions: actions(t("web.sf.btn.reset"), true) });
+    const ok = await kit.openDialog({ title: t("sf.resetTitle"), body: [t("sf.resetText")], actions: actions(t("sf.btn.reset"), true) });
     if (!ok) return;
     act(() => (store.global = { look: blankLook(), base: "orig" }));
-    kit.toast(t("web.sf.resetDone"));
+    kit.toast(t("sf.resetDone"));
   }
 
   async function askDelete(uid) {
     const u = store.user.find((x) => x.id === uid);
     if (!u) return;
-    const ok = await kit.openDialog({ title: t("web.sf.deleteTitle", { name: u.name }), body: [t("web.sf.deleteText")], actions: actions(t("web.sf.btn.delete"), true) });
+    const ok = await kit.openDialog({ title: t("sf.deleteTitle", { name: u.name }), body: [t("sf.deleteText")], actions: actions(t("sf.btn.delete"), true) });
     if (!ok) return;
     act(() => {
       store.user = store.user.filter((x) => x.id !== uid);
@@ -993,7 +985,7 @@ export function createScreenFilter(kit) {
   async function askSave() {
     const full = store.user.length >= USER_MAX;
     let pick = 0;
-    const body = [t("web.sf.saveText", { max: USER_MAX })];
+    const body = [t("sf.saveText", { max: USER_MAX })];
     if (full) {
       const seg = make("div", "seg seg--sm seg--wrap");
       seg.setAttribute("role", "radiogroup");
@@ -1009,17 +1001,17 @@ export function createScreenFilter(kit) {
         });
         seg.append(fid(b, `dl-pick-${i}`));
       });
-      body.push(make("p", "note note--warn", t("web.sf.saveFull", { max: USER_MAX })), seg);
+      body.push(make("p", "note note--warn", t("sf.saveFull", { max: USER_MAX })), seg);
     }
-    body.push(make("p", "dialog__label", t("web.sf.saveName", { max: NAME_MAX })));
-    const fallback = t("web.sf.saveDefault", { n: store.user.length + 1 });
+    body.push(make("p", "dialog__label", t("sf.saveName", { max: NAME_MAX })));
+    const fallback = t("sf.saveDefault", { n: store.user.length + 1 });
     const result = await kit.openDialog({
-      title: t("web.sf.save"),
+      title: t("sf.save"),
       body,
       input: { value: full ? store.user[0].name : fallback, maxLength: NAME_MAX },
       actions: [
-        { label: t("web.sf.btn.cancel"), value: null },
-        { label: t("web.sf.btn.save"), value: "save", primary: true, takeInput: true, id: "sf-save" },
+        { label: t("sf.btn.cancel"), value: null },
+        { label: t("sf.btn.save"), value: "save", primary: true, takeInput: true, id: "sf-save" },
       ],
     });
     if (!result?.action) return;
@@ -1038,27 +1030,24 @@ export function createScreenFilter(kit) {
       }
       rec.base = `user:${uid}`;
     });
-    kit.toast(t("web.sf.saved", { name }));
+    kit.toast(t("sf.saved", { name }));
   }
 
   // ---------------------------------------------------------------- 설정 창 「화면」 그룹
   function settingsRows() {
     const g = game();
     const { rec, scope } = recOf();
-    const summary = scope === "game" ? t("web.sf.cfgGame", { name: g.title, label: labelOf(rec) }) : t("web.sf.cfgGlobal", { label: labelOf(store.global) });
-    const edit = make("button", "btn");
-    edit.type = "button";
-    edit.dataset.action = "sf-edit";
-    edit.append(iconNode("pencil"), make("span", "btn__label", t("web.sf.cfgEdit")));
-    edit.addEventListener("click", () => {
+    const summary = scope === "game" ? t("sf.cfgGame", { name: g.title, label: labelOf(rec) }) : t("sf.cfgGlobal", { label: labelOf(store.global) });
+    const edit = textBtn("pencil", t("sf.cfgEdit"), "", () => {
       kit.closeSheet();
       open();
     });
-    const rows = [kit.field(t("web.sf.title"), summary, edit)];
+    edit.dataset.action = "sf-edit";
+    const rows = [kit.field(t("sf.title"), summary, edit)];
     const entries = Object.entries(store.games);
     const sub = make("div", "cfg-sub");
     const subText = make("div", "cfg-sub__text");
-    subText.append(make("span", "cfg-sub__label", t("web.sf.cfgGames")), make("span", "cfg-sub__note", entries.length ? t("web.sf.cfgGamesNote", { n: entries.length }) : t("web.sf.cfgGamesNone")));
+    subText.append(make("span", "cfg-sub__label", t("sf.cfgGames")), make("span", "cfg-sub__note", entries.length ? t("sf.cfgGamesNote", { n: entries.length }) : t("sf.cfgGamesNone")));
     sub.append(subText);
     rows.push(sub);
     if (entries.length) {
@@ -1066,8 +1055,8 @@ export function createScreenFilter(kit) {
       for (const [gid, r] of entries) {
         const li = make("li", "glist__item");
         const name = make("span", "glist__name", r.title || gid);
-        if (g?.gid === gid) name.append(chip(t("web.sf.cfgRunning"), "fp-chip--game"));
-        const del = toolBtn("trash", t("web.sf.cfgDelete", { name: r.title || gid }), `gdel-${gid}`, () => {
+        if (g?.gid === gid) name.append(chip(t("sf.cfgRunning"), "fp-chip--game"));
+        const del = toolBtn("trash", t("sf.cfgDelete", { name: r.title || gid }), `gdel-${gid}`, () => {
           release(gid);
           kit.renderSheet();
         }, { danger: true });
@@ -1234,7 +1223,7 @@ export function createScreenFilter(kit) {
     if (ui.open) close();
     const r = g?.gid ? store.games[g.gid] : null;
     apply();
-    if (r) kit.toast(t("web.sf.applied", { name: g.title, label: labelOf(r) }));
+    if (r) kit.toast(t("sf.applied", { name: g.title, label: labelOf(r) }));
   }
 
   function onClosed() {

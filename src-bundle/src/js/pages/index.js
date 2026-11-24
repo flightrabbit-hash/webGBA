@@ -16,6 +16,7 @@ import { androidOf, resolveInput, sha256Hex } from "../core/wgba-format.js";
 import { defaultNick, NetWindow, noticeLevel, noticeText, purposeName } from "../app/net-window.js";
 import { BoardPanel, centerBoardInk, centerBoardNodes } from "../app/board-panel.js";
 import { errorText, Journal } from "../app/journal.js";
+import { createScreenFilter } from "../app/screen-filter-ui.js";
 import { APP_API, Signal } from "../core/net/signal.js";
 import * as settings from "../app/settings.js";
 import * as theme from "../shell/theme.js";
@@ -69,6 +70,8 @@ const el = {
   mpPanel: $("mppanel"),
   btnMute: $("btn-mute"),
   btnMuteIcon: $("btn-mute-icon"),
+  btnFilter: $("btn-filter"),
+  btnFilterDot: $("btn-filter-dot"),
   btnSettings: $("btn-settings"),
   winMax: $("win-max"),
   winMaxIcon: $("win-max-icon"),
@@ -107,9 +110,19 @@ const state = {
   screen: null,
   scriptFrame: null,
   stateNote: "",
+  openNotes: [],
 };
 
-const player = new Player({
+class AppPlayer extends Player {
+  paint() {
+    super.paint();
+    if (filterUi?.glOn) filterUi.frame();
+  }
+}
+
+let filterUi = null;
+
+const player = new AppPlayer({
   canvas: el.screen,
   onStatus: (text, level) => status(text, level),
   onStatusClear: (text) => clearStatus(text),
@@ -688,10 +701,35 @@ function layoutScreen() {
     node.style.width = `${width}px`;
     node.style.height = `${height}px`;
   }
+  filterUi?.onResize();
 }
 
 new ResizeObserver(layoutScreen).observe(el.stage);
-window.addEventListener("resize", layoutScreen);
+window.addEventListener("resize", () => (filterUi?.isOpen ? layoutFilterDock() : layoutScreen()));
+
+// 화면 필터 우측 Dock 폭 = 창 폭 40%(20px 단위, 320~400px), 게임 영역 240px 이상 남김(하한 260px)
+function layoutFilterDock() {
+  const panel = document.getElementById("filterPanel");
+  if (panel && !panel.hidden) {
+    const shared = el.stage.getBoundingClientRect().width + panel.getBoundingClientRect().width;
+    const want = Math.min(400, Math.max(320, Math.round((window.innerWidth * 0.4) / 20) * 20));
+    document.documentElement.style.setProperty("--fp-w", `${Math.max(260, Math.min(want, Math.floor(shared - 240)))}px`);
+  }
+  layoutScreen();
+}
+
+function filterRect(sample, src = null) {
+  const c = el.screen;
+  if (!sample && !c.hidden && c.offsetWidth) return { x: c.offsetLeft, y: c.offsetTop, w: c.offsetWidth, h: c.offsetHeight };
+  const W = el.stage.clientWidth;
+  const H = el.stage.clientHeight;
+  const sw = src?.width || SCREEN_W;
+  const sh = src?.height || SCREEN_H;
+  const scale = Math.min(W / sw, H / sh);
+  const w = Math.max(1, Math.floor(sw * scale));
+  const h = Math.max(1, Math.floor(sh * scale));
+  return { x: Math.floor((W - w) / 2), y: Math.floor((H - h) / 2), w, h };
+}
 
 function showView(view) {
   el.start.hidden = view !== "start";
@@ -743,6 +781,7 @@ function syncControls() {
   el.btnPauseIcon.style.setProperty("--icon", `url("/icons/${player.paused ? "player-play" : "player-pause"}.svg")`);
   el.btnPause.title = t(player.paused ? "rail.resume" : "rail.pause");
   el.paused.hidden = !(hosted && player.paused);
+  el.btnFilter.disabled = !state.game;
   el.btnMute.setAttribute("aria-pressed", String(player.muted));
   el.btnMute.title = t(player.muted ? "rail.unmute" : "rail.mute");
   el.btnMuteIcon.style.setProperty("--icon", `url("/icons/${player.muted ? "volume-off" : "volume"}.svg")`);
@@ -947,6 +986,7 @@ async function openPath(path, options = {}) {
     return false;
   }
   state.opening = true;
+  state.openNotes = [];
   status(t("status.opening", { name: baseOf(path) }));
   let made = null;
   try {
@@ -974,6 +1014,7 @@ async function openPath(path, options = {}) {
     }
     made?.loader?.finish();
     if (made?.note) status(join(made.note, el.status.textContent));
+    if (state.openNotes.length) status(join(el.status.textContent, ...state.openNotes));
     await rememberRecent(path);
     state.root = dirOf(path);
     await loadRoot({ select: path });
@@ -1001,6 +1042,7 @@ async function startHosted(host, game) {
   await player.start({ host, saveId: game.saveId, game: game.path, net: game.net ?? null });
   player.fastScale = state.prefs.fastScale ?? 4;
   player.pushScript();
+  filterUi.onGame();
   syncControls();
   el.stage.focus();
   netWin.offerBack();
@@ -1291,6 +1333,7 @@ function openFrame(url, { path, build, rom, romEmbedded }) {
   state.game = { path, name: baseOf(path), title: baseOf(path), kind: "frame", build, rom, romEmbedded, saveId: build.saveId, origin: build.origin };
   el.frame.src = url;
   showView("frame");
+  filterUi.onGame();
   syncControls();
   el.frame.addEventListener("load", () => focusFrame(), { once: true });
 }
@@ -1317,6 +1360,7 @@ async function closeGame({ quiet = false, why = "닫기" } = {}) {
   if (!state.input.gba || state.input.dpad) applyInput(null);
   player.setMacro([]);
   showView("start");
+  filterUi.onClosed();
   syncControls();
   renderPanel();
   if (!quiet) status(t("status.closed"));
@@ -1623,7 +1667,8 @@ function openDialog({ title, body, actions, wide = false, kind = "" }) {
       ...actions.map((action) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = action.go ? "btn btn--go" : "btn";
+        button.className = action.go ? "btn btn--go" : action.danger ? "btn btn--danger" : "btn";
+        if (action.id) button.dataset.action = action.id;
         button.textContent = action.label;
         button.addEventListener("click", () => {
           if (action.run) action.run();
@@ -1870,6 +1915,7 @@ async function setLang(id) {
 function refreshTexts() {
   syncControls();
   renderPanel();
+  filterUi.reload();
   mp.font = null;
   if (mp.open) {
     mpBoard.reset();
@@ -2295,6 +2341,7 @@ function onKeyDown(event) {
     if (event.key === "Escape") closeMenu();
     return;
   }
+  if (filterUi.onKey(event)) return;
   const code = codeOf(event);
   if (event.repeat && player.keymap.has(code)) {
     event.preventDefault();
@@ -2422,6 +2469,7 @@ el.statusRight.addEventListener("click", () => {
   if (mpWanted() && !mp.open) openMp();
 });
 el.btnMute.addEventListener("click", toggleMute);
+el.btnFilter.addEventListener("click", () => filterUi.toggle());
 $("btn-keys").addEventListener("click", () => openSettings("keys"));
 el.btnSettings.addEventListener("click", () => (settings.isOpen() ? settings.close() : openSettings("general")));
 $("win-min").addEventListener("click", () => win.minimize());
@@ -2446,6 +2494,150 @@ onMaximized(setMaximized);
 onCloseRequested(shutdown);
 onOpenFile((path) => openPath(path));
 
+/* ── 화면 필터 ── */
+
+const SF_ICONS = { compare: "compare", history: "history", x: "x", warn: "alert-triangle", info: "info-circle", chevron: "chevron-down", refresh: "refresh", floppy: "device-floppy", trash: "trash", pencil: "pencil" };
+const SF_EXE_TEXT = new Set(["sf.lock.curve"]);
+const sfIcon = (name) => icon(SF_ICONS[name] ?? name);
+let sfHeld = false;
+
+function filterGame() {
+  const g = state.game;
+  if (!g) return null;
+  const title = g.label || g.name;
+  if (g.kind === "frame") return { gid: g.saveId, title, unsupported: true };
+  const manifest = g.net?.manifest ?? null;
+  return { gid: g.saveId, title, cssOnly: Boolean(player.host?.script), touch: Boolean(player.host?.hasPointer), wapk: Boolean(manifest && androidOf(manifest)), recommend: manifest?.display?.filter ?? null, frame: state.scriptFrame ?? null };
+}
+
+function filterHold(on) {
+  if (on) {
+    if (player.active && !player.paused) {
+      player.setPaused(true);
+      sfHeld = true;
+      journal.info("실행", "일시정지 · 화면 필터 패널");
+    }
+  } else if (sfHeld) {
+    sfHeld = false;
+    if (player.active && player.paused) {
+      player.setPaused(false);
+      journal.info("실행", "재개 · 화면 필터 패널 닫음");
+    }
+  }
+  syncControls();
+}
+
+function filterDialog({ title, body = [], input = null, actions }) {
+  let field = null;
+  const parts = [...body];
+  if (input) {
+    field = node("input", "cfg__input dialog__input");
+    field.type = "text";
+    field.value = input.value ?? "";
+    field.maxLength = input.maxLength ?? 12;
+    field.autocomplete = "off";
+    field.spellcheck = false;
+    field.setAttribute("aria-label", title);
+    parts.push(field);
+  }
+  const done = openDialog({
+    title,
+    body: parts,
+    actions: actions.map((action) => ({
+      label: action.label,
+      value: action.value,
+      go: Boolean(action.primary),
+      danger: Boolean(action.danger),
+      id: action.id,
+      run: action.takeInput ? () => dialogDone?.({ value: field.value, action: action.value }) : undefined,
+    })),
+  });
+  if (field) {
+    field.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      el.dialogActions.querySelector(".btn--go")?.click();
+    });
+    field.focus();
+    field.select();
+  }
+  return done;
+}
+
+filterUi = createScreenFilter({
+  t,
+  make: node,
+  iconNode: sfIcon,
+  textKey: (key) => (SF_EXE_TEXT.has(key) ? key.replace(/^sf\./, "sf.exe.") : key),
+  button: ({ icon: name, label, kind, small }) => {
+    const b = node("button", `btn sf-btn${kind === "primary" ? " btn--go" : kind === "danger" ? " btn--danger" : ""}${small ? " sf-btn--small" : ""}`);
+    b.type = "button";
+    b.append(sfIcon(name), node("span", "btn__label", label));
+    return b;
+  },
+  iconButton: ({ icon: name, label, danger }) => {
+    const b = node("button", `iconbtn iconbtn--xs${danger ? " iconbtn--danger" : ""}`);
+    b.type = "button";
+    b.title = label;
+    b.setAttribute("aria-label", label);
+    b.append(sfIcon(name));
+    return b;
+  },
+  paintButton: ({ on, open, slow, game, label }) => {
+    el.btnFilter.setAttribute("aria-pressed", String(on));
+    el.btnFilter.classList.toggle("is-open", open);
+    const tone = slow ? "warn" : game ? "game" : "";
+    el.btnFilterDot.hidden = !tone;
+    if ((el.btnFilterDot.dataset.tone ?? "") !== tone) el.btnFilterDot.dataset.tone = tone;
+    if (el.btnFilter.dataset.i18nTitle !== label) {
+      el.btnFilter.dataset.i18nTitle = label;
+      el.btnFilter.title = t(label);
+    }
+  },
+  focusButton: () => {
+    if (state.game?.kind === "frame") focusFrame();
+    else el.stage.focus();
+  },
+  mount: (panel) => el.stage.after(panel),
+  mountCanvas: (canvas) => el.screen.after(canvas),
+  sourceCanvas: () => el.screen,
+  box: ({ sample }) => {
+    const r = filterRect(sample);
+    return { w: r.w, h: r.h };
+  },
+  outRect: (src, { sample }) => filterRect(sample, src),
+  setRadius: (px, { canvas }) => {
+    const value = px ? `${px}px` : "";
+    el.screen.style.borderRadius = value;
+    if (canvas) canvas.style.borderRadius = value;
+  },
+  prefs: () => state.prefs,
+  savePrefs: (patch) => savePrefs(patch),
+  hold: (name, on) => filterHold(on),
+  toast: (text, level) => (state.opening ? state.openNotes.push(text) : status(text, level === "warn" ? "warn" : "info")),
+  openDialog: (options) => filterDialog(options),
+  dialogOpen: () => !el.layer.hidden,
+  dialogCancel: () => dialogDone?.(null),
+  sheetOpen: () => settings.isOpen() || netLayer || Boolean(state.menuName),
+  closeSheet: () => settings.close(),
+  renderSheet: () => settings.refreshFields(),
+  field: (label, note, control) => {
+    const row = node("div", "cfg__row cfg__row--static");
+    const text = node("span", "cfg__label", label);
+    text.append(node("span", "cfg__hint", note));
+    row.append(text, control);
+    return row;
+  },
+  layout: () => layoutFilterDock(),
+  dock: () => "right",
+  ff: () => player.active && player.runSpeed > 1,
+  paused: () => player.paused,
+  phone: () => false,
+  padTaken: (index) => Object.values(keysFor()).some((codes) => Array.isArray(codes) && codes.includes(`Gamepad:${index}`)),
+  game: () => filterGame(),
+  scriptThumb: () => player.host?.thumb ?? null,
+});
+
 settings.setup({
   snapshot: settingsSnapshot,
   apply: applySettings,
@@ -2460,6 +2652,7 @@ settings.setup({
   vars: (key) => (key === "netNick" ? { name: (netNick(), defaultNick(state.prefs.netNo)) } : {}),
   placeholder: (key) => (key === "netNick" ? (netNick(), defaultNick(state.prefs.netNo)) : undefined),
   hint: (key) => (key === "admin" ? adminHint() : key === "dpadMode" && state.input.dpad ? t("cfg.dpadMode.game", { name: state.game?.label || state.game?.name || state.input.gameId, value: t(`cfg.dpadMode.${state.input.dpad}`) }) : undefined),
+  groupExtra: (group) => (group === "screen" ? filterUi.settingsRows() : []),
   onClose: () => {
     syncControls();
     if (state.game?.kind === "frame") focusFrame();
@@ -2617,8 +2810,9 @@ async function boot() {
   }
   theme.apply(theme.known(state.prefs.theme?.mode) ? state.prefs.theme : { mode: "dark" });
   await i18n.use(state.prefs.lang ?? "ko");
+  filterUi.reload();
   if (state.info.settings?.useDevelopKit) {
-    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, updater, appUpdater, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin };
+    window.__WEBGBA_TEST__ = { state, player, settings, i18n, theme, updater, appUpdater, openPath, closeGame, stepGame, saveStateTo, loadStateFrom, openDropped, toggleFavorite, toggleRail, showPanel, toggleLink, refreshLink, hidePaths, openSettings, setLang, shutdown, importSave, exportSave, showInfo, netWin, filter: filterUi, layoutScreen };
   }
   player.setKeys(keysFromPrefs());
   player.setVolume((state.prefs.volume ?? 80) / 100);

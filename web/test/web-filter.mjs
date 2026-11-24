@@ -30,39 +30,39 @@ const ok = (name, pass, detail = "") => {
   console.log(`${pass ? "통과" : "실패"} ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
-// ---------------------------------------------------------------- 0. 번역 표 — 화면 필터가 조합해 쓰는 키(web.sf.*)가 세 언어 모두에 존재
+// ---------------------------------------------------------------- 0. 번역 표 — 화면 필터가 조합해 쓰는 키(sf.*, 앱과 같은 표 src-bundle/src/i18n)가 세 언어 모두에 존재
 if (want("keys")) {
   const core = await import(pathToFileURL(path.join(here, "..", "..", "src-bundle", "src", "js", "core", "screen-filter.js")).href);
   const need = new Set();
   for (const sec of core.SECTION_IDS) {
-    need.add(`web.sf.sec.${sec}`);
-    need.add(`web.sf.sec.${sec}.note`);
+    need.add(`sf.sec.${sec}`);
+    need.add(`sf.sec.${sec}.note`);
     for (const f of core.FILTERS[sec]) {
-      need.add(`web.sf.f.${sec}.${f.id}`);
-      need.add(`web.sf.f.${sec}.${f.id}.desc`);
+      need.add(`sf.f.${sec}.${f.id}`);
+      need.add(`sf.f.${sec}.${f.id}.desc`);
       for (const x of f.details) {
-        const key = `web.sf.d.${sec}.${f.id}.${x.k}`;
+        const key = `sf.d.${sec}.${f.id}.${x.k}`;
         need.add(key);
         if (x.descByValue) for (const o of x.options) need.add(`${key}.desc${o.v}`);
-        else if (x.type === "chips") for (const o of x.options) need.add(`web.sf.m.${o.v}`);
+        else if (x.type === "chips") for (const o of x.options) need.add(`sf.m.${o.v}`);
         else need.add(`${key}.desc`);
-        if (x.type === "seg" && x.k !== "levels") for (const o of x.options) need.add(`web.sf.o.${sec}.${f.id}.${x.k}.${o.v}`);
-        if (x.lock) need.add(`web.sf.lock.${x.k === "dither" ? "dither" : x.k}`);
+        if (x.type === "seg" && x.k !== "levels") for (const o of x.options) need.add(`sf.o.${sec}.${f.id}.${x.k}.${o.v}`);
+        if (x.lock) need.add(`sf.lock.${x.k === "dither" ? "dither" : x.k}`);
       }
     }
   }
   for (const p of core.BUILTIN) {
-    need.add(`web.sf.p.${p.id}`);
-    need.add(`web.sf.p.${p.id}.desc`);
+    need.add(`sf.p.${p.id}`);
+    need.add(`sf.p.${p.id}.desc`);
   }
-  for (const lv of [0, 1, 2]) need.add(`web.sf.cost.${lv}`);
+  for (const lv of [0, 1, 2]) need.add(`sf.cost.${lv}`);
   for (const w of ["scalefx", "toon", "stack"]) {
-    need.add(`web.sf.what.${w}`);
-    need.add(`web.sf.lighten.${w}`);
+    need.add(`sf.what.${w}`);
+    need.add(`sf.lighten.${w}`);
   }
   const missing = [];
   for (const lang of ["ko", "en", "ja"]) {
-    const table = JSON.parse(fs.readFileSync(path.join(here, "..", "src", "i18n", `${lang}.json`), "utf8"));
+    const table = JSON.parse(fs.readFileSync(path.join(here, "..", "..", "src-bundle", "src", "i18n", `${lang}.json`), "utf8"));
     for (const key of need) if (!(key in table)) missing.push(`${lang}:${key}`);
   }
   ok(`번역 표: 조합 키 ${need.size}개 × 3언어 존재`, !missing.length, missing.slice(0, 8).join(", "));

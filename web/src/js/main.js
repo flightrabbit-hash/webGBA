@@ -28,7 +28,7 @@ import { createUpdater } from "./update.js";
 import { GAME_GROUPS, groupEntry } from "./core/wgba-update.js";
 import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
 import { createAdminFlow } from "./app/admin-ui.js";
-import { createScreenFilter } from "./screen-filter-ui.js";
+import { createScreenFilter } from "./app/screen-filter-ui.js";
 
 const { t } = i18n;
 const $ = (id) => document.getElementById(id);
@@ -290,11 +290,46 @@ function filterGame() {
   return { gid: g.saveId || g.id, title: gameTitle(g), cssOnly: Boolean(player.host?.script), touch: Boolean(player.host?.hasPointer), wapk: Boolean(state.wapk), recommend: g.filter ?? null, frame: state.scriptFrame ?? null };
 }
 
+function paintFilterButton({ on, open, slow, badge, label }) {
+  const b = el.btnFilter;
+  const tag = b.querySelector(".tool__badge") ?? b.appendChild(make("span", "tool__badge"));
+  const text = tag.querySelector(".tool__badgeText") ?? tag.appendChild(make("span", "tool__badgeText"));
+  if (text.textContent !== badge) text.textContent = badge;
+  if (tag.hidden !== !badge) tag.hidden = !badge;
+  if (slow) tag.dataset.tone = "warn";
+  else delete tag.dataset.tone;
+  b.toggleAttribute("data-slow", slow);
+  b.setAttribute("aria-pressed", String(open));
+  if (b.dataset.i18nTitle !== label) setLabel(b, label);
+  if (b.dataset.on !== String(on)) {
+    b.dataset.on = String(on);
+    syncTools();
+  }
+}
+
 filterUi = createScreenFilter({
   t,
   make,
   iconNode,
-  el,
+  button: ({ icon, label, kind, small }) => {
+    const node = button({ icon, label, kind });
+    if (small) node.classList.add("btn--small");
+    return node;
+  },
+  iconButton: ({ icon, label, danger }) => button({ icon, title: label, kind: danger ? "tool-danger" : "tool" }),
+  paintButton: (s) => paintFilterButton(s),
+  focusButton: () => el.btnFilter.focus({ preventScroll: true }),
+  mount: (panel) => el.app.append(panel),
+  mountCanvas: (canvas) => el.canvas.after(canvas),
+  sourceCanvas: () => el.canvas,
+  box: () => {
+    const r = el.screen.getBoundingClientRect();
+    return { w: r.width, h: r.height };
+  },
+  setRadius: (px, { paint }) => {
+    el.screen.style.borderRadius = px ? `${px}px` : "";
+    if (paint) paintFrame();
+  },
   prefs: () => state.prefs,
   savePrefs: (patch) => savePrefs(patch),
   hold: (name, on) => hold(name, on),
@@ -307,9 +342,6 @@ filterUi = createScreenFilter({
   renderSheet: () => renderSheet(),
   field: (label, note, control) => field(label, note, control),
   layout: () => layout(),
-  paintFrame: () => paintFrame(),
-  syncTools: () => syncTools(),
-  setLabel: (node, key) => setLabel(node, key),
   dock: () => document.body.dataset.fp ?? "",
   ff: () => player.speed > 1,
   paused: () => player.paused,

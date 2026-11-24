@@ -294,9 +294,17 @@ function drawFields() {
     }
 
     for (const item of group.items) box.append(fieldRow(item));
+    for (const extra of hooks.groupExtra?.(group.group) ?? []) box.append(extra);
     el.body.append(box);
   }
   paintRequires();
+}
+
+export function refreshFields() {
+  if (!isOpen()) return;
+  const top = el.body.scrollTop;
+  drawFields();
+  el.body.scrollTop = top;
 }
 
 function fieldRow(item) {
