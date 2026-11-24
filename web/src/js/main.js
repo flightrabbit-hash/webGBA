@@ -75,6 +75,7 @@ const el = {
   canvas: $("canvas"),
   startOpen: $("startOpen"),
   startHint: $("startHint"),
+  startToggle: $("startToggle"),
   startList: $("startList"),
   startAll: $("startAll"),
   frame: $("frame"),
@@ -3388,6 +3389,7 @@ async function loadRoms() {
 }
 
 const RECENT_MAX = { portrait: 3, landscape: 5 };
+const START_PAD_TOGGLE = 8;
 const PACK_W = cartArt.FRONT[0] * cartArt.UNIT;
 
 /** 첫 화면 최근 줄: 들어가는 만큼(세로 3개·가로 5개까지)만 보인다. layout() 이 화면 크기를 바꿀 때마다. */
@@ -3410,20 +3412,62 @@ function fitRecent() {
   });
 }
 
+const startRecent = () => (state.prefs.startRecent === "added" ? "added" : "opened");
+const byAdded = (a, b) => (b.added ?? 0) - (a.added ?? 0) || byOpened(a, b);
+
+function startEmptyText() {
+  if (admin.isOn()) return t(coarse.matches ? "web.start.pickAdmin" : "web.start.pickAdminDrop");
+  return t(coarse.matches ? "web.start.pick" : "web.start.pickDrop");
+}
+
+function toggleRecent() {
+  savePrefs({ startRecent: startRecent() === "added" ? "opened" : "added" });
+  refreshStart();
+}
+
+function watchStartPad() {
+  if (!navigator.getGamepads) return;
+  let raf = 0;
+  let was = false;
+  const ready = () => document.body.dataset.view === "start" && !el.startToggle.hidden && !state.sheet && !state.dialogDone && !state.choiceDone && !state.menuOpen && !filterUi.isOpen;
+  const tick = () => {
+    raf = 0;
+    const pads = [...(navigator.getGamepads() ?? [])].filter(Boolean);
+    if (!pads.length) {
+      was = false;
+      return;
+    }
+    const down = pads.some((gp) => Boolean(gp.buttons[START_PAD_TOGGLE]?.pressed));
+    if (down && !was && ready()) toggleRecent();
+    was = down;
+    raf = requestAnimationFrame(tick);
+  };
+  const start = () => {
+    if (!raf) raf = requestAnimationFrame(tick);
+  };
+  window.addEventListener("gamepadconnected", start);
+  if ([...(navigator.getGamepads() ?? [])].some(Boolean)) start();
+}
+
 async function refreshStart() {
   syncOpenButtons();
   let roms = [];
   let saves = new Set();
+  const mode = startRecent();
   try {
     ({ roms, saves } = await loadRoms());
-    roms.sort(byOpened);
+    roms.sort(mode === "added" ? byAdded : byOpened);
   } catch {}
   const token = (state.startToken = (state.startToken ?? 0) + 1);
   const body = cartArt.themeBody();
   const recent = roms.slice(0, RECENT_MAX.landscape);
   const looks = await Promise.all(recent.map((rom) => cartLook(rom, body)));
   if (token !== state.startToken) return;
-  el.startHint.textContent = roms.length ? t("web.start.recent") : t(coarse.matches ? "web.start.pick" : "web.start.pickDrop");
+  const title = t(mode === "added" ? "web.start.recentAdded" : "web.start.recent");
+  el.startHint.textContent = roms.length ? title : startEmptyText();
+  el.startToggle.hidden = roms.length === 0;
+  el.startToggle.setAttribute("aria-pressed", String(mode === "added"));
+  setLabel(el.startToggle, mode === "added" ? "web.start.showOpened" : "web.start.showAdded");
   el.startList.replaceChildren(
     ...recent.map((rom, index) => {
       const node = make("button", "recent__item");
@@ -3439,7 +3483,7 @@ async function refreshStart() {
   el.startAll.hidden = roms.length === 0;
   el.startAll.querySelector(".recent__allLabel").textContent = t("web.start.all", { count: roms.length });
   document.getElementById("start").classList.toggle("has-list", roms.length > 0);
-  if (roms.length) el.startList.setAttribute("aria-label", t("web.start.recent"));
+  if (roms.length) el.startList.setAttribute("aria-label", title);
   fitRecent();
 }
 
@@ -5516,6 +5560,8 @@ function wire() {
   el.btnQuit.addEventListener("click", () => askCloseGame());
   el.btnPause.addEventListener("click", () => userPause(true));
   el.startAll.addEventListener("click", () => openSheet("library"));
+  el.startToggle.addEventListener("click", toggleRecent);
+  watchStartPad();
   el.btnQuick.addEventListener("click", openQuick);
   el.btnNet.addEventListener("click", onNetButton);
   el.btnSettings.addEventListener("click", () => openSheet("settings"));
@@ -5928,7 +5974,7 @@ const admin = createAdminFlow({
   icon: (name) => iconNode(name),
   notify: (text, level = "info") => toast(text, level),
   changed: () => {
-    syncOpenButtons();
+    refreshStart();
     if (state.sheet === "settings" || state.sheet === "library") renderSheet();
   },
   registeredIds: async () => new Set((await store.list(store.KIND_ROM).catch(() => [])).map((rom) => rom.gameId).filter(Boolean)),

@@ -507,7 +507,7 @@ body:not([data-view="start"]) .start {
 }
 
 .start.has-list .start__hint {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   height: 20px;
   overflow: hidden;
@@ -521,6 +521,18 @@ body:not([data-view="start"]) .start {
 .start.has-list .start__head .btn {
   min-height: 32px;
   flex: none;
+  margin-left: auto;
+}
+
+.start__toggle {
+  width: 32px;
+  height: 32px;
+  margin-left: -4px;
+}
+
+.start__toggle .icon {
+  width: 18px;
+  height: 18px;
 }
 
 .start__head .btn {
@@ -725,7 +737,8 @@ body:not([data-view="start"]) .start {
   touch-action: manipulation;
 }
 
-.btn--primary:not(:disabled) {
+.btn--primary:not(:disabled),
+.start__toggle[aria-pressed="true"] {
   --face: var(--px-acc);
   --face-hi: var(--px-acc-hi);
   --face-side: var(--px-acc-side);
