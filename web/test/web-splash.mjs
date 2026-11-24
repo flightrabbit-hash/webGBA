@@ -2,7 +2,8 @@
 // 도착 고양이 잉크 세로 가운데, 하단 주소, 디졸브 뒤 앱·설치 안내, 느린 로딩 제자리 달리기,
 // 움직임 줄이기도 같은 연출, 주 스레드가 멈춰도 다가오기를 건너뛰지 않음, ?splash=debug 진단 표시.
 //   PLAYWRIGHT_DIR=<playwright-core 폴더> node web/test/web-splash.mjs <주소> <캡처 폴더> [--chrome <chrome.exe>]
-// 시각은 Date 를 원하는 시:분으로 옮겨(시간은 흐름) 흉내, 느린 로딩은 /js/main.js 응답을 늦춰 흉내.
+// 시각은 Date 를 지정 날짜(기본 2026-11-24 화요일)·시:분 30초로 이동(시간은 흐름)하는 대역, 느린 로딩은 /js/main.js 응답 지연 대역.
+// 각 브라우저 맥락은 서비스 워커가 아직 맡지 않은 첫 접속이라 새 배경(PixelLab 26장)은 선택되지 않음 — 묶음 안 기존 배경 또는 초원(새 배경은 web-splash-plan.mjs·web-splash-bg.mjs).
 // 캡처는 CDP Page.captureScreenshot — page.screenshot 은 main.js 를 늦춘 동안 앱 준비 뒤까지 기다려 스플래시를 못 찍음.
 import fs from "node:fs";
 import path from "node:path";
@@ -32,18 +33,19 @@ const MIN_MS = 2000;
 const DAY = [10, 0];
 const NIGHT = [1, 0];
 const HOME = [19, 0];
+const WEEKDAY = [2026, 11, 24];
+const SATURDAY = [2026, 11, 28];
 const NAME = { meadow: "낮 초원(1안)", sunset: "밤 노을(2안)", home: "집 안(4안)" };
 const FADE_MS = 240;
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, time = DAY, reduce = false, standalone = true, slow = 0, query = "" } = {}) {
+async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true, time = DAY, date = WEEKDAY, reduce = false, standalone = true, slow = 0, query = "" } = {}) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: dpr, isMobile: mobile, hasTouch: touch, reducedMotion: reduce ? "reduce" : "no-preference" });
   await context.addInitScript(
-    ([[h, m], alone]) => {
+    ([[h, m], alone, [y, mo, d]]) => {
       const Real = Date;
-      const target = new Real();
-      target.setHours(h, m, 30, 0);
+      const target = new Real(y, mo - 1, d, h, m, 30, 0);
       const shift = target.getTime() - Real.now();
       window.Date = class extends Real {
         constructor(...args) {
@@ -62,7 +64,7 @@ async function open({ viewport = PORTRAIT, dpr = 3, mobile = true, touch = true,
         if (!window.__readyAt && document.documentElement?.dataset.ready === "1") window.__readyAt = performance.now();
       }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-ready"] });
     },
-    [time, standalone],
+    [time, standalone, date],
   );
   const page = await context.newPage();
   const errors = [];
@@ -84,10 +86,7 @@ function probe() {
   const splash = document.getElementById("splash");
   const [back, front, text] = splash.querySelectorAll("canvas");
   const dpr = devicePixelRatio;
-  const style = getComputedStyle(document.documentElement);
-  const variant = window.webgbaSplash.variant;
-  const hex = (name) => style.getPropertyValue(name).trim().toLowerCase();
-  const shadow = hex(`--sp-${variant}-shadow`);
+  const shadow = window.webgbaSplash.shadow.toLowerCase();
   const color = (d, i) => `#${[d[i], d[i + 1], d[i + 2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
   const read = (c) => c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
   const offset = (c) => ({ x: Math.round(parseFloat(c.style.left) * dpr), y: Math.round(parseFloat(c.style.top) * dpr) });
@@ -146,7 +145,7 @@ function inkUnion(ms) {
   const dpr = devicePixelRatio;
   const fx = Math.round(parseFloat(front.style.left) * dpr);
   const fy = Math.round(parseFloat(front.style.top) * dpr);
-  const shadow = getComputedStyle(document.documentElement).getPropertyValue(`--sp-${window.webgbaSplash.variant}-shadow`).trim().toLowerCase();
+  const shadow = window.webgbaSplash.shadow.toLowerCase();
   const sr = parseInt(shadow.slice(1, 3), 16);
   const sg = parseInt(shadow.slice(3, 5), 16);
   const sb = parseInt(shadow.slice(5, 7), 16);
@@ -178,7 +177,7 @@ function inkUnion(ms) {
 
 function scaleTrace(ms) {
   const front = document.querySelectorAll("#splash canvas")[1];
-  const shadow = getComputedStyle(document.documentElement).getPropertyValue(`--sp-${window.webgbaSplash.variant}-shadow`).trim().toLowerCase();
+  const shadow = window.webgbaSplash.shadow.toLowerCase();
   const [sr, sg, sb] = [1, 3, 5].map((i) => parseInt(shadow.slice(i, i + 2), 16));
   const list = [];
   const end = performance.now() + ms;
@@ -231,11 +230,12 @@ async function capture(page) {
 }
 const shot = async (page, name) => (shots[name] = decodePng(await capture(page)));
 
-for (const [time, want] of [[[3, 59], "sunset"], [[4, 0], "meadow"], [[16, 59], "meadow"], [[17, 0], "home"], [[22, 59], "home"], [[23, 0], "sunset"]]) {
-  const { context, page } = await open({ time });
+for (const [date, time, want] of [[WEEKDAY, [3, 59], "sunset"], [WEEKDAY, [4, 0], "meadow"], [WEEKDAY, [16, 59], "meadow"], [WEEKDAY, [17, 0], "home"], [WEEKDAY, [19, 0], "home"], [WEEKDAY, [19, 1], "meadow"], [WEEKDAY, [22, 59], "meadow"], [WEEKDAY, [23, 0], "sunset"], [SATURDAY, [17, 0], "sunset"], [SATURDAY, [21, 0], "home"]]) {
+  const { context, page } = await open({ time, date });
   await startOf(page);
   const got = await info(page);
-  ok(`시각 ${time[0]}:${String(time[1]).padStart(2, "0")} → ${NAME[want]}`, got.api?.variant === want, got.api?.variant);
+  const day = date === SATURDAY ? "토" : "화";
+  ok(`첫 접속(캐시 없음) ${day} ${time[0]}:${String(time[1]).padStart(2, "0")}:30 → ${NAME[want]}`, got.api?.variant === want, got.api?.variant);
   await context.close();
 }
 

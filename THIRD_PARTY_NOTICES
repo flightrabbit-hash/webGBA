@@ -22,6 +22,16 @@ webGBA 저작권자(flightrabbit)의 것입니다.
 The web library cartridge artwork (web/src/art/rompack.png) was made with
 PixelLab and belongs to the webGBA author (flightrabbit).
 
+웹 휴대폰 시작 스플래시의 배경 그림(web/src/splash/ 의 home.png 와 배경 26장:
+spring-cherry · tulip · summer-beach · sunflower · bamboo · hydrangea ·
+autumn-maple · desert · temple · market · winter-snow · cloud-path · candy ·
+library · train · castle · rain-alley · greenhouse · christmas · starry-hill ·
+crystal-cave · space · festival · underwater · neon-street · halloween)은
+PixelLab 으로 생성한 그림이며 webGBA 저작권자(flightrabbit)의 것입니다.
+The web phone start splash backgrounds (web/src/splash/home.png and the 26
+background PNGs listed above) were generated with PixelLab and belong to the
+webGBA author (flightrabbit).
+
 ------------------------------------------------------------------------------
 포함된 오픈소스 / Included open source
 ------------------------------------------------------------------------------
