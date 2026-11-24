@@ -28,6 +28,7 @@ import { createUpdater } from "./update.js";
 import { GAME_GROUPS, groupEntry } from "./core/wgba-update.js";
 import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
 import { createAdminFlow } from "./app/admin-ui.js";
+import { createScreenFilter } from "./screen-filter-ui.js";
 
 const { t } = i18n;
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,7 @@ const el = {
   btnSound: $("btnSound"),
   btnMenu: $("btnMenu"),
   btnSettings: $("btnSettings"),
+  btnFilter: $("btnFilter"),
   btnFull: $("btnFull"),
   btnBack: $("btnBack"),
   btnAppMenu: $("btnAppMenu"),
@@ -235,7 +237,14 @@ class WebPlayer extends Player {
     super.onAudioState(audio);
     if (audio === this.audio) systemAudio(audio.ac.state);
   }
+
+  paint() {
+    super.paint();
+    if (filterUi?.glOn) filterUi.frame();
+  }
 }
+
+let filterUi = null;
 
 const player = new WebPlayer({
   canvas: el.canvas,
@@ -273,6 +282,41 @@ const media = createMedia({
   titleOf: (rom) => displayName(rom),
   play: () => userPause(false),
   pause: () => userPause(true),
+});
+
+function filterGame() {
+  const g = state.game;
+  if (!g) return null;
+  return { gid: g.saveId || g.id, title: gameTitle(g), cssOnly: Boolean(player.host?.script), touch: Boolean(player.host?.hasPointer), wapk: Boolean(state.wapk), recommend: g.filter ?? null, frame: state.scriptFrame ?? null };
+}
+
+filterUi = createScreenFilter({
+  t,
+  make,
+  iconNode,
+  el,
+  prefs: () => state.prefs,
+  savePrefs: (patch) => savePrefs(patch),
+  hold: (name, on) => hold(name, on),
+  toast: (text, level) => toast(text, level ?? "info"),
+  openDialog: (options) => openDialog(options),
+  dialogOpen: () => Boolean(state.dialogDone),
+  dialogCancel: () => state.dialogDone?.(null),
+  sheetOpen: () => Boolean(state.sheet) || Boolean(state.choiceDone),
+  closeSheet: () => closeSheet(),
+  renderSheet: () => renderSheet(),
+  field: (label, note, control) => field(label, note, control),
+  layout: () => layout(),
+  paintFrame: () => paintFrame(),
+  syncTools: () => syncTools(),
+  setLabel: (node, key) => setLabel(node, key),
+  dock: () => document.body.dataset.fp ?? "",
+  ff: () => player.speed > 1,
+  paused: () => player.paused,
+  phone: () => coarse.matches,
+  padTaken: (index) => Object.values(keyTable()).some((codes) => Array.isArray(codes) && codes.includes(`Gamepad:${index}`)),
+  game: () => filterGame(),
+  scriptThumb: () => player.host?.thumb ?? null,
 });
 
 function userPause(on) {
@@ -1151,6 +1195,17 @@ function toolPlan(side, dpr) {
 
 const toolSideMin = () => TOOL_MIN * 2 + TOOL_GAP + TOOL_PAD * 2;
 
+// 화면 필터 패널(설계 38절): 우측 Dock 폭 = 화면 폭 40%(20px 단위, 320~400px), 하단 Dock 최소 높이 = 화면 높이 45%
+const FP_GAP = 8;
+const filterDockWidth = (width) => Math.min(400, Math.max(320, Math.round((width * 0.4) / 20) * 20));
+const filterPanelMin = (height) => Math.round(height * 0.45);
+
+function paintFrame() {
+  const a = state.frameArgs;
+  if (!a) return;
+  skin.frame(el.frame, { width: a.width, height: a.height, ring: a.ring, full: a.full, radius: Math.round((filterUi?.radius() ?? 0) * a.dpr) });
+}
+
 function toolColumnFits(height) {
   const left = [el.btnOpen, el.btnLibrary, el.btnSaves, el.btnQuit, el.btnQuick].filter((node) => !node.hidden).length;
   const right = TOOL_RIGHT_ORDER.filter((id) => !$(id).hidden).length;
@@ -1159,12 +1214,12 @@ function toolColumnFits(height) {
 }
 
 // 우측 묶음 우선순위(앞이 먼저 보임). 메뉴(좌측 첫 칸)·설정·소리·멀티플레이(인원 배지)는 늘 보이게 — 우측이 넘치면 좌측 빈칸으로.
-const TOOL_RIGHT_ORDER = ["btnSettings", "btnSound", "btnNet", "btnFast", "btnFull"];
+const TOOL_RIGHT_ORDER = ["btnSettings", "btnSound", "btnNet", "btnFast", "btnFilter", "btnFull"];
 const TOOL_KEEP = new Set(["btnSettings", "btnNet", "btnSound"]);
 let toolHomes = null;
 
 // slots = 0(세로, 또는 가로에서 모두 들어감)이면 처음 자리로. 자리가 같으면 DOM 을 건드리지 않는다(잉크 맞춤 MutationObserver 를 깨우지 않게).
-function placeTools(slots) {
+function placeTools(slots, spill = []) {
   state.toolSlots = slots;
   const mode = slots ? "menu" : "inline";
   if (document.body.dataset.tools !== mode) document.body.dataset.tools = mode;
@@ -1172,6 +1227,7 @@ function placeTools(slots) {
   toolHomes ??= [...el.bar.querySelectorAll(".bar__group--quick .tool, .bar__group--right .tool")].map((node) => [node, node.parentElement]);
   const side = el.bar.querySelector(".bar__side");
   const target = new Map(toolHomes);
+  for (const id of spill) target.set($(id), el.menuPanel);
   if (slots === "all") for (const [node] of toolHomes) target.set(node, el.menuPanel);
   else if (slots) {
     const shown = (id) => !$(id).hidden;
@@ -1192,6 +1248,19 @@ function placeTools(slots) {
     if (list.length !== have.length || list.some((node, i) => node !== have[i])) for (const node of list) parent.append(node);
   }
   if (el.menuPanel.lastElementChild !== el.btnQuit) el.menuPanel.append(el.btnQuit);
+}
+
+// 세로 기능 버튼 줄이 화면 폭을 넘으면(320 세로 등) 덜 쓰는 버튼(화면 필터 → 전체 화면)부터 햄버거 메뉴로.
+const PORTRAIT_SPILL = ["btnFilter", "btnFull"];
+function placePortraitTools() {
+  const spill = [];
+  placeTools(0, spill);
+  for (const id of PORTRAIT_SPILL) {
+    if (el.bar.scrollWidth <= el.bar.clientWidth + 1) break;
+    if ($(id).hidden) continue;
+    spill.push(id);
+    placeTools(0, spill);
+  }
 }
 
 function padParts() {
@@ -1237,13 +1306,21 @@ function layout() {
   const height = window.innerHeight;
   const landscape = window.innerWidth > height;
   const mode = padMode();
-  const padOn = mode !== "off" && !state.wapk;
+  let padOn = mode !== "off" && !state.wapk;
+  const fpDock = !filterUi?.isOpen ? "" : !landscape && padOn ? "pad" : landscape ? "right" : "bottom";
+  if (fpDock === "right") padOn = false;
+  const fpW = fpDock === "right" ? filterDockWidth(window.innerWidth) : 0;
   const overlay = padOn && landscape && mode === "overlay";
-  const boardOpen = landscape && boardState.open;
+  const boardOpen = landscape && boardState.open && !fpDock;
   const inline = boardOpen && padOn && !overlay;
   const side = boardOpen && !inline ? boardSide(window.innerWidth) : 0;
   const width = window.innerWidth - side;
   const body = document.body;
+  if (fpDock) body.dataset.fp = fpDock;
+  else delete body.dataset.fp;
+  const fpToolsOff = fpDock === "right" && coarse.matches;
+  body.toggleAttribute("data-fp-tools-off", fpToolsOff);
+  document.documentElement.style.setProperty("--fp-w", `${fpW}px`);
   body.dataset.layout = landscape ? "landscape" : "portrait";
   if (boardOpen) body.dataset.board = inline ? "inline" : "side";
   else delete body.dataset.board;
@@ -1325,8 +1402,8 @@ function layout() {
   let drop = 0;
   let keypadDrop = 0;
   if (state.wapk) {
-    sw = innerW;
-    sh = innerH;
+    sw = innerW - fpW;
+    sh = fpDock === "bottom" ? innerH - filterPanelMin(innerH) : innerH;
     placeTools("all");
     root.setProperty("--side", "0px");
   } else if (padOn && !landscape) {
@@ -1362,7 +1439,7 @@ function layout() {
     const rowW = Math.max(p.rowW, (parts.dir ? ART.stick * dirArt : 0) + p.s.faceW);
     const side = clamp(Math.floor((innerW - rowW - 12) / 2), PAD_SIDE.min, PAD_SIDE.nice);
     nudge(base, p.s.u, dirArt);
-    placeTools(0);
+    placePortraitTools();
     root.setProperty("--pad-top", `${space.top}px`);
     root.setProperty("--pad-bottom", `${space.bottom}px`);
     root.setProperty("--pad-gap", `${space.gap}px`);
@@ -1405,18 +1482,19 @@ function layout() {
     toolSize = block.size;
     if (inline) root.setProperty("--mpb-w", `${board}px`);
   } else {
-    toolColumn = landscape && toolColumnFits(innerH);
-    const toolSide = landscape ? (toolColumn ? TOOL_ART.w * 2 + TOOL_PAD * 2 : toolSideMin()) : 0;
-    const margin = overlay || toolColumn ? 0 : 16;
+    toolColumn = landscape && !fpToolsOff && toolColumnFits(innerH);
+    const toolSide = landscape && !fpToolsOff ? (toolColumn ? TOOL_ART.w * 2 + TOOL_PAD * 2 : toolSideMin()) : 0;
+    const margin = fpToolsOff ? 12 : overlay || toolColumn ? 0 : 16;
     const rim = overlay ? 0 : sideEdge;
-    const availW = innerW - margin - rim - toolSide * 2;
-    const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - margin - (overlay ? 0 : edge * 2);
+    const availW = innerW - margin - rim - toolSide * 2 - fpW - (fpW ? FP_GAP : 0);
+    const availH = innerH - (landscape ? 0 : el.bar.offsetHeight) - margin - (overlay ? 0 : edge * 2) - (fpDock === "bottom" ? filterPanelMin(innerH) : 0);
     sw = Math.floor(Math.max(120, Math.min(availW, (availH * aw) / ah)));
     sh = Math.floor((sw * ah) / aw);
-    const wide = Math.floor((innerW - sw - rim) / 2);
+    const wide = Math.floor((innerW - fpW - sw - rim) / 2);
     if (landscape) root.setProperty("--tool-side", `${wide}px`);
-    const block = landscape && !toolColumn ? toolPlan(wide, dpr) : null;
-    placeTools(block?.slots ?? 0);
+    const block = landscape && !toolColumn && !fpToolsOff ? toolPlan(wide, dpr) : null;
+    if (landscape) placeTools(block?.slots ?? 0);
+    else placePortraitTools();
     if (block) toolSize = block.size;
     let side = 0;
     if (overlay) {
@@ -1465,12 +1543,14 @@ function layout() {
   if (!state.wapk) {
     const frameW = Math.round(sw * dpr) + (landscape ? ring * FRAME_ROWS * 2 : 0);
     const frameH = Math.round(sh * dpr) + ring * FRAME_ROWS * 2;
-    skin.frame(el.frame, { width: frameW, height: frameH, ring, full: landscape });
+    state.frameArgs = { width: frameW, height: frameH, ring, full: landscape, dpr };
     el.frame.style.width = `${frameW / dpr}px`;
     el.frame.style.height = `${frameH / dpr}px`;
-  }
-  pad.enabled = padOn;
-  if (!padOn) pad.releaseAll();
+    filterUi?.onResize({ w: sw, h: sh });
+    paintFrame();
+  } else filterUi?.onResize({ w: sw, h: sh });
+  pad.enabled = padOn && fpDock !== "pad";
+  if (!pad.enabled) pad.releaseAll();
   padEditor.apply();
   pad.invalidate();
   state.appBox = appBoxKey();
@@ -1500,7 +1580,7 @@ function syncTools() {
     skin.tool(node, {
       size,
       disabled: toolOff(node),
-      on: (node === el.btnFast && player.gameSpeed !== 1) || (node === el.btnSound && state.prefs.muted) || (node === el.btnNet && player.net.active),
+      on: (node === el.btnFast && player.gameSpeed !== 1) || (node === el.btnSound && state.prefs.muted) || (node === el.btnNet && player.net.active) || (node === el.btnFilter && Boolean(filterUi?.buttonOn())),
       fast: player.gameSpeed !== 1,
       muted: state.prefs.muted,
       full,
@@ -1531,6 +1611,10 @@ function syncControls() {
   el.btnMenu.setAttribute("aria-expanded", String(Boolean(state.menuOpen)));
   el.btnQuick.setAttribute("aria-disabled", String(!canQuick() || player.net.locked));
   if (el.btnQuit.disabled !== !running) el.btnQuit.disabled = !running;
+  if (el.btnFilter.hidden !== !running) {
+    el.btnFilter.hidden = !running;
+    if (document.documentElement.dataset.ready) layout();
+  }
   if (el.btnPause.disabled !== (!running || userPaused)) el.btnPause.disabled = !running || userPaused;
   const pauseShown = coarse.matches && !state.wapk;
   if (el.btnPause.hidden !== !pauseShown) el.btnPause.hidden = !pauseShown;
@@ -2468,8 +2552,10 @@ async function startHosted(host, meta, input = null, net = null, kind = null) {
   syncControls();
   layout();
   applyPlayerPrefs();
+  state.game.filter = net?.manifest?.display?.filter ?? null;
   await player.start({ host, saveId, game: saveId, net });
   applyPlayerPrefs();
+  filterUi.onGame();
   hold("sheet", Boolean(state.sheet) && state.sheet !== "net");
   syncControls();
   updateWake();
@@ -3028,6 +3114,7 @@ async function closeGame({ quiet = false } = {}) {
   setWapk(null);
   setScreen(null);
   setInput(null);
+  filterUi.onClosed();
   syncControls();
   if (reshape) layout();
   updateWake();
@@ -3408,7 +3495,10 @@ function closeSheet({ fromHistory = false, force = false } = {}) {
   hold("sheet", false);
   if (state.sheetHistory) {
     state.sheetHistory = false;
-    if (!fromHistory) history.go(-1 - extra);
+    if (!fromHistory) {
+      state.ownPop = true;
+      history.go(-1 - extra);
+    }
   }
 }
 
@@ -4687,6 +4777,7 @@ async function setLang(id) {
   syncControls();
   refreshStart();
   renderSheet();
+  filterUi.reload();
 }
 
 function nickSetting() {
@@ -4744,6 +4835,7 @@ function renderSettings() {
           })
         : null,
     ),
+    group("", ...filterUi.settingsRows()),
     group(
       "",
       switchField(t("cfg.muted"), "", p.muted, (on) => {
@@ -5268,6 +5360,7 @@ function onKeyDown(event) {
     }
     return;
   }
+  if (filterUi.onKey(event)) return;
   if (state.menuOpen && event.key === "Escape") {
     event.preventDefault();
     setMenu(false);
@@ -5407,6 +5500,7 @@ function wire() {
     for (const type of ["pointerup", "pointerleave", "pointercancel"]) node.addEventListener(type, press(false));
   }
   el.btnFast.addEventListener("click", toggleFast);
+  el.btnFilter.addEventListener("click", () => filterUi.toggle());
   el.btnFull.addEventListener("click", toggleFullscreen);
   el.btnBack.addEventListener("click", () => pressRole("back"));
   el.btnAppMenu.addEventListener("click", () => pressRole("menu"));
@@ -5456,6 +5550,8 @@ function wire() {
   clearStaleGuard();
   window.addEventListener("popstate", () => {
     const forwarded = state.guardForward;
+    const own = state.ownPop;
+    state.ownPop = false;
     state.guardForward = false;
     state.guardDrop = false;
     if (forwarded && onGuard()) return;
@@ -5464,6 +5560,7 @@ function wire() {
       state.choiceHistory = false;
       state.choiceDone(null);
     } else if (state.sheet) closeSheet({ fromHistory: true });
+    else if (filterUi.isOpen && !own) filterUi.close();
     syncGuard();
   });
   el.choiceList.addEventListener("click", (event) => {
@@ -5946,7 +6043,7 @@ function startTouchDebug() {
   requestAnimationFrame(draw);
 }
 
-window.webgba = { player, pad, skin, store, state, layout, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, padEditor, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
+window.webgba = { player, pad, skin, store, state, layout, filter: filterUi, updater, importGame, quickSave, quickLoad, closeGame, openStored, openFiles, openLoader, toast, refreshStart, textInk, setInput: setInputFrom, openSheet, renderSheet, applyTheme, padEditor, version: BUILD, net: { win: netWin, open: openNet, nick: netNick, board: { open: openBoard, close: closeBoard, render: renderBoard, panel: boardPanel, state: boardState, root: boardRoot } } };
 
 boot().catch((error) => {
   console.error(error);

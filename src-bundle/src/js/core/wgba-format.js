@@ -11,6 +11,7 @@ import { checkBoard } from "./net/board.js";
 import { pickTextKey, TEXT_LANGS } from "./lang-text.js";
 import { readIceServers } from "./net/ice.js";
 import { netNewer } from "./net/net-host.js";
+import { FILTERS, SECTION_IDS } from "./screen-filter.js";
 
 export const SECTION_PREFIX = "webgba.";
 export const TOC_SECTION = "webgba.toc";
@@ -747,6 +748,34 @@ export function updateAction({ version: oldVersion, build: oldBuild }, { version
   return compareVersions(newVersion, oldVersion) < 0 ? "older" : "update";
 }
 
+// display.filter(게임 추천 화면 필터, 설계 38절) — 경고만(앱은 모르는 값을 버리고 「게임 추천」 칸을 만들지 않음)
+function filterProblems(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ["display.filter 는 객체({ scale, color, display })"];
+  const out = [];
+  for (const [part, spec] of Object.entries(value)) {
+    if (!SECTION_IDS.includes(part)) {
+      out.push(`display.filter 가 모르는 부분: ${part}`);
+      continue;
+    }
+    const id = typeof spec === "string" ? spec : spec?.id;
+    const filter = FILTERS[part].find((f) => f.id === id);
+    if (!filter) {
+      out.push(`display.filter.${part} 가 모르는 필터: ${JSON.stringify(id)}`);
+      continue;
+    }
+    if (typeof spec !== "object") continue;
+    if (spec.strength !== undefined && (!Number.isInteger(spec.strength) || spec.strength < 0 || spec.strength > 100)) out.push(`display.filter.${part}.strength 는 0~100 정수`);
+    for (const [k, v] of Object.entries(spec.detail ?? {})) {
+      const d = filter.details.find((x) => x.k === k);
+      if (!d) out.push(`display.filter.${part}.detail 가 모르는 설정: ${k}`);
+      else if (d.type === "range" && (typeof v !== "number" || v < d.min || v > d.max)) out.push(`display.filter.${part}.detail.${k} 는 ${d.min}~${d.max}`);
+      else if (d.type === "switch" && typeof v !== "boolean") out.push(`display.filter.${part}.detail.${k} 는 true·false`);
+      else if ((d.type === "seg" || d.type === "chips") && !d.options.some((o) => o.v === v)) out.push(`display.filter.${part}.detail.${k} 가 규칙 밖: ${JSON.stringify(v)}`);
+    }
+  }
+  return out;
+}
+
 function textProblems(key, value, max) {
   const one = (at, text) => {
     if (typeof text !== "string") return [`${at} 이 글이 아닙니다`];
@@ -786,6 +815,7 @@ export function checkManifest(m, errors, warnings) {
   if (s.scale !== undefined && !["fit", "integer"].includes(s.scale)) errors.push(`screen.scale 이 fit·integer 가 아닙니다: ${s.scale}`);
   if (m.display !== undefined && (!m.display || typeof m.display !== "object" || Array.isArray(m.display))) errors.push("display 는 객체");
   else if (m.display?.aspect !== undefined && !parseAspect(m.display.aspect)) errors.push(`display.aspect 는 "W:H"(1~${ASPECT_MAX} 정수, 비율 1:${ASPECT_RATIO_MAX}~${ASPECT_RATIO_MAX}:1): ${JSON.stringify(m.display.aspect)}`);
+  if (m.display?.filter !== undefined) warnings.push(...filterProblems(m.display.filter));
   if (m.input?.dpad !== undefined && !DPAD_MODES.includes(m.input.dpad)) errors.push(`input.dpad 가 both·opposite·latest 가 아닙니다: ${m.input.dpad}`);
   const save = m.save ?? {};
   if (save.kind !== undefined && !["flash", "storage", "localStorage", "files", "none"].includes(save.kind)) errors.push(`save.kind 가 규칙 밖입니다: ${save.kind}`);

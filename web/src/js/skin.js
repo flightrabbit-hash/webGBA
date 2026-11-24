@@ -11,6 +11,7 @@ const TOOL_ICONS = {
   btnFast: (s) => (s.fast ? "fastForwardOn" : "fastForwardOff"),
   btnSound: (s) => (s.muted ? "soundOff" : "soundOn"),
   btnSettings: () => "settings",
+  btnFilter: () => "filter",
   btnFull: (s) => (s.full ? "fullscreenExit" : "fullscreenEnter"),
   btnBack: () => "androidBack",
   btnAppMenu: () => "androidMenu",
@@ -552,7 +553,7 @@ export class Skin {
     return render;
   }
 
-  frame(canvas, { width, height, ring, full }) {
+  frame(canvas, { width, height, ring, full, radius = 0 }) {
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
@@ -569,6 +570,47 @@ export class Skin {
       [p.bodyHi, p.bodyLo],
       [p.body, p.body],
     ];
+    if (radius > 0) {
+      const side = full ? 0 : ring * rows.length;
+      const box = (k) => {
+        const o = k * ring;
+        const x = o - side;
+        const y = o;
+        const w = width - o * 2 + side * 2;
+        const h = height - o * 2;
+        const r = Math.min(Math.max(0, radius + (rows.length - k) * ring), w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      };
+      rows.forEach(([lead, tail], k) => {
+        box(k);
+        ctx.fillStyle = tail;
+        ctx.fill();
+        if (lead === tail) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(width, 0);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        ctx.clip();
+        box(k);
+        ctx.fillStyle = lead;
+        ctx.fill();
+        ctx.restore();
+      });
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      box(rows.length);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
     if (!full) {
       rows.forEach(([top, bottom], k) => {
         band(top, 0, k * ring, width, ring);
