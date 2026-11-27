@@ -34,9 +34,12 @@
   const MIN_MS = 2000;
   const FADE_STEPS = 4;
   const FADE_STEP_MS = 60;
-  const CONTACT_FRAME = 2;
+  const CONTACT_FRAME = 6;
+  const SHADOW = [[-1, 26], [0, 34], [1, 26]];
+  const SHADOW_HALF = 17;
+  const SHADOW_DX = -8;
   const BG_CSS = 3;
-  const SHARE_PORTRAIT = 0.6;
+  const SHARE_PORTRAIT = 0.75;
   const SHARE_LANDSCAPE = 0.7;
   const HORIZON = 0.4;
   const PATH_HALF = 27;
@@ -638,15 +641,15 @@
     const bottom = Math.round(feet);
     const left = Math.round(view.axis - (u.w * k) / 2);
     const top = Math.round(bottom - u.h * k);
-    const x0 = Math.floor(Math.min(left, view.axis - 13 * k)) - 2;
+    const x0 = Math.floor(Math.min(left, view.axis + (SHADOW_DX - SHADOW_HALF) * k)) - 2;
     const y0 = top - 2;
-    drawn = [x0, y0, Math.ceil(Math.max(left + u.w * k, view.axis + 13 * k)) + 2 - x0, Math.ceil(bottom + k) + 2 - y0];
+    drawn = [x0, y0, Math.ceil(Math.max(left + u.w * k, view.axis + (SHADOW_DX + SHADOW_HALF) * k)) + 2 - x0, Math.ceil(bottom + k) + 2 - y0];
     fctx.fillStyle = P.shadow;
-    for (const [row, w] of [[-1, 20], [0, 26], [1, 20]]) {
+    for (const [row, w] of SHADOW) {
       const y0 = Math.round(bottom + (row - 1) * k);
       const y1 = Math.round(bottom + row * k);
-      const x0 = Math.round(view.axis - (w * k) / 2);
-      fctx.fillRect(x0, y0, Math.round(view.axis + (w * k) / 2) - x0, Math.max(1, y1 - y0));
+      const x0 = Math.round(view.axis + (SHADOW_DX - w / 2) * k);
+      fctx.fillRect(x0, y0, Math.round(view.axis + (SHADOW_DX + w / 2) * k) - x0, Math.max(1, y1 - y0));
     }
     const frame = (Math.floor(t / FRAME_MS) + CONTACT_FRAME) % FRAMES;
     const S = cat.size;

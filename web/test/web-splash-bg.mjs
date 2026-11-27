@@ -185,7 +185,7 @@ function inspect({ ax, ay }) {
             if (fd[i + 3] && fd[i] === sr && fd[i + 1] === sg && fd[i + 2] === sb) rows.set(y, (rows.get(y) || 0) + 1);
           }
         const lowest = Math.max(-1, ...rows.keys());
-        resolve({ variant: s0.variant, LW: back.width, LH: back.height, AX, hyL, skyDiff, skyPixels: hyL * back.width, groundMarks, moved, shadow, shadowK: (rows.get(lowest) || 0) / 20, dpr });
+        resolve({ variant: s0.variant, LW: back.width, LH: back.height, AX, hyL, skyDiff, skyPixels: hyL * back.width, groundMarks, moved, shadow, shadowK: (rows.get(lowest) || 0) / 26, dpr });
       }, 200);
     });
   });

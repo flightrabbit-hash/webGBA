@@ -131,7 +131,7 @@ function probe() {
     vw: Math.round(innerWidth * dpr),
     vh: Math.round(innerHeight * dpr),
     cat: { x0: x0 + fo.x, y0: y0 + fo.y, x1: x1 + fo.x, y1: y1 + fo.y },
-    shadowK: shadowWidth / 20,
+    shadowK: shadowWidth / 26,
     soft,
     colors: [...colors],
     text: { x: to.x, y: to.y, w: text.width, h: text.height, colors: [...textColors], soft: textSoft },
@@ -198,7 +198,7 @@ function scaleTrace(ms) {
           width = n;
         }
       }
-      if (width && list.at(-1) !== width / 20) list.push(width / 20);
+      if (width && list.at(-1) !== width / 26) list.push(width / 26);
       requestAnimationFrame(tick);
     };
     tick();
