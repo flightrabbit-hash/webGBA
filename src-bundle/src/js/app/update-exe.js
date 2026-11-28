@@ -1,4 +1,4 @@
-import { buildGauge, checkGames, createVersionCache, FEED_INDEX, fetchChecked, GAUGE, planUpdate, prefetchFeeds, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
+import { buildGauge, checkGames, createVersionCache, FEED_INDEX, fetchChecked, GAUGE, newerVersion, planUpdate, prefetchFeeds, readOverrides, runSteps, UpdateError } from "../core/wgba-update.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./update-pick.js";
 import { runPatchJob } from "./patch-loader.js";
 import { readWgba, pickText } from "../core/wgba-read.js";
@@ -389,20 +389,26 @@ export function createExeUpdater(d) {
   }
 
   /** 경로들의 게임 파일(.wgba · .wmba · .wapk) 게임 id(설명서 조회 캐시 updateIndex 재사용 — 바뀐 파일만 읽음). */
-  async function ids(paths) {
+  async function games(paths) {
     const cache = { ...(d.prefs().updateIndex ?? {}) };
     const before = JSON.stringify(cache);
-    const found = new Set();
+    const found = new Map();
     const seen = new Set();
     for (const path of paths) {
       if (!PACK_FILE_RE.test(path) || seen.has(keyOf(path))) continue;
       seen.add(keyOf(path));
       const info = await describe(path, cache);
-      if (info?.gameId) found.add(info.gameId);
+      if (!info?.gameId) continue;
+      const had = found.get(info.gameId);
+      if (!had || newerVersion(info.version, had.version)) found.set(info.gameId, { path: info.path, version: info.version });
     }
     if (JSON.stringify(cache) !== before) d.savePrefs({ updateIndex: Object.fromEntries(Object.entries(cache).slice(-INDEX_MAX)) });
     return found;
   }
+
+  const ids = async (paths) => new Set((await games(paths)).keys());
+
+  const patchIndex = () => (navigator.onLine === false ? null : (overrides()?.index ?? FEED_INDEX));
 
   return {
     prepare,
@@ -415,6 +421,9 @@ export function createExeUpdater(d) {
     pending,
     keyOf,
     ids,
+    games,
+    patchIndex,
+    feeds,
     versions,
     get items() {
       return items;

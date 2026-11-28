@@ -11,6 +11,9 @@
 //        발행 폴더 묶음(위 폴더)에 index.json 이 있으면 목록도 다시 만든다(--no-index 로 끔).
 //   index --root <발행 폴더 묶음> --key <비밀 키.pem>   <묶음>/<게임 id>/latest.json 을 모두 담은 서명 목록 <묶음>/index.json
 //        묶음의 groups.json(게임 id → { group: emu|arcade|mobile, category })이 있으면 목록 signed.groups 에 넣는다(웹 라이브러리 그룹·카테고리, 옛 webGBA 는 조회하지 않음).
+//        묶음의 patches.json(로컬 원본)이 있으면 목록 signed.patches 에 넣는다(.gba 열기 때 부모 롬 패치 고르기, 규격 12.7, 옛 webGBA 는 조회하지 않음).
+//   patches --root <묶음> --id <게임 id> (--full | --wgbp <파일> --version <버전>) [--ko 이름] [--en 이름] [--ja 이름] · patches --root <묶음> --remove <게임 id>
+//        patches.json 줄 추가·교체(.wgbp 는 <id>/full/<SHA-256>.wgbp 로 복사). 부모 롬 SHA-1 · 이름은 .wgbp bases 에서. 다음에 index 로 서명.
 //   verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…   서명·파일 크기·SHA-256, 옛 파일마다 끝까지 적용.
 //        묶음이면 목록 서명·게임마다 latest.json 과 같은지, 게임 폴더면 목록이 있을 때 그 게임 줄이 latest.json 과 같은지도 본다.
 //   upload [<발행 폴더|묶음>] [--wgba|--wmba <게임 파일>]… [--groups <groups.json>] [--dry-run [--remote]]   (--wgba·--wmba = 비공개 버킷 <확장자>/<id>/<버전>.<확장자>, admin-cmds.mjs)
@@ -33,6 +36,8 @@ import { indexedApp } from "../../src-bundle/src/js/core/app-update.js";
 import { applyDelta, FEED_FORMAT, fromBase64, groupEntry, INDEX_FORMAT, INDEX_MAX, indexedFeed, planUpdate, readDeltaHead, romPlace, verifyFeed, verifyIndex } from "../../src-bundle/src/js/core/wgba-update.js";
 import { compareVersions, ID_RE, VERSION_RE } from "../../src-bundle/src/js/core/wgba-format.js";
 import { readPatch } from "../../src-bundle/src/js/core/wgbp.js";
+import { PATCHES_FORMAT, readPatches } from "../../src-bundle/src/js/core/patch-offer.js";
+import { saveFileName } from "../../api/_admin/save-name.js";
 
 const n = (v) => v.toLocaleString("en-US");
 const sha1 = (bytes) => crypto.createHash("sha1").update(bytes).digest("hex");
@@ -322,6 +327,153 @@ export function readGroupTable(root, ids) {
   return out;
 }
 
+const PATCH_NAME_LANGS = ["ko", "en", "ja"];
+
+function patchNames(value, id) {
+  const out = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) for (const lang of PATCH_NAME_LANGS) if (typeof value[lang] === "string" && value[lang].trim()) out[lang] = value[lang].trim().slice(0, 80);
+  if (!Object.keys(out).length) throw new Error(`patches.json 의 ${id} 에 name(ko · en · ja 중 하나 이상)이 없습니다`);
+  return out;
+}
+
+function readPatchesFile(root) {
+  const file = path.join(root, "patches.json");
+  if (!fs.existsSync(file)) return null;
+  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.items)) throw new Error("patches.json 은 { \"items\": [ { \"id\", \"name\", \"install\": \"full\" | { \"version\", \"file\" } } ] } 형식이어야 합니다");
+  return { file, raw };
+}
+
+/**
+ * 묶음의 patches.json(로컬 원본) → 목록 signed.patches(README 12.7). 부모 롬 SHA-1 · 이름은 .wgbp manifest bases 에서,
+ * "full" 은 그 게임 latest.json 의 full, 고정 버전은 묶음 안 .wgbp(크기 · SHA-256)와 from 표의 버전 · SHA-1 을 맞춰 본다.
+ * 맞지 않는 줄은 빼고 알린다(게임 발행을 막지 않음). 파일이 없으면 null(목록에 patches 없음).
+ */
+export function buildPatchTable(root, ids) {
+  const got = readPatchesFile(root);
+  if (!got) return null;
+  const items = [];
+  const seen = new Set();
+  for (const entry of got.raw.items) {
+    const id = entry?.id;
+    const skip = (why) => console.log(`패치 목록에서 뺌  ${id ?? "?"}: ${why}`);
+    if (!ID_RE.test(id ?? "") || seen.has(id)) {
+      skip("id 가 틀렸거나 두 번 있음");
+      continue;
+    }
+    if (!ids.includes(id)) {
+      skip("목록에 그 게임의 latest.json 이 없음");
+      continue;
+    }
+    const signed = JSON.parse(JSON.parse(fs.readFileSync(path.join(root, id, "latest.json"), "utf8")).signed);
+    let rel;
+    let version;
+    if (entry.install === "full") {
+      if (!signed.full) {
+        skip(`latest.json(${signed.version})에 full 이 없음`);
+        continue;
+      }
+      rel = `${id}/${signed.full.url}`;
+      version = signed.version;
+    } else {
+      rel = String(entry.install?.file ?? "").replace(/\\/g, "/");
+      version = entry.install?.version;
+      if (!rel || rel.startsWith("/") || rel.includes("..") || !VERSION_RE.test(version ?? "")) {
+        skip("install 은 \"full\" 또는 { version, file(묶음 안 상대 경로) }");
+        continue;
+      }
+    }
+    const file = path.join(root, ...rel.split("/"));
+    if (!fs.existsSync(file)) {
+      skip(`파일이 없음 ${rel}`);
+      continue;
+    }
+    const bytes = readBytes(file);
+    let manifest;
+    try {
+      manifest = readPatch(bytes).manifest;
+    } catch (error) {
+      skip(`.wgbp 를 읽지 못함(${error.code ?? error.message})`);
+      continue;
+    }
+    const target = manifest.wgba;
+    if (entry.install === "full") {
+      if (target.sha1 !== signed.wgba.sha1) {
+        skip("full .wgbp 의 결과 SHA-1 이 latest.json 의 wgba 와 다름");
+        continue;
+      }
+    } else {
+      const known = target.sha1 === signed.wgba.sha1 ? signed.version : (signed.from ?? []).find((item) => item.sha1 === target.sha1)?.version;
+      if (known !== version) {
+        skip(`.wgbp 결과 SHA-1 ${target.sha1.slice(0, 8)} 이 latest.json 의 ${version} 과 맞지 않음(${known ?? "from 표에 없음"})`);
+        continue;
+      }
+      const plan = planUpdate({ ...signed, from: (signed.from ?? []).map((item) => ({ ...item, patch: { size: item.patch.size } })), full: null }, target.sha1);
+      if (plan.kind === "none") {
+        skip(`${version} 에서 ${signed.version} 까지 가는 패치가 from 표에 없음`);
+        continue;
+      }
+    }
+    const parents = (manifest.bases ?? []).map((base) => ({ sha1: base.sha1, name: String(base.name ?? "") }));
+    if (!parents.length) {
+      skip(".wgbp 에 바탕 롬이 없음");
+      continue;
+    }
+    let name;
+    try {
+      name = patchNames(entry.name, id);
+    } catch (error) {
+      skip(error.message);
+      continue;
+    }
+    const install = entry.install === "full" ? "full" : { version, wgbp: { url: rel, size: bytes.length, sha256: sha256(bytes) }, wgba: { sha1: target.sha1, size: target.size } };
+    seen.add(id);
+    items.push({ id, name, parents, install, file: saveFileName({ id, version: signed.version, names: name }) });
+    console.log(`패치 목록  ${id} · ${entry.install === "full" ? `full ${signed.version}` : `${version} → ${signed.version}`} · 부모 ${parents.map((p) => `${p.name} ${p.sha1.slice(0, 8)}`).join(" · ")} · ${n(bytes.length)}바이트`);
+  }
+  return { format: PATCHES_FORMAT, items };
+}
+
+/** 패치 목록의 고정 버전 .wgbp 파일(upload · verify). "full" 은 게임 폴더 쪽에서 다룬다. */
+function patchFiles(root, patches) {
+  return (patches?.items ?? []).filter((item) => item.install && typeof item.install === "object").map((item) => ({ id: item.id, key: item.install.wgbp.url, file: path.join(root, ...item.install.wgbp.url.split("/")), size: item.install.wgbp.size, sha256: item.install.wgbp.sha256 }));
+}
+
+/** patches --root <묶음> --id <id> (--full | --wgbp <파일> --version <버전>) [--ko 이름] [--en 이름] [--ja 이름] · patches --root <묶음> --remove <id> */
+export function patchesCommand({ root, id, full = false, wgbp = null, version = null, names = {}, remove = null }) {
+  const file = path.join(root, "patches.json");
+  const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { $comment: "webGBA .gba 열기 때 고르기 창 목록(로컬 원본). wgba.mjs index 가 부모 롬 SHA-1 · 이름을 .wgbp 에서 채워 index.json signed.patches 로 서명한다. README 12.7.", items: [] };
+  if (!Array.isArray(raw.items)) throw new Error("patches.json 의 items 가 배열이 아닙니다");
+  if (remove) {
+    const before = raw.items.length;
+    raw.items = raw.items.filter((item) => item?.id !== remove);
+    writeAtomic(file, Buffer.from(`${JSON.stringify(raw, null, 1)}\n`, "utf8"));
+    console.log(`patches.json ${remove} ${before === raw.items.length ? "없음(그대로)" : "뺌"} — wgba.mjs index 로 목록을 다시 만듭니다`);
+    return 0;
+  }
+  if (!ID_RE.test(id ?? "") || !fs.existsSync(path.join(root, id, "latest.json"))) throw new Error(`${root}/${id}/latest.json 이 없습니다`);
+  const old = raw.items.find((item) => item?.id === id) ?? {};
+  let install;
+  if (full) install = "full";
+  else {
+    if (!wgbp || !VERSION_RE.test(version ?? "")) throw new Error("--wgbp <파일> --version <버전> 또는 --full 을 줍니다");
+    const bytes = readBytes(wgbp);
+    readPatch(bytes);
+    const rel = `${id}/full/${sha256(bytes)}.wgbp`;
+    const dest = path.join(root, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    if (!fs.existsSync(dest)) writeAtomic(dest, bytes);
+    install = { version, file: rel };
+  }
+  const name = { ...(old.name ?? {}), ...Object.fromEntries(Object.entries(names).filter(([, value]) => value)) };
+  const next = { id, name, install };
+  raw.items = [...raw.items.filter((item) => item?.id !== id), next];
+  writeAtomic(file, Buffer.from(`${JSON.stringify(raw, null, 1)}\n`, "utf8"));
+  const ok = buildPatchTable(root, gameDirs(root))?.items.some((item) => item.id === id);
+  console.log(`patches.json ${id} ${full ? "full" : `${version} ${install.file}`} ${ok ? "확인 통과" : "— 목록 조건에 맞지 않아 index 에서 빠집니다(위 알림)"} · 다음 = wgba.mjs index --root ${root} --key <비밀 키.pem>`);
+  return ok ? 0 : 1;
+}
+
 /**
  * 묶음의 게임별 latest.json 봉투를 그대로 담은 서명 목록 index.json. signed = { time, feeds: { <id>: SHA-256(latest.json 의 signed 글) } } —
  * 앱은 목록 서명·시각(전보다 이르면 거부)·해시를 확인한 뒤 게임마다 latest.json 과 같은 확인(verifyFeed)을 한다.
@@ -359,12 +511,14 @@ export async function buildIndex(root, secret, { time = null } = {}) {
     if (Date.parse(before) > Date.parse(at)) at = before;
   }
   const groups = readGroupTable(root, ids);
-  const text = JSON.stringify({ time: at, feeds: hashes, ...(appIds.length ? { apps: app.hashes } : {}), ...(Object.keys(groups).length ? { groups } : {}) });
+  const patches = buildPatchTable(root, ids);
+  const text = JSON.stringify({ time: at, feeds: hashes, ...(appIds.length ? { apps: app.hashes } : {}), ...(Object.keys(groups).length ? { groups } : {}), ...(patches ? { patches } : {}) });
   const envelope = { wgbaIndex: INDEX_FORMAT, signed: text, signature: signText(text, secret), feeds, ...(appIds.length ? { apps: app.apps } : {}) };
   const body = `${JSON.stringify(envelope, null, 1)}\n`;
   if (Buffer.byteLength(body) > INDEX_MAX) throw new Error(`index.json 이 ${n(Buffer.byteLength(body))}바이트로 앱 한도 ${n(INDEX_MAX)}바이트를 넘습니다`);
   const list = await verifyIndex(body, pub);
   for (const id of ids) await indexedFeed(list, id, { key: pub, feed: `https://feed.invalid/${id}/latest.json` });
+  if (patches && readPatches(list.patches, "https://feed.invalid/index.json").length !== patches.items.length) throw new Error("목록의 patches 를 앱 규칙으로 다시 읽지 못했습니다");
   if (appIds.length && !(await indexedApp(list, { key: pub, feed: APP_BASE }))) throw new Error("목록의 webGBA 항목을 확인하지 못했습니다");
   writeAtomic(path.join(root, "index.json"), Buffer.from(body, "utf8"));
   console.log(`index.json 게임 ${ids.length}개${appIds.length ? ` + 앱 ${appIds.join(", ")}` : ""}${Object.keys(groups).length ? ` · 그룹 ${Object.keys(groups).length}개` : ""} · ${n(Buffer.byteLength(body))}바이트 · 시각 ${at} · 서명 확인 통과(${ids.join(", ")})`);
@@ -464,6 +618,25 @@ async function verifyIndexFile(root, publicKey, only = null) {
       errors++;
     }
   }
+  if (signed.patches && !only) {
+    const read = readPatches(list.patches, "https://feed.invalid/index.json");
+    if (read.length !== (signed.patches.items ?? []).length) {
+      console.log(`오류  patches ${(signed.patches.items ?? []).length}줄 중 앱 규칙으로 읽은 것 ${read.length}줄`);
+      errors++;
+    }
+    for (const item of patchFiles(root, signed.patches)) {
+      const bytes = fs.existsSync(item.file) ? readBytes(item.file) : null;
+      if (!bytes || bytes.length !== item.size || sha256(bytes) !== item.sha256) {
+        console.log(`오류  패치 ${item.id} ${item.key}: ${bytes ? "크기·SHA-256 다름" : "파일 없음"}`);
+        errors++;
+      } else console.log(`통과  패치 ${item.id} ${item.key} ${n(item.size)}바이트`);
+    }
+    for (const item of read) if (item.install === "full" && !list.feeds[item.id]) {
+      console.log(`오류  패치 ${item.id}: full 인데 목록에 게임이 없음`);
+      errors++;
+    }
+    console.log(`목록 패치 ${read.length}개 · ${read.map((item) => `${item.id} ${item.install === "full" ? "full" : item.install.version}`).join(", ")}`);
+  }
   return { errors, ids, appIds };
 }
 
@@ -552,6 +725,8 @@ export async function upload(dir, { dryRun = false, remote = false, config = nul
   } else games = [isAppDir(dir) ? appPlan(dir, null) : gamePlan(dir, null)];
   const plan = games.flatMap((game) => game.items);
   if (withIndex) {
+    const patchKeys = new Set(plan.map((item) => item.key));
+    for (const item of patchFiles(root, readIndexFile(root).signed.patches)) if (!patchKeys.has(item.key)) plan.push({ key: item.key, file: item.file, size: item.size, type: "application/octet-stream", cache: IMMUTABLE });
     const file = path.join(root, "index.json");
     plan.push({ key: "index.json", file, size: fs.statSync(file).size, type: "application/json", cache: FEED_CACHE });
   }
@@ -639,6 +814,11 @@ export async function updateCommand(cmd, rest) {
     const o = parseList(rest, ["--root", "--key", "--time"]);
     if (!o["--root"] || !o["--key"] || o.positional.length) return -1;
     return buildIndex(o["--root"], loadSecret(o["--key"]), { time: o["--time"] ?? null });
+  }
+  if (cmd === "patches") {
+    const o = parseList(rest, ["--root", "--id", "--wgbp", "--version", "--ko", "--en", "--ja", "--remove"]);
+    if (!o["--root"] || o.positional.length || (!o["--remove"] && !o["--id"])) return -1;
+    return patchesCommand({ root: o["--root"], id: o["--id"] ?? null, full: Boolean(o["--full"]), wgbp: o["--wgbp"] ?? null, version: o["--version"] ?? null, names: { ko: o["--ko"], en: o["--en"], ja: o["--ja"] }, remove: o["--remove"] ?? null });
   }
   if (cmd === "verify") {
     const o = parseList(rest, ["--pub", "--key"], ["--wgba"]);

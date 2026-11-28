@@ -67,7 +67,7 @@ export function rowMeta(item) {
 
 const usable = (item) => item.kind === "patch" && !item.running && (item.state === "ready" || item.state === "failed");
 
-export function updatePicker({ items, art = () => null, button, kinds = {}, apply, install, stop, onChange = () => {}, metaOf = rowMeta, labelOf = null, listLabel = "", startOn = true }) {
+export function updatePicker({ items, art = () => null, button, kinds = {}, apply, install, stop, onChange = () => {}, metaOf = rowMeta, labelOf = null, listLabel = "", startOn = true, openRow = null }) {
   const root = make("div", button ? "zpick upick" : "zpick upick upick--bare");
   const box = () => {
     const node = make("span", "cbox");
@@ -227,6 +227,10 @@ export function updatePicker({ items, art = () => null, button, kinds = {}, appl
         if (!item.running) item.on = usable(item);
         paint();
       }
+      return;
+    }
+    if (openRow && (item.state === "done" || item.kind === "none")) {
+      openRow(item);
       return;
     }
     if (item.state === "busy" || item.state === "done" || item.kind === "none") return;

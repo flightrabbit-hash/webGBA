@@ -231,7 +231,7 @@ export async function verifyIndex(text, key, { url = "", memory = null } = {}) {
   if (time < last) throw new UpdateError("indexOld", { time: signed.time });
   memory?.set(url, time);
   const table = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
-  return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps), groups: readGroups(signed.groups) };
+  return { time, hashes, feeds, appHashes: table(signed.apps), apps: table(envelope.apps), groups: readGroups(signed.groups), patches: signed.patches ?? null };
 }
 
 export { GAME_GROUPS };

@@ -762,7 +762,7 @@ export function renderShoulder({ side = 'L', text = '', state = 'normal', scale 
     const { art, faceBox } = extrude({
       W, H, inside, depth: GAME_DEPTH, shadow: GAME_SHADOW, offsetAt: () => (st === 'pressed' ? 1 : 0), roles,
     });
-    const { ink, fine } = stampLabel(art, faceBox, shown, BIG[side], roles, [BIG, SMALL], s);
+    const { ink, fine } = stampLabel(art, faceBox, shown, BIG[side] ?? textBitmap(side, BIG), roles, [BIG, SMALL], s);
     const out = finish('shoulder', art, s, palette, {
       label: side, text: shown, state: st, faceBox, inkBox: ink, fineInk: fine?.box ?? null,
       hit: { x: 0, y: 0, w: W * s, h: (H + GAME_DEPTH) * s }, inside, depth: GAME_DEPTH,
@@ -864,6 +864,7 @@ export function renderGameButton(name, opts = {}) {
     case 'dpad': return renderDpad(opts);
     case 'a': case 'b': case 'c': case 'd': return renderRoundButton({ ...opts, label: name.toUpperCase() });
     case 'l': case 'r': return renderShoulder({ ...opts, side: name.toUpperCase() });
+    case 'l3': return renderShoulder({ ...opts, side: 'L3' });
     case 'start': case 'select': return renderPill({ ...opts, label: name.toUpperCase() });
     case 'rs': return renderPill({ ...opts, text: '', label: 'RS', tone: 'rs' });
     case 'num': return renderKeypadKey(opts);

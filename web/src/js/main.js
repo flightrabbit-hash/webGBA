@@ -25,6 +25,9 @@ import { createMedia } from "./media.js";
 import { iconBits, iconStyle } from "./icons.js";
 import { BUILD } from "./build-info.js";
 import { createUpdater } from "./update.js";
+import { applyInWorker } from "./app/update-pick.js";
+import { createPatchPicker } from "./app/patch-pick.js";
+import { addSkip, installOffer, matchPatches, offersFor, PATCH_SKIP_KEY, readSkip, romSha1s } from "./core/patch-offer.js";
 import { GAME_GROUPS, groupEntry } from "./core/wgba-update.js";
 import { ADMIN_PATH, adminClient, downloadBytes } from "./core/admin.js";
 import { createAdminFlow } from "./app/admin-ui.js";
@@ -716,7 +719,7 @@ const padCode = (name) => `Pad:${name}`;
 // 터치 버튼 자리 ← role(규격 5.2). 게임이 그 role 버튼을 정의했을 때만 그 자리가 보이고, 누르면 그 버튼(① bit)을 보낸다.
 // C·D 는 c·d role 을 정의한 게임에서만 A·B 위에(키보드 기본 C·I / V·U — ROLE_KEYS). l2·r2·extra 는 터치 자리가 아직 없음(키보드·게임패드만).
 const EXTRA_PAD = ["C", "D"];
-const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT", ok: "OK", soft1: "SOFT1", soft2: "SOFT2", clear: "CLEAR", num1: "N1", num2: "N2", num3: "N3", num4: "N4", num5: "N5", num6: "N6", num7: "N7", num8: "N8", num9: "N9", star: "STAR", num0: "N0", hash: "HASH", back: "BACK", menu: "MENU" };
+const TOUCH_SLOT = { a: "A", b: "B", c: "C", d: "D", l: "L", r: "R", l3: "L3", start: "START", select: "SELECT", up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT", ok: "OK", soft1: "SOFT1", soft2: "SOFT2", clear: "CLEAR", num1: "N1", num2: "N2", num3: "N3", num4: "N4", num5: "N5", num6: "N6", num7: "N7", num8: "N8", num9: "N9", star: "STAR", num0: "N0", hash: "HASH", back: "BACK", menu: "MENU" };
 const MOBILE_SIDE = 16;
 const MOBILE_SCREEN_MIN = 0.5;
 const mobileDrop = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mobile-drop")) || 0;
@@ -2931,10 +2934,160 @@ function openFile(file, patchRom = null) {
 }
 
 async function openBytes(name, bytes) {
+  if (PATCH_ROM_TYPES.has(extOf(name))) {
+    const picked = await offerPatches(name, bytes);
+    if (picked === "closed") {
+      refreshStart();
+      return false;
+    }
+    if (picked) return picked.bytes ? launch(picked.meta, picked.bytes, { note: picked.note }) : launchStored(picked);
+  }
   const kept = await importGame(name, bytes);
   if (!kept) return false;
   if (kept.stored) return launchStored(kept);
   return launch(kept.meta, bytes, { note: kept.note, wgba: kept.wgba });
+}
+
+const PATCH_ROM_TYPES = new Set(["gba", "agb", "bin"]);
+const patchSeen = new Set();
+let patchJob = null;
+
+function readPatchSkip() {
+  try {
+    return readSkip(JSON.parse(localStorage.getItem(PATCH_SKIP_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function writePatchSkip(list) {
+  try {
+    if (list.length) localStorage.setItem(PATCH_SKIP_KEY, JSON.stringify(list));
+    else localStorage.removeItem(PATCH_SKIP_KEY);
+  } catch {}
+}
+
+function patchSkipSetting() {
+  const count = readPatchSkip().length;
+  return switchField(
+    t("web.patchSkip"),
+    t("web.patchSkip.note", { count }),
+    count > 0,
+    (on) => {
+      if (on) return;
+      writePatchSkip([]);
+      logLine("INFO", "패치 안내 안 하는 롬 목록 삭제");
+      renderSheet();
+    },
+    { disabled: count === 0 },
+  );
+}
+
+function patchFileName(offer) {
+  if (offer.file) return offer.file;
+  const slug = String(offer.name?.en ?? "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${slug || offer.id.split(".").pop()}.wgba`;
+}
+
+async function installWebPatch(offer, progress, signal) {
+  const job = patchJob;
+  const made = await installOffer(offer, job.bytes, {
+    signal,
+    onProgress: progress,
+    apply: applyInWorker,
+    build: (patch, rom, onStage) =>
+      runPatchJob(patch, rom, onStage).catch((error) => {
+        throw new Error(patchError(error, { file: "", rom: job.name }));
+      }),
+  });
+  const file = patchFileName(offer);
+  const kept = await importGame(file, made.bytes, { sha1: made.sha1, file });
+  logLine("INFO", `패치 설치 ${offer.id} ${offer.target.version}${made.version !== offer.target.version ? ` → ${made.version}` : ""}${made.updateError ? ` · 업데이트 실패 ${made.updateError.code ?? made.updateError.message}` : ""} · ${job.name} → 라이브러리 ${kept?.meta?.key ?? "?"} (${made.base?.name ?? ""})`);
+  return { version: made.version, updateError: made.updateError, file: t("web.patch.library"), kept, bytes: kept?.meta?.transient ? made.bytes : null };
+}
+
+const patchPicker = createPatchPicker({
+  lang: () => i18n.lang(),
+  openDialog,
+  closeDialog: (value) => state.dialogDone?.(value),
+  actions: () => [el.dialogActions.querySelector('[data-action="patch-skip"]'), el.dialogActions.querySelector('[data-action="patch-go"]')],
+  rowButton: (onClick) => button({ label: " ", kind: "small", action: "patch-row", onClick }),
+  kinds: { primary: "btn--primary", warn: "btn--warn", plain: "" },
+  labels: {
+    get skip() {
+      return t("web.patch.skip");
+    },
+    install: (n, total) => (n && n === total ? t("web.patch.all") : t("web.patch.chosen", { n })),
+    get cancel() {
+      return t("web.btn.cancel");
+    },
+    get close() {
+      return t("web.update.close");
+    },
+    get play() {
+      return t("patch.btn.play");
+    },
+  },
+  textKey: "web.patch.text",
+  hintKey: "",
+  log: logLine,
+  install: installWebPatch,
+});
+
+async function offerPatches(name, bytes) {
+  const sha1s = await romSha1s(bytes);
+  if (patchSeen.has(sha1s[0]) || readPatchSkip().includes(sha1s[0])) return null;
+  const { index, list, items, error } = await updater.patches();
+  if (!list) {
+    if (index) logLine("INFO", `패치 목록 사용 안 함 ${name}: ${error?.code ?? ""} ${error?.message ?? ""}`);
+    return null;
+  }
+  const matches = matchPatches(items, sha1s);
+  if (!matches.length) return null;
+  const offers = await offersFor(list, index, matches);
+  if (!offers.length) return null;
+  let roms = [];
+  try {
+    roms = await store.list(store.KIND_ROM);
+  } catch {}
+  for (const offer of offers) {
+    const same = roms.filter((rom) => rom.gameId === offer.id).sort(byOpened)[0];
+    if (same) offer.exists = { version: same.version, meta: same };
+  }
+  const line = offers.map((offer) => `${offer.id} ${offer.version}${offer.exists ? `(있음 ${offer.exists.version})` : ""}`).join(", ");
+  if (offers.every((offer) => offer.exists)) {
+    logLine("INFO", `패치 안내 안 함(모두 있음) ${name} → ${line}`);
+    return null;
+  }
+  if (state.dialogDone) {
+    logLine("INFO", `패치 안내 건너뜀(다른 창) ${name}`);
+    return null;
+  }
+  logLine("INFO", `패치 안내 ${name} SHA-1 ${sha1s[0].slice(0, 8)} → ${line}`);
+  patchJob = { name, bytes };
+  let answer;
+  try {
+    answer = await patchPicker.ask({ offers, romName: name, parentName: matches[0].parent.name || "?" });
+  } finally {
+    patchJob = null;
+  }
+  if (answer.action === "skip") {
+    patchSeen.add(sha1s[0]);
+    if (answer.again) writePatchSkip(addSkip(readPatchSkip(), sha1s[0]));
+    logLine("INFO", `패치 안내 원본 실행 ${name}${answer.again ? " · 다시 묻지 않음" : ""}`);
+    return null;
+  }
+  if (answer.action === "play") {
+    const kept = answer.item.result?.kept;
+    if (kept?.meta) return { meta: kept.meta, note: kept.note ?? "", bytes: answer.item.result.bytes };
+    if (answer.item.exists?.meta) return { meta: answer.item.exists.meta, note: "" };
+  }
+  return "closed";
 }
 
 function zipText(error, name) {
@@ -4980,6 +5133,7 @@ function renderSettings() {
       }),
       nickSetting(),
       adminSetting(),
+      patchSkipSetting(),
     ),
     group(
       "",

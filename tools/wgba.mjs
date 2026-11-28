@@ -9,7 +9,7 @@
 //   node tools/wgba.mjs check <파일> [--quick]        규격 10장 검사. 오류가 있으면 끝 상태 1(--quick: 롬을 풀지 않음)
 //   node tools/wgba.mjs extract <파일> <조각> <출력>  조각 내용을 씀. code → 실행 가능한 wasm(머리 붙임), rom → 풀린 롬
 //   node tools/wgba.mjs strip <파일> <출력.wgba>      롬 조각만 빼고 다시 묶음(설명서·그림·JS·데이터 그대로)
-//   node tools/wgba.mjs keygen · diff · feed · app · index · verify · upload · r2-stats · admin-key   온라인 업데이트 배포(app = webGBA exe 자체 업데이트)·R2 요청 수 조회(tools/lib/update-cmds.mjs·app-cmds.mjs, 규격 12장)
+//   node tools/wgba.mjs keygen · diff · feed · app · index · patches · verify · upload · r2-stats · admin-key   온라인 업데이트 배포(app = webGBA exe 자체 업데이트)·R2 요청 수 조회(tools/lib/update-cmds.mjs·app-cmds.mjs, 규격 12장)
 //
 // --cart-dir 폴더의 label.png · front.png · spine.png(또는 .webp)가 있으면 넣는다(없는 것은 빠지고 설명서 cart.<그것>도 뺌).
 // 설명서의 cart.<label|front|spine> 의 chunk·format·width·height 는 그림에서 채운다(labelAt·textArea 등은 그대로).
@@ -354,7 +354,7 @@ export async function main(argv) {
   return usage();
 }
 
-const UPDATE_COMMANDS = ["keygen", "diff", "feed", "app", "index", "verify", "upload", "r2-stats", "admin-key", "private-prune"];
+const UPDATE_COMMANDS = ["keygen", "diff", "feed", "app", "index", "patches", "verify", "upload", "r2-stats", "admin-key", "private-prune"];
 const UPDATE_USAGE = [
   "        node tools/wgba.mjs keygen -o <저장소 밖 비밀 키.pem> [--force]",
   "        node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 롬>]… [--no-expand]",

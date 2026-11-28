@@ -39,7 +39,7 @@
         "keys": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["up", "down", "left", "right", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select"] },
+          "items": { "enum": ["up", "down", "left", "right", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu", "a", "b", "c", "d", "l", "r", "l2", "r2", "l3", "start", "select"] },
           "description": "Keys the game uses (README 13.4, 14.2). On .wmba the touch screen hides phone keys not listed; without it every defined key is shown. back, menu and the gamepad roles are for .wapk only"
         }
       }
@@ -270,9 +270,9 @@
       "required": ["id"],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,16}$" },
-        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu"] },
+        "role": { "enum": ["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "l3", "start", "select", "extra", "ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end", "back", "menu"] },
         "label": { "oneOf": [{ "type": "string", "maxLength": 8 }, { "type": "object", "additionalProperties": { "type": "string", "maxLength": 8 } }] },
-        "touchLabel": { "description": "Glyph on the on-screen button and RS cell instead of the slot name (roles a b c d l r start select). README 5.8", "oneOf": [{ "type": "string", "maxLength": 8 }, { "type": "object", "additionalProperties": { "type": "string", "maxLength": 8 } }] },
+        "touchLabel": { "description": "Glyph on the on-screen button and RS cell instead of the slot name (roles a b c d l r l3 start select). README 5.8", "oneOf": [{ "type": "string", "maxLength": 8 }, { "type": "object", "additionalProperties": { "type": "string", "maxLength": 8 } }] },
         "bit": { "type": "integer", "minimum": 0, "maximum": 31 },
         "code": { "type": "string", "pattern": "^[A-Za-z0-9]{1,24}$" },
         "keys": { "type": "array", "maxItems": 4, "items": { "type": "string", "pattern": "^[A-Za-z0-9]{1,24}$" } },

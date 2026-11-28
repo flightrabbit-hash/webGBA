@@ -642,7 +642,7 @@ One button:
 | `id` | Button name (`A`, `JUMP` …; letters, digits, `_`, `-`, 16 characters; unique) |
 | `role` | Position: `up` `down` `left` `right` · face `a` `b` `c` `d` (at most 4) · `l` `r` `l2` `r2` · `start` `select` · `extra`. Decides the default key, gamepad button and touch position. Except `extra`, one button per role |
 | `label` | Button name — shown in key settings, the controls list and the RS cell tooltip (string or per language — same order as "Text per language" in 3.1; 6 characters or fewer recommended, up to 8). Defaults to `touchLabel`, then `id` |
-| `touchLabel` | (Optional) Button glyph — shown on the on-screen (touch) button and in RS cells instead of the slot name (string or per language; 4 characters or fewer recommended, up to 8). Only for roles `a` `b` `c` `d` `l` `r` `start` `select`. Without it the slot name (A·B·C·D·L·R·START·SELECT) stays. [5.8](#58-button-glyph-touchlabel) |
+| `touchLabel` | (Optional) Button glyph — shown on the on-screen (touch) button and in RS cells instead of the slot name (string or per language; 4 characters or fewer recommended, up to 8). Only for roles `a` `b` `c` `d` `l` `r` `l3` `start` `select`. Without it the slot name (A·B·C·D·L·R·L3·START·SELECT) stays. [5.8](#58-button-glyph-touchlabel) |
 | `bit` | **Required for ①**: bit number 0–31 in `Web_RunFrame(keys)` (pressed = 1) |
 | `code` | **Required for ②**: the `KeyboardEvent.code` the game JS listens for (e.g. `"Space"`, `"KeyZ"`). The host also fills in `key`·`keyCode` |
 | `keys` | Default keyboard keys (up to 4 `KeyboardEvent.code` values). Defaults to the role's keys |
@@ -659,6 +659,7 @@ One button:
 | `c` · `d` | `KeyC` `KeyI` · `KeyV` `KeyU` | 2 · 3 | Face **row right above A·B** (5.4, only when the game defines them) |
 | `l` · `r` | `KeyA` · `KeyS` | 4(·6) · 5(·7) | Top left · top right |
 | `l2` · `r2` | `KeyQ` · `KeyW` | 6 · 7 | None (keyboard and gamepad only) |
+| `l3` | None (set `keys`) | None | **Right below L** (portrait and landscape, same shape as L, only when the game defines it) — webGBA 0.11.1 and older do not know this role and refuse to open the game |
 | `start` | `Enter` `NumpadEnter` | 9 | Bottom centre |
 | `select` | `Backspace` `ShiftRight` | 8 | Bottom centre |
 | `extra` | None (the user sets it) | None | None |
@@ -1587,6 +1588,12 @@ For the webGBA operator (game authors don't use this). Applies to the webGBA Win
 - Replace: downloads go to `.webgba-update\` in the exe folder → the new exe runs with `--webgba-version` and must print `webGBA <version>` equal to `version` → for each file the current file is renamed to `<name>.old` and the download takes the original name (any failure rolls everything back) → the new exe starts (a failure rolls back) → the current app exits normally. The new exe waits for the old process to end, and deletes the `.old` files and `.webgba-update\` once its screen is up.
 - Kept: `bin/` (settings, logs, quick slots, WebView data) and the `.sav` next to each game are never replaced. When the exe folder is not writable, the update fails with a message.
 - Publish: `wgba.mjs app` — reads the version by running the exe with `--webgba-version` (an exe without this feature is refused), refuses exes built with a test identifier (allowed only with `--test-id`), adds the repository `LICENSE` and `THIRD_PARTY_NOTICES` when no `--file` is given, writes `files/<compressed SHA-256>.z` per file, refuses a version lower than the previous publish or the same version with different files, and rebuilds the index when the root has `index.json` (`--no-index` turns this off). Upload order = compressed files → `latest.json` → `index.json`.
+
+#### 12.7 Parent-ROM patch list `patches` (picker when a `.gba` is opened or imported)
+
+Games that can be made from an original (parent) ROM. When the user opens (Windows app) or imports (web version) a `.gba`, the app compares the ROM SHA-1 (as is · padded with FF to 16 MB · trimmed to 16 MB when the rest is FF) with this list and, on a match, shows a picker (several can be checked). Each chosen patch downloads its `.wgbp`, builds a `.wgba` from the opened ROM and, when the `feed` has a newer version, applies the `from` patches up to the latest. The original `.gba` is not changed.
+
+It lives in `index.json` `signed.patches` (signed; older webGBA ignores it): `{ "format": 1, "items": [{ "id", "name", "parents": [{ "sha1", "name" }], "install": "full" | { "version", "wgbp": { "url", "size", "sha256" }, "wgba": { "sha1", "size" } }, "file" }] }`. `"full"` = the game's `latest.json` `full`; a fixed version is checked against the `from` table when publishing. `parents` come from the `.wgbp` manifest `bases`. Publishing: `wgba.mjs patches` edits `patches.json` (bundle root, local source) and `index` signs it; `upload` also uploads fixed `.wgbp` files (before `index.json`). Windows app: the new `.wgba` is saved next to the `.gba` and added to favourites; web version: added to the library (the original `.gba` is not kept). No picker when offline, the list fails (5 s), nothing matches, every matched game already exists, or the user chose "Don't ask again for this ROM" (reset in settings).
 
 ### 13. Mobile `.wmba` (spec 1 extension)
 

@@ -23,6 +23,7 @@ export const CONTROLS = [
   { id: "rs", sel: ".key--rs", keys: ["RS"], colorDefault: "rs" },
   { id: "L", sel: ".key--l", keys: ["L"], colorDefault: "button" },
   { id: "R", sel: ".key--r", keys: ["R"], colorDefault: "button" },
+  { id: "L3", sel: ".key--l3", keys: ["L3"], colorDefault: "button" },
   { id: "START", sel: ".key--start", keys: ["START"], colorDefault: "pill" },
   { id: "SELECT", sel: ".key--select", keys: ["SELECT"], colorDefault: "pill" },
   { id: "keypad", sel: ".keypad", keys: ["N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8", "N9", "STAR", "N0", "HASH", "CLEAR", "OK"], colorDefault: "button" },
@@ -648,7 +649,7 @@ export class PadEditor {
   bigLayout(landscape) {
     void landscape;
     // [id 들, 배율, 한 덩어리(서로 자리 그대로 함께 움직임)] — 키패드·소프트 키는 배율만 같고 따로 움직인다.
-    const groups = [[["a", "b", "c", "d", "rs"], 1.5, true], [["START", "SELECT"], 1.4, true], [["L", "R"], 1.17, true], [["keypad", "soft1", "soft2"], 1.25, false]];
+    const groups = [[["a", "b", "c", "d", "rs"], 1.5, true], [["START", "SELECT"], 1.4, true], [["L", "R", "L3"], 1.17, true], [["keypad", "soft1", "soft2"], 1.25, false]];
     const groupOf = Object.fromEntries(groups.flatMap(([ids], gi) => ids.map((id) => [id, gi])));
     const factor = groups.map(([, k]) => k);
     const def = (this.defaultsCache = this.captureDefaults()); // 화면 기본 자리도 이 값으로(positionAll)

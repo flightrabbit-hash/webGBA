@@ -19,16 +19,35 @@ const TOOL_ICONS = {
 
 const TOOL_DANGER = new Set(["btnQuit"]);
 
-const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", START: "start", SELECT: "select", RS: "rs", OK: "action", SOFT1: "soft", SOFT2: "soft", CLEAR: "clearKey", N1: "num", N2: "num", N3: "num", N4: "num", N5: "num", N6: "num", N7: "num", N8: "num", N9: "num", STAR: "num", N0: "num", HASH: "num" };
+const KEY_PARTS = { A: "a", B: "b", C: "c", D: "d", L: "l", R: "r", L3: "l3", START: "start", SELECT: "select", RS: "rs", OK: "action", SOFT1: "soft", SOFT2: "soft", CLEAR: "clearKey", N1: "num", N2: "num", N3: "num", N4: "num", N5: "num", N6: "num", N7: "num", N8: "num", N9: "num", STAR: "num", N0: "num", HASH: "num" };
 const KEY_LABELS = { STAR: "*", HASH: "#" };
 const keyLabel = (name) => KEY_LABELS[name] ?? (/^N\d$/.test(name) ? name.slice(1) : name);
 const STICK_NAMES = { RIGHT: "right", LEFT: "left", UP: "up", DOWN: "down" };
-const LABEL_KEYS = new Set(["A", "B", "C", "D", "L", "R", "START", "SELECT"]);
+const LABEL_KEYS = new Set(["A", "B", "C", "D", "L", "R", "L3", "START", "SELECT"]);
 const LABEL_FONT = "12px Galmuri11";
 const LABEL_ALPHA = 128;
 
+let lateLabels = null;
+const lateTexts = new Set();
+
+function waitLabelFont(text) {
+  if (typeof document === "undefined" || !document.fonts?.load || lateTexts.has(text)) return;
+  lateTexts.add(text);
+  document.fonts.load(LABEL_FONT, text).then(
+    () => {
+      lateTexts.delete(text);
+      if (document.fonts.check(LABEL_FONT, text)) lateLabels?.();
+    },
+    () => lateTexts.delete(text),
+  );
+}
+
 function rasterLabel(text) {
-  if (typeof document === "undefined" || !document.fonts?.check?.(LABEL_FONT, text)) return null;
+  if (typeof document === "undefined") return null;
+  if (!document.fonts?.check?.(LABEL_FONT, text)) {
+    waitLabelFont(text);
+    return null;
+  }
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.font = LABEL_FONT;
@@ -241,6 +260,7 @@ export class Skin {
     this.stretch = {};
     this.labels = {};
     PX.setTextRaster(rasterLabel);
+    lateLabels = () => this.refreshText();
   }
 
   setLabels(labels = {}) {
@@ -269,7 +289,7 @@ export class Skin {
     if (part === "c" || part === "d") return "cd";
     if (part === "start" || part === "select" || part === "soft") return "pill";
     if (part === "rs") return "rs";
-    if (part === "l" || part === "r" || part === "num" || part === "clearKey") return "sh";
+    if (part === "l" || part === "r" || part === "l3" || part === "num" || part === "clearKey") return "sh";
     return "btn";
   }
 

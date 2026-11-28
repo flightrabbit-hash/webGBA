@@ -971,6 +971,13 @@ body[data-layout="portrait"] .key--r {
   justify-self: end;
 }
 
+body[data-layout="portrait"] .key--l3 {
+  grid-area: l;
+  justify-self: start;
+  align-self: start;
+  transform: translateY(calc(100% + var(--l3-gap, 6px)));
+}
+
 body[data-layout="portrait"] .dpad {
   grid-area: dpad;
   justify-self: start;
@@ -1096,6 +1103,14 @@ body[data-layout="landscape"] .key--r {
   justify-self: end;
   align-self: start;
   margin: var(--lr-top, 8px) 10px 0 0;
+}
+
+body[data-layout="landscape"] .key--l3 {
+  grid-area: l;
+  justify-self: start;
+  align-self: start;
+  margin: var(--lr-top, 8px) 0 0 10px;
+  transform: translateY(calc(100% + var(--l3-gap, 6px)));
 }
 
 body[data-layout="landscape"] .dpad {
@@ -3208,6 +3223,15 @@ body[data-layout="landscape"] .lib__shelf {
   height: 14px;
 }
 
+.upick--single .zpick__all,
+.upick--single .upick__check {
+  display: none;
+}
+
+.upick__again {
+  margin-top: var(--gap-2);
+}
+
 .upick__bar {
   display: block;
   flex: 1 1 auto;
@@ -4938,6 +4962,7 @@ body[data-layout="landscape"] .mpb__panel {
 body[data-mobile] .face,
 body[data-mobile] .key--l,
 body[data-mobile] .key--r,
+body[data-mobile] .key--l3,
 body[data-mobile] .key--select,
 body[data-mobile] .key--start {
   display: none;

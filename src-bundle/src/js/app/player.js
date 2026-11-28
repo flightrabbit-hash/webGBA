@@ -182,7 +182,7 @@ export function buttonLabel(button, language = lang()) {
   return BUTTONS.includes(button.id) ? t(`key.${button.id}`) : button.id;
 }
 
-export const FACE_SLOTS = Object.freeze(["A", "B", "C", "D", "L", "R", "START", "SELECT"]);
+export const FACE_SLOTS = Object.freeze(["A", "B", "C", "D", "L", "R", "L3", "START", "SELECT"]);
 
 /** 터치 자리(A·B·C·D·L·R·START·SELECT) → 그 자리 버튼의 설명서 touchLabel. 없는 자리는 빠짐(자리 이름 그대로). */
 export function slotTexts(input, language = lang()) {

@@ -7,6 +7,10 @@ import { ZIP_MAX, zipFile, zipGames, zipName } from "../core/zip.js";
 import { openLoader, runPatchJob } from "../app/patch-loader.js";
 import { centerTexts, openCountLoader, shownNames, whyText, zipPicker } from "../app/zip-pick.js";
 import { createExeUpdater } from "../app/update-exe.js";
+import { applyInWorker } from "../app/update-pick.js";
+import { createPatchPicker } from "../app/patch-pick.js";
+import { addSkip, installOffer, matchPatches, offersFor, patchList, readSkip, romSha1s } from "../core/patch-offer.js";
+import { indexMemory, UpdateError } from "../core/wgba-update.js";
 import { createAppUpdater } from "../app/update-app.js";
 import { ADMIN_APP_API, adminClient, readRecord } from "../core/admin.js";
 import { createAdminFlow } from "../app/admin-ui.js";
@@ -1007,6 +1011,16 @@ async function openPath(path, options = {}) {
       path = made.path;
       ext = extOf(path);
       made.loader?.set("open", 0);
+    } else if (!WASM_EXT.has(ext)) {
+      const picked = await offerPatches(path);
+      if (picked?.closed) {
+        showView("start");
+        return false;
+      }
+      if (picked?.path) {
+        path = picked.path;
+        ext = extOf(path);
+      }
     }
     const ok = WASM_EXT.has(ext) ? await openWasm(path, { ...options, made: Boolean(made) }) : await openRom(path);
     if (!ok) {
@@ -1799,6 +1813,7 @@ async function settingsSnapshot() {
     webRom: state.prefs.webRom ?? "",
     favorites: [...favorites()],
     recent: [...(state.prefs.recent ?? [])],
+    patchSkip: readSkip(state.prefs.patchSkip),
     useDevelopKit: Boolean(ini.useDevelopKit),
     keys: keysFor(),
     keyLayout: keyLayout(),
@@ -1815,7 +1830,7 @@ async function settingsSnapshot() {
   };
 }
 
-const SETTING_HIDDEN = new Set(["netNick", "webRom", "favorites", "recent", "keys", "gameKeys", "rsPresets"]);
+const SETTING_HIDDEN = new Set(["netNick", "webRom", "favorites", "recent", "patchSkip", "keys", "gameKeys", "rsPresets"]);
 
 function settingChanges(patch, before) {
   const out = [];
@@ -1844,6 +1859,7 @@ async function applySettings(next) {
     webRom: String(next.webRom ?? "").trim(),
     favorites: next.favorites,
     recent: next.recent,
+    patchSkip: readSkip(next.patchSkip),
     keys: next.keys,
   };
   const input = state.input;
@@ -2721,6 +2737,147 @@ const updater = createExeUpdater({
     if (!el.start.hidden) renderStart();
   },
 });
+
+/* ── .gba 열기 때 부모 롬 패치 고르기 ── */
+
+const patchSeen = new Set();
+let patchJob = null;
+
+function patchRowButton(onClick) {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "btn";
+  node.dataset.action = "patch-row";
+  node.append(Object.assign(document.createElement("span"), { className: "upick__label" }));
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+function patchFileName(offer) {
+  if (offer.file) return offer.file;
+  const slug = String(offer.name?.en ?? "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${slug || offer.id.split(".").pop()}.wgba`;
+}
+
+async function freePath(path) {
+  if (!(await exists(path))) return path;
+  const dir = dirOf(path);
+  const sep = path.charAt(dir.length) || "\\";
+  const name = baseOf(path);
+  const dot = name.lastIndexOf(".");
+  for (let n = 2; n < 100; n++) {
+    const next = `${dir}${sep}${name.slice(0, dot)} (${n})${name.slice(dot)}`;
+    if (!(await exists(next))) return next;
+  }
+  return path;
+}
+
+async function installPatch(offer, progress, signal) {
+  const job = patchJob;
+  const made = await installOffer(offer, job.rom, {
+    signal,
+    onProgress: progress,
+    apply: applyInWorker,
+    build: (patch, rom, onStage) =>
+      runPatchJob(patch, rom, onStage).catch((error) => {
+        throw new Error(patchError(error, { file: "", rom: job.path }));
+      }),
+  });
+  let target = await freePath(besideOf(job.path, patchFileName(offer)));
+  try {
+    await core.fileWriteBytes(target, made.bytes);
+  } catch (error) {
+    core.log("WARN", `패치로 만든 게임을 쓰지 못했습니다 ${target}: ${reason(error)}`);
+    const other = await core.pickSave({ title: t("pick.patchOut"), defaultName: baseOf(target), defaultExt: "wgba", filters: ["wgba"], filterName: t("pick.gameFilter"), start: dirOf(job.path) });
+    if (!other) throw new Error(t("patch.err.write", { name: baseOf(target), reason: reason(error) }));
+    await core.fileWriteBytes(other, made.bytes);
+    target = other;
+  }
+  if ((await sha1Hex(await core.fileReadBytes(target))) !== made.sha1) throw new UpdateError("deltaResult");
+  if (!isFavorite(target)) await toggleFavorite(target, true, { quiet: true });
+  core.log("INFO", `패치 설치 ${offer.id} ${offer.target.version}${made.version !== offer.target.version ? ` → ${made.version}` : ""}${made.updateError ? ` · 업데이트 실패 ${made.updateError.code ?? made.updateError.message}` : ""} · ${job.path} → ${target} (${made.base?.name ?? ""})`);
+  return { version: made.version, updateError: made.updateError, path: target, file: baseOf(target) };
+}
+
+const patchPicker = createPatchPicker({
+  lang: () => i18n.lang(),
+  openDialog,
+  closeDialog: (value) => dialogDone?.(value),
+  actions: () => [...el.dialogActions.children],
+  rowButton: patchRowButton,
+  kinds: { primary: "btn--go", warn: "btn--warn", plain: "" },
+  labels: { skip: "SKIP", install: () => "INSTALL", cancel: "CANCEL", close: "CLOSE", play: "PLAY" },
+  textKey: "patch.pick.text",
+  hintKey: "patch.pick.hint",
+  log: (level, text) => core.log(level, text),
+  install: installPatch,
+});
+
+async function packFilesIn(dir) {
+  try {
+    return (await core.fileList(dir)).filter((item) => !item.isDir && PACK_FILE_EXT.has(String(item.extension).toLowerCase())).map((item) => item.path);
+  } catch {
+    return [];
+  }
+}
+
+async function offerPatches(path) {
+  if (!autoUpdate()) return null;
+  const index = updater.patchIndex();
+  if (!index) return null;
+  let rom;
+  try {
+    rom = await loadRomBytes(path);
+  } catch {
+    return null;
+  }
+  const sha1s = await romSha1s(rom);
+  if (patchSeen.has(sha1s[0]) || readSkip(state.prefs.patchSkip).includes(sha1s[0])) return null;
+  const { list, items, error } = await patchList(index, { cache: updateCache, memory: indexMemory() });
+  if (!list) {
+    core.log("INFO", `패치 목록 사용 안 함 ${baseOf(path)}: ${error?.code ?? ""} ${error?.message ?? ""}`);
+    return null;
+  }
+  const matches = matchPatches(items, sha1s);
+  if (!matches.length) return null;
+  const offers = await offersFor(list, index, matches);
+  if (!offers.length) return null;
+  const have = await updater.games([...updatePaths(), ...(await packFilesIn(dirOf(path))), ...(state.info?.appDir ? await packFilesIn(state.info.appDir) : [])]);
+  for (const offer of offers) if (have.has(offer.id)) offer.exists = have.get(offer.id);
+  const line = offers.map((offer) => `${offer.id} ${offer.version}${offer.exists ? `(있음 ${offer.exists.version})` : ""}`).join(", ");
+  if (offers.every((offer) => offer.exists)) {
+    core.log("INFO", `패치 안내 안 함(모두 있음) ${baseOf(path)} → ${line}`);
+    return null;
+  }
+  if (!el.layer.hidden) {
+    core.log("INFO", `패치 안내 건너뜀(다른 창) ${baseOf(path)}`);
+    return null;
+  }
+  core.log("INFO", `패치 안내 ${baseOf(path)} SHA-1 ${sha1s[0].slice(0, 8)} → ${line}`);
+  patchJob = { path, rom };
+  let answer;
+  try {
+    answer = await patchPicker.ask({ offers, romName: baseOf(path), parentName: matches[0].parent.name || "?" });
+  } finally {
+    patchJob = null;
+  }
+  if (answer.action === "skip") {
+    patchSeen.add(sha1s[0]);
+    if (answer.again) await savePrefs({ patchSkip: addSkip(state.prefs.patchSkip, sha1s[0]) });
+    core.log("INFO", `패치 안내 SKIP → 원본 실행 ${baseOf(path)}${answer.again ? " · 다시 묻지 않음" : ""}`);
+    return null;
+  }
+  if (answer.action === "play") {
+    const target = answer.item.result?.path ?? answer.item.exists?.path ?? "";
+    if (target) return { path: target };
+  }
+  return { closed: true };
+}
 
 /* ── 관리자 모드 롬 가져오기 ── */
 

@@ -631,7 +631,7 @@ WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wm
 | `id` | 버튼 이름(`A`, `JUMP` …, 영문·숫자·`_`·`-` 16자, 중복 불가) |
 | `role` | 위치: `up` `down` `left` `right` · 앞면 `a` `b` `c` `d`(최대 4개) · `l` `r` `l2` `r2` · `start` `select` · `extra`. 기본 키·게임패드·터치 위치를 이 값으로 결정. `extra` 외에는 role 한 개에 버튼 한 개 |
 | `label` | 버튼 이름 — 키 설정·조작법 목록·RS 칸 설명에 표시(문자열 또는 언어별 — 3.1 "언어별 글"과 같은 순서, 6자 이하 권장, 8자까지). 없으면 `touchLabel` → `id` |
-| `touchLabel` | (선택) 버튼 글자 — 가상 버튼(터치 화면)과 RS 칸에 자리 이름 대신 표시(문자열 또는 언어별, 4자 이하 권장, 8자까지). role `a` `b` `c` `d` `l` `r` `start` `select` 버튼만. 없으면 자리 이름(A·B·C·D·L·R·START·SELECT) 그대로. [5.8](#58-버튼-글자-touchlabel) |
+| `touchLabel` | (선택) 버튼 글자 — 가상 버튼(터치 화면)과 RS 칸에 자리 이름 대신 표시(문자열 또는 언어별, 4자 이하 권장, 8자까지). role `a` `b` `c` `d` `l` `r` `l3` `start` `select` 버튼만. 없으면 자리 이름(A·B·C·D·L·R·L3·START·SELECT) 그대로. [5.8](#58-버튼-글자-touchlabel) |
 | `bit` | **① 필수**: `Web_RunFrame(keys)`의 비트 번호 0~31(눌림 = 1) |
 | `code` | **② 필수**: 게임 JS가 수신하는 `KeyboardEvent.code`(예 `"Space"`, `"KeyZ"`). 호스트는 `key`·`keyCode`도 맞춰 전달 |
 | `keys` | 기본 키보드 배치(`KeyboardEvent.code` 4개까지). 없으면 `role`의 기본값 |
@@ -648,6 +648,7 @@ WebKit(iOS·macOS Safari, iOS의 모든 브라우저)에서 모바일 게임(.wm
 | `c` · `d` | `KeyC` `KeyI` · `KeyV` `KeyU` | 2 · 3 | 앞면 **A·B 바로 위 행**(5.4, 게임이 정의했을 때만) |
 | `l` · `r` | `KeyA` · `KeyS` | 4(·6) · 5(·7) | 상단 좌측 · 상단 우측 |
 | `l2` · `r2` | `KeyQ` · `KeyW` | 6 · 7 | 없음(키보드·게임패드만) |
+| `l3` | 없음(`keys`로 지정) | 없음 | **L 바로 아래**(세로·가로, L과 같은 모양, 게임이 정의했을 때만) — webGBA 0.11.1 이하는 모르는 role 이라 열지 않음 |
 | `start` | `Enter` `NumpadEnter` | 9 | 하단 가운데 |
 | `select` | `Backspace` `ShiftRight` | 8 | 하단 가운데 |
 | `extra` | 없음(사용자가 설정) | 없음 | 없음 |
@@ -1542,6 +1543,8 @@ node tools/wgba.mjs diff <옛.wgba> <새.wgba> -o <패치.wgbd> [--orig <원작 
 node tools/wgba.mjs feed --dir <발행 폴더> --key <비밀 키.pem> --wgba <새.wgba> [--patch <패치.wgbd>]… [--old <옛.wgba|폴더>]… [--orig <원작 롬>]… [--full <새.wgbp>] [--notes <글.json>] [--prev <latest.json>] [--no-index]
 node tools/wgba.mjs app --dir <발행 폴더 묶음>/com.flightrabbit.webgba --key <비밀 키.pem> --exe <webgba.exe> [--file <LICENSE 등>]… [--notes <글.json>] [--no-index] [--dry-run]
 node tools/wgba.mjs index --root <발행 폴더 묶음> --key <비밀 키.pem>
+node tools/wgba.mjs patches --root <발행 폴더 묶음> --id <게임 id> (--full | --wgbp <파일> --version <버전>) [--ko 이름] [--en 이름] [--ja 이름]
+node tools/wgba.mjs patches --root <발행 폴더 묶음> --remove <게임 id>
 node tools/wgba.mjs verify <발행 폴더|묶음> (--pub <공개 키> | --key <비밀 키.pem>) [--wgba <옛.wgba>]…
 node tools/wgba.mjs upload [<발행 폴더|묶음>] [--wgba <새.wgba>]… [--dry-run [--remote]]
 node tools/wgba.mjs admin-key [--dry-run]
@@ -1584,6 +1587,40 @@ webGBA 운영자용입니다(게임 제작자는 쓰지 않음). 대상 = webGBA
 - 교체: exe 폴더의 `.webgba-update\`에 받은 파일 → 새 exe를 `--webgba-version`으로 실행해 출력 `webGBA <버전>`이 `version`과 같은지 확인 → 파일마다 현재 파일을 `<이름>.old`로, 받은 파일을 원래 이름으로(하나라도 실패하면 모두 되돌림) → 새 exe 실행(실패하면 되돌림) → 기존 앱 정상 종료. 새 exe는 기존 프로세스가 끝나기를 기다린 뒤 시작하고, 화면이 뜬 뒤 `.old`·`.webgba-update\`를 삭제합니다.
 - 유지: `bin/`(설정·로그·퀵슬롯·WebView 데이터)·게임 옆 `.sav`는 교체 대상이 아닙니다. exe 폴더에 기록할 수 없으면 업데이트하지 못합니다(안내만).
 - 발행: `wgba.mjs app` — exe를 `--webgba-version`으로 실행해 버전을 조회(이 기능이 없는 exe 거부), 시험 식별자로 빌드한 exe 거부(`--test-id`로만 허용), `--file`이 없으면 저장소 `LICENSE`·`THIRD_PARTY_NOTICES` 포함, 파일마다 `files/<압축 SHA-256>.z`, 이전 발행보다 낮은 버전·같은 버전인데 파일이 다른 경우 거부, 묶음에 `index.json`이 있으면 목록 재생성(`--no-index`로 끔). 올리기 순서 = 압축 파일 → `latest.json` → `index.json`.
+
+#### 12.7 부모 롬 패치 목록 `patches` (`.gba` 열기 · 가져오기 때 고르기 창)
+
+원작 롬(부모 롬)으로 만들 수 있는 게임 목록입니다. 사용자가 `.gba`를 열거나(Windows 앱) 가져오면(웹 버전) 앱이 롬 SHA-1을 이 목록과 비교해, 일치하면 고르기 창을 표시합니다. 고른 패치마다 `.wgbp`를 받아 연 롬으로 `.wgba`를 생성하고, `feed`의 최신 버전과 다르면 `from` 패치로 최신까지 업데이트합니다. 원본 `.gba`는 변경하지 않습니다.
+
+`index.json`의 `signed` 안 `patches`(서명 대상, 옛 webGBA는 조회하지 않음):
+
+```json
+"patches": {
+  "format": 1,
+  "items": [
+    { "id": "com.flightrabbit.rapid", "name": { "ko": "포켓몬 래피드", "en": "Pokemon Rapid" },
+      "parents": [{ "sha1": "41cb23d8…", "name": "FireRed (English) 1.0" }, { "sha1": "dd5945db…", "name": "FireRed (English) 1.1" }],
+      "install": "full", "file": "pokemon-rapid-v.1.9.2.wgba" },
+    { "id": "local.hamtaro3", "name": { "ko": "햄토리 러브러브 대모험" },
+      "parents": [{ "sha1": "2525cc23…", "name": "Hamtaro - Ham-Ham Heartbreak (USA)" }],
+      "install": { "version": "1.0.0", "wgbp": { "url": "local.hamtaro3/full/<SHA-256>.wgbp", "size": 378648, "sha256": "…" }, "wgba": { "sha1": "67ccbddd…", "size": 5241650 } },
+      "file": "hamtaro-ham-ham-heartbreak.wgba" }
+  ]
+}
+```
+
+| 칸 | 뜻 |
+| --- | --- |
+| `parents[]` | 부모 롬 SHA-1 · 이름(`.wgbp` manifest `bases` 그대로). 앱은 연 롬의 SHA-1 3가지(그대로 · 16MB까지 FF 채움 · 32MB 뒤 FF 자름)로 비교 |
+| `install: "full"` | 같은 목록 안 그 게임 `latest.json`의 `full`(최신 버전 전용 `.wgbp`) 사용 |
+| `install: { version, wgbp, wgba }` | 고정 버전 `.wgbp`(주소는 `index.json` 기준 상대 · 크기 · SHA-256)와 기대 결과 `.wgba` SHA-1. 생성 후 `from` 표로 최신까지 |
+| `file` | Windows 앱이 롬 옆에 저장할 파일 이름(발행 도구가 정함, 없으면 영어 이름) |
+
+- 창: 체크로 여러 개 선택, `SKIP`(웹 「원본 실행」) = 원본 롬 그대로 실행, 「이 롬은 다시 묻지 않기」(롬 SHA-1 기억 — Windows 앱 설정 › 파일 「패치 안내 안 하는 롬」, 웹 설정 같은 이름 스위치로 초기화). 모두 성공하면 맨 위 완료 게임을 바로 실행, 실패가 있으면 창 유지(줄 버튼 「다시 시도」 · 「실행」).
+- 저장: Windows 앱 = 연 `.gba`와 같은 폴더(같은 이름이 있으면 ` (2)`, 쓸 수 없으면 저장 위치 선택) + 즐겨찾기, 웹 버전 = 라이브러리(원본 `.gba`는 남기지 않음).
+- 창을 띄우지 않는 경우: 오프라인 · 목록 받기 실패(5초) · 서명 불일치 · 일치 없음 · 일치한 게임이 모두 이미 있음 · 다시 묻지 않기로 정한 롬. 이때는 원래대로 실행합니다.
+- 요청: Windows 앱은 시작 때 받은 `index.json`을 그대로 사용(추가 요청 0), 웹 버전은 목록이 없을 때 1번. 설치 = 고른 패치마다 `.wgbp` 1번 + 업데이트 `.wgbd`.
+- 발행: `patches.json`(묶음 최상위, 로컬 원본 — `{ "items": [{ "id", "name", "install": "full" | { "version", "file" } }] }`)을 `wgba.mjs patches`로 편집하고 `index`(또는 `feed`)가 서명 목록에 넣습니다. 부모 롬 · 결과 SHA-1 은 `.wgbp`에서 읽고, 고정 버전은 `latest.json`의 `from` 표와 버전 · SHA-1 이 맞을 때만 넣습니다(최신까지 가는 경로가 없으면 뺌). `upload`는 고정 `.wgbp`도 올립니다(`index.json` 앞). `.wgbp`는 원작 롬과 32바이트 이상 같은 구간이 0이어야 합니다(`make-wgbp.mjs` 보고).
 
 ### 13. 모바일 `.wmba` (규격 1 확장)
 

@@ -95,8 +95,8 @@ export function parseAspect(text) {
 }
 export const MOBILE_ROLES = Object.freeze(["ok", "soft1", "soft2", "clear", "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9", "star", "num0", "hash", "call", "end"]);
 export const ANDROID_ROLES = Object.freeze(["back", "menu"]);
-export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "start", "select", "extra", ...MOBILE_ROLES, ...ANDROID_ROLES]);
-export const TOUCH_LABEL_ROLES = Object.freeze(["a", "b", "c", "d", "l", "r", "start", "select"]);
+export const ROLES = Object.freeze(["up", "down", "left", "right", "a", "b", "c", "d", "l", "r", "l2", "r2", "l3", "start", "select", "extra", ...MOBILE_ROLES, ...ANDROID_ROLES]);
+export const TOUCH_LABEL_ROLES = Object.freeze(["a", "b", "c", "d", "l", "r", "l3", "start", "select"]);
 export const LABEL_MAX = 8;
 export const GAME_GROUPS = Object.freeze(["emu", "arcade", "mobile"]);
 export const CATEGORY_RE = /^[\x20-\x7e]{1,24}$/;

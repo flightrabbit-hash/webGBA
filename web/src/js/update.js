@@ -1,4 +1,5 @@
-import { buildGauge, checkGames, fetchChecked, GAUGE, indexGroups, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
+import { buildGauge, checkGames, fetchChecked, FEED_INDEX, GAUGE, indexGroups, indexMemory, planUpdate, readOverrides, runSteps, UpdateError } from "./core/wgba-update.js";
+import { patchList } from "./core/patch-offer.js";
 import { applyInWorker, updateErrorText, updatePicker } from "./app/update-pick.js";
 import { runPatchJob } from "./app/patch-loader.js";
 import { sha1Hex } from "./core/wgbp.js";
@@ -189,9 +190,18 @@ export function createUpdater(d) {
     return picker;
   }
 
+  const patchIndex = () => (navigator.onLine === false ? null : (readOverrides()?.index ?? FEED_INDEX));
+
+  function patches() {
+    const index = patchIndex();
+    if (!index) return Promise.resolve({ index: null, list: null, items: [], error: null });
+    return patchList(index, { cache, memory: indexMemory() }).then((got) => ({ index, ...got }));
+  }
+
   return {
     prepare,
     groups,
+    patches,
     check,
     open,
     pending,

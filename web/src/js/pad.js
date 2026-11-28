@@ -1,4 +1,4 @@
-export const PAD_KEYS = ["A", "B", "L", "R", "START", "SELECT"];
+export const PAD_KEYS = ["A", "B", "L", "R", "L3", "START", "SELECT"];
 export const DIRS = ["UP", "DOWN", "LEFT", "RIGHT"];
 export const DIR_MODES = ["stick", "dpad"];
 

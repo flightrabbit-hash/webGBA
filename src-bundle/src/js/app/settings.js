@@ -94,6 +94,7 @@ const FIELDS = [
       { key: "webRom", type: "text", default: "" },
       { key: "favorites", type: "clear" },
       { key: "recent", type: "clear" },
+      { key: "patchSkip", type: "clear" },
     ],
   },
   {
