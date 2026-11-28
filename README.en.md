@@ -369,21 +369,26 @@ The ROM for a ① game (large data the host places in game memory). Its TOC meth
 | 4 | 2 | Header size `36` |
 | 6 | 1 | Format `1` |
 | 7 | 1 | `0` stored · `1` zlib |
-| 8 | 4 | ROM size (32MB or less) |
+| 8 | 4 | ROM size (512MB or less) |
 | 12 | 4 | Packed size |
 | 16 | 20 | ROM SHA-1 |
 | 36 | … | Packed ROM |
+
+The ROM chunk does not have to be a GBA ROM (game data, music and so on). Its size limit is 512MB; only when the game does not export `Web_RomBuffer` and the host places the ROM at the GBA address 0x08000000 is it limited to the GBA ROM area, 32MB.
 
 #### 2.3 Size limits
 
 | What | Limit | If exceeded |
 | --- | --- | --- |
-| Whole file | 512MB (64MB or less recommended for phones) | Not opened |
+| Whole file | 1GB (64MB or less recommended for phones) | Not opened |
 | Manifest | 64KB (unpacked) | Not opened |
 | Cartridge art (each) | 256KB (64KB or less recommended) | That picture falls back to the default look |
 | JS | 16MB (unpacked) | Not packed |
-| ROM | 32MB (unpacked) | Not opened |
+| ROM | 512MB (unpacked). 32MB for a ① game without `Web_RomBuffer` | Not opened |
 | Save | ① `Web_GetSaveSize` (128KB if absent) · ② `save.maxSize` (default 1MB, up to 16MB) | Not saved |
+
+- The whole-file limit (1GB) is set so that a 512MB ROM stored uncompressed still fits in one file together with the code, data and JS.
+- A larger ROM takes more memory while opening (current webGBA: the file + the ROM inside game memory, over 1GB for a 512MB ROM). Keep games for phones and the web version small.
 
 When unpacking, the host stops as soon as the output exceeds the TOC's "unpacked size" (zip-bomb protection).
 
@@ -1804,8 +1809,8 @@ You help me pack my WebAssembly game into a webGBA .wgba file (spec 1). Follow t
   - Kind: 0 code · 1 manifest · 2 cart · 3 js · 4 rom · 5 data. Flags: manifest, code, js, rom = 1 (required); cart, data = 0.
   - SHA-256 = hash of the bytes stored in the file (start to end, still compressed).
 - Order of computation: entry count n → TOC length 16+80n → full TOC section length → place the chunks one after another starting at offset 8 + TOC section length, recording start and end → fill the TOC (including the total file length). No iteration needed.
-- ROM chunk content (webgba.rom, method 0): "WGRM" · header size u16=36 · format u8=1 · compression u8 (0 stored, 1 zlib) · ROM size u32 (32MB or less) · packed size u32 · ROM SHA-1 20 bytes · packed ROM.
-- Limits: file 512MB, manifest 64KB, each cartridge picture 256KB (64KB recommended), JS 16MB, ROM 32MB, 256 TOC entries.
+- ROM chunk content (webgba.rom, method 0): "WGRM" · header size u16=36 · format u8=1 · compression u8 (0 stored, 1 zlib) · ROM size u32 (512MB or less) · packed size u32 · ROM SHA-1 20 bytes · packed ROM.
+- Limits: file 1GB, manifest 64KB, each cartridge picture 256KB (64KB recommended), JS 16MB, ROM 512MB (32MB for a game placed at 0x08000000 without Web_RomBuffer), 256 TOC entries.
 
 [Manifest webgba.manifest — UTF-8 JSON, no BOM]
 - Required: "wgba": 1, "id" (lowercase reverse domain, at least one dot, 64 characters or fewer), "version" ("x.y.z"; pre-release "-beta.1" allowed), "name" (string or {"en":…,"ko":…,"ja":…}, 48 characters or fewer per entry — hosts show the screen language's entry → en → ko → ja, whichever exists; write only the entries you have), "runtime" ("webapi" or "script").

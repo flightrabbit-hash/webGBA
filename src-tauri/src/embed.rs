@@ -20,7 +20,8 @@ const HEADER: usize = 36;
 const VERSION: u8 = 1;
 const METHOD_STORE: u8 = 0;
 const METHOD_ZLIB: u8 = 1;
-const MAX_ROM: usize = 0x0200_0000;
+/// 롬 조각(묶은 게임 자료) 상한 512MB — `.wgba` 규격 2.3, JS `MAX_ROM_PAYLOAD` 와 같은 값(2026-11-28, 전에는 GBA 롬 기준 32MB).
+const MAX_ROM: usize = 0x2000_0000;
 
 /// 파일 안 롬 구획의 내용(머리 포함) 자리.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,43 +163,68 @@ fn invalid(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("embedded rom: {what}"))
 }
 
-/// 구획 내용 → 롬. 머리·크기를 확인한다(SHA-1 은 열 때 화면이 확인).
-pub fn unpack(payload: &[u8]) -> io::Result<Vec<u8>> {
-    if payload.len() < HEADER || &payload[..4] != MAGIC {
+/// 구획 머리(36바이트 이상)에서 읽은 값. `total` = 구획 내용 전체 길이.
+struct Head {
+    header_size: usize,
+    method: u8,
+    size: usize,
+    packed: usize,
+}
+
+fn head(bytes: &[u8], total: usize) -> io::Result<Head> {
+    if bytes.len() < HEADER || &bytes[..4] != MAGIC {
         return Err(invalid("bad header"));
     }
-    let word = |at: usize| u32::from_le_bytes([payload[at], payload[at + 1], payload[at + 2], payload[at + 3]]) as usize;
-    let header_size = usize::from(u16::from_le_bytes([payload[4], payload[5]]));
-    let (version, method, size, packed) = (payload[6], payload[7], word(8), word(12));
+    let word = |at: usize| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize;
+    let header_size = usize::from(u16::from_le_bytes([bytes[4], bytes[5]]));
+    let (version, method, size, packed) = (bytes[6], bytes[7], word(8), word(12));
     if version != VERSION {
         return Err(invalid(&format!("unknown version {version}")));
     }
-    if header_size < HEADER || header_size + packed > payload.len() || size == 0 || size > MAX_ROM {
+    if header_size < HEADER || header_size + packed > total || size == 0 || size > MAX_ROM {
         return Err(invalid("bad sizes"));
     }
-    let data = &payload[header_size..header_size + packed];
-    let rom = match method {
-        METHOD_STORE => data.to_vec(),
-        METHOD_ZLIB => {
-            let mut out = Vec::with_capacity(size);
-            ZlibDecoder::new(data).take(size as u64 + 1).read_to_end(&mut out)?;
-            out
-        }
-        other => return Err(invalid(&format!("unknown method {other}"))),
+    if method != METHOD_STORE && method != METHOD_ZLIB {
+        return Err(invalid(&format!("unknown method {method}")));
+    }
+    Ok(Head { header_size, method, size, packed })
+}
+
+/// 머리 뒤 묶은 롬(`data`, 머리 길이부터) → 롬. 그대로 묶은 것은 한 번만 읽어 담고, zlib 은 롬 크기 + 1 에서 멈춘다(압축 폭탄).
+fn unpack_from<R: Read>(head: &Head, data: R) -> io::Result<Vec<u8>> {
+    let mut data = data.take(head.packed as u64);
+    let rom = if head.method == METHOD_STORE {
+        let mut out = Vec::with_capacity(head.packed);
+        data.read_to_end(&mut out)?;
+        out
+    } else {
+        let mut out = Vec::with_capacity(head.size);
+        ZlibDecoder::new(data).take(head.size as u64 + 1).read_to_end(&mut out)?;
+        out
     };
-    if rom.len() != size {
+    if rom.len() != head.size {
         return Err(invalid("size mismatch"));
     }
     Ok(rom)
 }
 
-/// 파일에서 구획을 읽어 롬으로 푼다.
+/// 구획 내용 → 롬. 머리·크기를 확인한다(SHA-1 은 열 때 화면이 확인).
+pub fn unpack(payload: &[u8]) -> io::Result<Vec<u8>> {
+    let head = head(payload, payload.len())?;
+    unpack_from(&head, &payload[head.header_size..head.header_size + head.packed])
+}
+
+/// 파일에서 구획을 읽어 롬으로 푼다. 머리만 먼저 읽고 묶은 롬은 파일에서 바로 읽는다(구획 전체를 한 번 더 담지 않음 — 512MB 롬이면
+/// 메모리에 롬 한 벌만).
 pub fn read(embedded: &Embedded) -> io::Result<Vec<u8>> {
+    let total = usize::try_from(embedded.len).map_err(|_| invalid("too large"))?;
     let mut file = File::open(&embedded.file)?;
     file.seek(SeekFrom::Start(embedded.offset))?;
-    let mut payload = vec![0u8; usize::try_from(embedded.len).map_err(|_| invalid("too large"))?];
-    file.read_exact(&mut payload)?;
-    unpack(&payload)
+    let mut first = vec![0u8; HEADER.min(total)];
+    file.read_exact(&mut first)?;
+    let head = head(&first, total)?;
+    file.seek(SeekFrom::Start(embedded.offset + head.header_size as u64))?;
+    unpack_from(&head, file)
 }
 
 #[cfg(test)]
@@ -368,5 +394,31 @@ mod tests {
         data[last] ^= 0xff;
         assert!(unpack(&data).is_err(), "깨진 압축");
         assert!(unpack(&good[..good.len() - 1]).is_err(), "잘린 내용");
+    }
+
+    #[test]
+    fn reads_roms_over_32mb_up_to_512mb() {
+        let dir = std::env::temp_dir().join("webgba-embed-big");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rom: Vec<u8> = (0..0x0210_0001u32).map(|i| (i % 251) as u8).collect();
+        let file = dir.join("big.wgba");
+        for method in [METHOD_STORE, METHOD_ZLIB] {
+            std::fs::write(&file, wasm(&[custom(SECTION, &payload(&rom, method))])).unwrap();
+            let found = find(&file).expect("구획을 찾음");
+            assert!(read(&found).unwrap() == rom, "32MB 넘는 롬(방식 {method})");
+        }
+
+        let stored = payload(&rom, METHOD_STORE);
+        std::fs::write(&file, &stored[..stored.len() - 10]).unwrap();
+        let cut = Embedded { file: file.clone(), offset: 0, len: stored.len() as u64 };
+        assert!(read(&cut).is_err(), "파일이 구획보다 짧으면(잘린 파일) 거절");
+
+        let mut top = stored[..HEADER].to_vec();
+        top[8..12].copy_from_slice(&(MAX_ROM as u32).to_le_bytes());
+        top[12..16].copy_from_slice(&0u32.to_le_bytes());
+        assert!(head(&top, HEADER).is_ok(), "512MB 딱 맞으면 머리는 받음");
+        top[8..12].copy_from_slice(&(MAX_ROM as u32 + 1).to_le_bytes());
+        assert!(head(&top, HEADER).is_err(), "512MB 넘으면 거절");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

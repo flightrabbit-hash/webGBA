@@ -69,6 +69,7 @@ const ROM_MAGIC = "WGRM";
 const ROM_HEADER = 36;
 const ROM_STORE = 0;
 const ROM_ZLIB = 1;
+const ROM_MAX = 0x20000000;
 
 const hexOf = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -89,23 +90,38 @@ export async function readRomPayload(payload) {
   const size = view.getUint32(8, true);
   const packed = view.getUint32(12, true);
   if (version !== 1 || (method !== ROM_STORE && method !== ROM_ZLIB)) throw new Error(t("host.embedFormat", { version, method }));
-  if (headerSize < ROM_HEADER || headerSize + packed > payload.length || size === 0 || size > 0x02000000) throw bad(t("host.embedWhyHeader"));
+  if (headerSize < ROM_HEADER || headerSize + packed > payload.length || size === 0 || size > ROM_MAX) throw bad(t("host.embedWhyHeader"));
   const sha1 = hexOf(payload.subarray(16, 36));
   const data = payload.subarray(headerSize, headerSize + packed);
-  let rom;
-  if (method === ROM_STORE) {
-    rom = data.slice();
-  } else {
+  let rom = data;
+  if (method === ROM_ZLIB) {
+    rom = new Uint8Array(size);
+    let got;
     try {
-      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate"));
-      rom = new Uint8Array(await new Response(stream).arrayBuffer());
+      got = await inflateInto(data, rom);
     } catch {
       throw bad(t("host.embedWhyInflate"));
     }
+    if (got !== size) throw bad(t("host.embedWhySize"));
   }
   if (rom.length !== size) throw bad(t("host.embedWhySize"));
   if (hexOf(new Uint8Array(await crypto.subtle.digest("SHA-1", rom))) !== sha1) throw bad(t("host.embedWhySha1"));
   return { rom, sha1, packed };
+}
+
+async function inflateInto(data, out) {
+  const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate")).getReader();
+  let at = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return at;
+    if (at + value.length > out.length) {
+      await reader.cancel().catch(() => {});
+      return out.length + 1;
+    }
+    out.set(value, at);
+    at += value.length;
+  }
 }
 
 function isBlank(bytes) {

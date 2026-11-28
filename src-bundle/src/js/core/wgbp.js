@@ -7,6 +7,7 @@ export const ROM_VERSION = 1;
 export const ROM_STORE = 0;
 export const ROM_ZLIB = 1;
 export const MAX_ROM = 0x02000000;
+export const MAX_ROM_PAYLOAD = 0x20000000;
 export const PACK_LEVEL = 9;
 export const PATCH_MAGIC = "WGBP";
 export const PATCH_HEADER = 16;
@@ -107,9 +108,9 @@ function deflateSteps(rom, level, onProgress) {
   return deflator.result;
 }
 
-export function romPayloadFrom(rom, sha1, { store = false, level = PACK_LEVEL, onProgress = null } = {}) {
+export function romPayloadFrom(rom, sha1, { store = false, level = PACK_LEVEL, onProgress = null, max = MAX_ROM_PAYLOAD } = {}) {
   if (!rom.length) throw new WgbpError("romEmpty");
-  if (rom.length > MAX_ROM) throw new WgbpError("romTooBig", { size: rom.length });
+  if (rom.length > max) throw new WgbpError("romTooBig", { size: rom.length });
   const data = store ? rom : onProgress ? deflateSteps(rom, level, onProgress) : deflate(rom, { level });
   const head = new Uint8Array(ROM_HEADER);
   for (let i = 0; i < 4; i++) head[i] = ROM_MAGIC.charCodeAt(i);
@@ -128,7 +129,7 @@ export async function romPayload(rom, options = {}) {
 }
 
 export async function packWgba(wasm, rom, options = {}) {
-  return concat([wasm, customSection(ROM_SECTION, await romPayload(rom, options))]);
+  return concat([wasm, customSection(ROM_SECTION, await romPayload(rom, { max: MAX_ROM, ...options }))]);
 }
 
 export function readPatch(bytes) {

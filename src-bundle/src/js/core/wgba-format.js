@@ -6,7 +6,7 @@
 // webgba.cart.spine → webgba.js → 원래 wasm 구획들(조각 "code") → webgba.data.<이름> … → webgba.rom(맨 끝, WGRM 1).
 // 롬 구획은 옛 도구(pack-wgba·.wgbp)가 쓰던 것과 같은 바이트라, 옛 앱이 롬 구획을 빼고 다시 붙여도 결과가 같다.
 import { Inflate, deflate } from "../vendor/pako.js";
-import { concat, customSection, leb, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECTION } from "./wgbp.js";
+import { concat, customSection, leb, MAX_ROM_PAYLOAD, romPayload, ROM_HEADER, ROM_MAGIC, ROM_SECTION } from "./wgbp.js";
 import { checkBoard } from "./net/board.js";
 import { pickTextKey, TEXT_LANGS } from "./lang-text.js";
 import { readIceServers } from "./net/ice.js";
@@ -26,12 +26,12 @@ export const KIND_NAME = Object.freeze(Object.fromEntries(Object.entries(KIND).m
 export const METHOD = Object.freeze({ store: 0, zlib: 1 });
 export const FLAG_REQUIRED = 1;
 export const LIMITS = Object.freeze({
-  file: 512 * 1024 * 1024,
+  file: 1024 * 1024 * 1024,
   manifest: 64 * 1024,
   cart: 256 * 1024,
   cartRecommended: 64 * 1024,
   js: 16 * 1024 * 1024,
-  rom: 32 * 1024 * 1024,
+  rom: MAX_ROM_PAYLOAD,
   data: 64,
 });
 /** 롬팩 그림 셋: 조각 이름과 격자 크기(가로·세로). 그림은 격자 × k(1~4, 셋이 같은 k). 권장 k = 2. */
@@ -628,7 +628,7 @@ export async function packWgba({ wasm, manifest, images = {}, js = null, jsMetho
     at = e.end;
   }
   const fileLen = at;
-  if (fileLen > LIMITS.file) throw new WgbaError("파일이 512MB 를 넘습니다", "file");
+  if (fileLen > LIMITS.file) throw new WgbaError("파일이 1GB 를 넘습니다", "file");
   const toc = new Uint8Array(tocLen);
   for (let i = 0; i < 4; i++) toc[i] = TOC_MAGIC.charCodeAt(i);
   toc[4] = TOC_MAJOR;
@@ -1007,7 +1007,7 @@ export async function checkWgba(bytes, { compile = true, deep = true } = {}) {
   const errors = [];
   const warnings = [];
   const result = { errors, warnings, toc: null, manifest: null, imports: [], exports: [], buildId: null, rom: null };
-  if (bytes.length > LIMITS.file) errors.push("파일이 512MB 를 넘습니다");
+  if (bytes.length > LIMITS.file) errors.push("파일이 1GB 를 넘습니다");
   let list;
   try {
     list = wasmSections(bytes);

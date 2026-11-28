@@ -26,7 +26,7 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import { fileURLToPath } from "url";
-import { romPayloadFrom } from "../src-bundle/src/js/core/wgbp.js";
+import { MAX_ROM_PAYLOAD, romPayloadFrom } from "../src-bundle/src/js/core/wgbp.js";
 import { readTocFrom } from "../src-bundle/src/js/core/wgba-format.js";
 
 export const SECTION = "webgba.rom";
@@ -35,7 +35,8 @@ export const HEADER_SIZE = 36;
 export const VERSION = 1;
 export const METHOD_STORE = 0;
 export const METHOD_ZLIB = 1;
-export const MAX_ROM = 0x02000000;
+// 롬 조각 상한 512MB(2026-11-28, 전에는 GBA 롬 기준 32MB). GBA 주소 창 32MB 는 앱이 Web_RomBuffer 없는 게임에만 따로 본다.
+export const MAX_ROM = MAX_ROM_PAYLOAD;
 
 function leb(value) {
   const out = [];
@@ -128,7 +129,7 @@ export function unpackPayload(payload) {
 /** 롬 → 구획 내용(머리 + 묶은 롬). 머리·압축은 앱과 같은 코드(wgbp.js romPayloadFrom, pako). */
 export function makePayload(rom, { store = false, level = 9 } = {}) {
   if (!rom.length) throw new Error("롬이 비어 있습니다");
-  if (rom.length > MAX_ROM) throw new Error(`롬이 32MB 보다 큽니다: ${rom.length}바이트`);
+  if (rom.length > MAX_ROM) throw new Error(`롬이 512MB 보다 큽니다: ${rom.length}바이트`);
   return Buffer.from(romPayloadFrom(rom, crypto.createHash("sha1").update(rom).digest(), { store, level }));
 }
 
